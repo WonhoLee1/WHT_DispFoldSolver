@@ -40,6 +40,7 @@ from dispsolver.mesh import Mesh
 from dispsolver.material import J2Plasticity, LinearViscoelastic
 from dispsolver.constraint import RBE2HingeConstraint, PenaltyContactConstraint
 from dispsolver.solver import DynamicSolver
+from dispsolver.load import Amplitude
 from dispsolver.export import export_vtkhdf
 
 def run_display_fold():
@@ -141,14 +142,10 @@ def run_display_fold():
     idx_L = nid_to_idx[99999]
     idx_R = nid_to_idx[99998]
     
-    # Master DOFs (translation fixed at 0)
-    bc_dofs_base = [idx_L * 2, idx_L * 2 + 1, idx_R * 2, idx_R * 2 + 1]
-    bc_vals_base = [0.0, 0.0, 0.0, 0.0]
-    
     # Extra DOFs indices for rotation angles: theta_L at solver.n_dofs, theta_R at solver.n_dofs + 1
     idx_theta_L = solver.n_dofs + 0
     idx_theta_R = solver.n_dofs + 1
-    
+
     # Target rotation angle: 90 degrees in opposite directions (1.570796 rad)
     # Hinge L rotates clockwise (-theta), Hinge R rotates counter-clockwise (+theta)
     target_angle = TARGET_ANGLE
@@ -159,39 +156,43 @@ def run_display_fold():
     dt_min       = DT_MIN
     dt_max       = DT_MAX
     max_cutbacks = MAX_CUTBACKS
-    
-    t_current = 0.0
+
+    # --- Time-dependent boundary conditions via Amplitude (Abaqus *AMPLITUDE) ---
+    # The hinge rotation is driven by a single amplitude curve ramping 0 -> 1 over
+    # the analysis time. Translations stay fixed (amplitude None). The solver
+    # evaluates BC = base * amplitude(t) each increment automatically — no manual
+    # per-step rescaling needed.
+    rotation_ampl = Amplitude([0.0, t_total], [0.0, 1.0], method="linear")
+    bc_dofs = [idx_L * 2, idx_L * 2 + 1, idx_R * 2, idx_R * 2 + 1, idx_theta_L, idx_theta_R]
+    bc_base = [0.0, 0.0, 0.0, 0.0, -target_angle, target_angle]
+    bc_amps = [None, None, None, None, rotation_ampl, rotation_ampl]
+    solver.set_prescribed_dofs(bc_dofs, bc_base, amplitudes=bc_amps)
+
     dt = dt_initial
     step_count = 0
     cutbacks = 0
-    
+
     print(f"\n{'='*100}")
     print(f" ADAPTIVE INCREMENTAL DISPLAY FOLDING SIMULATION")
     print(f" Total Time: {t_total:.2f} s   Initial dt: {dt_initial:.3e} s   dt_min: {dt_min:.1e} s   dt_max: {dt_max:.2e} s")
     print(f" Hinge Rotation Angle: {target_angle * 180 / np.pi:.1f} degrees (Total 180-degree Fold)")
+    print(f" Driven by Amplitude curve: {rotation_ampl}")
     print(f"{'='*100}")
-    
-    while t_current < t_total - 1e-12:
-        dt = min(dt, t_total - t_current)
-        t_end = t_current + dt
-        factor = t_end / t_total
-        
-        # Calculate current driven rotation angles
+
+    while solver.time < t_total - 1e-12:
+        dt = min(dt, t_total - solver.time)
+        t_start_step = solver.time
+        t_end = t_start_step + dt
+        factor = rotation_ampl(t_end)            # current amplitude (load factor)
         theta_L = -target_angle * factor
         theta_R = target_angle * factor
-        
-        # Setup boundary conditions: translation fixed + rotation prescribed
-        current_bc_dofs = bc_dofs_base + [idx_theta_L, idx_theta_R]
-        current_bc_vals = bc_vals_base + [theta_L, theta_R]
-        
-        solver.set_prescribed_dofs(current_bc_dofs, current_bc_vals)
-        
+
         step_count += 1
         print(f"\n{'='*100}", flush=True)
-        print(f" STEP {step_count}  Time: {t_current:.5f} -> {t_end:.5f}  (dt={dt:.3e}, Load Factor: {factor:.4f})", flush=True)
+        print(f" STEP {step_count}  Time: {t_start_step:.5f} -> {t_end:.5f}  (dt={dt:.3e}, Load Factor: {factor:.4f})", flush=True)
         print(f" Hinge Angles: L = {theta_L * 180 / np.pi:.1f} deg, R = {theta_R * 180 / np.pi:.1f} deg", flush=True)
         print(f"{'='*100}", flush=True)
-        
+
         # Save state for rollback
         saved_state = solver.save_state()
         
@@ -201,7 +202,7 @@ def run_display_fold():
             # Step failed - cutback dt and retry
             cutbacks += 1
             if cutbacks > max_cutbacks:
-                print(f"\n  *** FATAL: Maximum cutbacks ({max_cutbacks}) exceeded at t={t_current:.5f}. Aborting.", flush=True)
+                print(f"\n  *** FATAL: Maximum cutbacks ({max_cutbacks}) exceeded at t={solver.time:.5f}. Aborting.", flush=True)
                 break
             
             dt_new = dt * 0.5
@@ -217,8 +218,7 @@ def run_display_fold():
             step_count -= 1
             continue
             
-        # Step succeeded - advance time
-        t_current = t_end
+        # Step succeeded - solver.time advanced internally on convergence
         cutbacks = 0
         
         # Adaptive time step adjustments based on NR iterations
