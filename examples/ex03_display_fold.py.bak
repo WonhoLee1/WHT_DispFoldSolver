@@ -1,0 +1,235 @@
+"""
+ex03_display_fold.py
+====================
+Example showing a display folding test:
+- Two Support Plates (left and right) modeled as elastic materials.
+- Display Panel on top modeled as Viscoelastic or Elasto-plastic material.
+- Tied interface between Panel and Plates.
+- Penalty Hinge constraint between the two Plates (pin joint).
+- Adaptive time stepping for robust convergence through large deformation.
+- Output exported to VTU for ParaView visualization.
+"""
+
+import os
+import numpy as np
+from dispsolver.mesh import Mesh
+from dispsolver.material import NeoHookean
+from dispsolver.constraint.tie import TieConstraint
+from dispsolver.constraint.penalty_hinge import PenaltyHingeConstraint
+from dispsolver.solver import DynamicSolver
+from dispsolver.export import export_vtkhdf
+
+def run_display_fold():
+    print("Setting up display fold example...")
+    
+    # 1. Mesh setup
+    # Plate Left: [0, 5] x [0, 1]
+    # Plate Right: [5, 10] x [0, 1]
+    # Panel: [0, 10] x [1, 1.5]
+    
+    mesh = Mesh()
+    
+    # Helper for adding a grid of nodes
+    def add_grid(nx, ny, x_min, x_max, y_min, y_max, start_nid):
+        xs = np.linspace(x_min, x_max, nx)
+        ys = np.linspace(y_min, y_max, ny)
+        for j, y in enumerate(ys):
+            for i, x in enumerate(xs):
+                nid = start_nid + j * nx + i
+                mesh.add_node(nid, x, y)
+        return start_nid + nx * ny
+    
+    nx_plate = 11
+    ny_plate = 3
+    nx_panel = 21
+    ny_panel = 2
+    
+    nid_plate_left_end = add_grid(nx_plate, ny_plate, 0.0, 5.0, 0.0, 1.0, 0)
+    nid_plate_right_end = add_grid(nx_plate, ny_plate, 5.0, 10.0, 0.0, 1.0, nid_plate_left_end)
+    nid_panel_end = add_grid(nx_panel, ny_panel, 0.0, 10.0, 1.0, 1.5, nid_plate_right_end)
+    
+    # Elements
+    elem_idx = 0
+    def add_quads(nx, ny, start_nid, element_set):
+        nonlocal elem_idx
+        for j in range(ny - 1):
+            for i in range(nx - 1):
+                n1 = start_nid + j * nx + i
+                n2 = n1 + 1
+                n3 = n1 + nx + 1
+                n4 = n1 + nx
+                mesh.add_element(elem_idx, [n1, n2, n3, n4], "QUAD4")
+                elem_idx += 1
+                
+    add_quads(nx_plate, ny_plate, 0, "plate_left")
+    add_quads(nx_plate, ny_plate, nid_plate_left_end, "plate_right")
+    add_quads(nx_panel, ny_panel, nid_plate_right_end, "panel")
+    
+    # ----------------------------------------------------------------
+    # Hinge nodes (inner edge corners of the plates at x=5)
+    # ----------------------------------------------------------------
+    # All plate nodes at x=5 (right edge of left plate, left edge of right plate)
+    # These are coincident node pairs sharing coordinates.
+    
+    # Right column of left plate (nodes at x=5.0)
+    plate_left_right_col = [(nx_plate - 1) + j * nx_plate for j in range(ny_plate)]
+    # Left column of right plate (nodes at x=5.0)
+    plate_right_left_col = [nid_plate_left_end + j * nx_plate for j in range(ny_plate)]
+    
+    # ----------------------------------------------------------------
+    # Penalty Hinge: pin-join all coincident node pairs at x=5
+    # ----------------------------------------------------------------
+    # Use penalty stiffness proportional to material stiffness for good conditioning
+    # k_penalty ~ 100 * E_effective * char_length
+    # E_eff ~ 2*mu + lambda ~ 2e6 + 1e7 = 1.2e7,  char_length ~ 0.5
+    k_penalty = 1e9  # robust value
+    
+    penalty_hinges = []
+    for m_nid, s_nid in zip(plate_left_right_col, plate_right_left_col):
+        ph = PenaltyHingeConstraint(mesh, m_nid, [s_nid], k_penalty=k_penalty)
+        penalty_hinges.append(ph)
+    
+    # ----------------------------------------------------------------
+    # Tie constraint: panel bottom to plate tops
+    # ----------------------------------------------------------------
+    plate_left_top = [0 + (ny_plate - 1) * nx_plate + i for i in range(nx_plate)]
+    plate_right_top = [nid_plate_left_end + (ny_plate - 1) * nx_plate + i for i in range(nx_plate)]
+    panel_bottom = [nid_plate_right_end + i for i in range(nx_panel)]
+    
+    mesh.add_nodeset("tie_master", set(plate_left_top + plate_right_top))
+    mesh.add_nodeset("tie_slave", set(panel_bottom))
+    
+    tie_constraint = TieConstraint(mesh, "tie_master", "tie_slave", tol=0.1)
+    
+    # ----------------------------------------------------------------
+    # Boundary conditions
+    # ----------------------------------------------------------------
+    left_edge = [j * nx_plate for j in range(ny_plate)]
+    right_edge = [nid_plate_left_end + j * nx_plate + (nx_plate - 1) for j in range(ny_plate)]
+    
+    bc_dofs = []
+    bc_vals = []
+    
+    # Pin left edge (ux=0, uy=0)
+    for nid in left_edge:
+        bc_dofs.extend([nid * 2, nid * 2 + 1])
+        bc_vals.extend([0.0, 0.0])
+        
+    # Push right edge (ux=-4.0, uy=0) — will be scaled by load factor
+    for nid in right_edge:
+        bc_dofs.extend([nid * 2, nid * 2 + 1])
+        bc_vals.extend([-4.0, 0.0])
+        
+    # ----------------------------------------------------------------
+    # Solver setup
+    # ----------------------------------------------------------------
+    mat = NeoHookean()
+    solver = DynamicSolver(
+        mesh,
+        mat,
+        rho=1000.0,
+        material_params={'mu': 1e6, 'lambda': 1e7},
+        constraints=[tie_constraint],           # Lagrange multiplier constraints
+        penalty_constraints=penalty_hinges,      # Penalty constraints (no LM singularity)
+        max_iter=30,
+        tol=1e-8,
+        verbose=True,
+        element_type="Q4_UP"
+    )
+    
+    # ----------------------------------------------------------------
+    # Adaptive time stepping
+    # ----------------------------------------------------------------
+    target_disp = -4.0
+    t_total = 1.0
+    dt_initial = 0.01       # initial time increment
+    dt_min = 1e-6           # minimum time increment (fail-safe)
+    dt_max = 0.05           # maximum time increment
+    max_cutbacks = 8        # max consecutive cutbacks before abort
+    
+    t_current = 0.0
+    dt = dt_initial
+    step_count = 0
+    cutbacks = 0
+    
+    print(f"\n{'='*100}")
+    print(f" ADAPTIVE INCREMENTAL SOLUTION")
+    print(f" Total Time: {t_total:.3e}   Initial dt: {dt_initial:.3e}   dt_min: {dt_min:.1e}   dt_max: {dt_max:.2e}")
+    print(f" Target displacement: {target_disp:.3f}")
+    print(f"{'='*100}")
+    
+    while t_current < t_total - 1e-12:
+        # Clip dt to not exceed remaining time
+        dt = min(dt, t_total - t_current)
+        
+        # Compute load factor at end of this increment
+        t_end = t_current + dt
+        factor = t_end / t_total
+        
+        # Set BCs for this increment
+        current_bc_vals = []
+        for nid in left_edge:
+            current_bc_vals.extend([0.0, 0.0])
+        for nid in right_edge:
+            current_bc_vals.extend([factor * target_disp, 0.0])
+        
+        solver.set_prescribed_dofs(bc_dofs, current_bc_vals)
+        
+        step_count += 1
+        print(f"\n{'='*100}")
+        print(f" STEP {step_count}  Time: {t_current:.6f} -> {t_end:.6f}  (dt={dt:.3e}, Load Factor: {factor:.4f})")
+        print(f"{'='*100}")
+        
+        # Save state for rollback
+        saved_state = solver.save_state()
+        
+        n_iter = solver.solve_step(dt)
+        
+        if n_iter < 0:
+            # Failed — cutback
+            cutbacks += 1
+            if cutbacks > max_cutbacks:
+                print(f"\n  *** FATAL: Maximum cutbacks ({max_cutbacks}) exceeded at t={t_current:.6f}. Aborting.")
+                break
+            
+            dt_new = dt * 0.5
+            if dt_new < dt_min:
+                print(f"\n  *** FATAL: dt ({dt_new:.2e}) below minimum ({dt_min:.1e}). Aborting.")
+                break
+            
+            print(f"  *** CUTBACK {cutbacks}: dt {dt:.3e} -> {dt_new:.3e}")
+            
+            # Restore state and retry
+            solver.restore_state(saved_state)
+            dt = dt_new
+            step_count -= 1  # don't count failed step
+            continue
+        
+        # Success — advance time
+        t_current = t_end
+        cutbacks = 0  # reset cutback counter on success
+        
+        # Adaptive increase: if converged in few iterations, grow dt
+        if n_iter <= 5:
+            dt = min(dt * 2.0, dt_max)
+        elif n_iter <= 10:
+            dt = min(dt * 1.5, dt_max)
+        # If many iterations, keep dt or slightly reduce
+        elif n_iter >= 20:
+            dt = max(dt * 0.75, dt_min)
+    
+    else:
+        print(f"\n{'='*100}")
+        print(f" => ALL INCREMENTS COMPLETED SUCCESSFULLY. Total steps: {step_count}")
+        print(f"{'='*100}")
+    
+    # Export results
+    output_dir = "output"
+    os.makedirs(output_dir, exist_ok=True)
+    filepath = os.path.join(output_dir, "ex03_fold.vtkhdf")
+    
+    export_vtkhdf(filepath, mesh, solver.u)
+    print(f"Exported to {filepath}")
+
+if __name__ == "__main__":
+    run_display_fold()
