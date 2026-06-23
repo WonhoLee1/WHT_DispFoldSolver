@@ -165,7 +165,8 @@ _GP2 = q4._GP2
 _W2 = q4._W2
 
 def _element_contributions(
-    coords: np.ndarray, u_elem: np.ndarray, state_elem: np.ndarray, material: MaterialAdapter, dt: Optional[float] = None
+    coords: np.ndarray, u_elem: np.ndarray, state_elem: np.ndarray, material: MaterialAdapter,
+    dt: Optional[float] = None, thickness: float = 1.0,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     _, _, invJ0 = q4.jacobian(0.0, 0.0, coords)
     B0 = q4.B_matrix(0.0, 0.0, invJ0)
@@ -198,7 +199,7 @@ def _element_contributions(
         state_gp = state_elem[gp] if state_elem is not None else None
         S_v, C_v, sg_new = material(F_eval, state_gp, dt)
 
-        w = detJ * _W2[gp]
+        w = detJ * _W2[gp] * thickness
         f_int += Bb.T @ S_v * w
         
         # Geometric stiffness
@@ -221,11 +222,13 @@ def _element_contributions(
 
     return f_int, K_e, state_new
 
-def _lumped_mass_matrix(elem_coords: np.ndarray, conn: np.ndarray, rho: float, n_dofs: int) -> np.ndarray:
+def _lumped_mass_matrix(elem_coords: np.ndarray, conn: np.ndarray, rho: float, n_dofs: int,
+                        thickness: Optional[np.ndarray] = None) -> np.ndarray:
     diag = np.zeros(n_dofs, dtype=np.float64)
     n_elem = len(elem_coords)
     for e in range(n_elem):
-        M_e = q4.compute_M_lumped(elem_coords[e], rho)
+        t_e = 1.0 if thickness is None else float(thickness[e])
+        M_e = q4.compute_M_lumped(elem_coords[e], rho) * t_e
         nids = conn[e]
         for a in range(4):
             dof_base = int(nids[a]) * 2
@@ -256,9 +259,11 @@ class DynamicSolver:
         max_step: Optional[float] = None,
         element_type: str = "Q4",
         fast_assembly: bool = True,
+        section_thickness=1.0,
     ):
         self.mesh = mesh
         self.fast_assembly = fast_assembly
+        self.section_thickness = section_thickness
         if isinstance(material, dict):
             params_dict = material_params if isinstance(material_params, dict) else {}
             self.materials = {
@@ -305,6 +310,20 @@ class DynamicSolver:
         self.n_total = self.n_dofs + self.n_extra + self.n_lambdas
 
         self.elem_coords = mesh.nodes_array()[conn]
+
+        # --- section (out-of-plane) thickness per element.
+        # section_thickness may be a scalar (uniform) or a {pid: t} dict so each
+        # stacked layer can have its own out-of-plane depth. The thickness scales
+        # the element internal force, stiffness, and mass (plane-strain virtual
+        # work integral). Constraints/contact are not auto-scaled.
+        self._elem_thickness = np.ones(self.n_elem, dtype=np.float64)
+        if isinstance(section_thickness, dict):
+            for e in range(self.n_elem):
+                elem = mesh.elements[elem_ids[e]]
+                pid = elem.pid if elem.pid is not None else 0
+                self._elem_thickness[e] = float(section_thickness.get(pid, 1.0))
+        else:
+            self._elem_thickness[:] = float(section_thickness)
 
         # --- mechanical state
         self.u = np.zeros(self.n_dofs, dtype=np.float64)
@@ -379,7 +398,7 @@ class DynamicSolver:
                     self.use_multi_material_batch = True
         except ImportError:
             pass
-        self.M = _lumped_mass_matrix(self.elem_coords, conn, self.rho, self.n_dofs)
+        self.M = _lumped_mass_matrix(self.elem_coords, conn, self.rho, self.n_dofs, self._elem_thickness)
 
         max_vars = max(m.n_internal_vars for m in self.materials.values())
         n_gp = len(_GP2)
@@ -437,14 +456,48 @@ class DynamicSolver:
         self.f_ext = np.zeros(self.n_dofs, dtype=np.float64)
         self.bc_dofs = np.array([], dtype=np.int32)
         self.bc_vals = np.array([], dtype=np.float64)
+        self._bc_base_vals = np.array([], dtype=np.float64)
+        self._bc_amplitudes = None      # None, single Amplitude, or per-dof list
+        self.time = 0.0                 # accumulated analysis time
 
-    def set_prescribed_dofs(self, bc_dofs: np.ndarray, bc_vals: Optional[np.ndarray] = None) -> None:
+    def set_prescribed_dofs(
+        self,
+        bc_dofs: np.ndarray,
+        bc_vals: Optional[np.ndarray] = None,
+        amplitudes=None,
+    ) -> None:
+        """Prescribe DOF values, optionally time-dependent via Amplitude curves.
+
+        amplitudes : None | Amplitude | list
+            - None: constant values (bc_vals held over time).
+            - a single Amplitude: applied to every dof; value(t) = bc_vals * a(t).
+            - a list (len == n_dofs): per-dof amplitude; entries may be None
+              (that dof stays constant) or an Amplitude.
+        The effective value at time t is  base_value * amplitude(t).
+        """
         self.bc_dofs = np.asarray(bc_dofs, dtype=np.int32).ravel()
         if bc_vals is None:
-            self.bc_vals = np.zeros(len(self.bc_dofs), dtype=np.float64)
+            self._bc_base_vals = np.zeros(len(self.bc_dofs), dtype=np.float64)
         else:
-            self.bc_vals = np.asarray(bc_vals, dtype=np.float64).ravel()
-            assert len(self.bc_vals) == len(self.bc_dofs)
+            self._bc_base_vals = np.asarray(bc_vals, dtype=np.float64).ravel()
+            assert len(self._bc_base_vals) == len(self.bc_dofs)
+        self._bc_amplitudes = amplitudes
+        self.bc_vals = self._eval_bc_vals(self.time)
+
+    def _eval_bc_vals(self, t: float) -> np.ndarray:
+        """Effective prescribed values at time t (base * amplitude)."""
+        base = self._bc_base_vals
+        amp = self._bc_amplitudes
+        if amp is None:
+            return base.copy()
+        if isinstance(amp, (list, tuple, np.ndarray)):
+            out = base.copy()
+            for i, a in enumerate(amp):
+                if a is not None:
+                    out[i] = base[i] * a(t)
+            return out
+        # single Amplitude applied to all dofs
+        return base * amp(t)
 
     def apply_load(self, dofs: Sequence[int], values: Sequence[float]) -> None:
         for d, v in zip(dofs, values):
@@ -538,6 +591,12 @@ class DynamicSolver:
     def solve_step(self, dt: float) -> int:
         t_start = time.time()
         beta, gamma, dt2 = self.beta, self.gamma, dt * dt
+
+        # Evaluate time-dependent prescribed values at the end of the increment
+        # (Abaqus-style amplitude ramp). On cutback dt shrinks and the target
+        # time is recomputed from the (unadvanced) current time.
+        if self._bc_amplitudes is not None:
+            self.bc_vals = self._eval_bc_vals(self.time + dt)
 
         u_n = self.u.copy()
         v_n = self.v.copy()
@@ -832,6 +891,7 @@ class DynamicSolver:
             energy_err = np.abs(np.dot(R_total, du_all))
             if (rel_change < self.tol or energy_err < 1e-15) and n_iter > 0:
                 converged = True
+                self.time += dt          # advance analysis time on success only
                 if state_new is not None:
                     self.state = state_new
                 if getattr(self, 'verbose', False):
@@ -892,6 +952,7 @@ class DynamicSolver:
             'v_extra': self.v_extra.copy(),
             'a_extra': self.a_extra.copy(),
             'lam': self.lam.copy(),
+            'time': self.time,
         }
         if self.state is not None:
             d['state'] = self.state.copy()
@@ -912,6 +973,8 @@ class DynamicSolver:
         self.v_extra = state_dict['v_extra'].copy()
         self.a_extra = state_dict['a_extra'].copy()
         self.lam = state_dict['lam'].copy()
+        if 'time' in state_dict:
+            self.time = state_dict['time']
         if 'state' in state_dict and self.state is not None:
             self.state = state_dict['state'].copy()
 
@@ -956,6 +1019,7 @@ class DynamicSolver:
                                   if self.state is not None else None)
                     f_e, K_e, se_new = compute_visco_hybrid_contributions(
                         coords, u_elem, state_elem, mat_adapter.material, dt_h, temp,
+                        self._elem_thickness[e],
                     )
                     np.add.at(f_int, self.dof_indices[e], f_e)
                     if state_new is not None and se_new is not None:
@@ -1086,7 +1150,8 @@ class DynamicSolver:
 
                     n_vars     = mat_adapter.n_internal_vars
                     state_elem = self.state[e, :, :n_vars] if self.state is not None else None
-                    f_e, K_e, se_new = _element_contributions(coords, u_elem, state_elem, mat_adapter, dt)
+                    f_e, K_e, se_new = _element_contributions(
+                        coords, u_elem, state_elem, mat_adapter, dt, self._elem_thickness[e])
 
                     for a in range(4):
                         dof_a = int(nids[a]) * 2
@@ -1128,7 +1193,7 @@ class DynamicSolver:
                 xi, eta = _GP2[gp]
                 _, detJ, invJ = q4.jacobian(xi, eta, coords)
                 B_bar_all[e, gp] = q4.B_bar_matrix(xi, eta, invJ, B0, invJ0)
-                weights_all[e, gp] = detJ * _W2[gp]
+                weights_all[e, gp] = detJ * _W2[gp] * self._elem_thickness[e]
                 dN_dxi, dN_deta = q4.shape_derivatives(xi, eta)
                 dN_dX_all[e, gp, 0] = invJ[0, 0] * dN_dxi + invJ[0, 1] * dN_deta
                 dN_dX_all[e, gp, 1] = invJ[1, 0] * dN_dxi + invJ[1, 1] * dN_deta
@@ -1202,8 +1267,8 @@ class DynamicSolver:
             # --- Single-material Vectorized JAX Assembly ---
             u_elems = u[self.dof_indices]
             f_es, K_es = self.vmapped_elem_contribs(self.elem_coords, u_elems)
-            f_es = np.asarray(f_es)
-            K_es = np.asarray(K_es)
+            f_es = np.asarray(f_es) * self._elem_thickness[:, None]
+            K_es = np.asarray(K_es) * self._elem_thickness[:, None, None]
 
             np.add.at(f_int, self.dof_indices.flatten(), f_es.flatten())
 
@@ -1228,9 +1293,10 @@ class DynamicSolver:
                 coords_g = self.elem_coords[elem_indices]
                 u_elems_g = u[self.dof_indices[elem_indices]]
 
+                t_g = self._elem_thickness[elem_indices]
                 f_es, K_es = self.vmapped_elem_contribs_by_pid[pid](coords_g, u_elems_g)
-                f_es = np.asarray(f_es)
-                K_es = np.asarray(K_es)
+                f_es = np.asarray(f_es) * t_g[:, None]
+                K_es = np.asarray(K_es) * t_g[:, None, None]
 
                 np.add.at(f_int, self.dof_indices[elem_indices].flatten(), f_es.flatten())
 
@@ -1277,17 +1343,18 @@ class DynamicSolver:
                         temp = getattr(self, 'temperature', 20.0)
                         f_e, K_e, se_new = compute_visco_hybrid_contributions(
                             coords, u_elem, state_elem, mat_adapter.material,
-                            dt if dt is not None else 1.0, temp,
+                            dt if dt is not None else 1.0, temp, self._elem_thickness[e],
                         )
                     else:
                         from ..element.q4_up_jax import compute_hybrid_element_contributions
                         f_e_jax, K_e_jax = compute_hybrid_element_contributions(coords, u_elem, mat_adapter.params)
-                        f_e = np.asarray(f_e_jax)
-                        K_e = np.asarray(K_e_jax)
+                        f_e = np.asarray(f_e_jax) * self._elem_thickness[e]
+                        K_e = np.asarray(K_e_jax) * self._elem_thickness[e]
                         se_new = None
                 else:
                     state_elem = self.state[e][:, :mat_adapter.n_internal_vars] if self.state is not None else None
-                    f_e, K_e, se_new = _element_contributions(coords, u_elem, state_elem, mat_adapter, dt)
+                    f_e, K_e, se_new = _element_contributions(
+                        coords, u_elem, state_elem, mat_adapter, dt, self._elem_thickness[e])
 
                 for a in range(4):
                     dof_a = int(nids[a]) * 2

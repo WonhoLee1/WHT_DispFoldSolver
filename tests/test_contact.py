@@ -51,6 +51,25 @@ def test_contact_activation_and_symmetry():
     assert f_int[2] < 0.0, "Node 1 should feel repulsive force in -x"
 
 
+def test_contact_depth_scales_force():
+    """Out-of-plane depth scales the penalty stiffness/force linearly."""
+    mesh = Mesh()
+    mesh.add_node(0, 0.0, 0.0)
+    mesh.add_node(1, 1.0, 0.0)
+    u_close = np.array([0.0, 0.0, -0.7, 0.0])  # penetrating pair
+
+    c1 = PenaltyContactConstraint(mesh, contact_nodes=[0, 1], k_contact=1e6, d_0=0.5, depth=1.0)
+    c3 = PenaltyContactConstraint(mesh, contact_nodes=[0, 1], k_contact=1e6, d_0=0.5, depth=3.0)
+
+    f1 = np.zeros(4); K1 = np.zeros((4, 4))
+    f3 = np.zeros(4); K3 = np.zeros((4, 4))
+    c1.apply_penalty(u_close, f1, K1)
+    c3.apply_penalty(u_close, f3, K3)
+
+    assert np.allclose(f3, 3.0 * f1)
+    assert np.allclose(K3, 3.0 * K1)
+
+
 def test_contact_tangent_finite_difference():
     # Setup mesh
     mesh = Mesh()
