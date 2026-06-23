@@ -1,0 +1,22 @@
+*NODE, NSET=ALL
+1, 0.0, 0.0
+2, 1.0, 0.0
+3, 1.0, 1.0
+4, 0.0, 1.0
+
+*ELEMENT, TYPE=CPE4
+1, 1, 2, 3, 4
+
+*ELASTIC
+1000.0, 0.3
+
+*BOUNDARY
+1, 1, 2, 0.0
+
+*CLOAD
+2, 2, -10.0
+
+*STEP, NAME=PULL
+*DYNAMIC
+0.01, 1.0, 1e-8, 0.1
+*END STEP

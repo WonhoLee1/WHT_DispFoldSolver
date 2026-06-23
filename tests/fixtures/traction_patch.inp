@@ -1,0 +1,25 @@
+*NODE, NSET=ALL
+1, 0.0, 0.0
+2, 1.0, 0.0
+3, 1.0, 1.0
+4, 0.0, 1.0
+
+*ELEMENT, TYPE=CPE4
+1, 1, 2, 3, 4
+
+*ELASTIC
+4000.0, 0.3
+
+*BOUNDARY
+1, 1, 2, 0.0
+2, 1, 2, 0.0
+3, 1, 2, 0.0
+4, 1, 2, 0.0
+
+*DLOAD
+P001, P3, -1.0
+
+*STEP, NAME=PRESS
+*DYNAMIC
+0.01, 1.0, 1e-8, 0.1
+*END STEP

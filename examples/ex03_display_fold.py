@@ -42,6 +42,7 @@ from dispsolver.constraint import RBE2HingeConstraint, PenaltyContactConstraint
 from dispsolver.solver import DynamicSolver
 from dispsolver.load import Amplitude
 from dispsolver.export import export_vtkhdf
+from dispsolver.export.vtkhdf_exporter import TransientVTKHDFExporter
 
 def run_display_fold():
     print("Setting up multilayer display fold example with rotational hinges and contact...")
@@ -57,8 +58,28 @@ def run_display_fold():
     xs = np.concatenate([xs_left, xs_mid, xs_right])
     nx = len(xs)
     
-    # Y direction: 7 layers with boundaries [0.0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35]
-    ys = np.array([0.0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35])
+    # Y direction: 7 layers
+    # PET layers (0, 2, 4, 6) -> 3 elements through thickness
+    # PSA layers (1, 3, 5)    -> 1 element through thickness
+    ys_list = [0.0]
+    row_pids = []
+    
+    current_y = 0.0
+    layer_thickness = 0.05
+    
+    for layer in range(7):
+        if layer % 2 == 0:
+            dy = layer_thickness / 3.0
+            for _ in range(3):
+                current_y += dy
+                ys_list.append(current_y)
+                row_pids.append(layer)
+        else:
+            current_y += layer_thickness
+            ys_list.append(current_y)
+            row_pids.append(layer)
+            
+    ys = np.array(ys_list)
     ny = len(ys)
     
     # Add nodes
@@ -67,12 +88,10 @@ def run_display_fold():
             nid = j * nx + i
             mesh.add_node(nid, x, y)
             
-    # Add Elements: alternating PET (pid=0) and PSA (pid=1)
+    # Add Elements: pid corresponds to layer id (0 to 6)
     elem_idx = 0
     for j in range(ny - 1):
-        # Layer 0, 2, 4, 6 (PET) -> pid=0
-        # Layer 1, 3, 5 (PSA) -> pid=1
-        pid = 0 if j % 2 == 0 else 1
+        pid = row_pids[j]
         for i in range(nx - 1):
             n1 = j * nx + i
             n2 = n1 + 1
@@ -97,13 +116,12 @@ def run_display_fold():
     psa_mat = LinearViscoelastic(E=10.0, nu=0.49, g_i=[0.8], tau_i=[1.0])
 
     materials = {
-        0: pet_mat,
-        1: psa_mat
+        layer: pet_mat if layer % 2 == 0 else psa_mat
+        for layer in range(7)
     }
 
     material_params = {
-        0: {},
-        1: {}
+        layer: {} for layer in range(7)
     }
     
     # 3. Constraint setup
@@ -119,9 +137,12 @@ def run_display_fold():
     contact_constraint = PenaltyContactConstraint(mesh, contact_nodes=contact_nodes, k_contact=1e6, d_0=0.2)
     
     # 4. Solver setup — 재료(pid)별 요소 타입 혼용:
-    #   PET(pid=0, J2 소성) → Q4 B-bar  (배치 가속)
-    #   PSA(pid=1, 선형 점탄성) → Q4_UP Q1P0 하이브리드 (힌지부 체적 락킹 완화)
-    element_type = {0: "Q4", 1: "Q4_UP"}
+    #   PET (Even layers, J2 소성) → Q4 B-bar
+    #   PSA (Odd layers, 선형 점탄성) → Q4_UP Q1P0 하이브리드
+    element_type = {
+        layer: "Q4" if layer % 2 == 0 else "Q4_UP"
+        for layer in range(7)
+    }
     solver = DynamicSolver(
         mesh,
         materials,
@@ -172,6 +193,16 @@ def run_display_fold():
     step_count = 0
     cutbacks = 0
 
+    output_dir = "output"
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Setup Transient Exporter
+    filepath = os.path.join(output_dir, "ex03_fold_transient_v2.vtkhdf")
+    exporter = TransientVTKHDFExporter(filepath, mesh)
+    
+    # Export initial state (t=0)
+    exporter.add_step(0.0, solver.u)
+
     print(f"\n{'='*100}")
     print(f" ADAPTIVE INCREMENTAL DISPLAY FOLDING SIMULATION")
     print(f" Total Time: {t_total:.2f} s   Initial dt: {dt_initial:.3e} s   dt_min: {dt_min:.1e} s   dt_max: {dt_max:.2e} s")
@@ -221,6 +252,9 @@ def run_display_fold():
         # Step succeeded - solver.time advanced internally on convergence
         cutbacks = 0
         
+        # Export frame
+        exporter.add_step(solver.time, solver.u)
+        
         # Adaptive time step adjustments based on NR iterations
         if n_iter <= 5:
             dt = min(dt * 1.5, dt_max)
@@ -234,13 +268,8 @@ def run_display_fold():
         print(f" => ALL INCREMENTS COMPLETED SUCCESSFULLY. Total steps: {step_count}", flush=True)
         print(f"{'='*100}", flush=True)
         
-    # Export results for ParaView visualization
-    output_dir = "output"
-    os.makedirs(output_dir, exist_ok=True)
-    filepath = os.path.join(output_dir, "ex03_fold.vtkhdf")
-    
-    export_vtkhdf(filepath, mesh, solver.u)
-    print(f"Successfully exported final deformed shape to {filepath}")
+    exporter.close()
+    print(f"Successfully exported all transient frames to {filepath}")
 
 if __name__ == "__main__":
     run_display_fold()

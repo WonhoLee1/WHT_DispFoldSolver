@@ -260,6 +260,8 @@ class DynamicSolver:
         element_type: str = "Q4",
         fast_assembly: bool = True,
         section_thickness=1.0,
+        static_mode: bool = False,
+        alpha: float = 0.0,
     ):
         self.mesh = mesh
         self.fast_assembly = fast_assembly
@@ -283,6 +285,9 @@ class DynamicSolver:
         self.tol = tol
         self.verbose = verbose
         self.max_step = max_step
+        self.static_mode = static_mode
+        self.alpha = alpha
+        self.f_int_n = None  # for HHT-α alpha method
         # element_type may be a single string (uniform) or a {pid: str} dict
         # (per-material) so e.g. viscoelastic layers use the Q1P0 hybrid while
         # plastic layers use standard Q4 B-bar.
@@ -550,7 +555,12 @@ class DynamicSolver:
         a_k = (u_k - u_n - dt * v_n) * inv_beta_dt2 - (1.0 - 2.0 * beta) / (2.0 * beta) * a_n
         a_ext_k = (u_ext_k - u_ext_n - dt * v_ext_n) * inv_beta_dt2 - (1.0 - 2.0 * beta) / (2.0 * beta) * a_ext_n
 
-        R_u = self.f_ext - self.M * a_k - f_int
+        if self.static_mode:
+            R_u = self.f_ext - f_int
+        elif self.alpha != 0.0 and self.f_int_n is not None:
+            R_u = self.f_ext - self.M * a_k - (1.0 + self.alpha) * f_int + self.alpha * self.f_int_n
+        else:
+            R_u = self.f_ext - self.M * a_k - f_int
         R_ext = np.zeros(self.n_extra)
         R_lam = np.zeros(self.n_lambdas)
         
@@ -609,6 +619,10 @@ class DynamicSolver:
         u_ext_k = u_ext_n + dt * v_ext_n + 0.5 * dt2 * a_ext_n
         lam_k = self.lam.copy()
 
+        # HHT-α: compute f_int_n on first call (initial converged internal force)
+        if self.alpha != 0.0 and self.f_int_n is None:
+            self.f_int_n, _, _ = self._assemble(u_n, dt)
+
         has_bc = len(self.bc_dofs) > 0
         inv_beta_dt2 = 1.0 / (beta * dt2)
 
@@ -659,7 +673,12 @@ class DynamicSolver:
             a_k = (u_k - u_n - dt * v_n) * inv_beta_dt2 - (1.0 - 2.0 * beta) / (2.0 * beta) * a_n
             a_ext_k = (u_ext_k - u_ext_n - dt * v_ext_n) * inv_beta_dt2 - (1.0 - 2.0 * beta) / (2.0 * beta) * a_ext_n
 
-            R_u = self.f_ext - self.M * a_k - f_int
+            if self.static_mode:
+                R_u = self.f_ext - f_int
+            elif self.alpha != 0.0 and self.f_int_n is not None:
+                R_u = self.f_ext - self.M * a_k - (1.0 + self.alpha) * f_int + self.alpha * self.f_int_n
+            else:
+                R_u = self.f_ext - self.M * a_k - f_int
             R_ext = np.zeros(self.n_extra)
             R_lam = np.zeros(self.n_lambdas)
             
@@ -698,8 +717,14 @@ class DynamicSolver:
             R_total = np.concatenate([R_u, R_ext, R_lam])
 
             # Combine Stiffness
-            K_eff = K_T.copy()
-            K_eff.setdiag(K_eff.diagonal() + inv_beta_dt2 * self.M)
+            if self.static_mode:
+                K_eff = K_T.copy()  # no inertial contribution
+            elif self.alpha != 0.0:
+                K_eff = (1.0 + self.alpha) * K_T
+                K_eff.setdiag(K_eff.diagonal() + inv_beta_dt2 * self.M)
+            else:
+                K_eff = K_T.copy()
+                K_eff.setdiag(K_eff.diagonal() + inv_beta_dt2 * self.M)
             
             # Convert to COO for global assembly
             K_eff_coo = K_eff.tocoo()
@@ -894,6 +919,8 @@ class DynamicSolver:
                 self.time += dt          # advance analysis time on success only
                 if state_new is not None:
                     self.state = state_new
+                if self.alpha != 0.0:
+                    self.f_int_n = f_int.copy()  # store for HHT-α next step
                 if getattr(self, 'verbose', False):
                     t_elapsed = time.time() - t_start
                     print(f"  ---------------------------------------------------------------------------------------------------------------------", flush=True)
