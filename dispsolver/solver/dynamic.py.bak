@@ -1,0 +1,691 @@
+"""
+dynamic.py
+==========
+Implicit dynamic FEM solver using Newmark integration + Newton-Raphson.
+
+Formulation
+-----------
+- Total Lagrangian kinematics (reference-configuration strain measures)
+- Q4 quadrilateral with B-bar SRI (volumetric locking mitigation)
+- 2 DOF/node (ux, uy) — plane strain
+- Newmark time integration (beta=0.25, gamma=0.5 default)
+- Newton-Raphson equilibrium iteration with energy-norm convergence
+- Supports Lagrange Multiplier constraints via scipy.sparse
+
+Supports both:
+  - JAX-based hyperelastic materials (MaterialModel subclass — no state)
+  - Numpy-based inelastic materials (J2Plasticity, ViscoelasticMaterial — with state)
+"""
+
+from __future__ import annotations
+
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
+import time
+import numpy as np
+import scipy.sparse as sps
+import scipy.sparse.linalg as spla
+
+from ..element import q4
+from ..mesh import Mesh
+from ..material.base import MaterialModel
+from ..constraint.base import BaseConstraint
+
+
+# ------------------------------------------------------------------
+# Material adapter
+# ------------------------------------------------------------------
+
+class MaterialAdapter:
+    def __init__(self, material, params: Optional[Dict] = None):
+        self.material = material
+        self.params = params if params is not None else {}
+        self.has_state = hasattr(material, "n_internal_vars")
+
+    @property
+    def n_internal_vars(self) -> int:
+        if self.has_state:
+            return int(self.material.n_internal_vars)
+        return 0
+
+    def __call__(
+        self, F: np.ndarray, state_gp: Optional[np.ndarray] = None
+    ) -> Tuple[np.ndarray, np.ndarray, Optional[np.ndarray]]:
+        if hasattr(self.material, "pk2_tensor_full"):
+            S, C, state_new = self.material.pk2_voigt(F, self.params, state_gp)
+            return S, C, state_new
+        else:
+            S = np.asarray(self.material.pk2_voigt(F, self.params))
+            C = np.asarray(self.material.tangent_voigt(F, self.params))
+            return S, C, None
+
+
+# ------------------------------------------------------------------
+# Helpers
+# ------------------------------------------------------------------
+
+def _compute_F(coords: np.ndarray, u_elem: np.ndarray, xi: float, eta: float) -> np.ndarray:
+    _, _, invJ = q4.jacobian(xi, eta, coords)
+    dN_dxi, dN_deta = q4.shape_derivatives(xi, eta)
+
+    grad_u = np.zeros((2, 2), dtype=np.float64)
+    for a in range(4):
+        dN_dx = invJ[0, 0] * dN_dxi[a] + invJ[0, 1] * dN_deta[a]
+        dN_dy = invJ[1, 0] * dN_dxi[a] + invJ[1, 1] * dN_deta[a]
+        grad_u[0, 0] += u_elem[2 * a] * dN_dx
+        grad_u[0, 1] += u_elem[2 * a] * dN_dy
+        grad_u[1, 0] += u_elem[2 * a + 1] * dN_dx
+        grad_u[1, 1] += u_elem[2 * a + 1] * dN_dy
+
+    return np.eye(2, dtype=np.float64) + grad_u
+
+_GP2 = q4._GP2
+_W2 = q4._W2
+
+def _element_contributions(
+    coords: np.ndarray, u_elem: np.ndarray, state_elem: np.ndarray, material: MaterialAdapter,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    _, _, invJ0 = q4.jacobian(0.0, 0.0, coords)
+    B0 = q4.B_matrix(0.0, 0.0, invJ0)
+
+    n_gp = len(_GP2)
+    n_vars = material.n_internal_vars
+    state_new = np.zeros((n_gp, n_vars), dtype=np.float64) if n_vars > 0 else None
+
+    f_int = np.zeros(8, dtype=np.float64)
+    K_e = np.zeros((8, 8), dtype=np.float64)
+
+    for gp in range(n_gp):
+        xi, eta = _GP2[gp]
+        _, detJ, invJ = q4.jacobian(xi, eta, coords)
+
+        Bb = q4.B_bar_matrix(xi, eta, invJ, B0, invJ0)
+        F = _compute_F(coords, u_elem, xi, eta)
+        if material.has_state:
+            F_eval = F
+        else:
+            F0 = _compute_F(coords, u_elem, 0.0, 0.0)
+            J = np.linalg.det(F)
+            J0 = np.linalg.det(F0)
+            F_eval = F * np.sqrt(J0 / J)
+
+        state_gp = state_elem[gp] if state_elem is not None else None
+        S_v, C_v, sg_new = material(F_eval, state_gp)
+
+        w = detJ * _W2[gp]
+        f_int += Bb.T @ S_v * w
+        
+        # Geometric stiffness
+        dN_dxi, dN_deta = q4.shape_derivatives(xi, eta)
+        dN_dX = invJ[0, 0] * dN_dxi + invJ[0, 1] * dN_deta
+        dN_dY = invJ[1, 0] * dN_dxi + invJ[1, 1] * dN_deta
+        grad_N = np.stack([dN_dX, dN_dY], axis=1)
+        
+        S_tensor = np.array([[S_v[0], S_v[2]], [S_v[2], S_v[1]]])
+        gamma = grad_N @ S_tensor @ grad_N.T
+        
+        K_geo = np.zeros((8, 8))
+        K_geo[0::2, 0::2] = gamma
+        K_geo[1::2, 1::2] = gamma
+        
+        K_e += (Bb.T @ C_v @ Bb + K_geo) * w
+
+        if n_vars > 0 and sg_new is not None:
+            state_new[gp] = sg_new
+
+    return f_int, K_e, state_new
+
+def _lumped_mass_matrix(elem_coords: np.ndarray, conn: np.ndarray, rho: float, n_dofs: int) -> np.ndarray:
+    diag = np.zeros(n_dofs, dtype=np.float64)
+    n_elem = len(elem_coords)
+    for e in range(n_elem):
+        M_e = q4.compute_M_lumped(elem_coords[e], rho)
+        nids = conn[e]
+        for a in range(4):
+            dof_base = int(nids[a]) * 2
+            row_base = 2 * a
+            for i in range(2):
+                diag[dof_base + i] += M_e[row_base + i, row_base + i]
+    return diag
+
+
+# ------------------------------------------------------------------
+# Solver
+# ------------------------------------------------------------------
+
+class DynamicSolver:
+    def __init__(
+        self,
+        mesh: Mesh,
+        material: object,
+        rho: float,
+        material_params: Optional[Dict] = None,
+        constraints: Optional[List[BaseConstraint]] = None,
+        penalty_constraints: Optional[List] = None,
+        beta: float = 0.25,
+        gamma: float = 0.5,
+        max_iter: int = 20,
+        tol: float = 1e-8,
+        verbose: bool = False,
+        max_step: Optional[float] = None,
+        element_type: str = "Q4",
+    ):
+        self.material = MaterialAdapter(material, material_params)
+        self.rho = float(rho)
+        self.beta = beta
+        self.gamma = gamma
+        self.max_iter = max_iter
+        self.tol = tol
+        self.verbose = verbose
+        self.max_step = max_step
+        self.element_type = element_type
+        self.constraints = constraints if constraints is not None else []
+        self.penalty_constraints = penalty_constraints if penalty_constraints is not None else []
+
+        # --- mesh data
+        conn, nid_to_idx, sorted_nids, elem_ids = mesh.connectivity_array()
+        self.conn = conn
+        self.elem_ids = elem_ids
+        self.n_nodes = len(sorted_nids)
+        self.n_dofs = self.n_nodes * 2
+        self.n_elem = len(conn)
+        
+        # --- constraint setup
+        self.n_extra = sum(c.n_extra_primal() for c in self.constraints)
+        self.n_lambdas = sum(c.n_multipliers() for c in self.constraints)
+        self.n_total = self.n_dofs + self.n_extra + self.n_lambdas
+
+        self.elem_coords = mesh.nodes_array()[conn]
+
+        # --- mechanical state
+        self.u = np.zeros(self.n_dofs, dtype=np.float64)
+        self.v = np.zeros(self.n_dofs, dtype=np.float64)
+        self.a = np.zeros(self.n_dofs, dtype=np.float64)
+        
+        self.u_extra = np.zeros(self.n_extra, dtype=np.float64)
+        self.v_extra = np.zeros(self.n_extra, dtype=np.float64)
+        self.a_extra = np.zeros(self.n_extra, dtype=np.float64)
+        
+        self.lam = np.zeros(self.n_lambdas, dtype=np.float64)
+
+        # --- precompute dof indices for assembly
+        self.dof_indices = np.zeros((self.n_elem, 8), dtype=np.int32)
+        self.dof_indices[:, 0::2] = self.conn * 2
+        self.dof_indices[:, 1::2] = self.conn * 2 + 1
+        
+        self.K_rows = np.repeat(self.dof_indices, 8, axis=1).flatten()
+        self.K_cols = np.tile(self.dof_indices, (1, 8)).flatten()
+
+        # --- check if material is JAX-compatible for vectorization
+        self.use_jax_vmap = False
+        from ..material.base import MaterialModel
+        if isinstance(self.material.material, MaterialModel):
+            self.use_jax_vmap = True
+            try:
+                import jax
+                if self.element_type == "Q4_UP":
+                    from .dynamic_jax import build_hybrid_element_contributions_jax
+                    elem_fn = build_hybrid_element_contributions_jax(self.material.params)
+                else:
+                    from .dynamic_jax import build_element_contributions_jax
+                    elem_fn = build_element_contributions_jax(self.material.material, self.material.params)
+                self.vmapped_elem_contribs = jax.jit(jax.vmap(elem_fn))
+            except ImportError:
+                self.use_jax_vmap = False
+        self.M = _lumped_mass_matrix(self.elem_coords, conn, self.rho, self.n_dofs)
+
+        n_gp = len(_GP2)
+        n_vars = self.material.n_internal_vars
+        if n_vars > 0:
+            self.state = np.zeros((self.n_elem, n_gp, n_vars), dtype=np.float64)
+            if hasattr(material, "initial_internal_vars"):
+                init = material.initial_internal_vars()
+                for e in range(self.n_elem):
+                    for gp in range(n_gp):
+                        self.state[e, gp] = init
+        else:
+            self.state = None
+
+        self.f_ext = np.zeros(self.n_dofs, dtype=np.float64)
+        self.bc_dofs = np.array([], dtype=np.int32)
+        self.bc_vals = np.array([], dtype=np.float64)
+
+    def set_prescribed_dofs(self, bc_dofs: np.ndarray, bc_vals: Optional[np.ndarray] = None) -> None:
+        self.bc_dofs = np.asarray(bc_dofs, dtype=np.int32).ravel()
+        if bc_vals is None:
+            self.bc_vals = np.zeros(len(self.bc_dofs), dtype=np.float64)
+        else:
+            self.bc_vals = np.asarray(bc_vals, dtype=np.float64).ravel()
+            assert len(self.bc_vals) == len(self.bc_dofs)
+
+    def apply_load(self, dofs: Sequence[int], values: Sequence[float]) -> None:
+        for d, v in zip(dofs, values):
+            self.f_ext[d] = v
+
+    def reaction_forces(self, u: Optional[np.ndarray] = None) -> np.ndarray:
+        if u is None:
+            u = self.u
+            u_ext = self.u_extra
+            lam = self.lam
+        else:
+            u_ext = np.zeros(self.n_extra)
+            lam = np.zeros(self.n_lambdas)
+        
+        f_int, _, _ = self._assemble(u)
+        
+        # Constraint forces: C_u^T * lam
+        f_c = np.zeros(self.n_dofs)
+        lam_offset = 0
+        for c in self.constraints:
+            n_lam = c.n_multipliers()
+            if n_lam > 0:
+                row_u, col_u, val_u, _, _, _, _ = c.assemble(u, u_ext)
+                for i in range(len(val_u)):
+                    eq_idx = row_u[i] + lam_offset
+                    dof_idx = col_u[i]
+                    f_c[dof_idx] += val_u[i] * lam[eq_idx]
+            lam_offset += n_lam
+            
+        a = self.a.copy() if u is self.u else np.zeros(self.n_dofs)
+        return f_int + f_c + self.M * a - self.f_ext
+
+    def _compute_R_total(
+        self,
+        u_k: np.ndarray,
+        u_ext_k: np.ndarray,
+        lam_k: np.ndarray,
+        u_n: np.ndarray,
+        v_n: np.ndarray,
+        a_n: np.ndarray,
+        u_ext_n: np.ndarray,
+        v_ext_n: np.ndarray,
+        a_ext_n: np.ndarray,
+        dt: float,
+        inv_beta_dt2: float,
+        beta: float,
+    ) -> np.ndarray:
+        f_int, _, _ = self._assemble(u_k)
+        
+        a_k = (u_k - u_n - dt * v_n) * inv_beta_dt2 - (1.0 - 2.0 * beta) / (2.0 * beta) * a_n
+        a_ext_k = (u_ext_k - u_ext_n - dt * v_ext_n) * inv_beta_dt2 - (1.0 - 2.0 * beta) / (2.0 * beta) * a_ext_n
+
+        R_u = self.f_ext - self.M * a_k - f_int
+        R_ext = np.zeros(self.n_extra)
+        R_lam = np.zeros(self.n_lambdas)
+        
+        lam_offset = 0
+        for c in self.constraints:
+            n_lam = c.n_multipliers()
+            if n_lam > 0:
+                r_u, c_u, v_u, r_ext, c_ext, v_ext, g = c.assemble(u_k, u_ext_k)
+                
+                for i in range(len(v_u)):
+                    eq_idx = r_u[i] + lam_offset
+                    dof_idx = c_u[i]
+                    R_u[dof_idx] -= v_u[i] * lam_k[eq_idx]
+                    
+                for i in range(len(v_ext)):
+                    eq_idx = r_ext[i] + lam_offset
+                    ext_idx = c_ext[i]
+                    R_ext[ext_idx] -= v_ext[i] * lam_k[eq_idx]
+                    
+                for i in range(n_lam):
+                    R_lam[lam_offset + i] = -g[i]
+                    
+            lam_offset += n_lam
+            
+        R_total = np.concatenate([R_u, R_ext, R_lam])
+        
+        if len(self.bc_dofs) > 0:
+            for i, idx in enumerate(self.bc_dofs):
+                val = self.bc_vals[i]
+                R_total[idx] = val - u_k[idx]
+                
+        return R_total
+
+    def solve_step(self, dt: float) -> int:
+        t_start = time.time()
+        beta, gamma, dt2 = self.beta, self.gamma, dt * dt
+
+        u_n = self.u.copy()
+        v_n = self.v.copy()
+        a_n = self.a.copy()
+        u_ext_n = self.u_extra.copy()
+        v_ext_n = self.v_extra.copy()
+        a_ext_n = self.a_extra.copy()
+
+        u_k = u_n + dt * v_n + 0.5 * dt2 * a_n
+        u_ext_k = u_ext_n + dt * v_ext_n + 0.5 * dt2 * a_ext_n
+        lam_k = self.lam.copy()
+
+        has_bc = len(self.bc_dofs) > 0
+        inv_beta_dt2 = 1.0 / (beta * dt2)
+
+        if getattr(self, 'verbose', False):
+            print(f"")
+            print(f"  Nonlinear Iteration Summary")
+            print(f"  ==================================================================================================")
+            print(f"  Time increment: {dt:.3e}")
+            print(f"  Tolerance (Disp Ratio): {self.tol:.1e}     Max Iterations: {self.max_iter}")
+            print(f"  --------------------------------------------------------------------------------------------------")
+            print(f"  Iter      Residual   Res Ratio   Disp Incr   Disp Corr  Disp Ratio   dLam Norm  Energy Err")
+            print(f"  --------------------------------------------------------------------------------------------------")
+
+        res_norm_0 = None
+        converged = False
+        for n_iter in range(self.max_iter):
+            f_int, K_T, state_new = self._assemble(u_k)
+
+            a_k = (u_k - u_n - dt * v_n) * inv_beta_dt2 - (1.0 - 2.0 * beta) / (2.0 * beta) * a_n
+            a_ext_k = (u_ext_k - u_ext_n - dt * v_ext_n) * inv_beta_dt2 - (1.0 - 2.0 * beta) / (2.0 * beta) * a_ext_n
+
+            R_u = self.f_ext - self.M * a_k - f_int
+            R_ext = np.zeros(self.n_extra)
+            R_lam = np.zeros(self.n_lambdas)
+            
+            # Constraints
+            C_row_u, C_col_u, C_val_u = [], [], []
+            C_row_ext, C_col_ext, C_val_ext = [], [], []
+            
+            lam_offset = 0
+            for c in self.constraints:
+                n_lam = c.n_multipliers()
+                if n_lam > 0:
+                    r_u, c_u, v_u, r_ext, c_ext, v_ext, g = c.assemble(u_k, u_ext_k)
+                    
+                    for i in range(len(v_u)):
+                        eq_idx = r_u[i] + lam_offset
+                        dof_idx = c_u[i]
+                        R_u[dof_idx] -= v_u[i] * lam_k[eq_idx]
+                        C_row_u.append(eq_idx)
+                        C_col_u.append(dof_idx)
+                        C_val_u.append(v_u[i])
+                        
+                    for i in range(len(v_ext)):
+                        eq_idx = r_ext[i] + lam_offset
+                        ext_idx = c_ext[i]
+                        R_ext[ext_idx] -= v_ext[i] * lam_k[eq_idx]
+                        C_row_ext.append(eq_idx)
+                        C_col_ext.append(ext_idx)
+                        C_val_ext.append(v_ext[i])
+                        
+                    for i in range(n_lam):
+                        R_lam[lam_offset + i] = -g[i]
+                        
+                lam_offset += n_lam
+            
+            # Combine Residual
+            R_total = np.concatenate([R_u, R_ext, R_lam])
+
+            # Combine Stiffness
+            K_eff = K_T.copy()
+            K_eff.setdiag(K_eff.diagonal() + inv_beta_dt2 * self.M)
+            
+            # Convert to COO for global assembly
+            K_eff_coo = K_eff.tocoo()
+            global_row = list(K_eff_coo.row)
+            global_col = list(K_eff_coo.col)
+            global_val = list(K_eff_coo.data)
+            
+            # Assemble C_u^T and C_u
+            lam_start_idx = self.n_dofs + self.n_extra
+            for r, c, v in zip(C_row_u, C_col_u, C_val_u):
+                global_row.append(r + lam_start_idx)
+                global_col.append(c)
+                global_val.append(v)
+                
+                global_row.append(c)
+                global_col.append(r + lam_start_idx)
+                global_val.append(v)
+                
+            # Assemble C_ext^T and C_ext
+            ext_start_idx = self.n_dofs
+            for r, c, v in zip(C_row_ext, C_col_ext, C_val_ext):
+                global_row.append(r + lam_start_idx)
+                global_col.append(c + ext_start_idx)
+                global_val.append(v)
+                
+                global_row.append(c + ext_start_idx)
+                global_col.append(r + lam_start_idx)
+                global_val.append(v)
+
+            # Extra primal inertia (0 for now, but add small regularization to avoid singular diagonal)
+            for i in range(self.n_extra):
+                global_row.append(ext_start_idx + i)
+                global_col.append(ext_start_idx + i)
+                global_val.append(1e-12)  # small stabilization
+                
+            # Lambda stabilization (optional, avoid saddle point issues, usually spsolve handles it)
+            # but sometimes zeros on diagonal cause UMFPACK to complain.
+            # We will rely on spsolve unless it fails.
+            
+            J = sps.coo_matrix((global_val, (global_row, global_col)), shape=(self.n_total, self.n_total)).tocsr()
+
+            if has_bc:
+                for i, idx in enumerate(self.bc_dofs):
+                    val = self.bc_vals[i]
+                    # Zero out row idx
+                    start_ptr = J.indptr[idx]
+                    end_ptr = J.indptr[idx+1]
+                    for ptr in range(start_ptr, end_ptr):
+                        col = J.indices[ptr]
+                        if col == idx:
+                            J.data[ptr] = 1.0
+                        else:
+                            J.data[ptr] = 0.0
+                    R_total[idx] = val - u_k[idx]
+
+            # Solve
+            du_all = spla.spsolve(J, R_total)
+            
+            du = du_all[:self.n_dofs]
+            du_ext = du_all[self.n_dofs:self.n_dofs+self.n_extra]
+            dlam = du_all[self.n_dofs+self.n_extra:]
+
+            # Backtracking Line Search
+            alpha = 1.0
+            alpha_min = 0.1
+            R_norm_current = np.linalg.norm(R_total)
+            
+            while alpha > alpha_min + 1e-5:
+                u_temp = u_k + alpha * du
+                u_ext_temp = u_ext_k + alpha * du_ext
+                lam_temp = lam_k + alpha * dlam
+                
+                R_temp = self._compute_R_total(
+                    u_temp, u_ext_temp, lam_temp,
+                    u_n, v_n, a_n,
+                    u_ext_n, v_ext_n, a_ext_n,
+                    dt, inv_beta_dt2, self.beta
+                )
+                R_norm_temp = np.linalg.norm(R_temp)
+                
+                if not np.isnan(R_norm_temp) and not np.isinf(R_norm_temp):
+                    break
+                alpha *= 0.5
+                
+            du *= alpha
+            du_ext *= alpha
+            dlam *= alpha
+            du_all *= alpha
+            
+            res_norm = R_norm_current
+            if res_norm_0 is None:
+                res_norm_0 = res_norm + 1e-16
+            res_ratio = res_norm / res_norm_0
+            du_norm = np.linalg.norm(du)
+            if self.max_step is not None and du_norm > self.max_step:
+                scale = self.max_step / du_norm
+                du *= scale
+                du_ext *= scale
+                dlam *= scale
+                du_all *= scale
+                du_norm = self.max_step
+                
+            u_norm = np.linalg.norm(u_k)
+            rel_change = du_norm / (u_norm + 1e-12)
+            
+            if getattr(self, 'verbose', False):
+                dlam_norm = np.linalg.norm(dlam)
+                energy_err = np.abs(np.dot(R_total, du_all))
+                print(f"  {n_iter+1:4d}  {res_norm:11.4e} {res_ratio:11.4e} {u_norm:11.4e} {du_norm:11.4e} {rel_change:11.4e} {dlam_norm:11.4e} {energy_err:11.4e}")
+
+            if np.isnan(du_norm) or np.isinf(du_norm) or (res_norm_0 is not None and res_ratio > 1e15):
+                if getattr(self, 'verbose', False):
+                    t_elapsed = time.time() - t_start
+                    print(f"  --------------------------------------------------------------------------------------------------")
+                    print(f"  *** ERROR: Divergence detected at iteration {n_iter+1}. (Time: {t_elapsed:.2f} s)\n")
+                return -(self.max_iter)
+
+            energy_err = np.abs(np.dot(R_total, du_all))
+            if (rel_change < self.tol or energy_err < 1e-15) and n_iter > 0:
+                converged = True
+                if state_new is not None:
+                    self.state = state_new
+                if getattr(self, 'verbose', False):
+                    t_elapsed = time.time() - t_start
+                    print(f"  --------------------------------------------------------------------------------------------------")
+                    print(f"  => Increment Converged. (Time: {t_elapsed:.2f} s)\n")
+                break
+
+            u_k += du
+            u_ext_k += du_ext
+            lam_k += dlam
+
+        self.u = u_k.copy()
+        self.a = a_k.copy()
+        self.v = v_n + dt * ((1.0 - gamma) * a_n + gamma * a_k)
+        
+        self.u_extra = u_ext_k.copy()
+        self.a_extra = a_ext_k.copy()
+        self.v_extra = v_ext_n + dt * ((1.0 - gamma) * a_ext_n + gamma * a_ext_k)
+        
+        self.lam = lam_k.copy()
+
+        if not converged:
+            if getattr(self, 'verbose', False):
+                t_elapsed = time.time() - t_start
+                print(f"  --------------------------------------------------------------------------------------------------")
+                print(f"  *** ERROR: Failed to converge after {self.max_iter} iterations. (Time: {t_elapsed:.2f} s)\n")
+            return -(self.max_iter)
+
+        return n_iter
+
+    def solve(self, num_steps: int, dt: float, callback: Optional[Callable] = None) -> List[np.ndarray]:
+        history = []
+        for step in range(num_steps):
+            n_iter = self.solve_step(dt)
+            if n_iter < 0:
+                import warnings
+                warnings.warn(f"Step {step}: NR did not converge ({-n_iter} iters)")
+            history.append(self.u.copy())
+            if callback:
+                callback(step, self)
+        return history
+
+    def save_state(self) -> dict:
+        """Save current solver state for adaptive time stepping rollback.
+
+        Returns
+        -------
+        state_dict : dict
+            Snapshot of all mutable solver state variables.
+        """
+        d = {
+            'u': self.u.copy(),
+            'v': self.v.copy(),
+            'a': self.a.copy(),
+            'u_extra': self.u_extra.copy(),
+            'v_extra': self.v_extra.copy(),
+            'a_extra': self.a_extra.copy(),
+            'lam': self.lam.copy(),
+        }
+        if self.state is not None:
+            d['state'] = self.state.copy()
+        return d
+
+    def restore_state(self, state_dict: dict) -> None:
+        """Restore solver state from a saved snapshot.
+
+        Parameters
+        ----------
+        state_dict : dict
+            Previously saved state from save_state().
+        """
+        self.u = state_dict['u'].copy()
+        self.v = state_dict['v'].copy()
+        self.a = state_dict['a'].copy()
+        self.u_extra = state_dict['u_extra'].copy()
+        self.v_extra = state_dict['v_extra'].copy()
+        self.a_extra = state_dict['a_extra'].copy()
+        self.lam = state_dict['lam'].copy()
+        if 'state' in state_dict and self.state is not None:
+            self.state = state_dict['state'].copy()
+
+    def _assemble(self, u: np.ndarray) -> Tuple[np.ndarray, sps.csr_matrix, Optional[np.ndarray]]:
+        f_int = np.zeros(self.n_dofs, dtype=np.float64)
+        n_gp = len(_GP2)
+        n_vars = self.material.n_internal_vars
+
+        if self.use_jax_vmap:
+            # --- Vectorized JAX Assembly ---
+            u_elems = u[self.dof_indices]
+            f_es, K_es = self.vmapped_elem_contribs(self.elem_coords, u_elems)
+            f_es = np.asarray(f_es)
+            K_es = np.asarray(K_es)
+            
+            # Bulk sum for internal forces
+            np.add.at(f_int, self.dof_indices.flatten(), f_es.flatten())
+            
+            # Bulk sparse matrix construction
+            K_vals = K_es.flatten()
+            K_T = sps.coo_matrix((K_vals, (self.K_rows, self.K_cols)), shape=(self.n_dofs, self.n_dofs))
+            K_T = K_T.tocsr()
+            
+            state_new = None # No internal state for pure JAX hyperelastic materials yet
+        else:
+            # --- Sequential Fallback Assembly ---
+            K_T = sps.lil_matrix((self.n_dofs, self.n_dofs), dtype=np.float64)
+            state_new = np.zeros((self.n_elem, n_gp, n_vars), dtype=np.float64) if n_vars > 0 else None
+
+            for e in range(self.n_elem):
+                coords = self.elem_coords[e]
+                nids = self.conn[e]
+
+                u_elem = np.zeros(8, dtype=np.float64)
+                for a in range(4):
+                    dof = int(nids[a]) * 2
+                    u_elem[2 * a] = u[dof]
+                    u_elem[2 * a + 1] = u[dof + 1]
+
+                if self.element_type == "Q4_UP":
+                    from ..element.q4_up_jax import compute_hybrid_element_contributions
+                    f_e_jax, K_e_jax = compute_hybrid_element_contributions(coords, u_elem, self.material.params)
+                    f_e = np.asarray(f_e_jax)
+                    K_e = np.asarray(K_e_jax)
+                    se_new = None
+                else:
+                    state_elem = self.state[e] if self.state is not None else None
+                    f_e, K_e, se_new = _element_contributions(coords, u_elem, state_elem, self.material)
+
+                for a in range(4):
+                    dof_a = int(nids[a]) * 2
+                    for i in range(2):
+                        f_int[dof_a + i] += f_e[2 * a + i]
+                        for b in range(4):
+                            dof_b = int(nids[b]) * 2
+                            for j in range(2):
+                                K_T[dof_a + i, dof_b + j] += K_e[2 * a + i, 2 * b + j]
+
+                if n_vars > 0 and se_new is not None:
+                    state_new[e] = se_new
+            K_T = K_T.tocsr()
+
+        # --- Penalty constraints ---
+        if self.penalty_constraints:
+            # Convert to lil for efficient element-wise modification
+            K_T = K_T.tolil()
+            for pc in self.penalty_constraints:
+                pc.apply_penalty(u, f_int, K_T)
+            K_T = K_T.tocsr()
+
+        return f_int, K_T, state_new
