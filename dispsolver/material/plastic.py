@@ -35,7 +35,7 @@ Simo, J.C. & Hughes, T.J.R. (1998). Computational Inelasticity. Springer.
 
 from __future__ import annotations
 
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 
@@ -64,15 +64,17 @@ class J2Plasticity:
         [F_p_inv_00, F_p_inv_01, F_p_inv_10, F_p_inv_11, eqps]
     """
 
-    def __init__(self, E: float, nu: float, sigma_y0: float, H: float = 0.0):
+    def __init__(self, E: float, nu: float, sigma_y0: float, H: float = 0.0,
+                 hardening_table: Optional[np.ndarray] = None):
         self.E = E
         self.nu = nu
         self.sigma_y0 = sigma_y0
         self.H = H
+        self.hardening_table = hardening_table
         self.mu = E / (2.0 * (1.0 + nu))
         self.lam = E * nu / ((1.0 + nu) * (1.0 - 2.0 * nu))
         self.K = self.lam + 2.0 * self.mu / 3.0  # bulk modulus
-        
+
         # Precompute 4D spatial elasticity tensor for Einstein summation
         self.c_tensor_4d = np.zeros((3, 3, 3, 3), dtype=np.float64)
         for i in range(3):
@@ -87,6 +89,20 @@ class J2Plasticity:
                         if i == l and j == k:
                             val += self.mu
                         self.c_tensor_4d[i, j, k, l] = val
+
+    def _yield_stress(self, eqps: float | np.ndarray) -> float | np.ndarray:
+        """Compute current yield stress based on equivalent plastic strain.
+
+        Uses hardening_table if provided (multi-point linear interpolation),
+        otherwise uses the standard linear hardening model: sigma_y0 + H * eqps.
+        """
+        if self.hardening_table is not None:
+            return np.interp(eqps,
+                             self.hardening_table[:, 0],
+                             self.hardening_table[:, 1],
+                             left=self.hardening_table[0, 1],
+                             right=self.hardening_table[-1, 1])
+        return self.sigma_y0 + self.H * eqps
 
     # ------------------------------------------------------------------
     # Internal variable interface
@@ -224,7 +240,7 @@ class J2Plasticity:
         q_tr = np.sqrt(1.5) * s_norm
 
         # --- 5. Yield check
-        sigma_y = self.sigma_y0 + self.H * eqps
+        sigma_y = self._yield_stress(eqps)
 
         if q_tr <= sigma_y + 1e-12:
             # === ELASTIC STEP ===
@@ -374,7 +390,7 @@ class J2Plasticity:
         q_tr = np.sqrt(1.5) * np.linalg.norm(s_a, axis=1)  # (N,)
 
         # Yield
-        sigma_y = self.sigma_y0 + self.H * eqps
+        sigma_y = self._yield_stress(eqps)
         is_plastic = q_tr > sigma_y + 1e-12
 
         # Radial return (computed for all, masked by is_plastic)
@@ -507,7 +523,7 @@ class J2Plasticity:
         p_mean = np.mean(tau_a)
         s_a = tau_a - p_mean
         q = np.sqrt(1.5) * np.sqrt(np.sum(s_a ** 2))
-        sigma_y = self.sigma_y0 + self.H * eqps
+        sigma_y = self._yield_stress(eqps)
         return q - sigma_y
 
     # ------------------------------------------------------------------
