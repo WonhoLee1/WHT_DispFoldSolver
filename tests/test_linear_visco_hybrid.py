@@ -137,6 +137,62 @@ def test_hybrid_solver_wlf_shift():
     assert np.any(solver.state != 0.0)
 
 
+def _single_quad_solver(thickness, element_type="Q4_UP"):
+    mesh = Mesh()
+    mesh.add_node(0, 0.0, 0.0); mesh.add_node(1, 1.0, 0.0)
+    mesh.add_node(2, 1.0, 1.0); mesh.add_node(3, 0.0, 1.0)
+    mesh.add_element(0, [0, 1, 2, 3], "QUAD4", pid=0)
+    mat = LinearViscoelastic(1000.0, 0.45, g_i=[0.5], tau_i=[1.0])
+    return DynamicSolver(mesh, mat, rho=1000.0, material_params={},
+                         element_type=element_type, section_thickness=thickness)
+
+
+def test_section_thickness_scales_stiffness():
+    """Section depth scales element force, stiffness, and mass linearly."""
+    u = np.array([0.0, 0.0, 0.01, 0.0, 0.012, 0.02, 0.0, 0.018])
+
+    s1 = _single_quad_solver(1.0)
+    s3 = _single_quad_solver(3.0)
+
+    f1, K1, _ = s1._assemble(u, dt=0.1)
+    f3, K3, _ = s3._assemble(u, dt=0.1)
+
+    assert np.allclose(f3, 3.0 * f1, rtol=1e-9, atol=1e-9)
+    assert np.allclose(K3.toarray(), 3.0 * K1.toarray(), rtol=1e-9, atol=1e-9)
+    # Lumped mass also scales with depth
+    assert np.allclose(s3.M, 3.0 * s1.M, rtol=1e-9)
+
+
+def test_section_thickness_per_pid():
+    """Different out-of-plane depth per stacked layer."""
+    mesh = Mesh()
+    mesh.add_node(0, 0.0, 0.0); mesh.add_node(1, 1.0, 0.0)
+    mesh.add_node(2, 1.0, 1.0); mesh.add_node(3, 0.0, 1.0)
+    mesh.add_node(4, 1.0, 2.0); mesh.add_node(5, 0.0, 2.0)
+    mesh.add_element(0, [0, 1, 2, 3], "QUAD4", pid=0)   # depth 2.0
+    mesh.add_element(1, [3, 2, 4, 5], "QUAD4", pid=1)   # depth 5.0
+
+    materials = {
+        0: LinearViscoelastic(100.0, 0.3, g_i=[0.5], tau_i=[1.0]),
+        1: LinearViscoelastic(100.0, 0.3, g_i=[0.5], tau_i=[1.0]),
+    }
+    solver = DynamicSolver(
+        mesh, materials, rho=1000.0, material_params={0: {}, 1: {}},
+        element_type={0: "Q4_UP", 1: "Q4_UP"},
+        section_thickness={0: 2.0, 1: 5.0},
+    )
+    assert solver._elem_thickness[0] == 2.0
+    assert solver._elem_thickness[1] == 5.0
+
+    bc_dofs, bc_vals = [], []
+    for nid in [0, 1]:
+        bc_dofs += [nid * 2, nid * 2 + 1]; bc_vals += [0.0, 0.0]
+    for nid in [4, 5]:
+        bc_dofs += [nid * 2, nid * 2 + 1]; bc_vals += [0.0, 0.05]
+    solver.set_prescribed_dofs(bc_dofs, bc_vals)
+    assert solver.solve_step(dt=0.1) >= 0
+
+
 def test_mixed_element_type_per_pid():
     """PET(J2)=Q4 batch  +  PSA(linear visco)=Q4_UP hybrid in one mesh."""
     mesh = Mesh()

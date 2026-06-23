@@ -124,10 +124,15 @@ class PenaltyContactConstraint:
         contact_nodes: list,
         k_contact: float = 1e8,
         d_0: float = 0.2,
+        depth: float = 1.0,
     ):
         self.mesh = mesh
         self.contact_nodes = contact_nodes
-        self.k_contact = float(k_contact)
+        # Contact force = pressure * area, and area ∝ out-of-plane depth, so the
+        # penalty stiffness scales with the section depth to stay consistent with
+        # depth-scaled solid elements.
+        self.depth = float(depth)
+        self.k_contact = float(k_contact) * self.depth
         self.d_0 = float(d_0)
 
         self.nid_to_idx = mesh.node_id_to_index()

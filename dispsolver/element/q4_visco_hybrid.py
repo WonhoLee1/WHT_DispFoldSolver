@@ -32,6 +32,7 @@ def compute_visco_hybrid_contributions(
     material,                   # LinearViscoelastic
     dt: float,
     temperature: float = 20.0,
+    thickness: float = 1.0,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     n_gp = len(q4._GP2)
     K_bulk = material.K
@@ -59,7 +60,7 @@ def compute_visco_hybrid_contributions(
     for gp in range(n_gp):
         xi, eta = q4._GP2[gp]
         _, detJ, invJ = q4.jacobian(xi, eta, coords)
-        w = detJ * q4._W2[gp]
+        w = detJ * q4._W2[gp] * thickness
 
         # Mean-dilatation B-bar: deviatoric strain local, volumetric = element mean
         Bb = q4.B_bar_matrix(xi, eta, invJ, B0, invJ0)
