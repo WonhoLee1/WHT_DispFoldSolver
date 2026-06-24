@@ -34,6 +34,7 @@ FAST_ASSEMBLY = True
 
 os.environ["MKL_NUM_THREADS"]     = str(N_CORES)  # MKL 전체 (PARDISO 포함)
 os.environ["PARDISO_NUM_THREADS"] = str(N_CORES)  # PARDISO 명시적 오버라이드
+os.environ["XLA_FLAGS"]           = f"--xla_cpu_multi_thread_eigen=false"
 
 import numpy as np
 from dispsolver.mesh import Mesh
@@ -100,11 +101,11 @@ def run_display_fold():
             mesh.add_element(elem_idx, [n1, n2, n3, n4], "QUAD4", pid=pid)
             elem_idx += 1
             
-    # Add Hinge Master Nodes (outside the display mesh)
-    # Hinge L: at x = -15, y = -5.0 mm
-    # Hinge R: at x = 15, y = -5.0 mm
-    mesh.add_node(99999, -15.0, -5.0)
-    mesh.add_node(99998, 15.0, -5.0)
+    # Add Hinge Master Nodes (바닥면과 동일 평면 y=0)
+    # Hinge L: at x = -15, y = 0.0 mm
+    # Hinge R: at x = 15, y = 0.0 mm
+    mesh.add_node(99999, -15.0, 0.0)
+    mesh.add_node(99998, 15.0, 0.0)
     
     # 2. Material setup
     # PET: Elasto-plastic (J2Plasticity)
@@ -125,11 +126,16 @@ def run_display_fold():
     }
     
     # 3. Constraint setup
-    # RBE2 rotational constraints coupling outer display bottom boundary ends to offset hinges
-    # Hinge L (master 99999) couples to bottom left node (nid=0)
-    # Hinge R (master 99998) couples to bottom right node (nid=nx-1)
-    rbe2_l = RBE2HingeConstraint(mesh, master_id=99999, slave_ids=[0], extra_primal_offset=0)
-    rbe2_r = RBE2HingeConstraint(mesh, master_id=99998, slave_ids=[nx-1], extra_primal_offset=1)
+    # 바닥면(y=0, j=0 행)을 두 개의 강체 플랩으로 힌지에 연결한다.
+    #   - 좌측 플랩 바닥면 (x <= -15) → 힌지 L (master 99999)
+    #   - 우측 플랩 바닥면 (x >= +15) → 힌지 R (master 99998)
+    #   - 가운데 힌지 영역(-15 < x < 15)의 바닥 노드는 자유 → 굽힘 허용
+    # 바닥 행 노드의 전역 인덱스는 nid = 0*nx + i = i.
+    tol = 1e-9
+    slave_l = [i for i in range(nx) if xs[i] <= -15.0 + tol]
+    slave_r = [i for i in range(nx) if xs[i] >=  15.0 - tol]
+    rbe2_l = RBE2HingeConstraint(mesh, master_id=99999, slave_ids=slave_l, extra_primal_offset=0)
+    rbe2_r = RBE2HingeConstraint(mesh, master_id=99998, slave_ids=slave_r, extra_primal_offset=1)
     
     # JAX Penalty self-contact constraint for panel top (y=0.35) and bottom (y=0.0) nodes
     # Contact thickness (threshold) d_0 = 0.2 mm
@@ -137,12 +143,12 @@ def run_display_fold():
     contact_constraint = PenaltyContactConstraint(mesh, contact_nodes=contact_nodes, k_contact=1e6, d_0=0.2)
     
     # 4. Solver setup — 재료(pid)별 요소 타입 혼용:
-    #   PET (Even layers, J2 소성) → Q4 B-bar
-    #   PSA (Odd layers, 선형 점탄성) → Q4_UP Q1P0 하이브리드
+    #   PET (Even layers, J2 소성) → Q4_EAS (Enhanced Assumed Strain, 굽힘 락킹 제거)
+    #   PSA (Odd layers, 선형 점탄성) → Q4_UP Q1P0 하이브리드 (체적 락킹 제거)
     element_type = {
-        layer: "Q4" if layer % 2 == 0 else "Q4_UP"
+        layer: "Q4_EAS" if layer % 2 == 0 else "Q4_UP"
         for layer in range(7)
-    }
+}
     solver = DynamicSolver(
         mesh,
         materials,
@@ -197,7 +203,7 @@ def run_display_fold():
     os.makedirs(output_dir, exist_ok=True)
     
     # Setup Transient Exporter
-    filepath = os.path.join(output_dir, "ex03_fold_transient_v2.vtkhdf")
+    filepath = os.path.join(output_dir, "ex03_fold_transient_v4.vtkhdf")
     exporter = TransientVTKHDFExporter(filepath, mesh)
     
     # Export initial state (t=0)
