@@ -288,6 +288,7 @@ class DynamicSolver:
         self.static_mode = static_mode
         self.alpha = alpha
         self.f_int_n = None  # for HHT-α alpha method
+        
         # element_type may be a single string (uniform) or a {pid: str} dict
         # (per-material) so e.g. viscoelastic layers use the Q1P0 hybrid while
         # plastic layers use standard Q4 B-bar.
@@ -426,7 +427,6 @@ class DynamicSolver:
         else:
             self.state = None
 
-        # --- Precompute reference geometry (B-bar, weights, dN/dX) for all elements × GPs
         self._B_bar_all, self._weights_all, self._dN_dX_all = self._precompute_reference_geometry()
 
         # --- Detect single-material J2 batch path
@@ -457,6 +457,62 @@ class DynamicSolver:
             self.use_jax_grouped_vmap = False
             self.use_j2_batch = False
             self.use_multi_material_batch = True
+
+            # --- JAX EAS+J2 vmap batch setup (per-pid groups) ---
+            # Pre-build jax.jit(jax.vmap(...)) for each Q4_EAS + J2Plasticity pid group
+            self._eas_jax_vmap_by_pid: Dict[int, object] = {}
+            try:
+                import jax
+                from ..element.q4_eas_jax import compute_eas_j2_contributions_jax
+                from ..material.plastic_jax import pk2_voigt_jax as _pk2_jax
+                for pid, mat_adapter in self.materials.items():
+                    if (self._pid_element_type(pid) == "Q4_EAS"
+                            and isinstance(mat_adapter.material, J2Plasticity)):
+                        mat = mat_adapter.material
+                        lam = float(mat.lam)
+                        mu = float(mat.mu)
+                        sigma_y0 = float(mat.sigma_y0)
+                        H = float(mat.H)
+                        _single = lambda coords, u_e, a, s: compute_eas_j2_contributions_jax(
+                            coords, u_e, a, s, lam, mu, sigma_y0, H, 1.0,
+                        )
+                        self._eas_jax_vmap_by_pid[pid] = jax.jit(jax.vmap(_single))
+            except ImportError:
+                pass
+
+            # --- JAX finite-strain visco vmap batch setup (per-pid groups) ---
+            # Pre-build jax.jit(jax.vmap(...)) for each Q4_UP + LinearViscoelastic pid group.
+            # Uses q4_visco_hybrid_fs_jax (Green-Lagrange + F-bar + autodiff tangent).
+            self._visco_fs_jax_vmap_by_pid: Dict[int, object] = {}
+            try:
+                import jax
+                import jax.numpy as jnp
+                from ..element.q4_visco_hybrid_fs_jax import (
+                    compute_single as _visco_fs_single,
+                )
+                from ..material.linear_viscoelastic import LinearViscoelastic
+                for pid, mat_adapter in self.materials.items():
+                    if (self._pid_element_type(pid) == "Q4_UP"
+                            and isinstance(mat_adapter.material, LinearViscoelastic)):
+                        visco_mat = mat_adapter.material
+                        K_bulk = float(visco_mat.K)
+                        G0 = float(visco_mat.G0)
+                        g_i = jnp.asarray(visco_mat.g_i)
+                        tau_i = jnp.asarray(visco_mat.tau_i)
+                        # thickness=1.0 inside element; scaled externally during assembly
+                        _single_visco = lambda coords, u_e, s, dt: _visco_fs_single(
+                            coords, u_e, s, K_bulk, g_i, tau_i, G0, dt, 1.0,
+                        )
+                        self._visco_fs_jax_vmap_by_pid[pid] = jax.jit(jax.vmap(
+                            _single_visco,
+                            in_axes=(0, 0, 0, None),
+                        ))
+            except ImportError:
+                pass
+
+        # --- EAS internal parameters (4 per element); only Q4_EAS elements use
+        #     them, others stay zero. Persisted/rolled back like material state.
+        self.eas_alpha = np.zeros((self.n_elem, 4), dtype=np.float64)
 
         self.f_ext = np.zeros(self.n_dofs, dtype=np.float64)
         self.bc_dofs = np.array([], dtype=np.int32)
@@ -980,6 +1036,7 @@ class DynamicSolver:
             'a_extra': self.a_extra.copy(),
             'lam': self.lam.copy(),
             'time': self.time,
+            'eas_alpha': self.eas_alpha.copy(),
         }
         if self.state is not None:
             d['state'] = self.state.copy()
@@ -1002,6 +1059,8 @@ class DynamicSolver:
         self.lam = state_dict['lam'].copy()
         if 'time' in state_dict:
             self.time = state_dict['time']
+        if 'eas_alpha' in state_dict:
+            self.eas_alpha = state_dict['eas_alpha'].copy()
         if 'state' in state_dict and self.state is not None:
             self.state = state_dict['state'].copy()
 
@@ -1033,28 +1092,155 @@ class DynamicSolver:
 
             if (self._pid_element_type(pid) == "Q4_UP"
                     and isinstance(mat_adapter.material, LinearViscoelastic)):
-                # ---- Q1P0 hybrid (mean-dilatation) for linear viscoelasticity ----
-                from ..element.q4_visco_hybrid import compute_visco_hybrid_contributions
+                import jax
+                import jax.numpy as jnp
                 n_vars = mat_adapter.n_internal_vars
-                temp = getattr(self, 'temperature', 20.0)
                 dt_h = dt if dt is not None else 1.0
-                for e in elem_indices:
-                    coords = self.elem_coords[e]
-                    nids = self.conn[e]
-                    u_elem = u[self.dof_indices[e]]
-                    state_elem = (self.state[e, :, :n_vars]
-                                  if self.state is not None else None)
-                    f_e, K_e, se_new = compute_visco_hybrid_contributions(
-                        coords, u_elem, state_elem, mat_adapter.material, dt_h, temp,
-                        self._elem_thickness[e],
+
+                if pid in self._visco_fs_jax_vmap_by_pid:
+                    _vmap_fn = self._visco_fs_jax_vmap_by_pid[pid]
+                    Ng = len(elem_indices)
+                    coords_b = jnp.asarray(self.elem_coords[elem_indices])
+                    u_b = jnp.asarray(u[self.dof_indices[elem_indices]])
+                    state_b = jnp.asarray(
+                        self.state[elem_indices, :, :n_vars]
+                    ) if self.state is not None else jnp.zeros((Ng, 4, n_vars))
+                    t_b = jnp.asarray(self._elem_thickness[elem_indices])
+
+                    f_es, K_es, se_all = _vmap_fn(coords_b, u_b, state_b, dt_h)
+                    f_es_np = np.asarray(f_es)
+                    K_es_np = np.asarray(K_es)
+
+                    f_es_scaled = f_es_np * np.asarray(t_b)[:, None]
+                    K_es_scaled = K_es_np * np.asarray(t_b)[:, None, None]
+
+                    np.add.at(f_int, self.dof_indices[elem_indices].flatten(), f_es_scaled.flatten())
+
+                    if state_new is not None:
+                        state_new[elem_indices, :, :n_vars] = np.asarray(se_all)
+
+                    all_K_rows.append(self._pid_K_rows[pid])
+                    all_K_cols.append(self._pid_K_cols[pid])
+                    all_K_vals.append(K_es_scaled.reshape(-1))
+                else:
+                    from ..element.q4_visco_hybrid_fs_jax import (
+                        compute_single as _visco_fs,
                     )
-                    np.add.at(f_int, self.dof_indices[e], f_e)
-                    if state_new is not None and se_new is not None:
-                        state_new[e, :, :n_vars] = se_new
-                    dof_g = self.dof_indices[e]
-                    all_K_rows.append(np.repeat(dof_g, 8))
-                    all_K_cols.append(np.tile(dof_g, 8))
-                    all_K_vals.append(K_e.flatten())
+                    visco_mat = mat_adapter.material
+                    coords_b = jnp.asarray(self.elem_coords[elem_indices])
+                    u_b = jnp.asarray(u[self.dof_indices[elem_indices]])
+                    state_b = jnp.asarray(
+                        self.state[elem_indices, :, :n_vars]
+                    ) if self.state is not None else jnp.zeros((len(elem_indices), 4, n_vars))
+                    t_b = jnp.asarray(self._elem_thickness[elem_indices])
+
+                    _vmap_visco = jax.vmap(
+                        _visco_fs,
+                        in_axes=(0, 0, 0, None, None, None, None, None, 0),
+                    )
+                    f_es, K_es, se_all = _vmap_visco(
+                        coords_b, u_b, state_b,
+                        float(visco_mat.K), jnp.asarray(visco_mat.g_i),
+                        jnp.asarray(visco_mat.tau_i), float(visco_mat.G0), dt_h,
+                        t_b,
+                    )
+                    f_es = np.asarray(f_es)
+                    K_es = np.asarray(K_es)
+                    se_all = np.asarray(se_all)
+
+                    np.add.at(f_int, self.dof_indices[elem_indices].flatten(), f_es.flatten())
+
+                    if state_new is not None:
+                        state_new[elem_indices, :, :n_vars] = se_all
+
+                    all_K_rows.append(self._pid_K_rows[pid])
+                    all_K_cols.append(self._pid_K_cols[pid])
+                    all_K_vals.append(K_es.reshape(-1))
+                continue
+
+            if (self._pid_element_type(pid) == "Q4_EAS"
+                    and isinstance(mat_adapter.material, J2Plasticity)):
+                n_vars = mat_adapter.n_internal_vars
+                if pid in self._eas_jax_vmap_by_pid:
+                    import jax
+                    import jax.numpy as jnp
+                    _vmap_fn = self._eas_jax_vmap_by_pid[pid]
+                    Ng = len(elem_indices)
+                    coords_b = jnp.asarray(self.elem_coords[elem_indices])
+                    u_b = jnp.asarray(u[self.dof_indices[elem_indices]])
+                    alpha_b = jnp.asarray(self.eas_alpha[elem_indices])
+                    state_b = jnp.asarray(
+                        self.state[elem_indices, :, :n_vars]
+                    ) if self.state is not None else jnp.zeros((Ng, 4, n_vars))
+                    t_b = jnp.asarray(self._elem_thickness[elem_indices])
+
+                    f_es, K_es, alpha_all, se_all = _vmap_fn(coords_b, u_b, alpha_b, state_b)
+                    f_es_np = np.asarray(f_es)
+                    K_es_np = np.asarray(K_es)
+
+                    nan_mask = ~np.all(np.isfinite(f_es_np), axis=(1,)) | ~np.all(np.isfinite(K_es_np), axis=(1, 2))
+                    if np.any(nan_mask):
+                        nan_idx = np.where(nan_mask)[0]
+                        print(f"DEBUG: EAS JAX vmap NaN in {len(nan_idx)}/{Ng} elems (pid={pid}), falling back to sequential")
+                        good_mask = ~nan_mask
+                        if np.any(good_mask):
+                            good_f = f_es_np[good_mask] * np.asarray(t_b[good_mask])[:, None]
+                            good_K = K_es_np[good_mask] * np.asarray(t_b[good_mask])[:, None, None]
+                            good_dofs = self.dof_indices[elem_indices[good_mask]]
+                            np.add.at(f_int, good_dofs.flatten(), good_f.flatten())
+                            all_K_rows.append(good_dofs.reshape(-1))
+                            all_K_cols.append(np.repeat(good_dofs, 8, axis=1).reshape(-1))
+                            all_K_vals.append(good_K.reshape(-1))
+                        from ..element.q4_eas import compute_eas_j2_contributions
+                        for idx in nan_idx:
+                            e = elem_indices[idx]
+                            coords = self.elem_coords[e]
+                            u_elem = u[self.dof_indices[e]]
+                            state_elem = (self.state[e, :, :n_vars]
+                                          if self.state is not None else None)
+                            f_e, K_e, alpha_new, se_new = compute_eas_j2_contributions(
+                                coords, u_elem, self.eas_alpha[e], state_elem,
+                                mat_adapter.material, mat_adapter.params,
+                                self._elem_thickness[e],
+                            )
+                            self.eas_alpha[e] = alpha_new
+                            np.add.at(f_int, self.dof_indices[e], f_e)
+                            if state_new is not None and se_new is not None:
+                                state_new[e, :, :n_vars] = se_new
+                            dof_g = self.dof_indices[e]
+                            all_K_rows.append(np.repeat(dof_g, 8))
+                            all_K_cols.append(np.tile(dof_g, 8))
+                            all_K_vals.append(K_e.flatten())
+                    else:
+                        f_es_scaled = f_es_np * np.asarray(t_b)[:, None]
+                        K_es_scaled = K_es_np * np.asarray(t_b)[:, None, None]
+                        self.eas_alpha[elem_indices] = np.asarray(alpha_all)
+                        np.add.at(f_int, self.dof_indices[elem_indices].flatten(), f_es_scaled.flatten())
+                        if state_new is not None:
+                            state_new[elem_indices, :, :n_vars] = np.asarray(se_all)
+                        all_K_rows.append(self._pid_K_rows[pid])
+                        all_K_cols.append(self._pid_K_cols[pid])
+                        all_K_vals.append(K_es_scaled.reshape(-1))
+                else:
+                    from ..element.q4_eas import compute_eas_j2_contributions
+                    for e in elem_indices:
+                        coords = self.elem_coords[e]
+                        u_elem = u[self.dof_indices[e]]
+                        state_elem = (self.state[e, :, :n_vars]
+                                      if self.state is not None else None)
+                        f_e, K_e, alpha_new, se_new = compute_eas_j2_contributions(
+                            coords, u_elem, self.eas_alpha[e], state_elem,
+                            mat_adapter.material, mat_adapter.params,
+                            self._elem_thickness[e],
+                        )
+                        self.eas_alpha[e] = alpha_new
+                        np.add.at(f_int, self.dof_indices[e], f_e)
+                        if state_new is not None and se_new is not None:
+                            state_new[e, :, :n_vars] = se_new
+                        dof_g = self.dof_indices[e]
+                        all_K_rows.append(np.repeat(dof_g, 8))
+                        all_K_cols.append(np.tile(dof_g, 8))
+                        all_K_vals.append(K_e.flatten())
                 continue
 
             if isinstance(mat_adapter.material, J2Plasticity):
@@ -1206,26 +1392,86 @@ class DynamicSolver:
         return f_int, K_T, state_new
 
     def _precompute_reference_geometry(self):
-        """Precompute B-bar, integration weights, and dN/dX for all elements × GPs."""
+        """Precompute B-bar, integration weights, and dN/dX for all elements × GPs.
+
+        Uses JAX jit + vmap for vectorised element-loop over all integration points.
+        """
+        import jax
+        import jax.numpy as jnp
+
         n_gp = len(_GP2)
-        B_bar_all   = np.zeros((self.n_elem, n_gp, 3, 8), dtype=np.float64)
-        weights_all = np.zeros((self.n_elem, n_gp),        dtype=np.float64)
-        dN_dX_all   = np.zeros((self.n_elem, n_gp, 2, 4), dtype=np.float64)
+        GP2 = jnp.asarray(_GP2, dtype=jnp.float64)
+        W2 = jnp.asarray(_W2, dtype=jnp.float64)
+        elem_coords_j = jnp.asarray(self.elem_coords, dtype=jnp.float64)
+        elem_thickness_j = jnp.asarray(self._elem_thickness, dtype=jnp.float64)
 
-        for e in range(self.n_elem):
-            coords = self.elem_coords[e]
-            _, _, invJ0 = q4.jacobian(0.0, 0.0, coords)
-            B0 = q4.B_matrix(0.0, 0.0, invJ0)
+        @jax.jit
+        def _precompute_single_element(coords, thickness):
+            def _sd(xi, eta):
+                dN_dxi = 0.25 * jnp.array([
+                    -(1.0 - eta),  (1.0 - eta),
+                     (1.0 + eta), -(1.0 + eta)])
+                dN_deta = 0.25 * jnp.array([
+                    -(1.0 - xi), -(1.0 + xi),
+                     (1.0 + xi),  (1.0 - xi)])
+                return dN_dxi, dN_deta
+
+            def _jac(xi, eta):
+                dN_dxi, dN_deta = _sd(xi, eta)
+                J = jnp.array([
+                    [jnp.dot(dN_dxi,  coords[:, 0]),
+                     jnp.dot(dN_dxi,  coords[:, 1])],
+                    [jnp.dot(dN_deta, coords[:, 0]),
+                     jnp.dot(dN_deta, coords[:, 1])],
+                ])
+                return J, jnp.linalg.det(J), jnp.linalg.inv(J)
+
+            def _B_mat(xi, eta, invJ):
+                dN_dxi, dN_deta = _sd(xi, eta)
+                dN_dx = invJ[0, 0] * dN_dxi + invJ[0, 1] * dN_deta
+                dN_dy = invJ[1, 0] * dN_dxi + invJ[1, 1] * dN_deta
+                B = jnp.zeros((3, 8))
+                for i in range(4):
+                    col = 2 * i
+                    B = B.at[0, col].set(dN_dx[i])
+                    B = B.at[1, col + 1].set(dN_dy[i])
+                    B = B.at[2, col].set(dN_dy[i])
+                    B = B.at[2, col + 1].set(dN_dx[i])
+                return B
+
+            P_vol = 0.5 * jnp.array([
+                [1, 1, 0],
+                [1, 1, 0],
+                [0, 0, 0],
+            ], dtype=jnp.float64)
+
+            _, _, invJ0 = _jac(0.0, 0.0)
+            B0_vol = P_vol @ _B_mat(0.0, 0.0, invJ0)
+
+            B_bar_gp = jnp.empty((n_gp, 3, 8), dtype=jnp.float64)
+            weights_gp = jnp.empty((n_gp,), dtype=jnp.float64)
+            dN_dX_gp = jnp.empty((n_gp, 2, 4), dtype=jnp.float64)
+
             for gp in range(n_gp):
-                xi, eta = _GP2[gp]
-                _, detJ, invJ = q4.jacobian(xi, eta, coords)
-                B_bar_all[e, gp] = q4.B_bar_matrix(xi, eta, invJ, B0, invJ0)
-                weights_all[e, gp] = detJ * _W2[gp] * self._elem_thickness[e]
-                dN_dxi, dN_deta = q4.shape_derivatives(xi, eta)
-                dN_dX_all[e, gp, 0] = invJ[0, 0] * dN_dxi + invJ[0, 1] * dN_deta
-                dN_dX_all[e, gp, 1] = invJ[1, 0] * dN_dxi + invJ[1, 1] * dN_deta
+                xi, eta = GP2[gp]
+                _, detJ, invJ = _jac(xi, eta)
+                B_std = _B_mat(xi, eta, invJ)
+                B_bar_gp = B_bar_gp.at[gp].set(B_std - P_vol @ B_std + B0_vol)
+                weights_gp = weights_gp.at[gp].set(detJ * W2[gp] * thickness)
+                dN_dxi, dN_deta = _sd(xi, eta)
+                dN_dX_gp = dN_dX_gp.at[gp, 0].set(invJ[0, 0] * dN_dxi + invJ[0, 1] * dN_deta)
+                dN_dX_gp = dN_dX_gp.at[gp, 1].set(invJ[1, 0] * dN_dxi + invJ[1, 1] * dN_deta)
 
-        return B_bar_all, weights_all, dN_dX_all
+            return B_bar_gp, weights_gp, dN_dX_gp
+
+        _vmap_precompute = jax.jit(jax.vmap(_precompute_single_element))
+        B_bar_all, weights_all, dN_dX_all = _vmap_precompute(elem_coords_j, elem_thickness_j)
+
+        return (
+            np.asarray(B_bar_all),
+            np.asarray(weights_all),
+            np.asarray(dN_dX_all),
+        )
 
     def _assemble_j2_batch(self, u: np.ndarray, dt=None):
         """Fully vectorized assembly for single-material J2Plasticity (no Python GP/element loop)."""

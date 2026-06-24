@@ -139,6 +139,128 @@ class LinearViscoelastic:
             state_new[4 * (i + 1):4 * (i + 2)] = q_new
         return s_dev, state_new
 
+    # ------------------------------------------------------------------
+    # Batch processing for vectorized assembly
+    # ------------------------------------------------------------------
+
+    def pk2_tangent_voigt_batch(
+        self,
+        F_flat: np.ndarray,      # (N_tot, 2, 2) deformation gradients
+        params: dict,
+        state_flat: np.ndarray,  # (N_tot, n_vars) internal variables
+        dt: float,
+        temperature: float = 20.0,
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Batch processing for multiple Gauss points at once.
+
+        Parameters
+        ----------
+        F_flat : (N_tot, 2, 2) deformation gradients
+        params : dict (unused, for interface compatibility)
+        state_flat : (N_tot, n_vars) internal variables
+        dt : time increment
+        temperature : temperature for WLF shift
+
+        Returns
+        -------
+        S_flat : (N_tot, 3) PK2 stress in Voigt order [S11, S22, S12]
+        C_flat : (N_tot, 3, 3) tangent stiffness
+        state_new_flat : (N_tot, n_vars) updated internal variables
+        """
+        N_tot = F_flat.shape[0]
+        n_vars = self.n_internal_vars
+        M = self.M
+
+        # Get Prony coefficients for current dt and temperature
+        a, gamma, G_alg = self.prony_coeffs(dt, temperature)
+
+        # Initialize output arrays
+        S_flat = np.zeros((N_tot, 3), dtype=np.float64)
+        C_flat = np.zeros((N_tot, 3, 3), dtype=np.float64)
+        state_new_flat = np.zeros((N_tot, n_vars), dtype=np.float64)
+
+        # Bulk modulus (volumetric response is elastic)
+        K = self.K
+
+        # Process all Gauss points in a vectorized manner
+        # Extract strains from deformation gradients (small-strain assumption)
+        # F = I + grad_u => eps = (grad_u + grad_u^T)/2
+        # For plane strain: eps_zz = 0
+
+        # Previous deviatoric strain: e_prev = state[:, :4]
+        e_prev = state_flat[:, :4]  # (N_tot, 4)
+
+        # Current total strain from F (small strain)
+        # eps_xx = F[0,0] - 1, eps_yy = F[1,1] - 1, eps_xy = (F[0,1] + F[1,0])/2
+        eps_xx = F_flat[:, 0, 0] - 1.0
+        eps_yy = F_flat[:, 1, 1] - 1.0
+        eps_xy = 0.5 * (F_flat[:, 0, 1] + F_flat[:, 1, 0])
+
+        # Volumetric strain (trace)
+        theta = eps_xx + eps_yy  # plane strain: eps_zz = 0
+
+        # Deviatoric strain: e = eps - (theta/3) * I
+        # For plane strain with eps_zz = 0:
+        # e_xx = eps_xx - theta/3
+        # e_yy = eps_yy - theta/3
+        # e_zz = 0 - theta/3 = -theta/3
+        # e_xy = eps_xy
+        e_xx = eps_xx - theta / 3.0
+        e_yy = eps_yy - theta / 3.0
+        e_zz = -theta / 3.0
+        e_xy = eps_xy
+
+        e_dev_new = np.column_stack([e_xx, e_yy, e_zz, e_xy])  # (N_tot, 4)
+
+        # Deviatoric stress update (vectorized Prony series)
+        de = e_dev_new - e_prev  # (N_tot, 4)
+
+        # s_dev = 2 * G_inf * e_dev_new + sum_i q_i
+        s_dev = 2.0 * self.G_inf * e_dev_new  # (N_tot, 4)
+
+        # Update Prony internal variables q_i
+        state_new_flat[:, :4] = e_dev_new
+        for i in range(M):
+            q_prev = state_flat[:, 4 * (i + 1):4 * (i + 2)]  # (N_tot, 4)
+            q_new = a[i] * q_prev + 2.0 * self.G_terms[i] * gamma[i] * de
+            s_dev += q_new
+            state_new_flat[:, 4 * (i + 1):4 * (i + 2)] = q_new
+
+        # Convert deviatoric stress to Voigt form [S11, S22, S12]
+        S_flat[:, 0] = s_dev[:, 0]  # S_xx
+        S_flat[:, 1] = s_dev[:, 1]  # S_yy
+        S_flat[:, 2] = s_dev[:, 3]  # S_xy
+
+        # Add volumetric stress: p = K * theta
+        p = K * theta
+        S_flat[:, 0] += p
+        S_flat[:, 1] += p
+
+        # Tangent stiffness (consistent tangent)
+        # For linear viscoelasticity:
+        # C_dev = 2 * G_alg * I_dev (deviatoric part)
+        # C_vol = K * I_vol (volumetric part)
+        G2 = 2.0 * G_alg
+
+        # Deviatoric tangent components (plane strain)
+        # C_dev[0,0] = C_dev[1,1] = 4/3 * G2
+        # C_dev[0,1] = C_dev[1,0] = -2/3 * G2
+        # C_dev[2,2] = G2
+        C43 = 4.0 / 3.0 * G2
+        C23 = 2.0 / 3.0 * G2
+
+        C_flat[:, 0, 0] = C43 + K
+        C_flat[:, 0, 1] = K - C23
+        C_flat[:, 0, 2] = 0.0
+        C_flat[:, 1, 0] = K - C23
+        C_flat[:, 1, 1] = C43 + K
+        C_flat[:, 1, 2] = 0.0
+        C_flat[:, 2, 0] = 0.0
+        C_flat[:, 2, 1] = 0.0
+        C_flat[:, 2, 2] = G2
+
+        return S_flat, C_flat, state_new_flat
+
     def __repr__(self) -> str:
         trs = "WLF" if self.wlf_params else "isothermal"
         return (f"LinearViscoelastic(E={self.E}, nu={self.nu}, M={self.M}, "
