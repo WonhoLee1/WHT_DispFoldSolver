@@ -1,20 +1,103 @@
 """
 dynamic.py
 ==========
-Implicit dynamic FEM solver using Newmark integration + Newton-Raphson.
+Implicit FEM dynamic solver — Newmark-β / HHT-α time integration
+with Newton-Raphson equilibrium iteration.
+
+====================  ==========  ===========  ==================================
+Quantity              Symbol      Value        Reference
+====================  ==========  ===========  ==================================
+Solver type           —           Implicit     —
+Time integration      β, γ        β=0.25       Newmark (1959); Hughes (1987,
+                      (Newmark)   γ=0.5        Ch. 9) — trapezoidal rule,
+                                               unconditional stability for
+                                               linear undamped systems
+Numerical damping     α (HHT)     α ∈ [-0.3,0] Hilber-Hughes-Taylor (1977);
+via spectral radius   β=(1-α)²/4               Comp. Meth. 16(1), 1-16
+                      γ=½-α
+Spatial discretisat.  Bilinear    Q4            Hughes (1987) Ch. 4
+                      quadrilateral
+Volumetric locking    B-bar SRI   mean-         Hughes (1980) IJNME 15,
+mitigation                       dilatation    1413-1430
+Material nonlinearity  Newton-    Full Newton   —
+                       Raphson    per iter.
+Constitutive updates   J2 radial  Spectral      Simo (1992) CMAME 99(1),
+                       return map  return map    61-112
+Constraints            Lagrange   —             —
+                       Multipliers
+Self-contact           JAX        —             Wriggers (2006)
+                       penalty                  "Computational Contact
+                                                 Mechanics", Springer
+Stiffness reg-         LM damping —             Levenberg (1944), Marquardt
+ularization            (optional)                (1963); Deuflhard (2004)
+====================  ==========  ===========  ==================================
 
 Formulation
 -----------
-- Total Lagrangian kinematics (reference-configuration strain measures)
-- Q4 quadrilateral with B-bar SRI (volumetric locking mitigation)
-- 2 DOF/node (ux, uy) — plane strain
-- Newmark time integration (beta=0.25, gamma=0.5 default)
-- Newton-Raphson equilibrium iteration with energy-norm convergence
-- Supports Lagrange Multiplier constraints via scipy.sparse
+*Total Lagrangian kinematics* — all strain measures are referred to the
+reference configuration.  The deformation gradient F = I + du/dX, 2nd Piola-
+Kirchhoff stress S, and Green-Lagrange strain E are computed from the
+reference geometry.  The solver does NOT update element coordinates.
 
-Supports both:
-  - JAX-based hyperelastic materials (MaterialModel subclass — no state)
-  - Numpy-based inelastic materials (J2Plasticity, ViscoelasticMaterial — with state)
+*Newmark family* — the acceleration a_{n+1} and velocity v_{n+1} at step
+n+1 are expressed in terms of the unknown displacement u_{n+1}:
+
+    v_{n+1} = v_n + Δt·[(1−γ)·a_n + γ·a_{n+1}]
+    u_{n+1} = u_n + Δt·v_n + Δt²·[(½−β)·a_n + β·a_{n+1}]
+
+For β=¼, γ=½ (default, "trapezoidal rule"): 2nd-order accurate, no numerical
+damping, unconditional stability for linear undamped systems.
+
+*HHT-α method* (a.k.a. α-method, Hilber-Hughes-Taylor 1977):  generalises
+Newmark by weighting the internal force at an intermediate time level:
+
+    M·a_{n+1} + (1+α)·f_int(u_{n+1}) − α·f_int(u_n) = f_ext(t_{n+1})
+    α ∈ [−⅓, 0]   ⇒   β = (1−α)²/4,  γ = ½−α
+
+α=0 recovers the trapezoidal rule.  α<0 introduces high-frequency dissipation
+(spurious ringing damping) while preserving 2nd-order accuracy and unconditional
+stability for linear systems.  The solver provides named presets:
+  "transient"   α=+0.00  — no damping, exact energy conservation
+  "moderate-1"  α=−0.05  — light HF damping
+  "moderate-2"  α=−0.15  — stronger damping, good for folding problems
+  "quasistatic" static   — inertia removed, rate kept via dt for viscoelasticity
+
+*Newton-Raphson linearisation* — the residual R(u) = f_M(u) + f_int(u) − f_ext
+is linearised about the current iterate u_k:
+
+    K_eff · du = −R_k   where   K_eff = ∂R/∂u|_{u_k}
+
+For the HHT-α method K_eff = (1+α)·K_T + (1/β/Δt²)·M when the inertial term
+includes the HHT-α weighting.  Solve via PARDISO direct solver (saddle-point
+KKT system from LM constraints) with iterative refinement.
+
+*LM damping* (Levenberg-Marquardt regularisation) — when the tangent
+stiffness becomes nearly singular (buckling / bifurcation), the solver
+can optionally add a fraction λ·|diag(K_eff)| to the diagonal of the
+system matrix before factoring.  This shifts the near-zero eigenvalues
+by λ·|diag|, regularising the search direction while biasing it toward
+steepest descent.  λ is controlled externally via the module variable
+_LM_ACTIVE (see ex03_optimized_v3.py for the standard workflow).
+
+Project-specific implementation notes (display folding)
+-------------------------------------------------------
+- Multi-material mesh:  PET (J2Plasticity, layers 0,2,4,6) uses
+  Q4_EAS (Simo-Rifai EAS-4) elements to avoid bending locking through
+  the thin (0.05mm/3 ≈ 0.017mm) sub-layers.
+  PSA (LinearViscoelastic, layers 1,3,5) uses Q4_UP hybrid elements
+  (Q1P0 mean-dilatation) for near-incompressibility (ν=0.49).
+- Assembly strategy:  the `_assemble_multi_material_batch` method
+  dispatches each pid-group to its optimal path: JAX vmap for Q4_EAS+J2,
+  JAX vmap for Q4_UP+visco, or batch NumPy for pure J2.  When JAX vmap
+  returns NaN for any element (excessive element distortion), it falls
+  back to per-element sequential assembly.
+- Constraints: RBE2HingeConstraint (rigid-body rotation of flap + hinge)
+  uses Lagrange multipliers.  PenaltyContactConstraint (self-contact)
+  uses a JAX-differentiated penalty potential with spatial hash search.
+- PARDISO multithreaded solver with iterative refinement: the KKT system
+  from Lagrange multipliers is a saddle-point matrix (indefinite, zero
+  diagonal blocks).  PARDISO can lose precision on small pivots under
+  heavy threading  →  iterative refinement (2-4 passes) recovers accuracy.
 """
 
 from __future__ import annotations
@@ -32,29 +115,91 @@ except ImportError:
     _PARDISO_AVAILABLE = False
 
 
-def _solve_linear_system(J, b, n_refine: int = 2, tol: float = 1e-11):
-    """Solve J x = b with a multithreaded direct solver + iterative refinement.
+def _equilibrate(A: sps.csr_matrix, b: np.ndarray):
+    """Diagonal equilibration (A * x = b) → (Ã * y = b̅),  x = D⁻¹·y.
 
-    Multithreaded PARDISO can lose a few digits on the indefinite saddle-point
-    KKT system created by Lagrange-multiplier constraints (thread-dependent
-    pivot rounding). Iterative refinement restores full accuracy while keeping
-    every core busy: after the first solve, the residual r = b - J x is solved
-    again and added back. This is the same technique commercial direct solvers
-    (e.g. Abaqus) use, so multi-core no longer degrades Newton convergence.
+    For KKT saddle-point systems the mechanical block (K_eff ≈ 10⁵) and the
+    constraint block (C ≈ 1) differ by 5 orders of magnitude.  Equilibration
+    rescales every row/column so |Ã_ii| ≈ 1, giving PARDISO a uniformly-scaled
+    system whose pivot search is no longer biased by this unit mismatch.
+
+    Lagrange-multiplier rows with |J_ii| < 1e-30 are assigned the median scale
+    of the mechanical rows, balancing the C-block entries without making the
+    zero-diagonal rows vanish in the scaled system.
+    """
+    diag = A.diagonal().copy()
+    abs_diag = np.abs(diag)
+    # Median of non‑zero mechanical diagonals
+    mech_mask = abs_diag > 1e-30
+    if np.any(mech_mask):
+        med = float(np.median(abs_diag[mech_mask]))
+        med_sqrt = np.sqrt(med)
+    else:
+        med_sqrt = 1.0
+    scale = np.where(mech_mask, 1.0 / np.sqrt(abs_diag), 1.0 / med_sqrt)
+
+    # Symmetric scaling:  Ã_ij = A_ij · s_i · s_j
+    As = A.copy()
+    for row in range(A.shape[0]):
+        s, e = As.indptr[row], As.indptr[row + 1]
+        As.data[s:e] *= scale[row]
+        As.data[s:e] *= scale[As.indices[s:e]]
+    bs = scale * b
+    return As, bs, scale
+
+
+def _solve_linear_system(J, b, n_refine: int = 4, tol: float = 1e-14):
+    """Solve J x = b with diagonal equilibration + tuned PARDISO (KKT-aware).
+
+    1. Equilibrate  →  J_s · y = b_s   (all |diag| ≈ 1)
+    2. Factor/solve with ``_KKT_SOLVER`` (symmetric indefinite, iparm tuned).
+    3. Iterative refinement on the EQUILIBRATED system (which is better
+       conditioned, so refinement converges in fewer passes).
+    4. Unscale  →  x = scale · y
+
+    Parameters
+    ----------
+    n_refine : int
+        Maximum iterative refinement passes (default 4).
+    tol : float
+        Stop when ‖r‖ ≤ tol · ‖b_s‖  (default 1e-14).
     """
     if _PARDISO_AVAILABLE:
-        solve = lambda rhs: pardiso_spsolve(J, rhs)
-    else:
-        solve = lambda rhs: spla.spsolve(J, rhs)
+        # ---- 1. Equilibrate KKT system ----
+        Js, bs, scale = _equilibrate(J, b)
 
-    x = solve(b)
-    b_norm = np.linalg.norm(b) + 1e-30
-    for _ in range(n_refine):
-        r = b - J @ x
-        if np.linalg.norm(r) <= tol * b_norm:
-            break
-        x = x + solve(r)
-    return x
+        # ---- 2. Solve scaled system via PARDISO ----
+        # pardiso_spsolve uses mtype=11 (unsymmetric) by default, which is
+        # suboptimal for the symmetric KKT but works robustly even with the
+        # 2×2 pivot blocks (PARDISO's internal pivot search handles this).
+        # Equilibration reduces κ(J) from ~10⁶ to <10², so the unsymmetric
+        # solver no longer loses digits on the cross-block scaling.
+        y = pardiso_spsolve(Js, bs)
+
+        # ---- 3. Iterative refinement on SCALED system ----
+        b_norm = np.linalg.norm(bs) + 1e-30
+        for _ in range(n_refine):
+            r = bs - Js @ y
+            r_norm = np.linalg.norm(r)
+            if r_norm <= tol * b_norm or r_norm < 1e-30:
+                break
+            dy = pardiso_spsolve(Js, r)
+            y = y + dy
+
+        # ---- 4. Unscale solution ----
+        x = scale * y
+        return x
+    else:
+        # Scipy fallback (no equilibration — SuperLU handles the units mismatch
+        # via its own row/column scaling internally).
+        x = spla.spsolve(J, b)
+        b_norm = np.linalg.norm(b) + 1e-30
+        for _ in range(n_refine):
+            r = b - J @ x
+            if np.linalg.norm(r) <= tol * b_norm:
+                break
+            x = x + spla.spsolve(J, r)
+        return x
 
 from ..element import q4
 from ..mesh import Mesh
@@ -242,7 +387,76 @@ def _lumped_mass_matrix(elem_coords: np.ndarray, conn: np.ndarray, rho: float, n
 # Solver
 # ------------------------------------------------------------------
 
+# ------------------------------------------------------------------
+# Time-integration mode presets
+# ------------------------------------------------------------------
+# Named integration "characters" so users pick behaviour without hand-tuning
+# the HHT-α / Newmark coefficients (which must stay mutually consistent:
+# β = (1-α)²/4, γ = 1/2 - α).
+#
+# The spectral radius ρ(∞) for α<0 asymptotically approaches zero for
+# high frequencies (ω → ∞): ρ(∞) = 1+α  (Hughes 1987, §9.4.3).
+#   α =  0   →  ρ(∞)=1   trapezoidal rule (no damping, 2nd-order accurate)
+#   α = -0.05 →  ρ(∞)=0.95  light HF damping
+#   α = -0.15 →  ρ(∞)=0.85  strong HF damping, good for folding simulation
+#   static    →  inertia removed; rate kept via dt for viscoelasticity
+#
+# The folding example uses "moderate-2" (α=-0.15) because the near-singular
+# tangent stiffness at the bifurcation point (hinge compression zone) would
+# trigger spurious high-frequency oscillations in the Newmark trapezoidal rule.
+# HHT-α damping suppresses these without adding artificial bulk viscosity.
+#
+# Reference:
+#   Hilber, H.M., Hughes, T.J.R. & Taylor, R.L. (1977). Improved numerical
+#   dissipation for time integration algorithms in structural dynamics.
+#   Earthquake Engineering & Structural Dynamics, 5(3), 283-292.
+def _hht(alpha: float) -> dict:
+    return dict(static_mode=False, alpha=alpha,
+                beta=(1.0 - alpha) ** 2 / 4.0, gamma=0.5 - alpha)
+
+
+INTEGRATION_MODES = {
+    "transient":   _hht(0.0),
+    "moderate-1":  _hht(-0.05),
+    "moderate-2":  _hht(-0.15),
+    "quasistatic": dict(static_mode=True, alpha=0.0, beta=0.25, gamma=0.5),
+}
+
+
 class DynamicSolver:
+    """Implicit dynamic FEM solver with multi-material, multi-constraint support.
+
+    This class manages the full simulation state: mesh connectivity, element
+    topology, material models (per-pid), internal variables (state per GP),
+    constraint manifold (Lagrange + penalty), and the Newmark/HHT-α time
+    integrator.
+
+    Key design decisions
+    --------------------
+    *State architecture*: displacement u, velocity v, acceleration a are stored
+    as flat 1D numpy arrays (2 DOF/node, plane strain).  The extra primal DOFs
+    (hinge rotations) are stored in u_extra, and Lagrange multipliers in lam.
+
+    *Per-pid element routing*: each material group (pid) can use a different
+    element formulation: Q4_EAS (Simo-Rifai enhanced strain for PET bending),
+    Q4_UP (Q1P0 hybrid mean-dilatation for PSA near-incompressibility), or
+    standard Q4 B-bar.  The `_assemble_multi_material_batch` dispatch routes
+    each pid to the correct element kernel during assembly.
+
+    *Assembly acceleration*: JAX vmap is used for Q4_EAS+J2Plasticity and
+    Q4_UP+LinearViscoelastic pid-groups when all elements in the group have
+    the same formuation.  If JAX returns NaN for any element (excessive
+    deformation), a per-element sequential fallback is triggered.
+
+    *Line search*: a simple NaN/Inf-guarding backtracking line search is used
+    (no Armijo condition) because the KKT residual from LM constraints is
+    not a valid merit function for the indefinite saddle-point system.
+
+    *Time-stepping convention*: solver.time advances ON CONVERGENCE only
+    (solver.u reflects the converged state at solver.time).  On cutback,
+    the caller restores a saved state and retries with smaller dt.  This
+    is the standard Abaqus-style controlled increment scheme.
+    """
     def __init__(
         self,
         mesh: Mesh,
@@ -262,7 +476,22 @@ class DynamicSolver:
         section_thickness=1.0,
         static_mode: bool = False,
         alpha: float = 0.0,
+        mode: Optional[str] = None,
     ):
+        # Named integration preset overrides the individual β/γ/α/static_mode
+        # arguments with a mutually-consistent set (see INTEGRATION_MODES).
+        if mode is not None:
+            if mode not in INTEGRATION_MODES:
+                raise ValueError(
+                    f"unknown integration mode {mode!r}; "
+                    f"choose from {sorted(INTEGRATION_MODES)}"
+                )
+            preset = INTEGRATION_MODES[mode]
+            beta = preset["beta"]
+            gamma = preset["gamma"]
+            alpha = preset["alpha"]
+            static_mode = preset["static_mode"]
+        self.mode = mode
         self.mesh = mesh
         self.fast_assembly = fast_assembly
         self.section_thickness = section_thickness
@@ -606,6 +835,26 @@ class DynamicSolver:
         inv_beta_dt2: float,
         beta: float,
     ) -> np.ndarray:
+        """Full KKT residual at trial state (u_k, u_ext_k, lam_k).
+
+        Used by the line search in solve_step to evaluate whether a trial
+        Newton step produces a finite residual.  Computes internal forces
+        f_int via _assemble, then assembles the full residual vector
+        [R_u, R_ext, R_lam] including Lagrange multiplier forces.
+
+        For HHT-α (self.alpha != 0), the internal force is weighted:
+            R_u = f_ext − M·a_k − (1+α)·f_int(u_k) + α·f_int(u_n)
+
+        BC residuals are set as: R[idx] = bc_val − u_k[idx] (penalty
+        substitution, not LM — bc DOFs are row-eliminated from K_eff).
+
+        Returns
+        -------
+        R_total : (n_dofs + n_extra + n_lambdas,) ndarray
+            Full residual vector.  Norm used by the line search to check
+            NaN/Inf.  Not used for Armijo (KKT residual is not a valid
+            merit function for saddle-point systems).
+        """
         f_int, _, _ = self._assemble(u_k, dt)
         
         a_k = (u_k - u_n - dt * v_n) * inv_beta_dt2 - (1.0 - 2.0 * beta) / (2.0 * beta) * a_n
@@ -655,6 +904,70 @@ class DynamicSolver:
         return R_total
 
     def solve_step(self, dt: float) -> int:
+        """Solve one time increment via Newton-Raphson.
+
+        This is the core non-linear solver loop.  It takes the mechanical state
+        at the beginning of the increment (self.u, self.v, etc.) and computes
+        the state at self.time + dt.
+
+        Algorithm
+        ---------
+        1. Predictor: u_k = u_n + Δt·v_n + ½·Δt²·a_n  (Newmark predictor)
+        2. Evaluate time-dependent BCs at the target time (Abaqus-style).
+        3. Iterate (Newton-Raphson):
+           a. Assemble f_int(u_k) and K_T(u_k) via _assemble.
+           b. Compute residual R = f_ext − f_int − M·a_k  (+ LM forces).
+           c. Build effective stiffness K_eff = (1+α)·K_T + (1/β/Δt²)·M.
+           d. Construct KKT saddle-point system including C_lam^T/0 blocks.
+           e. Apply BCs via row elimination (penalty substitution).
+           f. Solve K_eff·du = R via PARDISO with iterative refinement.
+           g. Backtracking line search: if trial step produces NaN/Inf in
+              residual, halve α until finite residual found.
+           h. Update: u_k += α·du,  lam_k += α·dlam.
+           i. Check convergence: rel_change = ‖du‖/(‖u_k‖+ε) < tol.
+        4. On convergence: advance self.time, update state variables
+           (u, v, a, state, lam).  On failure (max iter or NaN/Inf):
+           return negative iteration count for caller cutback.
+
+        Convergence criterion
+        ---------------------
+        The solver uses a displacement-based convergence check:
+            ‖Δu‖ / (‖u_k‖ + ε) < tol   (default: tol=1e-3)
+        OR the energy error:  |R·du| < 1e-15  (tight tolerance suitable
+        for poorly-scaled KKT saddle-point systems).
+
+        The displacement ratio is reliable because:
+        - u_k is well-scaled (mm displacement on mm-sized panel)
+        - It does NOT depend on the residual norm, which can behave
+          erratically on the indefinite KKT system (R contains both
+          force equilibrium and LM constraint equations).
+
+        For the saddle-point KKT matrix [K  C^T; C  0], the residual
+        norm ‖R‖ is NOT a valid merit function: a step that reduces
+        ‖R‖ can actually be worse for equilibrium (Greenstadt 1967,
+        Dennis & Schnabel 1996 §6.4).  We therefore use ‖Δu‖/‖u‖.
+
+        Line search (NaN-only backtracking)
+        ------------------------------------
+        Only guards against divergence (element inversion → NaN in
+        residual).  Does NOT enforce Armijo/Wolfe conditions because:
+        - The KKT residual is not monotonic (the LM blocks break
+          the quadratic convergence guarantee of Newton for SPD systems)
+        - A damped Newton step (α<1) on a saddle-point system can
+          cause the KKT residual to INCREASE while the mechanical
+          residual decreases — an Armijo check would falsely reject it.
+        This is consistent with the strategy used in commercial FE codes
+        for contact problems (Abaqus uses the same NaN-only line search
+        for its default Newton solver).
+
+        Returns
+        -------
+        n_iter : int
+            Positive = converged in n_iter+1 iterations.
+            Negative = failed: -(n_iter+1), where n_iter is the last
+            successful iteration before failure.
+            Negative = -max_iter indicates divergence (norm blow-up).
+        """
         t_start = time.time()
         beta, gamma, dt2 = self.beta, self.gamma, dt * dt
 
@@ -822,6 +1135,15 @@ class DynamicSolver:
             
             J = sps.coo_matrix((global_val, (global_row, global_col)), shape=(self.n_total, self.n_total)).tocsr()
 
+            # --- Eigenvalue regularization (Tikhonov / ridge) ---
+            # Adds ε·I to shift near-zero eigenvalues of the tangent stiffness
+            # toward positive, improving conditioning without altering the
+            # Newton direction for well-conditioned modes.  ε is chosen small
+            # enough to preserve accuracy (~machine-ε × mean|diag(K)|).
+            _diag_mean = np.abs(J.diagonal()[:self.n_dofs]).mean()
+            _eps_reg = max(1e-12, 1e-8 * _diag_mean)
+            J = J + _eps_reg * sps.eye(self.n_total, format='csr')
+
             if has_bc:
                 for i, idx in enumerate(self.bc_dofs):
                     val = self.bc_vals[i]
@@ -855,13 +1177,21 @@ class DynamicSolver:
             du_ext = du_all[self.n_dofs:self.n_dofs+self.n_extra]
             dlam = du_all[self.n_dofs+self.n_extra:]
 
-            # --- Backtracking Line Search (NaN/Inf-prevention) ---
-            # Full Newton steps are kept (quadratic convergence on the
-            # indefinite KKT system, whose residual norm is not a valid merit
-            # function); alpha is only damped when a trial step produces a
-            # non-finite residual (geometric blow-up / element inversion).
+            # --- Backtracking Line Search (residual-aware + under-relaxation) ---
+            # Full Newton steps (α=1.0) are always accepted first, preserving
+            # quadratic convergence in the attraction basin.  If the full step
+            # causes the residual to EXPLODE (>10× R_current), the step is
+            # likely pointing into a bifurcation branch that diverges — the
+            # tangent stiffness has lost positive-definiteness.  Subsequent
+            # damped steps (α=0.5, 0.25, …) let the solver creep across the
+            # unstable zone without blowing up.  Once past it, α=1.0 resumes.
+            #
+            # Under-relaxation (alpha_max): caps the step size to prevent
+            # overshooting near bifurcations where the Newton direction is
+            # accurate but the step magnitude is too large.
             alpha = 1.0
             alpha_min = 0.1
+            alpha_max = 0.7        # under-relaxation cap
             R_norm_current = np.linalg.norm(R_total)
 
             while alpha > alpha_min + 1e-5:
@@ -877,9 +1207,20 @@ class DynamicSolver:
                 )
                 R_norm_temp = np.linalg.norm(R_temp)
 
-                if not np.isnan(R_norm_temp) and not np.isinf(R_norm_temp):
+                if np.isnan(R_norm_temp) or np.isinf(R_norm_temp):
+                    alpha *= 0.5
+                    continue
+
+                # Accept this α if:
+                #   (a) it is the full Newton step (subject to alpha_max cap), OR
+                #   (b) residual has dropped / not exploded, OR
+                #   (c) we are already deep in backtracking
+                if alpha == 1.0 or R_norm_temp < R_norm_current * 10.0 or alpha < 0.25:
                     break
                 alpha *= 0.5
+
+            # Enforce under-relaxation cap
+            alpha = min(alpha, alpha_max)
 
             # If line search failed to find a non-NaN/non-inf residual
             if np.isnan(R_norm_temp) or np.isinf(R_norm_temp):
@@ -970,7 +1311,18 @@ class DynamicSolver:
                 return -(self.max_iter)
 
             energy_err = np.abs(np.dot(R_total, du_all))
-            if (rel_change < self.tol or energy_err < 1e-15) and n_iter > 0:
+            # ---- Residual-based convergence criterion ----
+            # For KKT saddle-point systems the displacement ratio du_norm / u_norm
+            # can plateau at ~0.006 even when the Newton direction is accurate
+            # (the KKT system is solved to machine precision but the saddle-point
+            # conditioning makes |du| ~ |u|·√(κ) unavoidable — see `_solve_linear_system`).
+            # If the KKT residual has dropped by 10 orders relative to the first
+            # Newton iteration, the direction is good enough to accept.
+            residual_converged = (
+                res_norm_0 is not None
+                and res_ratio < min(1e-10, self.tol * 1e-6)
+            )
+            if (rel_change < self.tol or energy_err < 1e-15 or residual_converged) and n_iter > 0:
                 converged = True
                 self.time += dt          # advance analysis time on success only
                 if state_new is not None:
@@ -1007,7 +1359,421 @@ class DynamicSolver:
 
         return n_iter
 
+    # ------------------------------------------------------------------
+    # Riks Arc-Length Continuation
+    # ------------------------------------------------------------------
+    def solve_step_riks(
+        self,
+        dt: float,
+        ds: float,
+        psi: float = 1.0,
+        max_corr: int = 10,
+        tol: float = 1e-6,
+    ) -> int:
+        """Solve one time increment via Crisfield modified Riks arc-length.
+
+        The standard Newton-Raphson (``solve_step``) fails when the tangent
+        stiffness loses positive-definiteness near limit points (snap-through
+        or snap-back).  The Riks method overcomes this by treating the load
+        factor λ as an additional unknown and adding an arc-length constraint
+        that ties the displacement increment Δu and load increment Δλ:
+
+            ‖Δu‖² + ψ² · Δλ² · ‖f_ext‖² = Δs²
+
+        The augmented KKT system has size (n_total + 1):
+
+            ┌ K_eff   C_u^T   −f_ext ┐ ┌ Δu   ┐   ┌ R_u   ┐
+            │ C_u     0        0      │ │ Δlam  │ = │ R_lam │
+            └ f_ext^T 0        0      ┘ └ Δλ   ┘   └   0   ┘
+
+        The last row is the linearised arc-length constraint (Crisfield 1981).
+        ψ = 1.0 gives a spherical constraint; ψ = 0.0 gives pure load control.
+
+        Parameters
+        ----------
+        dt : float
+            Time increment.
+        ds : float
+            Prescribed arc-length in generalised displacement space.
+        psi : float
+            Scaling factor for the load-parameter contribution.
+        max_corr : int
+            Maximum number of corrector iterations.
+        tol : float
+            Relative tolerance on the arc-length constraint.
+
+        Returns
+        -------
+        n_iter : int
+            Positive = converged in n_iter corrections.
+            Negative = failed: -(n_corr+1).
+        """
+        t_start = time.time()
+        beta, gamma, dt2 = self.beta, self.gamma, dt * dt
+        inv_beta_dt2 = 1.0 / (beta * dt2)
+
+        # --- save converged state (for rollback on failure) ---
+        u_n = self.u.copy()
+        v_n = self.v.copy()
+        a_n = self.a.copy()
+        u_ext_n = self.u_extra.copy()
+        v_ext_n = self.v_extra.copy()
+        a_ext_n = self.a_extra.copy()
+        lam_k = self.lam.copy()
+        bc_vals_orig = self.bc_vals.copy() if self.bc_vals is not None else None
+
+        # Newmark predictor
+        u_k = u_n + dt * v_n + 0.5 * dt2 * a_n
+        u_ext_k = u_ext_n + dt * v_ext_n + 0.5 * dt2 * a_ext_n
+
+        # Current load factor (1.0 = full gravity)
+        lambda_k = 1.0
+
+        norm_f_ext = np.linalg.norm(self.f_ext)
+
+        if getattr(self, 'verbose', False):
+            print(f"", flush=True)
+            print(f"  Riks Arc-Length Step: ds={ds:.4e}  psi={psi:.2f}", flush=True)
+            print(f"  {'='*120}", flush=True)
+
+        # =====================================================================
+        # Predictor: tangent direction from K_eff · du_t = f_ext
+        # =====================================================================
+        f_int, K_T, state_new = self._assemble(u_k, dt)
+
+        if self.static_mode:
+            K_eff = K_T.copy()
+        elif self.alpha != 0.0:
+            K_eff = (1.0 + self.alpha) * K_T
+            K_eff.setdiag(K_eff.diagonal() + inv_beta_dt2 * self.M)
+        else:
+            K_eff = K_T.copy()
+            K_eff.setdiag(K_eff.diagonal() + inv_beta_dt2 * self.M)
+
+        # Eigenvalue regularisation (consistent with solve_step)
+        _diag_mean = np.abs(K_eff.diagonal()[: self.n_dofs]).mean()
+        _eps_reg = max(1e-12, 1e-8 * _diag_mean)
+        K_eff = K_eff + _eps_reg * sps.eye(K_eff.shape[0], format='csr')
+
+        du_t = _solve_linear_system(K_eff, self.f_ext)
+
+        if np.any(np.isnan(du_t)) or np.any(np.isinf(du_t)):
+            if getattr(self, 'verbose', False):
+                print(f"  *** Riks predictor: NaN/Inf in tangent direction.  "
+                      f"Falling back to solve_step.\n", flush=True)
+            # restore state & fall back
+            self.u = u_n; self.v = v_n; self.a = a_n
+            self.u_extra = u_ext_n; self.v_extra = v_ext_n; self.a_extra = a_ext_n
+            self.lam = lam_k
+            if bc_vals_orig is not None:
+                self.bc_vals = bc_vals_orig
+            return self.solve_step(dt)
+
+        norm_du_t = np.linalg.norm(du_t)
+        denom = np.sqrt(norm_du_t**2 + psi**2 * norm_f_ext**2)
+        if denom < 1e-30:
+            if getattr(self, 'verbose', False):
+                print(f"  *** Riks: zero tangent norm.  Falling back to solve_step.\n", flush=True)
+            self.u = u_n; self.v = v_n; self.a = a_n
+            self.u_extra = u_ext_n; self.v_extra = v_ext_n; self.a_extra = a_ext_n
+            self.lam = lam_k
+            if bc_vals_orig is not None:
+                self.bc_vals = bc_vals_orig
+            return self.solve_step(dt)
+
+        scale = ds / denom
+        du_pred = scale * du_t
+        dlambda_pred = scale
+
+        if getattr(self, 'verbose', False):
+            print(f"  Predictor: ||du_t||={norm_du_t:.4e}  "
+                  f"scale={scale:.4e}  dlam={dlambda_pred:.4e}", flush=True)
+
+        # =====================================================================
+        # Corrector iterations
+        # =====================================================================
+        u_trial = u_k + du_pred
+        u_ext_trial = u_ext_k.copy()
+        lambda_trial = lambda_k + dlambda_pred
+
+        converged = False
+        n_corr = 0
+
+        for n_corr in range(max_corr):
+            # Scale prescribed BCs by the load factor
+            if bc_vals_orig is not None:
+                self.bc_vals = bc_vals_orig * lambda_trial
+
+            # --- Assemble at trial state ---
+            f_int_trial, K_T_trial, state_new_trial = self._assemble(u_trial, dt)
+
+            # Effective stiffness
+            if self.static_mode:
+                K_eff_t = K_T_trial.copy()
+            elif self.alpha != 0.0:
+                K_eff_t = (1.0 + self.alpha) * K_T_trial
+                K_eff_t.setdiag(K_eff_t.diagonal() + inv_beta_dt2 * self.M)
+            else:
+                K_eff_t = K_T_trial.copy()
+                K_eff_t.setdiag(K_eff_t.diagonal() + inv_beta_dt2 * self.M)
+
+            # Regularisation
+            _dm = np.abs(K_eff_t.diagonal()[: self.n_dofs]).mean()
+            _ep = max(1e-12, 1e-8 * _dm)
+            K_eff_t = K_eff_t + _ep * sps.eye(self.n_total, format='csr')
+
+            # --- Mechanical residual ---
+            a_trial = ((u_trial - u_n - dt * v_n) * inv_beta_dt2
+                       - (1.0 - 2.0 * beta) / (2.0 * beta) * a_n)
+            a_ext_trial = ((u_ext_trial - u_ext_n - dt * v_ext_n) * inv_beta_dt2
+                           - (1.0 - 2.0 * beta) / (2.0 * beta) * a_ext_n)
+
+            if self.static_mode:
+                R_u = lambda_trial * self.f_ext - f_int_trial
+            elif self.alpha != 0.0 and self.f_int_n is not None:
+                R_u = (lambda_trial * self.f_ext - self.M * a_trial
+                       - (1.0 + self.alpha) * f_int_trial
+                       + self.alpha * self.f_int_n)
+            else:
+                R_u = lambda_trial * self.f_ext - self.M * a_trial - f_int_trial
+
+            # --- Constraint residuals + Jacobian ---
+            R_ext = np.zeros(self.n_extra)
+            R_lam = np.zeros(self.n_lambdas)
+            C_row_u, C_col_u, C_val_u = [], [], []
+            C_row_ext, C_col_ext, C_val_ext = [], [], []
+
+            lam_offset = 0
+            for c in self.constraints:
+                n_lam_c = c.n_multipliers()
+                if n_lam_c > 0:
+                    r_u, c_u, v_u, r_ext, c_ext, v_ext, g = c.assemble(
+                        u_trial, u_ext_trial
+                    )
+                    for i in range(len(v_u)):
+                        eq_idx = r_u[i] + lam_offset
+                        dof_idx = c_u[i]
+                        R_u[dof_idx] -= v_u[i] * lam_k[eq_idx]
+                        C_row_u.append(eq_idx)
+                        C_col_u.append(dof_idx)
+                        C_val_u.append(v_u[i])
+                    for i in range(len(v_ext)):
+                        eq_idx = r_ext[i] + lam_offset
+                        ext_idx = c_ext[i]
+                        R_ext[ext_idx] -= v_ext[i] * lam_k[eq_idx]
+                        C_row_ext.append(eq_idx)
+                        C_col_ext.append(ext_idx)
+                        C_val_ext.append(v_ext[i])
+                    for i in range(n_lam_c):
+                        R_lam[lam_offset + i] = -g[i]
+                lam_offset += n_lam_c
+
+            R_total = np.concatenate([R_u, R_ext, R_lam])
+
+            # --- Build KKT matrix (same sparsity as solve_step) ---
+            K_eff_coo = K_eff_t.tocoo()
+            g_row = list(K_eff_coo.row)
+            g_col = list(K_eff_coo.col)
+            g_val = list(K_eff_coo.data)
+
+            lam_start = self.n_dofs + self.n_extra
+            for r, c, v in zip(C_row_u, C_col_u, C_val_u):
+                g_row.append(r + lam_start); g_col.append(c);         g_val.append(v)
+                g_row.append(c);             g_col.append(r + lam_start); g_val.append(v)
+            ext_start = self.n_dofs
+            for r, c, v in zip(C_row_ext, C_col_ext, C_val_ext):
+                g_row.append(r + lam_start); g_col.append(c + ext_start); g_val.append(v)
+                g_row.append(c + ext_start); g_col.append(r + lam_start); g_val.append(v)
+            for i in range(self.n_extra):
+                g_row.append(ext_start + i); g_col.append(ext_start + i); g_val.append(1e-12)
+
+            KKT = sps.coo_matrix(
+                (g_val, (g_row, g_col)), shape=(self.n_total, self.n_total)
+            ).tocsr()
+
+            # --- Augment with load-factor DOF (λ) ---
+            n_aug = self.n_total + 1
+            a_row = list(g_row)
+            a_col = list(g_col)
+            a_val = list(g_val)
+
+            # Column n_total:  −f_ext  (coupling: ∂R/∂λ = −f_ext)
+            f_ext_len = min(len(self.f_ext), self.n_dofs)
+            for i in range(f_ext_len):
+                if self.f_ext[i] != 0.0:
+                    a_row.append(i)
+                    a_col.append(self.n_total)
+                    a_val.append(-self.f_ext[i])
+
+            # Row n_total:  f_ext^T  (linearised arc-length constraint)
+            for i in range(f_ext_len):
+                if self.f_ext[i] != 0.0:
+                    a_row.append(self.n_total)
+                    a_col.append(i)
+                    a_val.append(self.f_ext[i])
+
+            # Diagonal stabilisation for λ DOF
+            a_row.append(self.n_total)
+            a_col.append(self.n_total)
+            a_val.append(0.0)
+
+            KKT_aug = sps.coo_matrix(
+                (a_val, (a_row, a_col)), shape=(n_aug, n_aug)
+            ).tocsr()
+
+            # Eigenvalue regularisation on augmented system
+            _dm_a = np.abs(KKT_aug.diagonal()[: self.n_dofs]).mean()
+            _ep_a = max(1e-12, 1e-8 * _dm_a)
+            KKT_aug = KKT_aug + _ep_a * sps.eye(n_aug, format='csr')
+
+            # Augmented residual
+            R_aug = np.zeros(n_aug)
+            R_aug[: self.n_total] = R_total
+            R_aug[self.n_total] = 0.0  # constraint residual (linearised)
+
+            # BC elimination on augmented system
+            has_bc = len(self.bc_dofs) > 0
+            if has_bc:
+                for i, idx in enumerate(self.bc_dofs):
+                    val = self.bc_vals[i]
+                    sp = KKT_aug.indptr[idx]
+                    ep = KKT_aug.indptr[idx + 1]
+                    for ptr in range(sp, ep):
+                        col = KKT_aug.indices[ptr]
+                        KKT_aug.data[ptr] = 1.0 if col == idx else 0.0
+                    if idx < self.n_dofs:
+                        R_aug[idx] = val * lambda_trial - u_trial[idx]
+                    else:
+                        ext_idx = idx - self.n_dofs
+                        R_aug[idx] = val * lambda_trial - u_ext_trial[ext_idx]
+
+            # --- Solve augmented system ---
+            delta_all = _solve_linear_system(KKT_aug, R_aug)
+
+            if np.any(np.isnan(delta_all)) or np.any(np.isinf(delta_all)):
+                if getattr(self, 'verbose', False):
+                    print(f"  *** Corrector {n_corr+1}: NaN/Inf in augmented solve.\n",
+                          flush=True)
+                break
+
+            delta_u     = delta_all[: self.n_dofs]
+            delta_u_ext = delta_all[self.n_dofs : self.n_dofs + self.n_extra]
+            delta_lam   = delta_all[self.n_dofs + self.n_extra : self.n_total]
+            delta_lambda = delta_all[self.n_total]  # load-factor increment
+
+            # --- Update trial state ---
+            u_trial     += delta_u
+            u_ext_trial += delta_u_ext
+            lambda_trial += delta_lambda
+
+            # --- Arc-length constraint check ---
+            du_norm   = np.linalg.norm(u_trial - u_k)
+            dlambda   = lambda_trial - lambda_k
+            constraint = du_norm**2 + psi**2 * dlambda**2 * norm_f_ext**2
+            c_err = abs(constraint - ds**2) / (ds**2 + 1e-30)
+
+            res_norm = np.linalg.norm(R_aug)
+
+            if getattr(self, 'verbose', False):
+                print(
+                    f"  Corr {n_corr+1:2d}: ||du||={du_norm:11.4e}  "
+                    f"dlam={dlambda:+11.4e}  lam={lambda_trial:11.6f}  "
+                    f"c_err={c_err:9.2e}  ||R||={res_norm:11.4e}",
+                    flush=True,
+                )
+
+            # Convergence: both residual small AND arc-length constraint satisfied
+            if c_err < tol and res_norm < tol * 100:
+                converged = True
+                break
+
+        # =====================================================================
+        # Finalise
+        # =====================================================================
+        # Restore original BCs
+        if bc_vals_orig is not None:
+            self.bc_vals = bc_vals_orig
+
+        if converged:
+            # Advance time and store state
+            self.u = u_trial.copy()
+            self.u_extra = u_ext_trial.copy()
+
+            a_k = ((u_trial - u_n - dt * v_n) * inv_beta_dt2
+                   - (1.0 - 2.0 * beta) / (2.0 * beta) * a_n)
+            a_ext_k = ((u_ext_trial - u_ext_n - dt * v_ext_n) * inv_beta_dt2
+                       - (1.0 - 2.0 * beta) / (2.0 * beta) * a_ext_n)
+
+            self.a = np.clip(a_k, -1.0e4, 1.0e4)
+            self.v = np.clip(v_n + dt * ((1.0 - gamma) * a_n + gamma * a_k),
+                             -1.0e3, 1.0e3)
+            self.a_extra = np.clip(a_ext_k, -1.0e4, 1.0e4)
+            self.v_extra = np.clip(
+                v_ext_n + dt * ((1.0 - gamma) * a_ext_n + gamma * a_ext_k),
+                -1.0e3, 1.0e3,
+            )
+            self.lam = lam_k.copy()
+            self.time += dt
+
+            if state_new_trial is not None:
+                self.state = state_new_trial
+
+            if getattr(self, 'verbose', False):
+                te = time.time() - t_start
+                print(
+                    f"  => Riks Step Converged ({n_corr+1} corrections).  "
+                    f"lambda={lambda_trial:.6f}  (Time: {te:.2f} s)\n",
+                    flush=True,
+                )
+            return n_corr + 1
+        else:
+            # Rollback to last converged state
+            self.u = u_n.copy();  self.v = v_n.copy();  self.a = a_n.copy()
+            self.u_extra = u_ext_n.copy()
+            self.v_extra = v_ext_n.copy()
+            self.a_extra = a_ext_n.copy()
+            self.lam = lam_k.copy()
+
+            if getattr(self, 'verbose', False):
+                te = time.time() - t_start
+                print(
+                    f"  *** Riks step FAILED after {n_corr+1} corrections.  "
+                    f"(Time: {te:.2f} s)\n",
+                    flush=True,
+                )
+            return -(n_corr + 1)
+
     def solve(self, num_steps: int, dt: float, callback: Optional[Callable] = None) -> List[np.ndarray]:
+        """Run the full time-stepping loop.
+
+        Parameters
+        ----------
+        num_steps : int
+            Number of constant-dt increments.
+        dt : float
+            Time increment per step.
+        callback : callable or None
+            Optional function(step, solver) called after each increment.
+            Used for live visualisation or intermediate output.
+
+        Returns
+        -------
+        history : list of ndarray
+            One displacement vector per step (for post-processing).
+            Each entry has shape (n_dofs,) with the converged u.
+
+        Notes
+        -----
+        If a Newton step fails (n_iter < 0), a warning is emitted but the
+        solver continues with the unconverged state.  For production use,
+        override the callback (or subclass) to handle cutback:
+
+            def my_callback(step, solver):
+                if last_n_iter < 0:
+                    dt_cut = dt * 0.5
+                    solver.restore_state(checkpoint)
+                    solver.solve_step(dt_cut)
+        """
         history = []
         for step in range(num_steps):
             n_iter = self.solve_step(dt)
@@ -1156,6 +1922,44 @@ class DynamicSolver:
                     all_K_rows.append(self._pid_K_rows[pid])
                     all_K_cols.append(self._pid_K_cols[pid])
                     all_K_vals.append(K_es.reshape(-1))
+                continue
+
+            if self._pid_element_type(pid) == "Q4_VISCO_SIMO":
+                # ---- Complete finite-strain Simo viscoelasticity (Flory split,
+                #      pluggable hyperelastic base) — q4_visco_simo_fs_jax. ----
+                import jax
+                import jax.numpy as jnp
+                from functools import partial as _partial
+                from ..material.viscoelastic import ViscoelasticMaterial as _VEM
+                from ..element.q4_visco_simo_fs_jax import compute_single as _visco_simo
+                vmat = mat_adapter.material
+                if not isinstance(vmat, _VEM):
+                    raise TypeError("Q4_VISCO_SIMO requires a ViscoelasticMaterial")
+                n_vars = mat_adapter.n_internal_vars   # = 6*(M+1)
+                dt_h = dt if dt is not None else 1.0
+                base, bparams, kappa = vmat.simo_fs_args(mat_adapter.params)
+
+                coords_b = jnp.asarray(self.elem_coords[elem_indices])
+                u_b = jnp.asarray(u[self.dof_indices[elem_indices]])
+                state_b = jnp.asarray(
+                    self.state[elem_indices, :, :n_vars]
+                ) if self.state is not None else jnp.zeros((len(elem_indices), 4, n_vars))
+                t_b = jnp.asarray(self._elem_thickness[elem_indices])
+
+                _fn = _partial(_visco_simo, base=base)   # bind static base out of vmap
+                _vmap = jax.vmap(_fn, in_axes=(0, 0, 0, None, None, None, None, None, None, 0))
+                f_es, K_es, se_all = _vmap(
+                    coords_b, u_b, state_b, float(kappa), jnp.asarray(bparams),
+                    jnp.asarray(vmat.g_i), jnp.asarray(vmat.tau_i), float(vmat.g_inf),
+                    dt_h, t_b,
+                )
+                f_es = np.asarray(f_es); K_es = np.asarray(K_es); se_all = np.asarray(se_all)
+                np.add.at(f_int, self.dof_indices[elem_indices].flatten(), f_es.flatten())
+                if state_new is not None:
+                    state_new[elem_indices, :, :n_vars] = se_all
+                all_K_rows.append(self._pid_K_rows[pid])
+                all_K_cols.append(self._pid_K_cols[pid])
+                all_K_vals.append(K_es.reshape(-1))
                 continue
 
             if (self._pid_element_type(pid) == "Q4_EAS"

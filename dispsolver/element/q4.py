@@ -3,19 +3,58 @@ q4.py
 =====
 Q4 Plane Strain Element — Selective Reduced Integration (B-bar).
 
-Formulation
------------
-- Bilinear quadrilateral (4 nodes, 2 DOF/node → 8 DOF/element)
-- Plane strain assumption (ε_zz = 0)
-- B-bar method: volumetric strain averaged at element center (1-pt reduced),
-  deviatoric strain at full 2×2 integration
-- Consistent mass matrix via 2×2 quadrature
-- Total Lagrangian kinematics (reference-configuration Jacobian J0 cached)
+The bilinear Q4 locks in bending (parasitic shear) and in
+near-incompressibility (volumetric locking). The B-bar method (mean
+dilatation) cures the latter: the volumetric part of the B-matrix is
+evaluated at the element centroid (1-point reduced integration) while the
+deviatoric part retains the full 2×2 quadrature.  Written in operator form:
+
+    B̄(ξ,η) = B_dev(ξ,η) + B̄_vol
+
+    B̄_vol = (1/Ωₑ) ∫ B_vol(ξ,η) dΩ   (mean dilatation operator)
+
+    ε(u) = B̄(ξ,η)·u                  (B-bar strain-displacement relation)
+
+This preserves the patch test (B̄ reproduces constant strain exactly) and
+eliminates volumetric locking while keeping 2×2 deviatoric accuracy.
+
+Element type hierarchy
+----------------------
+This codebase provides three Q4 variants for the multi-material fold mesh:
+
+    Q4_BBAR (this file)  —  baseline B-bar element
+        * Used for: general elastic continuum (when bending locking is
+          not the primary concern)
+        * Limitation: still locks in bending for thin (0.017mm) PET
+          sub-layers because it has no incompatible bending modes
+
+    Q4_EAS  (q4_eas.py)  —  Enhanced Assumed Strain (Simo & Rifai 1990)
+        * Adds 4 internal parameters (EAS-4 modes) that permit the element
+          to represent pure bending without spurious shear stress
+        * Used for: PET layers in the folding problem (thin bending-dominated)
+
+    Q4_UP   (q4_visco_hybrid_fs_jax.py)  —  Q1P0 mean-dilatation hybrid
+        * Replaces the B-bar with a true mixed formulation: displacement
+          field + pressure field (P0, constant per element)
+        * Used for: PSA layers (ν=0.49, near-incompressible)
+
+Kinematics
+----------
+Total Lagrangian: all quantities (deformation gradient F, B-matrix,
+stiffness) are computed with respect to the reference configuration.
+The Jacobian determinant J0 is cached at element construction.
+
+Mass matrix: consistent mass via 2×2 Gaussian quadrature.
 
 References
 ----------
-- Hughes, T.J.R. "The Finite Element Method" (1987) — B-bar formulation
-- Bathe, K.J. "Finite Element Procedures" (2006) — Q4 formulation
+- Hughes, T.J.R. (1987) "The Finite Element Method", Prentice-Hall.
+  Ch. 4: B-bar method, selective reduced integration.
+- Bathe, K.J. (2006) "Finite Element Procedures", 2nd ed., Klaus-Jurgen Bathe.
+  Ch. 5: isoparametric Q4 formulation.
+- Simo, J.C. & Rifai, M.S. (1990). A class of mixed assumed strain methods
+  and the method of incompatible modes. IJNME, 29(8), 1595-1638.
+  — EAS extension of the B-bar concept.
 """
 
 from __future__ import annotations

@@ -3,34 +3,90 @@ plastic.py
 ===========
 Finite-strain J2 plasticity with exponential return mapping (Simo 1992).
 
-Multiplicative decomposition: F = F_e * F_p  (isochoric plastic flow: det(F_p)=1)
+The material is modelled with the multiplicative decomposition of the
+deformation gradient:
+
+    F = F_e · F_p,   det(F_p) ≡ 1   (isochoric plastic flow)
 
 Internal variables per Gauss point:
     F_p_inv  : (2,2) inverse plastic deformation gradient F_p^{-1}
-    eqps     : scalar equivalent plastic strain
+    eqps     : scalar equivalent plastic strain (for hardening)
 
-Algorithm
----------
-1. Elastic predictor: F_e_tr = F @ F_p_inv, b_e_tr = F_e_tr @ F_e_tr^T
-2. Spectral decomposition of b_e_tr -> eigenvalues (= lambda_a**2), eigenvectors
-3. Trial Kirchhoff stress in principal axes: tau_a = lam * tr(eps) + 2*mu * eps_a
-4. Deviatoric trial -> q_tr = sqrt(1.5 * sum(s_a**2))
-5. If q_tr <= sigma_y: elastic step (F, F_p_inv unchanged)
-6. Else: radial return
-       n_a = 3 * s_a / (2 * q_tr)      (flow direction in principal space)
-       dgamma = (q_tr - sigma_y) / (3*mu + H*sqrt(1.5))
-       tau_a_new = s_a_new + p
-       eps_e_a_new = eps_tr_a - dgamma * n_a
-       lambda_new_a = exp(eps_e_a_new)
-       b_e_new = sum lambda_new_a**2 * v_a (x) v_a
-       F_e_new = sum lambda_new_a * v_a (x) v_a    (stretch part, R unchanged)
-       F_p_inv_new = F_e_new^{-1} @ F
+The elastic left Cauchy-Green tensor b_e = F_e·F_e^T carries the full
+elastic state through the logarithm (Hencky strain):
+
+    ε_e = ½·ln(b_e)    →    principal strains ε_e_a = ln(λ_a)
+
+Algorithm (exponential return mapping in principal stress space)
+----------------------------------------------------------------
+1. Elastic predictor:  F_e_tr = F · F_p⁻¹
+                        b_e_tr = F_e_tr · F_e_trᵀ
+
+2. Spectral decomposition of b_e_tr:
+       eigenvalues  λ_a²,  eigenvectors  v_a   (a=1,2 in 2D)
+       ε_tr_a = ln(λ_a)                     (principal trial strains)
+
+3. Trial Kirchhoff stress (plane strain, isotropic linear elasticity):
+       τ_tr_a = K·tr(ε_tr) + 2μ·(ε_tr_a − ⅓·tr(ε_tr))
+       s_tr_a = τ_tr_a − ⅓·tr(τ_tr)         (deviatoric trial)
+       p      = ⅓·(τ_1 + τ_2)               (mean stress)
+       q_tr   = √(1.5·Σ s_tr_a²)            (Mises equivalent trial)
+
+4. Yield check:
+       If q_tr ≤ σ_y(eqps):  elastic step   (no update to F_p)
+       Else:  radial return in principal deviatoric space
+           n_a     = 1.5·s_tr_a / q_tr          (plastic flow direction)
+           Δγ      = (q_tr − σ_y) / (3μ + H)    (consistency parameter)
+           ε_e_a   = ε_tr_a − Δγ·n_a             (corrected elastic strains)
+           λ_a     = exp(ε_e_a)                  (updated elastic stretches)
+           F_e     = Σ λ_a · v_a ⊗ v_a          (stretch; rotation ≈ I in
+                                                  principal frame)
+           F_p_inv = F_e⁻¹ · F                  (updated plastic state)
+
+   Hardening: σ_y(eqps) = σ_y0 + H·eqps
+              eqps += Δγ·√(2/3)                 (equivalent plastic strain)
+
+5. Consistent tangent (algorithmic modulus):
+   The continuum tangent (linearisation of τ_w.r.t. ε) differs from the
+   algorithmic tangent (linearisation of the *return-mapped* stress).
+   Following Simo & Taylor (1985) and Simo (1992), the algorithmic tangent
+   is derived by exact linearisation of the return map, yielding a
+   closed-form expression in principal axes that preserves the quadratic
+   convergence rate of Newton's method.  For the elastic step this is the
+   standard elasticity tensor; for the plastic step it includes the
+   elastoplastic correction (the "consistency tangent").
+
+Batch vectorisation
+-------------------
+The function `pk2_voigt_batch` processes all Gauss points for a given
+material group simultaneously via Numpy vectorisation, because each
+integration point's return map is independent of all others.
+
+Project-specific context (display folding)
+------------------------------------------
+- PET layers (E=3.5 GPa, ν=0.35) reach up to ~90° rotation at the hinge
+  fold line.  Infinitesimal plasticity would mistake the large rotation
+  for elastic strain, producing spurious stress and incorrect hinge moments.
+- The finite-strain total-Lagrangian formulation is essential: it uses
+  rotationally-objective stress measures (2nd Piola-Kirchhoff S,
+  Green-Lagrange E = ½(FᵀF−I)), so rigid rotation produces zero strain.
+- The plastic hinge forms naturally when the Kirchhoff stress in the
+  outermost PET fibres reaches the yield stress σ_y.  The exponential
+  return map ensures the relaxed state satisfies the yield condition
+  exactly at every converged Newton step.
 
 References
 ----------
-Simo, J.C. (1992). Algorithms for static and dynamic multiplicative plasticity.
-    Comp. Meth. Appl. Mech. Eng., 99(1), 61-112.
-Simo, J.C. & Hughes, T.J.R. (1998). Computational Inelasticity. Springer.
+- Simo, J.C. (1992). Algorithms for static and dynamic multiplicative
+  plasticity. CMAME, 99(1), 61-112.
+  — The definitive finite-strain exponential return mapping.
+- Simo, J.C. & Taylor, R.L. (1985). Consistent tangent operators for
+  rate-independent elasto-plasticity. CMAME, 48(1), 101-118.
+  — The consistent (algorithmic) tangent concept.
+- Simo, J.C. & Hughes, T.J.R. (1998). Computational Inelasticity.
+  Springer. — Comprehensive treatment.
+- de Souza Neto, E.A., Peric, D., Owen, D.R.J. (2008). Computational
+  Methods for Plasticity. Wiley. — Practical implementation details.
 """
 
 from __future__ import annotations

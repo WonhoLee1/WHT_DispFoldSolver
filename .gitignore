@@ -32,7 +32,9 @@ _old_*.py
 
 # OMC internal
 .omc/
+.omo/
 
 # OS
 .DS_Store
 Thumbs.db
+

@@ -415,6 +415,36 @@ class ViscoelasticMaterial:
 
         return S_voigt, C_eff, state_new_flat
 
+    # ------------------------------------------------------------------
+    # Finite-strain element argument extraction
+    # ------------------------------------------------------------------
+    def simo_fs_args(self, params: Params) -> Tuple[str, np.ndarray, float]:
+        """Resolve (base_name, bparams, kappa) for q4_visco_simo_fs_jax.
+
+        Maps the wrapped hyperelastic ground state to the pluggable-base
+        signature of the finite-strain Simo viscoelastic element:
+            neohookean -> bparams = [mu]
+            yeoh       -> bparams = [c1, c2, c3]   (params C10/C20/C30)
+            arruda     -> bparams = [mu, lambda_m]
+        kappa (bulk modulus) is taken from the ground-state E, nu.
+        """
+        mu, lam = _extract_lam_mu(params)
+        kappa = lam + 2.0 * mu / 3.0
+        name = type(self.base).__name__.lower()
+        if "neohookean" in name:
+            return "neohookean", np.array([mu], dtype=np.float64), kappa
+        if "yeoh" in name:
+            c1 = float(params.get("C10", params.get("c1", mu / 2.0)))
+            c2 = float(params.get("C20", params.get("c2", 0.0)))
+            c3 = float(params.get("C30", params.get("c3", 0.0)))
+            return "yeoh", np.array([c1, c2, c3], dtype=np.float64), kappa
+        if "arruda" in name or "boyce" in name:
+            lm = float(params.get("lambda_m", params.get("N", 2.5)))
+            return "arruda", np.array([mu, lm], dtype=np.float64), kappa
+        raise ValueError(
+            f"no finite-strain element mapping for base {type(self.base).__name__!r}"
+        )
+
     def __repr__(self) -> str:
         wlf = "WLF" if self.wlf_params else "isothermal"
         return f"ViscoelasticMaterial(base={self.base}, M={self.M}, g_oo={self.g_inf:.4f}, {wlf})"
