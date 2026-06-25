@@ -4,25 +4,82 @@ q4_eas.py
 Enhanced Assumed Strain (EAS) Q4 element — Simo & Rifai (1990).
 
 The compatible strain field of the bilinear Q4 locks in bending (parasitic
-shear) and is too stiff for thin elements driven through a single edge. EAS
-augments the strain with element-internal incompatible modes that are
-condensed out, so a single element through the thickness captures pure bending
-without spurious shear stiffness.
+shear): when the element is loaded in pure bending, the linear interpolation
+produces spurious shear strain that stores energy artificially, making the
+element ~O(h²) too stiff in bending (shear-locking).  A single element
+through the thickness of a thin PET layer (0.017 mm) would give a bending
+stiffness many orders of magnitude too high — the hinge would not fold.
 
-    eps_total(xi) = B(xi) u  +  M(xi) alpha
+EAS fixes this by augmenting the strain field with element-internal
+incompatible modes:
 
-`alpha` (4 internal parameters for 2D) is found per element by enforcing the
-enhanced equilibrium  f_alpha = integral( M^T S ) = 0, then statically
-condensed from the element residual / tangent.
+    ε(ξ) = B(ξ)·u + M(ξ)·α
 
-This module implements the *small-strain linear-elastic* core first, against
-which the patch test and a bending benchmark are verified. The finite-strain
-J2 path reuses the same M(xi) enhancement and condensation machinery.
+where:
+    B(ξ)   : standard compatible B-matrix (4-node bilinear, size 3×8)
+    u      : nodal displacement vector (8 DOF)
+    M(ξ)   : enhancing shape function matrix   (3×4 for 2D "EAS-4")
+    α      : internal parameters (4), statically condensed per element
+
+The M-matrix in natural coordinates (ξ, η ∈ [−1, 1]) for the EAS-4 mode:
+
+           [ ξ    0    0     0  ]
+    M(ξ) = [ 0    η    0     0  ]
+           [ 0    0    ξ    η   ]
+
+Modes 1–3 (ξ, η on diagonal) enrich the normal strain in each direction;
+mode 4 (the lower-triangular η) enriches the shear-xy component.  The
+EAS modes are orthogonal to constant stress states — the patch test is
+preserved by construction.
+
+Condensation: a statically condensed element stiffness K_eas is computed:
+
+    k_uu − k_uα·k_αα⁻¹·k_αu
+
+so that the global system size is unchanged.  The α DOFs are recovered
+element-by-element from the nodal solution.
+
+Small-strain vs. finite-strain path
+-----------------------------------
+This module provides two separate code paths:
+
+1. **Small-strain linear-elastic** (default):  Green-Lagrange linearised
+   to ε = B·u.  Used for verification (patch test, bending benchmark).
+
+2. **Finite-strain J2 plasticity** (when J2Plasticity material is active):
+   The deformation gradient F replaces the linear strain, the 2nd
+   Piola-Kirchhoff stress S (from J2 return mapping) replaces C·ε, and
+   the element tangent includes the geometric (initial-stress) contribution.
+   The EAS enhancement M(ξ)·α is applied at the strain level in the
+   reference configuration, consistent with the total-Lagrangian framework.
+
+The J2 path uses Numpy/Scipy sparse assembly (not JAX pure), because the
+J2 spectral return mapping involves eigendecompositions that produce NaN
+under JAX autodiff at critical points (e.g., repeated eigenvalues at the
+onset of yielding).
+
+Project-specific context (display folding)
+------------------------------------------
+- PET layers (E=3.5 GPa, ν=0.35, 0.05 mm each, subdivided into 3
+  elements through the thickness ≈ 0.017 mm/element) would lock
+  catastrophically with standard Q4 in bending.
+- Q4_EAS enables a single element through each PET sub-layer to capture
+  the 90° hinge fold with correct bending compliance.
+- The EAS element is paired with the J2Plasticity material for the PET
+  layers (the J2 tangent ensures the correct plastic hinge moment).
 
 References
 ----------
-Simo, J.C. & Rifai, M.S. (1990). A class of mixed assumed strain methods and
-    the method of incompatible modes. IJNME, 29(8), 1595-1638.
+- Simo, J.C. & Rifai, M.S. (1990). A class of mixed assumed strain methods
+  and the method of incompatible modes. IJNME, 29(8), 1595-1638.
+  — The original EAS formulation.
+- Simo, J.C. & Armero, F. (1992). Geometrically non-linear enhanced strain
+  mixed method and the method of incompatible modes. CMAME, 95(1), 119-162.
+  — Finite-strain EAS extension.
+- Simo, J.C. & Hughes, T.J.R. (1998). Computational Inelasticity. Springer.
+  — Inelastic tangent moduli and static condensation.
+- Wriggers, P. (2006). Computational Contact Mechanics, 2nd ed., Springer.
+  Ch. 6.3: EAS element performance in large deformation contact.
 """
 
 from __future__ import annotations
@@ -326,7 +383,13 @@ def compute_eas_j2_contributions(
         K_ua += (BL.T @ C_v @ G + Kgeo_ua) * w
         K_aa += (G.T @ C_v @ G + Kgeo_aa) * w
 
-    K_aa_inv_KuaT = np.linalg.solve(K_aa, K_ua.T)
+    # Regularize the condensation solve: under a large trial step (line search)
+    # a near-inverted element can drive K_aa rank-deficient, and an un-shifted
+    # np.linalg.solve then raises "Singular matrix" and aborts the whole step.
+    # A small trace-scaled Tikhonov shift (same device as the local alpha-Newton)
+    # keeps the condensation finite so the global line search can back off.
+    K_aa_reg = K_aa + 1e-10 * (np.trace(K_aa) / 4.0 + 1e-30) * np.eye(4)
+    K_aa_inv_KuaT = np.linalg.solve(K_aa_reg, K_ua.T)
     K_e = K_uu - K_ua @ K_aa_inv_KuaT
-    f_e = f_u - K_ua @ np.linalg.solve(K_aa, f_a)
+    f_e = f_u - K_ua @ np.linalg.solve(K_aa_reg, f_a)
     return f_e, K_e, alpha, state_new

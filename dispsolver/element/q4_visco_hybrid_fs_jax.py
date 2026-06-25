@@ -15,11 +15,32 @@ This element fixes both:
 
 Volumetric locking (PSA nu=0.49) is controlled with the plane-strain F-bar
 mean-dilatation  Fbar = F * sqrt(J0/J),  J0 = det F at the element centre —
-the same device already used in the hyperelastic path of the solver.
+the same device already used in the hyperelastic path of the solver.  This is
+the F-bar method of de Souza Neto et al. (1996), also known as the "mean
+dilatation" technique.
+
+JAX vs hybrid sequential note
+-----------------------------
+This element computes the FULL internal force vector AND tangent via pure
+JAX (jnp + jax.jacobian) — unlike q4_eas.py which falls back to scipy
+sparse assembly.  It is used ONLY for the PSA layers, which have a
+smooth linear-viscoelastic constitutive law (no yield surfaces) so the
+autodiff path never hits the J2 NaN problem that plagues the JAX J2
+spectral path in q4_eas.py.
 
 State layout per GP (unchanged from the small-strain hybrid):
     [ e_dev(4) ,  q_i(4) for each Prony term i ]
 with e_dev = [exx, eyy, ezz, exy(tensor)] the previous deviatoric strain.
+
+References
+----------
+- Simo, J.C. & Armero, F. (1992) "Geometrically non-linear enhanced
+  strain mixed method", CMAME 95(1): 119-162.
+- de Souza Neto, E.A. et al. (1996) "Design of simple low order finite
+  elements for large strain analysis of nearly incompressible solids",
+  IJSS 33(20-22): 3277-3296.  (F-bar method)
+- Bonet, J. & Wood, R.D. (2008) "Nonlinear Continuum Mechanics for
+  Finite Element Analysis", 2nd ed., Cambridge.  (Total-Lagrangian)
 """
 
 from __future__ import annotations

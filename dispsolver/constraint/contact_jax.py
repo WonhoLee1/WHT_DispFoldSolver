@@ -1,11 +1,52 @@
 """
 contact_jax.py
 ==============
-JAX-based Penalty self-contact constraint with Spatial Grid contact search.
+JAX-accelerated penalty-based self-contact constraint for 2D plane strain.
 
-Contact pair discovery uses a dict-based spatial hash grid (cell size = d_0),
-reducing candidate pair count from O(N²) to O(N * avg_neighbors). Forces and
-tangent stiffness are computed via JAX automatic differentiation.
+Formulation
+-----------
+Penalty contact energy for a node pair (i, j):
+
+    Π_contact(d) = {  ½·k·(d − d₀)²   if d < d₀   (active)
+                   {  0                  otherwise  (inactive)
+
+where d = ‖x_i − x_j‖ is the current Euclidean distance and d₀ is the
+activation threshold (sum of contact layer half-thicknesses).
+
+The penalty force and tangent stiffness are obtained by automatic
+differentiation via JAX:
+
+    f = dΠ/dx,    K_t = d²Π/dx²
+
+This eliminates any error-prone manual derivation of the contact tangent
+(which requires 2nd-order linearisation of the unit normal vector n =
+(x_j − x_i)/d — a term that is infinite at d=0).
+
+Contact search
+--------------
+A dict-based spatial hash grid (cell size = d₀) reduces candidate pairs
+from O(N²) to O(N·m) where m ≈ 9–25 (neighbouring cells in 2D).
+The hash function: h(cell_ix, cell_iy) = (ix·p₁ − iy·p₂) % table_size,
+with Morton-hashed keys for efficiency.
+
+Self-contact is critical for the display folding problem because:
+1. The hinge zone closes onto itself (d → 0) during a 0→90° fold.
+2. PET layers on opposite sides of the hinge would interpenetrate
+   without contact enforcement — not physically correct.
+3. The contact activation also stabilises the tangent during the
+   compression buckling phase (divergence at t≈0.06s in the baseline
+   solver is in the hinge compression zone where contact just activates).
+
+References
+----------
+- Wriggers, P. (2006) "Computational Contact Mechanics", 2nd ed., Springer.
+  Ch. 3: contact kinematics, penalty regularisation.
+- Zienkiewicz, O.C. & Taylor, R.L. (2013) "The Finite Element Method",
+  7th ed., Vol. 2, Ch. 12: contact problems.
+- Belytschko, T. et al. (2013) "Nonlinear Finite Elements for Continua
+  and Structures", 2nd ed., Ch. 10: contact-impact.
+- Teschner, M. et al. (2003) "Optimized Spatial Hashing for Collision
+  Detection" — the grid hashing approach used here.
 """
 
 import jax

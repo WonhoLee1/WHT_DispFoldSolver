@@ -7,27 +7,78 @@ time-temperature superposition (*TRS, WLF) — designed for the Q1P0 hybrid
 
 Formulation (plane strain, deviatoric/volumetric split)
 -------------------------------------------------------
-Bulk response is elastic:           p = K · θ            (θ = tr(ε))
+Bulk response is elastic:           p  = K · θ             (θ = tr(ε))
 Deviatoric response relaxes via a Prony series of internal stresses q_i:
 
-    s(t+Δt) = 2·G_∞·e(t+Δt) + Σ_i q_i(t+Δt)
+    s(t+Δt)  =  2·G_∞·e(t+Δt)  +  Σ_i q_i(t+Δt)
 
-    q_i(t+Δt) = a_i·q_i(t) + 2·G_i·γ_i·( e(t+Δt) − e(t) )
+    q_i(t+Δt)  =  a_i·q_i(t)  +  2·G_i·γ_i·( e(t+Δt) − e(t) )
 
-    a_i = exp(−Δt / τ_i*) ,   γ_i = (1 − a_i)·τ_i* / Δt
-    τ_i* = τ_i · a_T(T)                       (WLF shift, TTS)
+    a_i  =  exp(−Δt / τ_i*)           (recurrence coefficient)
+    γ_i  =  (1 − a_i)·τ_i* / Δt      (integration scaling)
 
-with  G_∞ = G_0·(1 − Σ g_i),  G_i = G_0·g_i,  G_0 = E / (2(1+ν)),
-      K   = E / (3(1−2ν)).
+    τ_i* =  τ_i · a_T(T)              (WLF shift, time-temperature superposition)
 
-e is the (tensorial) deviatoric strain; in plane strain ε_zz = 0 so
-    e = ε − (θ/3)·I  ⇒  e_zz = −θ/3 ≠ 0.
+    log₁₀(a_T)  =  −C₁·(T−Tᵣ) / (C₂ + T−Tᵣ)       (WLF equation)
 
-Algorithmic shear modulus (consistent tangent):
-    G_alg = G_∞ + Σ_i G_i·γ_i ,   ds = 2·G_alg·de
+    G_∞ = G₀·(1 − Σ g_i),   G_i = G₀·g_i
+    G₀  = E / (2(1+ν)),     K  = E / (3(1−2ν))
+
+    e = ε − (θ/3)·I         (deviatoric strain, tensorial components)
+    e_zz = −θ/3  (in plane strain ε_zz=0 but e_zz ≠ 0)
+
+Algorithmic shear modulus (consistent tangent)
+----------------------------------------------
+    G_alg = G_∞ + Σ_i G_i·γ_i      ds = 2·G_alg·de
+
+This is the exact linearisation of the recurrence, giving the correct
+consistent tangent for Newton-Raphson convergence.  The tangent is isotropic
+(deviatoric) because all q_i terms are proportional to the deviatoric strain
+increment through the scalar γ_i.
 
 Internal-variable layout per Gauss point (flat, length 4·(M+1)):
-    [ e_prev(4) , q_1(4) , … , q_M(4) ]      components ordered (xx, yy, zz, xy)
+    [ e_prev(4) , q_1(4) , … , q_M(4) ]
+Tensor components ordered: (xx, yy, zz, xy)   — these are full (3×3) tensor
+components, NOT Voigt engineering shear.  This means the stored "xy" is the
+tensor shear ε¹², NOT γ¹² = 2ε¹².  This convention is used throughout the
+codebase for consistency with the 3D finite-strain formulation.
+
+Stability:  The recurrence a_i = exp(−Δt/τ_i) is unconditionally stable for
+Δt > 0 (A-stable, Dahlquist 1963).  For Δt ≫ τ_i the term reduces to zero
+(full relaxation within one step), which is physically correct but can cause
+oscillations in the internal stress if step sizes vary erratically.
+
+WLF reference temperature Tᵣ is set at construction.  If T = Tᵣ (isothermal),
+a_T = 1 and no time-scaling occurs.  Currently the folding simulation is
+isothermal (room temperature), but the WLF infrastructure is retained for
+thermal folding studies.
+
+Project-specific context (display folding)
+------------------------------------------
+- PSA (E = 1.0–10 MPa, ν = 0.49) is nearly incompressible and requires the
+  Q1P0 hybrid (mean-dilatation) element at the ELEMENT level (not the
+  material level) to avoid volumetric locking.
+- Prony series set to one term: g_i = [0.8], τ_i = [1.0 s].  This gives
+  G_∞/G₀ = 0.2 — i.e., the shear modulus relaxes by 80% within ~1 s of
+  sustained loading, modelling the PSA creep observed experimentally.
+- The viscoelastic relaxation allows the PSA to accommodate shear strain
+  between PET layers during folding, preventing unrealistic stress build-up
+  at the PET/PSA interface.
+- Time-dependent amplitude: the 90° fold is applied over t_total ≈ 1 s,
+  which is comparable to τ₁ = 1.0 s, so the viscoelastic effects are active
+  throughout the folding simulation (not in the "long-time" asymptotic limit).
+
+References
+----------
+- Abaqus 2022 *VISCOELASTIC documentation (TIME=PRONY).
+- Christensen, R.M. (1982). Theory of Viscoelasticity, 2nd ed., Academic Press.
+- Williams, M.L., Landel, R.F., Ferry, J.D. (1955). The temperature dependence
+  of relaxation mechanisms in amorphous polymers. JACS, 77(14), 3701-3707.
+  — The WLF equation (original paper).
+- Ferry, J.D. (1980). Viscoelastic Properties of Polymers, 3rd ed., Wiley.
+  — Full treatment of Prony series/master curve / WLF.
+- Simo, J.C. & Hughes, T.J.R. (1998). Computational Inelasticity. Springer.
+  Ch. 9: viscoelasticity and the algorithmic tangent.
 """
 
 from __future__ import annotations

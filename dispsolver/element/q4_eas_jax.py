@@ -232,9 +232,11 @@ def compute_eas_j2_contributions_jax(
         K_ua = K_ua + (BL.T @ C_v @ G + Kgeo_ua) * w_all[k]
         K_aa = K_aa + (G.T @ C_v @ G + Kgeo_aa) * w_all[k]
 
-    # ── Static condensation ──
-    K_aa_inv_KuaT = jnp.linalg.solve(K_aa, K_ua.T)
+    # ── Static condensation (Tikhonov-regularized so a near-inverted trial
+    #    element during line search cannot make K_aa singular) ──
+    K_aa_reg = K_aa + 1e-10 * (jnp.trace(K_aa) / 4.0 + 1e-30) * jnp.eye(4)
+    K_aa_inv_KuaT = jnp.linalg.solve(K_aa_reg, K_ua.T)
     K_e = K_uu - K_ua @ K_aa_inv_KuaT
-    f_e = f_u - K_ua @ jnp.linalg.solve(K_aa, f_a)
+    f_e = f_u - K_ua @ jnp.linalg.solve(K_aa_reg, f_a)
 
     return f_e, K_e, alpha_final, state_new

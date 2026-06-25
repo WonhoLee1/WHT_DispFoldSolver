@@ -1,9 +1,40 @@
 """
 rbe2.py
 =======
-Rigid Body Element (RBE2) constraint for plane strain 2D.
-Couples a set of slave nodes to a master node, allowing only a rigid body rotation
-about the Z axis.
+Rigid Body Element (RBE2) constraint for plane strain 2D hinge.
+
+Formulation
+-----------
+Couples m slave nodes to a master node (the hinge rotation centre) via
+Lagrange multipliers.  The constraint equations enforce that each slave
+node lies at a fixed offset from the master node, rotated by a shared
+unknown angle θ:
+
+    g_i(u, θ) = x_si(u_si) − x_m(u_m) − R(θ)·(X_si − X_m) = 0
+
+where R(θ) = [[cosθ, -sinθ], [sinθ, cosθ]].  The resulting KKT saddle-point
+system has 2·m multiplier equations and 1 extra primal DOF (θ), giving a
+theoretically rigid hinge connection.
+
+The RBE2 name comes from MSC Nastran (Rigid Body Element type 2), where
+a single "master" node defines the motion of any number of "slave" nodes.
+Unlike MPC (multipoint constraint) approaches that linearise at each step,
+this formulation retains the exact non-linear rotation, enabling large
+hinge angles (0→90° in the folding simulation) without geometric drift.
+
+Implementation notes
+--------------------
+- The rotation angle θ is stored in u_extra as an extra primal unknown.
+- The tangent stiffness contribution includes geometric terms from the
+  linearisation of R(θ) w.r.t. u and θ.
+- Assemble() returns the constraint vector g and its Jacobian
+  [∂g/∂u, ∂g/∂θ], which are assembled into the KKT system.
+
+References
+----------
+- MSC Nastran 2021 "Rigid Body Elements" documentation.
+- Felippa, C.A. (2004) "Introduction to Finite Element Methods",
+  Ch. 28: Multi-Freedom Constraints.
 """
 
 import numpy as np
