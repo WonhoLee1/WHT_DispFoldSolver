@@ -59,7 +59,38 @@ class RBE2HingeConstraint(BaseConstraint):
 
     def n_extra_primal(self) -> int:
         return 1  # 1 rotation theta
-        
+
+    def extra_geometric_stiffness(self, u_extra: np.ndarray, lam: np.ndarray) -> tuple:
+        """Rotation-DOF geometric stiffness  K_θθ = Σ_i λ_i · ∂²g_i/∂θ².
+
+        The rigid-rotation constraint g is nonlinear in θ (sin/cos), so the
+        consistent KKT tangent needs the second-derivative term λ·∂²g/∂θ² on the
+        (θ,θ) diagonal of the extra-primal block. The solver previously used only
+        a 1e-12 regularization there, leaving the global tangent inconsistent as
+        soon as θ≠0 — Newton then stalls with a constant displacement correction
+        (no quadratic convergence). With:
+            ∂g_x/∂θ = sinθ·dx + cosθ·dy ,  ∂²g_x/∂θ² = cosθ·dx − sinθ·dy
+            ∂g_y/∂θ = −cosθ·dx + sinθ·dy , ∂²g_y/∂θ² = sinθ·dx + cosθ·dy
+        and  J(θ,θ) = Σ λ·∂(∂g/∂θ)/∂θ.
+
+        Parameters
+        ----------
+        u_extra : full extra-primal vector (this constraint reads its offset).
+        lam     : multiplier slice for THIS constraint, length 2*n_slaves.
+        """
+        theta = float(u_extra[self.extra_primal_offset])
+        cost = np.cos(theta)
+        sint = np.sin(theta)
+        x_m, y_m = self.coords[self.master_idx]
+        k = 0.0
+        for i, s_idx in enumerate(self.slave_indices):
+            x_s, y_s = self.coords[s_idx]
+            dx = x_s - x_m
+            dy = y_s - y_m
+            k += lam[2 * i]     * (cost * dx - sint * dy)
+            k += lam[2 * i + 1] * (sint * dx + cost * dy)
+        return self.extra_primal_offset, float(k)
+
     def assemble(self, u: np.ndarray, u_extra: np.ndarray):
         n_slaves = len(self.slave_indices)
         

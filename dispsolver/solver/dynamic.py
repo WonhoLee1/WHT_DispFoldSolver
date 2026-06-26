@@ -469,6 +469,8 @@ class DynamicSolver:
         gamma: float = 0.5,
         max_iter: int = 20,
         tol: float = 1e-8,
+        atol: float = 1e-9,
+        rtol: float = 1e-4,
         verbose: bool = False,
         max_step: Optional[float] = None,
         element_type: str = "Q4",
@@ -512,6 +514,8 @@ class DynamicSolver:
         self.gamma = gamma
         self.max_iter = max_iter
         self.tol = tol
+        self.atol = atol   # absolute displacement-correction floor (P2)
+        self.rtol = rtol   # relative residual-force convergence tolerance (P2)
         self.verbose = verbose
         self.max_step = max_step
         self.static_mode = static_mode
@@ -1124,10 +1128,25 @@ class DynamicSolver:
                 global_val.append(v)
 
             # Extra primal inertia (0 for now, but add small regularization to avoid singular diagonal)
+            # Extra-primal (rotation θ) diagonal block. The CONSISTENT tangent
+            # requires the constraint geometric stiffness K_θθ = Σ λ·∂²g/∂θ²
+            # (the rigid rotation is nonlinear in θ). Without it the global
+            # tangent is inconsistent once θ≠0 and Newton stalls. A tiny 1e-12
+            # is kept on top to stabilize the otherwise-zero diagonal at θ=0.
+            k_extra_geo = np.zeros(self.n_extra, dtype=np.float64)
+            lam_off = 0
+            for c in self.constraints:
+                n_lam_c = c.n_multipliers()
+                if n_lam_c > 0 and hasattr(c, "extra_geometric_stiffness"):
+                    off, kval = c.extra_geometric_stiffness(
+                        u_ext_k, lam_k[lam_off:lam_off + n_lam_c]
+                    )
+                    k_extra_geo[off] += kval
+                lam_off += n_lam_c
             for i in range(self.n_extra):
                 global_row.append(ext_start_idx + i)
                 global_col.append(ext_start_idx + i)
-                global_val.append(1e-12)  # small stabilization
+                global_val.append(k_extra_geo[i] + 1e-12)
                 
             # Lambda stabilization (optional, avoid saddle point issues, usually spsolve handles it)
             # but sometimes zeros on diagonal cause UMFPACK to complain.
@@ -1186,12 +1205,18 @@ class DynamicSolver:
             # damped steps (α=0.5, 0.25, …) let the solver creep across the
             # unstable zone without blowing up.  Once past it, α=1.0 resumes.
             #
-            # Under-relaxation (alpha_max): caps the step size to prevent
-            # overshooting near bifurcations where the Newton direction is
-            # accurate but the step magnitude is too large.
+            # NOTE: a previous unconditional under-relaxation cap (alpha_max=0.7)
+            # forced EVERY accepted step — including the full Newton step — down
+            # to 0.7, which destroys quadratic convergence: with a consistent
+            # tangent the residual then contracts only ~linearly and trivial
+            # near-zero increments stall to max_iter (observed as constant du and
+            # LS.alpha pinned at 0.70). Bifurcation regularization is already
+            # provided by the LM diagonal shift, so the cap is both redundant and
+            # harmful. The full Newton step (alpha=1.0) is now allowed; the loop
+            # below only backtracks to escape NaN/Inf (geometric blow-up).
             alpha = 1.0
             alpha_min = 0.1
-            alpha_max = 0.7        # under-relaxation cap
+            alpha_max = 1.0        # no under-relaxation cap (full Newton allowed)
             R_norm_current = np.linalg.norm(R_total)
 
             while alpha > alpha_min + 1e-5:
@@ -1318,11 +1343,26 @@ class DynamicSolver:
             # conditioning makes |du| ~ |u|·√(κ) unavoidable — see `_solve_linear_system`).
             # If the KKT residual has dropped by 10 orders relative to the first
             # Newton iteration, the direction is good enough to accept.
+            # Relative residual-force convergence (P2): the KKT residual norm
+            # has dropped by ≥ -log10(rtol) orders from the first Newton
+            # iteration, i.e. the configuration is in equilibrium to rtol. This
+            # is the standard force criterion (Abaqus default ~5e-3); the prior
+            # 1e-9 threshold was unreachable on the equilibrated KKT (residual
+            # floors at the linear-solver precision ~1e-6 absolute) and never
+            # fired, so steps with a near-zero displacement ratio stalled to
+            # max_iter even when already converged.
             residual_converged = (
-                res_norm_0 is not None
-                and res_ratio < min(1e-10, self.tol * 1e-6)
+                res_norm_0 is not None and res_ratio < self.rtol
             )
-            if (rel_change < self.tol or energy_err < 1e-15 or residual_converged) and n_iter > 0:
+            # Absolute convergence (P2): when the Newton correction itself is
+            # negligibly small, the increment has converged regardless of the
+            # *relative* disp ratio. This cures the near-zero-deformation stall
+            # of a flat (C2) amplitude start and saddle-point noise, where
+            # du_norm/u_norm is dominated by numerical noise (0/0) and never
+            # reaches `tol` even though |du| ~ 1e-11.
+            abs_converged = du_norm < self.atol
+            if (rel_change < self.tol or energy_err < 1e-15
+                    or residual_converged or abs_converged) and n_iter > 0:
                 converged = True
                 self.time += dt          # advance analysis time on success only
                 if state_new is not None:

@@ -178,9 +178,15 @@ def run_v3():
     solver = DynamicSolver(
         mesh, materials, rho=1000.0, material_params={layer: {} for layer in range(7)},
         constraints=[rbe2_l, rbe2_r], penalty_constraints=[contact_c],
-        max_iter=MAX_ITER, tol=TOL, verbose=True, element_type=elem_type,
-        fast_assembly=FAST_ASSEMBLY, mode="moderate-2",
+        max_iter=MAX_ITER, tol=TOL, atol=1e-7, verbose=True, element_type=elem_type,
+        fast_assembly=FAST_ASSEMBLY, mode="quasistatic",
     )
+    # atol=1e-7: absolute Newton-correction floor. The C2 amplitude is flat near
+    # t=0, so early increments deform the panel by ~1e-8 mm; the *relative* disp
+    # ratio du/u then sits at ~0.07 (0/0 noise) and never reaches tol=1e-3,
+    # burning 50 iters -> cutback. A 1e-7 mm correction is physically negligible
+    # (element height 0.0167 mm), so accepting it lets the flat region pass in
+    # ~2 iters. Real loaded steps keep du_norm >> 1e-7 until truly converged.
 
     # 5. BCs with smooth amplitude
     nid_to_idx = mesh.node_id_to_index()
