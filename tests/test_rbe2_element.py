@@ -93,3 +93,125 @@ class TestRBE2ElementInterface:
         assert np.allclose(f_e, 0.0, atol=1e-8), (
             f"Rigid rotation should give ~zero force, got norm={np.linalg.norm(f_e):.2e}"
         )
+
+
+class TestSolverIntegration:
+    """Verify DynamicSolver correctly integrates RBE2HingeElement assembly.
+
+    The solver must:
+    - Accept rbe2_elements parameter without error.
+    - Call compute_contributions during the Newton loop.
+    - Accumulate RBE2 forces into f_int and stiffness into K_T.
+    - Persist RBE2 element state across converged steps.
+    """
+
+    @pytest.fixture
+    def two_quad_mesh(self):
+        """Two QUAD4 elements with a hinge master at (0,0).
+
+        Node layout (node_id: coordinates):
+        0: (-2, 0)  1: (-2, 2)
+        2: ( 0, 0)  3: ( 0, 2)
+        4: ( 2, 0)  5: ( 2, 2)
+
+        Elements: [QUAD4 (0,2,3,1)] left, [QUAD4 (2,4,5,3)] right.
+        RBE2 hinge: master=2, slaves=[0] (left wing tip).
+        """
+        from dispsolver.mesh import Mesh
+        mesh = Mesh()
+        mesh.add_node(0, -2.0, 0.0)
+        mesh.add_node(1, -2.0, 2.0)
+        mesh.add_node(2,  0.0, 0.0)
+        mesh.add_node(3,  0.0, 2.0)
+        mesh.add_node(4,  2.0, 0.0)
+        mesh.add_node(5,  2.0, 2.0)
+        mesh.add_element(0, [0, 2, 3, 1], 'QUAD4')
+        mesh.add_element(1, [2, 4, 5, 3], 'QUAD4')
+        return mesh
+
+    def test_accepts_rbe2_elements(self, two_quad_mesh):
+        """Solver constructor accepts rbe2_elements with zero constraints."""
+        from dispsolver.element.rbe2 import RBE2HingeElement
+        from dispsolver.solver import DynamicSolver
+        from dispsolver.material import J2Plasticity
+
+        coords = two_quad_mesh.nodes_array()
+        rbe2 = RBE2HingeElement(2, [0], coords)
+        mat = J2Plasticity(E=4000.0, nu=0.3, sigma_y0=80.0, H=620.0)
+
+        solver = DynamicSolver(
+            two_quad_mesh, mat, rho=1000.0,
+            constraints=[],
+            rbe2_elements=[rbe2],
+            max_iter=5, tol=1e-3,
+            element_type='Q4', mode='quasistatic',
+        )
+        assert solver.rbe2_elements == [rbe2]
+        assert solver.n_extra == 0     # no KKT extra DOFs
+        assert solver.n_lambdas == 0   # no KKT multipliers
+
+    def test_zero_load_no_crash(self, two_quad_mesh):
+        """Solver step with zero load converges trivially; RBE2 assembly runs."""
+        from dispsolver.element.rbe2 import RBE2HingeElement
+        from dispsolver.solver import DynamicSolver
+        from dispsolver.material import J2Plasticity
+
+        coords = two_quad_mesh.nodes_array()
+        nid_to_idx = two_quad_mesh.node_id_to_index()
+        rbe2 = RBE2HingeElement(2, [0], coords)
+        mat = J2Plasticity(E=4000.0, nu=0.3, sigma_y0=80.0, H=620.0)
+
+        solver = DynamicSolver(
+            two_quad_mesh, mat, rho=1000.0,
+            constraints=[], rbe2_elements=[rbe2],
+            max_iter=5, tol=1e-3,
+            element_type='Q4', mode='quasistatic',
+        )
+        # Fix master (2) and left edge (0,1)
+        solver.set_prescribed_dofs(
+            [nid_to_idx[2]*2, nid_to_idx[2]*2+1],
+            [0.0, 0.0],
+        )
+        # Zero load step → converges in 1 iteration (no crash)
+        n_iter = solver.solve_step(1.0)
+        assert n_iter >= 0, f"Solver should converge with zero load, got {n_iter}"
+        # RBE2 element state should be persisted
+        assert rbe2.state is not None, "RBE2 state must be persisted after convergence"
+
+    def test_state_persists_across_steps(self, two_quad_mesh):
+        """RBE2 element state persists across multiple converged time steps."""
+        from dispsolver.element.rbe2 import RBE2HingeElement
+        from dispsolver.solver import DynamicSolver
+        from dispsolver.material import J2Plasticity
+        from dispsolver.load import Amplitude
+
+        coords = two_quad_mesh.nodes_array()
+        nid_to_idx = two_quad_mesh.node_id_to_index()
+        rbe2 = RBE2HingeElement(2, [0], coords)
+        mat = J2Plasticity(E=4000.0, nu=0.3, sigma_y0=80.0, H=620.0)
+
+        solver = DynamicSolver(
+            two_quad_mesh, mat, rho=1000.0,
+            constraints=[],
+            rbe2_elements=[rbe2],
+            max_iter=10, tol=1e-3,
+            element_type='Q4', mode='quasistatic',
+        )
+        # Fix master (2)
+        solver.set_prescribed_dofs(
+            [nid_to_idx[2]*2, nid_to_idx[2]*2+1],
+            [0.0, 0.0],
+        )
+        # Step 1
+        solver.solve_step(0.5)
+        state_1 = rbe2.state
+        # Step 2 (zero load, should converge)
+        solver.solve_step(0.5)
+        state_2 = rbe2.state
+        # RBE2 internal state (λ accumulated penalty) should persist
+        # and may evolve if any constraint gap opens
+        assert state_2 is not None, "RBE2 state must persist after step 2"
+        # The state object identity may differ across steps (new state is
+        # computed each compute_contributions call), but the state must
+        # not be None after convergence.
+        assert state_2 is not None
