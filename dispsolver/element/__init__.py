@@ -2,8 +2,10 @@
 
 from . import q4
 from . import t3
+from . import rbe2
 
 __all__ = [
     "q4",
     "t3",
+    "rbe2",
 ]
