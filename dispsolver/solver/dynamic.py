@@ -465,6 +465,7 @@ class DynamicSolver:
         material_params: Optional[Dict] = None,
         constraints: Optional[List[BaseConstraint]] = None,
         penalty_constraints: Optional[List] = None,
+        rbe2_elements: Optional[List] = None,
         beta: float = 0.25,
         gamma: float = 0.5,
         max_iter: int = 20,
@@ -533,10 +534,12 @@ class DynamicSolver:
             self.element_type = element_type
         self.constraints = constraints if constraints is not None else []
         self.penalty_constraints = penalty_constraints if penalty_constraints is not None else []
+        self.rbe2_elements = rbe2_elements if rbe2_elements is not None else []
 
         # --- mesh data
         conn, nid_to_idx, sorted_nids, elem_ids = mesh.connectivity_array()
         self.conn = conn
+        self.nid_to_idx = nid_to_idx
         self.elem_ids = elem_ids
         self.sorted_nids = np.array(sorted_nids)
         self.n_nodes = len(sorted_nids)
@@ -549,6 +552,7 @@ class DynamicSolver:
         self.n_total = self.n_dofs + self.n_extra + self.n_lambdas
 
         self.elem_coords = mesh.nodes_array()[conn]
+        self.coords = mesh.nodes_array()
 
         # --- section (out-of-plane) thickness per element.
         # section_thickness may be a scalar (uniform) or a {pid: t} dict so each
@@ -860,7 +864,28 @@ class DynamicSolver:
             merit function for saddle-point systems).
         """
         f_int, _, _ = self._assemble(u_k, dt)
-        
+
+        # RBE2 element forces (same sign as regular elements)
+        if self.rbe2_elements:
+            for rbe2_elem in self.rbe2_elements:
+                nids = [rbe2_elem.master_id] + rbe2_elem.slave_ids
+                local_indices = [self.nid_to_idx[nid] for nid in nids]
+                n_nodes = len(nids)
+
+                u_elem = np.zeros(2 * n_nodes)
+                for j, idx in enumerate(local_indices):
+                    u_elem[2*j]     = u_k[2*idx]
+                    u_elem[2*j + 1] = u_k[2*idx + 1]
+
+                coords_elem = self.coords[local_indices]
+                f_e, _, _ = rbe2_elem.compute_contributions(
+                    coords_elem, u_elem, rbe2_elem.state
+                )
+
+                for j, idx in enumerate(local_indices):
+                    f_int[2*idx]     += f_e[2*j]
+                    f_int[2*idx + 1] += f_e[2*j + 1]
+
         a_k = (u_k - u_n - dt * v_n) * inv_beta_dt2 - (1.0 - 2.0 * beta) / (2.0 * beta) * a_n
         a_ext_k = (u_ext_k - u_ext_n - dt * v_ext_n) * inv_beta_dt2 - (1.0 - 2.0 * beta) / (2.0 * beta) * a_ext_n
 
@@ -1018,13 +1043,48 @@ class DynamicSolver:
 
         res_norm_0 = None
         converged = False
+        rbe2_trial_states = []
         for n_iter in range(self.max_iter):
             # --- debug check
             if np.any(np.isnan(u_k)):
                 print(f"DEBUG: u_k has NaN before assembly at iter {n_iter+1}!", flush=True)
                 
             f_int, K_T, state_new = self._assemble(u_k, dt)
-            
+
+            # --- RBE2 element assembly ---
+            if self.rbe2_elements:
+                K_T = K_T.tolil()
+                for rbe2_elem in self.rbe2_elements:
+                    nids = [rbe2_elem.master_id] + rbe2_elem.slave_ids
+                    local_indices = [self.nid_to_idx[nid] for nid in nids]
+                    n_nodes = len(nids)
+
+                    u_elem = np.zeros(2 * n_nodes)
+                    for j, idx in enumerate(local_indices):
+                        u_elem[2*j]     = u_k[2*idx]
+                        u_elem[2*j + 1] = u_k[2*idx + 1]
+
+                    coords_elem = self.coords[local_indices]
+                    elem_state = rbe2_elem.state
+
+                    f_e, K_e, state_new_elem = rbe2_elem.compute_contributions(
+                        coords_elem, u_elem, elem_state
+                    )
+
+                    for j, idx in enumerate(local_indices):
+                        f_int[2*idx]     += f_e[2*j]
+                        f_int[2*idx + 1] += f_e[2*j + 1]
+
+                    for a_idx, a_global in enumerate(local_indices):
+                        for i in range(2):
+                            for b_idx, b_global in enumerate(local_indices):
+                                for j in range(2):
+                                    K_T[2*a_global + i, 2*b_global + j] += K_e[2*a_idx + i, 2*b_idx + j]
+
+                    rbe2_trial_states.append(state_new_elem)
+
+                K_T = K_T.tocsr()
+
             # --- debug check
             if np.any(np.isnan(f_int)) or (K_T is not None and np.any(np.isnan(K_T.data))):
                 print(f"DEBUG: NaN detected in assembly at iter {n_iter+1}!", flush=True)
@@ -1367,6 +1427,9 @@ class DynamicSolver:
                 self.time += dt          # advance analysis time on success only
                 if state_new is not None:
                     self.state = state_new
+                if self.rbe2_elements and rbe2_trial_states:
+                    for i, rbe2_elem in enumerate(self.rbe2_elements):
+                        rbe2_elem.state = rbe2_trial_states[i]
                 if self.alpha != 0.0:
                     self.f_int_n = f_int.copy()  # store for HHT-α next step
                 if getattr(self, 'verbose', False):
