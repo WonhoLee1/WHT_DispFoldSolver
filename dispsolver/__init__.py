@@ -14,8 +14,15 @@ Specialized for display panel folding simulation with:
 
 __version__ = "0.1.0"
 
+# JAX must use float64 throughout — the FEM solver operates at float64
+# precision (element stiffness ~1e7, convergence tolerances ~1e-7).
+# Set the env var *before* import jax so the initial config picks it up.
+import os
+os.environ.setdefault("JAX_ENABLE_X64", "True")
+
 try:
     import jax
-    jax.config.update("jax_enable_x64", True)
+    if not jax.config.read("jax_enable_x64"):
+        jax.config.update("jax_enable_x64", True)
 except ImportError:
     pass

@@ -23,7 +23,7 @@ def pk2_voigt_jax(F_2d, state, lam, mu, sigma_y0, H):
     F_e_tr = F_3d @ F_p_inv_3d
     b_e_tr = F_e_tr @ F_e_tr.T
 
-    bad = (jnp.linalg.det(F_3d) < 1e-6) | ~jnp.all(jnp.isfinite(b_e_tr))
+    bad = (jnp.abs(jnp.linalg.det(F_3d)) < 1e-6) | ~jnp.all(jnp.isfinite(b_e_tr))
     b_e_tr_safe = jnp.where(bad, jnp.eye(3), b_e_tr)
 
     w, v = jnp.linalg.eigh(b_e_tr_safe)
@@ -92,12 +92,13 @@ def tangent_voigt_jax(F_2d, state, lam, mu, sigma_y0, H, h=1e-6):
     """
     S0, state_new = pk2_voigt_jax(F_2d, state, lam, mu, sigma_y0, H)
 
-    # Inversion guard: at a degenerate / inverted trial F (det <= 0, which the
-    # global line search probes), inv(F) blows up and the FD tangent becomes
-    # NaN. Replace it with a finite isotropic tangent (matching pk2_voigt_jax,
-    # whose `bad` branch already returns ~zero stress there) so the line search
-    # can back off instead of stalling on NaN.
-    bad = jnp.linalg.det(F_2d) <= 1e-8
+    # Inversion guard: distinguish truly-singular (|det|<1e-8, inv blows up)
+    # from merely-inverted (det<0 but |det|>=1e-8).  For truly-singular F we
+    # fall back to the identity so the FD is well-defined.  For inverted F we
+    # compute the FD tangent around the actual F — inv(F) is well-defined even
+    # when det(F)<0, and using C_iso there caused Newton divergence because the
+    # search direction was wrong.
+    bad = jnp.abs(jnp.linalg.det(F_2d)) < 1e-8
     F_safe = jnp.where(bad, jnp.eye(2), F_2d)
 
     FinvT = jnp.linalg.inv(F_safe).T
