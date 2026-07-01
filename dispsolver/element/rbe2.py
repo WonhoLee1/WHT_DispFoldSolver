@@ -88,16 +88,13 @@ class RBE2HingeElement:
         master_id: int,
         slave_ids: list[int],
         coords_initial: np.ndarray,
+        E_estimate: float = 4000.0,
+        penalty: float | None = None,
     ):
         self.master_id = master_id
         self.slave_ids = list(slave_ids)
         self.n_slaves = len(slave_ids)
 
-        # Map node IDs to index positions in coords_initial
-        # (for this simple element, we assume node IDs are sequential 0..n-1
-        #  matching the row index in coords_initial)
-        # In production, a mesh lookup would be needed; here we use IDs directly
-        # for the element-local coordinate array passed to compute_contributions.
         self.master_idx = master_id
         self.slave_indices = list(slave_ids)
 
@@ -108,6 +105,23 @@ class RBE2HingeElement:
             dtype=np.float64,
         )
 
+        # Auto-scale penalty based on element size and material stiffness.
+        # ANSYS RBE2 approach: penalty = α · E · h  where α ≈ 100.
+        if penalty is not None:
+            self.PENALTY = float(penalty)
+        else:
+            x = coords_initial[:, 0]
+            y = coords_initial[:, 1]
+            h = float(max(np.ptp(x), np.ptp(y)))
+            if h < 1e-12:
+                h = 1.0
+            self.PENALTY = 100.0 * E_estimate * h
+
+        # Externally prescribed rotation angle.
+        # None = solve internally via local Newton (default).
+        # float = use this value, skip local Newton, no condensation.
+        self._prescribed_theta: float | None = None
+
         # Initialise state (zeros — first step uses initial geometry)
         self.state = RBE2State(
             u_m_n=np.zeros(2, dtype=np.float64),
@@ -116,6 +130,13 @@ class RBE2HingeElement:
             lam_n=np.zeros(2 * self.n_slaves, dtype=np.float64),
         )
 
+    def set_prescribed_theta(self, theta: float | None) -> None:
+        self._prescribed_theta = theta
+
+    @property
+    def is_prescribed(self) -> bool:
+        return self._prescribed_theta is not None
+
     @property
     def n_external_dofs(self) -> int:
         """Number of external (global) DOFs: 2 per node × (master + slaves)."""
@@ -123,8 +144,13 @@ class RBE2HingeElement:
 
     # ------------------------------------------------------------------
     #  Penalty parameter
+    #  Auto-scaled based on element size and material stiffness.
+    #  Following ANSYS RBE2 approach: penalty = α · E · h
+    #  where α ≈ 100, E = estimated Young's modulus, h = char. element size.
+    #  This gives penalty well-conditioned relative to element stiffness.
+    #  The user can override by passing PENALTY to the constructor.
     # ------------------------------------------------------------------
-    PENALTY: float = 1e10
+    PENALTY: float = None  # None means auto-scale in __init__
 
     # ------------------------------------------------------------------
     #  Geometry helpers
@@ -328,20 +354,31 @@ class RBE2HingeElement:
         u_m = u_elem[0:2].copy()
         u_s = u_elem[2:].copy() if m > 0 else np.array([], dtype=np.float64)
         C_u = self._build_Cu()
-        d_n = self._offset(prev)
         lam = prev.lam_n.copy() if len(prev.lam_n) > 0 else np.zeros(2 * m)
 
+        if self._prescribed_theta is not None:
+            # ── Externally prescribed θ (Abaqus-style) ────────────────
+            # No local Newton, no condensation — pure penalty + AL force.
+            θ = float(self._prescribed_theta)
+            g = self._exact_gap(u_m, u_s, θ)
+            f_e = C_u.T @ lam + k * (C_u.T @ g)       # (n_ext,)
+            K_e = k * (C_u.T @ C_u)                     # (n_ext, n_ext)
+            lam_new = lam + k * g
+            state_new = RBE2State(
+                u_m_n=u_m, u_s_n=u_s, theta_n=θ, lam_n=lam_new,
+            )
+            return f_e, K_e, state_new
+
+        # ── Internal θ (element-level condensation) ──────────────────
         # --- 1. Local Newton for exact θ ---
         θ_converged = self._local_newton_theta(u_m, u_s, prev.theta_n)
 
         # --- 2. Tangent + force via penalty condensation ---
         f_e, K_e, Δθ = self._build_tangent(
-            u_m, u_s, θ_converged, lam, d_n, k, C_u,
+            u_m, u_s, θ_converged, lam, self._offset(prev), k, C_u,
         )
 
         # --- 3. State update ---
-        # Augmented-Lagrange multiplier update (Uzawa):
-        #   λ_new = λ_n + k·g(u, θ_converged)
         g_converged = self._exact_gap(u_m, u_s, θ_converged)
         lam_new = lam + k * g_converged
 
