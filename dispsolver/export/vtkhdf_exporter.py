@@ -211,11 +211,19 @@ class TransientVTKHDFExporter:
             ascii_type = b"UnstructuredGrid"
             g.attrs.create("Type", ascii_type, dtype=h5.string_dtype("ascii", len(ascii_type)))
 
-            # Static geometry
-            g.create_dataset("Points", data=self._points_3d)
+            # Connectivity / topology is static (shared across all steps)
             g.create_dataset("Connectivity", data=self._connectivity)
             g.create_dataset("Offsets", data=self._offsets)
             g.create_dataset("Types", data=self._types)
+
+            # --- Deformed geometry per step ---
+            # Store deformed coordinates (original + displacement) so ParaView
+            # shows the folded shape automatically without manual Warp By Vector.
+            # PointOffsets tells ParaView where each step's points begin.
+            deformed_points = []
+            for u_3d in self._u_buf:
+                deformed_points.append(self._points_3d + u_3d)
+            g.create_dataset("Points", data=np.concatenate(deformed_points, axis=0))
 
             # Per-step field data (concatenated across steps)
             pd = g.create_group("PointData")
@@ -236,14 +244,16 @@ class TransientVTKHDFExporter:
             steps.create_dataset("Values", data=np.array(self.time_values, dtype=np.float32))
             steps.attrs["NSteps"] = np.array(nsteps, dtype=np.int32)
             steps.create_dataset("PartOffsets", data=np.zeros(nsteps, dtype=np.int32))
-            steps.create_dataset("PointOffsets", data=np.zeros(nsteps, dtype=np.int32))
+            # PointOffsets = [0, N, 2N, ...] → each step reads its own deformed coordinates
+            steps.create_dataset("PointOffsets", data=np.arange(nsteps, dtype=np.int32) * self.n_nodes)
             steps.create_dataset("CellOffsets", data=np.zeros(nsteps, dtype=np.int32))
             steps.create_dataset("ConnectivityIdOffsets", data=np.zeros(nsteps, dtype=np.int32))
 
             p_offsets = np.arange(nsteps, dtype=np.int32) * self.n_nodes
             c_offsets = np.arange(nsteps, dtype=np.int32) * self.n_cells
             pd_offsets = steps.create_group("PointDataOffsets")
-            pd_offsets.create_dataset("Displacement", data=p_offsets)
+            if self._u_buf:
+                pd_offsets.create_dataset("Displacement", data=p_offsets)
             for k in self._point_state_buf.keys():
                 pd_offsets.create_dataset(k, data=p_offsets)
             cd_offsets = steps.create_group("CellDataOffsets")
