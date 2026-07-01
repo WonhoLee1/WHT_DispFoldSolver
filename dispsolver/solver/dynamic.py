@@ -114,6 +114,10 @@ try:
 except ImportError:
     _PARDISO_AVAILABLE = False
 
+# Tracks which (n,) matrix sizes have already had their first PARDISO
+# factorisation announced, keyed by matrix dimension.
+_PARDISO_FACTOR_NOTIFIED: dict = {}
+
 
 def _equilibrate(A: sps.csr_matrix, b: np.ndarray):
     """Diagonal equilibration (A * x = b) → (Ã * y = b̅),  x = D⁻¹·y.
@@ -174,7 +178,16 @@ def _solve_linear_system(J, b, n_refine: int = 4, tol: float = 1e-14):
         # 2×2 pivot blocks (PARDISO's internal pivot search handles this).
         # Equilibration reduces κ(J) from ~10⁶ to <10², so the unsymmetric
         # solver no longer loses digits on the cross-block scaling.
+        _t0 = time.perf_counter()
         y = pardiso_spsolve(Js, bs)
+        _dt = time.perf_counter() - _t0
+        if _dt > 1.0 and not _PARDISO_FACTOR_NOTIFIED.get(Js.shape[0], False):
+            n = Js.shape[0]
+            nnz = Js.nnz
+            print(f"[PARDISO] factorising {n}x{n} system ({nnz} nnz) "
+                  f"took {_dt:.1f}s (one-time per matrix structure)",
+                  flush=True)
+            _PARDISO_FACTOR_NOTIFIED[n] = True
 
         # ---- 3. Iterative refinement on SCALED system ----
         b_norm = np.linalg.norm(bs) + 1e-30
@@ -202,6 +215,7 @@ def _solve_linear_system(J, b, n_refine: int = 4, tol: float = 1e-14):
         return x
 
 from ..element import q4
+from ..element.rbe2 import RBE2State
 from ..mesh import Mesh
 from ..material.base import MaterialModel
 from ..constraint.base import BaseConstraint
@@ -423,8 +437,93 @@ INTEGRATION_MODES = {
 }
 
 
+def _rbe2_assemble_single(solver, d, f_int, K_T, rbe2_trial_states, u_k):
+    """Per-element RBE2 assembly (NumPy or per-element JAX) — fallback path.
+
+    Used for elements not covered by the vmap'd group dispatch (single-element
+    groups, or JAX unavailable). Mirrors the original per-element logic.
+
+    When the element has an externally prescribed θ (is_prescribed), the
+    element forces and stiffness are added to ALL element DOFs — no master
+    projection.  This is the Abaqus-style approach: prescribed θ drives the
+    element constraint, and the constraint forces act on every slave node.
+    """
+    rbe2_elem = d["elem"]
+    local_indices = d["local_indices"]
+    n_nodes = d["n_nodes"]
+    u_elem = d["u_elem"]
+    coords_elem = d["coords_elem"]
+    m = rbe2_elem.n_slaves
+    n_ext = 2 * n_nodes
+    prescribed = getattr(rbe2_elem, 'is_prescribed', False)
+
+    if prescribed:
+        # ── Externally prescribed θ — Abaqus-style full-DOF contribution ──
+        f_e, K_e, state_new_elem = rbe2_elem.compute_contributions(
+            coords_elem, u_elem, rbe2_elem.state,
+        )
+        # f_e: (n_ext,), K_e: (n_ext, n_ext) — add to ALL element DOFs
+        for ii in range(n_ext):
+            g_ii = 2 * local_indices[ii // 2] + (ii % 2)
+            f_int[g_ii] += f_e[ii]
+            for jj in range(n_ext):
+                k_val = K_e[ii, jj]
+                if abs(k_val) < 1e-30:
+                    continue
+                g_jj = 2 * local_indices[jj // 2] + (jj % 2)
+                K_T[g_ii, g_jj] += k_val
+        rbe2_trial_states.append(state_new_elem)
+        return
+
+    if solver.use_jax_rbe2 and solver._rbe2_jax_fn is not None:
+        import jax.numpy as jnp
+        prev = rbe2_elem.state
+        lam_n = prev.lam_n if len(prev.lam_n) > 0 else np.zeros(2 * m)
+        f_e_jax, K_e_jax, theta_new, lam_new, _dtheta = solver._rbe2_jax_fn(
+            jnp.asarray(coords_elem),
+            jnp.asarray(u_elem),
+            jnp.asarray(rbe2_elem.d0),
+            jnp.asarray(lam_n),
+            jnp.asarray(float(prev.theta_n)),
+            jnp.asarray(float(rbe2_elem.PENALTY)),
+        )
+        f_e = np.asarray(f_e_jax)
+        K_e = np.asarray(K_e_jax)
+        state_new_elem = RBE2State(
+            u_m_n=u_elem[0:2].copy(),
+            u_s_n=u_elem[2:].copy() if m > 0 else prev.u_s_n,
+            theta_n=float(np.asarray(theta_new)),
+            lam_n=np.asarray(lam_new),
+        )
+    else:
+        f_e, K_e, state_new_elem = rbe2_elem.compute_contributions(
+            coords_elem, u_elem, rbe2_elem.state,
+        )
+
+    # ── Master-only projection (condensed element, internal θ) ──
+    T = np.zeros((n_ext, 2))
+    for idx in range(n_nodes):
+        T[2 * idx:2 * idx + 2, :] = np.eye(2)
+    f_m = T.T @ f_e
+    K_m = T.T @ K_e @ T
+
+    master_global = local_indices[0]
+    f_int[2 * master_global:2 * master_global + 2] += f_m
+    for ii in range(2):
+        for jj in range(2):
+            K_T[2 * master_global + ii, 2 * master_global + jj] += K_m[ii, jj]
+    rbe2_trial_states.append(state_new_elem)
+
+
 class DynamicSolver:
     """Implicit dynamic FEM solver with multi-material, multi-constraint support.
+
+    Class attributes
+    ----------------
+    RBE2_VMAP_THRESHOLD : int
+        Minimum RBE2 element group size to activate jax.vmap dispatch.
+        Groups smaller than this use the per-element JIT path. Benchmarked
+        crossover is N ≈ 16 on CPU. Override via subclass or instance attr.
 
     This class manages the full simulation state: mesh connectivity, element
     topology, material models (per-pid), internal variables (state per GP),
@@ -457,6 +556,9 @@ class DynamicSolver:
     the caller restores a saved state and retries with smaller dt.  This
     is the standard Abaqus-style controlled increment scheme.
     """
+
+    RBE2_VMAP_THRESHOLD = 16
+
     def __init__(
         self,
         mesh: Mesh,
@@ -480,6 +582,7 @@ class DynamicSolver:
         static_mode: bool = False,
         alpha: float = 0.0,
         mode: Optional[str] = None,
+        ul_mode: bool = False,
     ):
         # Named integration preset overrides the individual β/γ/α/static_mode
         # arguments with a mutually-consistent set (see INTEGRATION_MODES).
@@ -536,6 +639,47 @@ class DynamicSolver:
         self.penalty_constraints = penalty_constraints if penalty_constraints is not None else []
         self.rbe2_elements = rbe2_elements if rbe2_elements is not None else []
 
+        # JAX acceleration path for RBE2 element assembly (per-element JIT).
+        # Activated only when jax is importable; solver falls back to NumPy otherwise.
+        # Elements sharing the same slave count m are grouped together so a
+        # single jax.vmap call can replace the per-element Python loop.
+        self.use_jax_rbe2 = False
+        self._rbe2_jax_fn = None
+        self._rbe2_jax_vmap_fn = None
+        self._rbe2_elements_by_m = {}
+        self._rbe2_T_by_m = {}
+        self._rbe2_vmap_threshold = type(self).RBE2_VMAP_THRESHOLD
+        if self.rbe2_elements:
+            try:
+                from .dynamic_jax import (
+                    build_rbe2_element_contributions_jax,
+                    build_rbe2_vmap_contributions_jax,
+                )
+                self._rbe2_jax_fn = build_rbe2_element_contributions_jax()
+                self._rbe2_jax_vmap_fn = build_rbe2_vmap_contributions_jax()
+                self.use_jax_rbe2 = True
+                for rbe2_elem in self.rbe2_elements:
+                    m = rbe2_elem.n_slaves
+                    self._rbe2_elements_by_m.setdefault(m, []).append(rbe2_elem)
+                for m, elems in self._rbe2_elements_by_m.items():
+                    n_ext = 2 * (m + 1)
+                    T = np.zeros((n_ext, 2))
+                    for idx in range(m + 1):
+                        T[2 * idx:2 * idx + 2, :] = np.eye(2)
+                    self._rbe2_T_by_m[m] = T
+            except ImportError:
+                self.use_jax_rbe2 = False
+
+        # RBE2 DOF-elimination map is built after nid_to_idx is computed below.
+        # We only collect slave node IDs here so the map is available as soon as
+        # the rest of the mesh data is ready.
+        self.rbe2_dof_map: dict[int, int] = {}
+        self.rbe2_slave_nodes: set[int] = set()
+        if self.rbe2_elements:
+            for rbe2_elem in self.rbe2_elements:
+                for slave_id in rbe2_elem.slave_ids:
+                    self.rbe2_slave_nodes.add(slave_id)
+
         # --- mesh data
         conn, nid_to_idx, sorted_nids, elem_ids = mesh.connectivity_array()
         self.conn = conn
@@ -545,6 +689,24 @@ class DynamicSolver:
         self.n_nodes = len(sorted_nids)
         self.n_dofs = self.n_nodes * 2
         self.n_elem = len(conn)
+
+        if self.rbe2_elements:
+            for rbe2_elem in self.rbe2_elements:
+                master_id = rbe2_elem.master_id
+                if master_id not in nid_to_idx:
+                    raise ValueError(
+                        f"RBE2 master node id {master_id} not in mesh connectivity"
+                    )
+                master_idx = nid_to_idx[master_id]
+                for slave_id in rbe2_elem.slave_ids:
+                    if slave_id not in nid_to_idx:
+                        raise ValueError(
+                            f"RBE2 slave node id {slave_id} not in mesh connectivity"
+                        )
+                    for comp in (0, 1):
+                        slave_dof = slave_id * 2 + comp
+                        master_dof = master_idx * 2 + comp
+                        self.rbe2_dof_map[slave_dof] = master_dof
         
         # --- constraint setup
         self.n_extra = sum(c.n_extra_primal() for c in self.constraints)
@@ -710,8 +872,8 @@ class DynamicSolver:
                         mu = float(mat.mu)
                         sigma_y0 = float(mat.sigma_y0)
                         H = float(mat.H)
-                        _single = lambda coords, u_e, a, s: compute_eas_j2_contributions_jax(
-                            coords, u_e, a, s, lam, mu, sigma_y0, H, 1.0,
+                        _single = lambda coords, u_e, a, s, fn: compute_eas_j2_contributions_jax(
+                            coords, u_e, a, s, lam, mu, sigma_y0, H, 1.0, fn,
                         )
                         self._eas_jax_vmap_by_pid[pid] = jax.jit(jax.vmap(_single))
             except ImportError:
@@ -750,6 +912,17 @@ class DynamicSolver:
         # --- EAS internal parameters (4 per element); only Q4_EAS elements use
         #     them, others stay zero. Persisted/rolled back like material state.
         self.eas_alpha = np.zeros((self.n_elem, 4), dtype=np.float64)
+
+        # --- Updated-Lagrangian bookkeeping ---
+        # _ul_F_n  : total deformation gradient at last converged step, per elem per GP.
+        #            Identity at t=0 (TL and UL behave identically for the first step).
+        # _ul_u_ref: total displacement at the last converged step (used to compute
+        #            u_inc = u - u_ref and coords_ref = coords_0 + u_ref).
+        self.ul_mode = ul_mode
+        self._ul_F_n = np.tile(
+            np.eye(2, dtype=np.float64), (self.n_elem, 4, 1, 1)
+        )  # (n_elem, 4, 2, 2)
+        self._ul_u_ref = np.zeros(self.n_dofs, dtype=np.float64)
 
         self.f_ext = np.zeros(self.n_dofs, dtype=np.float64)
         self.bc_dofs = np.array([], dtype=np.int32)
@@ -865,7 +1038,16 @@ class DynamicSolver:
         """
         f_int, _, _ = self._assemble(u_k, dt)
 
-        # RBE2 element forces (same sign as regular elements)
+        # Redirect external loads on RBE2 slave DOFs → master DOFs (Abaqus-style)
+        f_ext_mapped = self.f_ext.copy()
+        if self.rbe2_dof_map:
+            for slave_dof, master_dof in self.rbe2_dof_map.items():
+                val = f_ext_mapped[slave_dof]
+                if val != 0.0:
+                    f_ext_mapped[master_dof] += val
+                    f_ext_mapped[slave_dof] = 0.0
+
+        # RBE2 element forces — projected onto master DOFs (Abaqus-style)
         if self.rbe2_elements:
             for rbe2_elem in self.rbe2_elements:
                 nids = [rbe2_elem.master_id] + rbe2_elem.slave_ids
@@ -882,19 +1064,31 @@ class DynamicSolver:
                     coords_elem, u_elem, rbe2_elem.state
                 )
 
-                for j, idx in enumerate(local_indices):
-                    f_int[2*idx]     += f_e[2*j]
-                    f_int[2*idx + 1] += f_e[2*j + 1]
+                if getattr(rbe2_elem, 'is_prescribed', False):
+                    # Full DOF contribution (Abaqus-style prescribed θ)
+                    n_ext = 2 * n_nodes
+                    for ii in range(n_ext):
+                        g_ii = 2 * local_indices[ii // 2] + (ii % 2)
+                        f_int[g_ii] += f_e[ii]
+                else:
+                    # Project onto master DOFs (condensed element)
+                    n_ext = 2 * n_nodes
+                    T = np.zeros((n_ext, 2))
+                    for idx in range(n_nodes):
+                        T[2*idx:2*idx+2, :] = np.eye(2)
+                    f_m = T.T @ f_e
+                    master_global = local_indices[0]
+                    f_int[2*master_global:2*master_global+2] += f_m
 
         a_k = (u_k - u_n - dt * v_n) * inv_beta_dt2 - (1.0 - 2.0 * beta) / (2.0 * beta) * a_n
         a_ext_k = (u_ext_k - u_ext_n - dt * v_ext_n) * inv_beta_dt2 - (1.0 - 2.0 * beta) / (2.0 * beta) * a_ext_n
 
         if self.static_mode:
-            R_u = self.f_ext - f_int
+            R_u = f_ext_mapped - f_int
         elif self.alpha != 0.0 and self.f_int_n is not None:
-            R_u = self.f_ext - self.M * a_k - (1.0 + self.alpha) * f_int + self.alpha * self.f_int_n
+            R_u = f_ext_mapped - self.M * a_k - (1.0 + self.alpha) * f_int + self.alpha * self.f_int_n
         else:
-            R_u = self.f_ext - self.M * a_k - f_int
+            R_u = f_ext_mapped - self.M * a_k - f_int
         R_ext = np.zeros(self.n_extra)
         R_lam = np.zeros(self.n_lambdas)
         
@@ -1003,8 +1197,9 @@ class DynamicSolver:
         # Evaluate time-dependent prescribed values at the end of the increment
         # (Abaqus-style amplitude ramp). On cutback dt shrinks and the target
         # time is recomputed from the (unadvanced) current time.
-        if self._bc_amplitudes is not None:
-            self.bc_vals = self._eval_bc_vals(self.time + dt)
+        # Always re-evaluate so that callers who update _bc_base_vals directly
+        # per-step (e.g. NODE_MOV_BC rotation BCs) are picked up correctly.
+        self.bc_vals = self._eval_bc_vals(self.time + dt)
 
         u_n = self.u.copy()
         v_n = self.v.copy()
@@ -1041,6 +1236,15 @@ class DynamicSolver:
             print(f"  v_n has NaN: {np.any(np.isnan(v_n))}", flush=True)
             print(f"  a_n has NaN: {np.any(np.isnan(a_n))}", flush=True)
 
+        # Redirect external loads on RBE2 slave DOFs → master DOFs (Abaqus-style)
+        f_ext_mapped = self.f_ext.copy()
+        if self.rbe2_dof_map:
+            for slave_dof, master_dof in self.rbe2_dof_map.items():
+                val = f_ext_mapped[slave_dof]
+                if val != 0.0:
+                    f_ext_mapped[master_dof] += val
+                    f_ext_mapped[slave_dof] = 0.0
+
         res_norm_0 = None
         converged = False
         rbe2_trial_states = []
@@ -1051,37 +1255,85 @@ class DynamicSolver:
                 
             f_int, K_T, state_new = self._assemble(u_k, dt)
 
-            # --- RBE2 element assembly ---
+            # --- RBE2 element assembly (Abaqus-style: projected to master DOFs only) ---
             if self.rbe2_elements:
                 K_T = K_T.tolil()
+                # Pre-build per-element data needed for both vmap and per-element paths
+                elem_data = []
                 for rbe2_elem in self.rbe2_elements:
                     nids = [rbe2_elem.master_id] + rbe2_elem.slave_ids
                     local_indices = [self.nid_to_idx[nid] for nid in nids]
                     n_nodes = len(nids)
-
                     u_elem = np.zeros(2 * n_nodes)
                     for j, idx in enumerate(local_indices):
                         u_elem[2*j]     = u_k[2*idx]
                         u_elem[2*j + 1] = u_k[2*idx + 1]
+                    elem_data.append({
+                        "elem": rbe2_elem,
+                        "local_indices": local_indices,
+                        "n_nodes": n_nodes,
+                        "u_elem": u_elem,
+                        "coords_elem": self.coords[local_indices],
+                    })
 
-                    coords_elem = self.coords[local_indices]
-                    elem_state = rbe2_elem.state
-
-                    f_e, K_e, state_new_elem = rbe2_elem.compute_contributions(
-                        coords_elem, u_elem, elem_state
-                    )
-
-                    for j, idx in enumerate(local_indices):
-                        f_int[2*idx]     += f_e[2*j]
-                        f_int[2*idx + 1] += f_e[2*j + 1]
-
-                    for a_idx, a_global in enumerate(local_indices):
-                        for i in range(2):
-                            for b_idx, b_global in enumerate(local_indices):
-                                for j in range(2):
-                                    K_T[2*a_global + i, 2*b_global + j] += K_e[2*a_idx + i, 2*b_idx + j]
-
-                    rbe2_trial_states.append(state_new_elem)
+                # Group by slave count m and dispatch via jax.vmap when possible.
+                if self.use_jax_rbe2 and self._rbe2_jax_vmap_fn is not None:
+                    import jax.numpy as jnp
+                    processed = set()
+                    for m, group_elems in self._rbe2_elements_by_m.items():
+                        if len(group_elems) < self._rbe2_vmap_threshold:
+                            continue  # small group: per-element path is faster
+                        group_data = [d for d in elem_data if d["elem"] in group_elems]
+                        if len(group_data) < 2:
+                            continue
+                        # Build batched inputs
+                        coords_b = np.stack([d["coords_elem"] for d in group_data])
+                        u_b = np.stack([d["u_elem"] for d in group_data])
+                        d0_b = np.stack([d["elem"].d0 for d in group_data])
+                        lam_b = np.stack([
+                            (d["elem"].state.lam_n if len(d["elem"].state.lam_n) > 0
+                             else np.zeros(2 * m))
+                            for d in group_data
+                        ])
+                        theta_b = np.array([d["elem"].state.theta_n for d in group_data])
+                        pen_b = np.array([d["elem"].PENALTY for d in group_data])
+                        f_b, K_b, th_b, lam_b_out, _dth_b = self._rbe2_jax_vmap_fn(
+                            jnp.asarray(coords_b),
+                            jnp.asarray(u_b),
+                            jnp.asarray(d0_b),
+                            jnp.asarray(lam_b),
+                            jnp.asarray(theta_b),
+                            jnp.asarray(pen_b),
+                        )
+                        f_b = np.asarray(f_b)
+                        K_b = np.asarray(K_b)
+                        th_b = np.asarray(th_b)
+                        lam_b_out = np.asarray(lam_b_out)
+                        T = self._rbe2_T_by_m[m]
+                        for i, d in enumerate(group_data):
+                            rbe2_elem = d["elem"]
+                            f_m = T.T @ f_b[i]
+                            K_m = T.T @ K_b[i] @ T
+                            master_global = d["local_indices"][0]
+                            f_int[2*master_global:2*master_global+2] += f_m
+                            for ii in range(2):
+                                for jj in range(2):
+                                    K_T[2*master_global + ii, 2*master_global + jj] += K_m[ii, jj]
+                            rbe2_trial_states.append(RBE2State(
+                                u_m_n=d["u_elem"][0:2].copy(),
+                                u_s_n=d["u_elem"][2:].copy() if m > 0 else rbe2_elem.state.u_s_n,
+                                theta_n=float(th_b[i]),
+                                lam_n=lam_b_out[i].copy(),
+                            ))
+                            processed.add(id(rbe2_elem))
+                    # Fall through to per-element loop for elements not in a vmap'd group
+                    for d in elem_data:
+                        if id(d["elem"]) in processed:
+                            continue
+                        _rbe2_assemble_single(self, d, f_int, K_T, rbe2_trial_states, u_k)
+                else:
+                    for d in elem_data:
+                        _rbe2_assemble_single(self, d, f_int, K_T, rbe2_trial_states, u_k)
 
                 K_T = K_T.tocsr()
 
@@ -1107,11 +1359,11 @@ class DynamicSolver:
             a_ext_k = (u_ext_k - u_ext_n - dt * v_ext_n) * inv_beta_dt2 - (1.0 - 2.0 * beta) / (2.0 * beta) * a_ext_n
 
             if self.static_mode:
-                R_u = self.f_ext - f_int
+                R_u = f_ext_mapped - f_int
             elif self.alpha != 0.0 and self.f_int_n is not None:
-                R_u = self.f_ext - self.M * a_k - (1.0 + self.alpha) * f_int + self.alpha * self.f_int_n
+                R_u = f_ext_mapped - self.M * a_k - (1.0 + self.alpha) * f_int + self.alpha * self.f_int_n
             else:
-                R_u = self.f_ext - self.M * a_k - f_int
+                R_u = f_ext_mapped - self.M * a_k - f_int
             R_ext = np.zeros(self.n_extra)
             R_lam = np.zeros(self.n_lambdas)
             
@@ -1215,12 +1467,15 @@ class DynamicSolver:
             J = sps.coo_matrix((global_val, (global_row, global_col)), shape=(self.n_total, self.n_total)).tocsr()
 
             # --- Eigenvalue regularization (Tikhonov / ridge) ---
-            # Adds ε·I to shift near-zero eigenvalues of the tangent stiffness
-            # toward positive, improving conditioning without altering the
-            # Newton direction for well-conditioned modes.  ε is chosen small
-            # enough to preserve accuracy (~machine-ε × mean|diag(K)|).
+            # Adds ε·I to the entire KKT system.  For well-conditioned
+            # displacement blocks the perturbation is negligible (ε ≈ 1e-8
+            # of the mean diagonal).  At the flat C² amplitude start the
+            # displacement stiffness K_uu ≈ 0, making the Schur complement
+            # C_u·K_uu⁻¹·C_u^T singular; ε_min provides the minimum
+            # conditioning needed for PARDISO to produce a stable Newton
+            # direction (1e-2 is ~10⁻⁶ relative to element stiffnesses).
             _diag_mean = np.abs(J.diagonal()[:self.n_dofs]).mean()
-            _eps_reg = max(1e-12, 1e-8 * _diag_mean)
+            _eps_reg = max(1e-4, 1e-8 * _diag_mean)
             J = J + _eps_reg * sps.eye(self.n_total, format='csr')
 
             if has_bc:
@@ -1427,9 +1682,46 @@ class DynamicSolver:
                 self.time += dt          # advance analysis time on success only
                 if state_new is not None:
                     self.state = state_new
+                # UL: commit the converged displacement as new reference for next step
+                if self.ul_mode:
+                    self._ul_u_ref = u_k[:self.n_dofs].copy()
+                    # Sync _ul_F_n for ALL elements using F = I + grad(u_total).
+                    # This ensures elements that went through the numpy TL fallback
+                    # have consistent F_n before the next step starts.
+                    _u_conv = self._ul_u_ref
+                    _u_elems = _u_conv[self.dof_indices]   # (N_elem, 8)
+                    _ux = _u_elems[:, 0::2]                # (N_elem, 4)
+                    _uy = _u_elems[:, 1::2]
+                    _gu = np.einsum('ea,egja->egj', _ux, self._dN_dX_all)  # (N,gp,2)
+                    _gv = np.einsum('ea,egja->egj', _uy, self._dN_dX_all)
+                    _F_sync = np.zeros_like(self._ul_F_n)
+                    _F_sync[:, :, 0, 0] = 1.0 + _gu[:, :, 0]
+                    _F_sync[:, :, 0, 1] = _gu[:, :, 1]
+                    _F_sync[:, :, 1, 0] = _gv[:, :, 0]
+                    _F_sync[:, :, 1, 1] = 1.0 + _gv[:, :, 1]
+                    # Only update elements where sync gives finite values
+                    _finite = np.all(np.isfinite(_F_sync.reshape(self.n_elem, -1)), axis=1)
+                    self._ul_F_n[_finite] = _F_sync[_finite]
                 if self.rbe2_elements and rbe2_trial_states:
                     for i, rbe2_elem in enumerate(self.rbe2_elements):
+                        # Recover exact slave displacements from constraint (Abaqus-style)
+                        master_idx = self.nid_to_idx[rbe2_elem.master_id]
+                        u_m_new = u_k[2*master_idx:2*master_idx+2]
+                        theta_new = rbe2_trial_states[i].theta_n
+                        R = rbe2_elem._R(theta_new)
+                        u_s_new = np.zeros(2 * rbe2_elem.n_slaves)
+                        for j in range(rbe2_elem.n_slaves):
+                            d0 = rbe2_elem.d0[j]
+                            u_s_new[2*j:2*j+2] = u_m_new + (R - np.eye(2)) @ d0
+                        # Update element state with exact slave displacements
+                        rbe2_trial_states[i].u_s_n = u_s_new
+                        # Update global u for slave DOFs (were dummy during solve)
+                        for j, slave_id in enumerate(rbe2_elem.slave_ids):
+                            u_k[slave_id*2]     = u_s_new[2*j]
+                            u_k[slave_id*2 + 1] = u_s_new[2*j + 1]
                         rbe2_elem.state = rbe2_trial_states[i]
+                    # Update converged solution with recovered slave DOFs
+                    self.u = u_k.copy()
                 if self.alpha != 0.0:
                     self.f_int_n = f_int.copy()  # store for HHT-α next step
                 if getattr(self, 'verbose', False):
@@ -1443,14 +1735,28 @@ class DynamicSolver:
             lam_k += dlam
 
         self.u = u_k.copy()
-        # Guard against unphysical acceleration / velocity spikes due to tiny dt cutbacks
-        self.a = np.clip(a_k.copy(), -1.0e4, 1.0e4)
-        self.v = np.clip(v_n + dt * ((1.0 - gamma) * a_n + gamma * a_k), -1.0e3, 1.0e3)
+        if self.static_mode:
+            # In quasistatic mode the Newmark predictor v_n, a_n has no physical
+            # meaning — it is only a kinematic byproduct of the update formula
+            #   a_k = (u_k - u_n - dt·v_n) / (β·dt²) − ((1−2β)/2β)·a_n
+            # and accumulates unphysical values through successive tiny-dt
+            # cutbacks (v→±1000, a→±10⁴ after a few steps).  The predictor
+            #   u_k(Δt) = u_n + Δt·v_n + ½Δt²·a_n
+            # then perturbs the converged state by ~0.4 mm even for Δt = 0,
+            # pushing already-distorted root Q4 elements past their Jacobian
+            # singularity limit (~12° hinge rotation in ex03_v4).
+            self.a = np.zeros_like(a_k)
+            self.v = np.zeros_like(v_n)
+            self.a_extra = np.zeros_like(a_ext_k)
+            self.v_extra = np.zeros_like(v_ext_n)
+        else:
+            # Guard against unphysical acceleration / velocity spikes due to tiny dt cutbacks
+            self.a = np.clip(a_k.copy(), -1.0e4, 1.0e4)
+            self.v = np.clip(v_n + dt * ((1.0 - gamma) * a_n + gamma * a_k), -1.0e3, 1.0e3)
+            self.a_extra = np.clip(a_ext_k.copy(), -1.0e4, 1.0e4)
+            self.v_extra = np.clip(v_ext_n + dt * ((1.0 - gamma) * a_ext_n + gamma * a_ext_k), -1.0e3, 1.0e3)
         
         self.u_extra = u_ext_k.copy()
-        self.a_extra = np.clip(a_ext_k.copy(), -1.0e4, 1.0e4)
-        self.v_extra = np.clip(v_ext_n + dt * ((1.0 - gamma) * a_ext_n + gamma * a_ext_k), -1.0e3, 1.0e3)
-        
         self.lam = lam_k.copy()
 
         if not converged:
@@ -1906,6 +2212,8 @@ class DynamicSolver:
             'lam': self.lam.copy(),
             'time': self.time,
             'eas_alpha': self.eas_alpha.copy(),
+            '_ul_F_n': self._ul_F_n.copy(),
+            '_ul_u_ref': self._ul_u_ref.copy(),
         }
         if self.state is not None:
             d['state'] = self.state.copy()
@@ -1930,6 +2238,10 @@ class DynamicSolver:
             self.time = state_dict['time']
         if 'eas_alpha' in state_dict:
             self.eas_alpha = state_dict['eas_alpha'].copy()
+        if '_ul_F_n' in state_dict:
+            self._ul_F_n = state_dict['_ul_F_n'].copy()
+        if '_ul_u_ref' in state_dict:
+            self._ul_u_ref = state_dict['_ul_u_ref'].copy()
         if 'state' in state_dict and self.state is not None:
             self.state = state_dict['state'].copy()
 
@@ -2073,17 +2385,51 @@ class DynamicSolver:
                     import jax.numpy as jnp
                     _vmap_fn = self._eas_jax_vmap_by_pid[pid]
                     Ng = len(elem_indices)
-                    coords_b = jnp.asarray(self.elem_coords[elem_indices])
-                    u_b = jnp.asarray(u[self.dof_indices[elem_indices]])
+                    # UL mode: reference coords = original + u_ref; u passed = u_inc = u - u_ref
+                    u_b_raw = u[self.dof_indices[elem_indices]]  # (Ng, 8) total u
+                    if self.ul_mode:
+                        u_ref_b = self._ul_u_ref[self.dof_indices[elem_indices]]  # (Ng, 8)
+                        coords_ref = self.elem_coords[elem_indices] + u_ref_b.reshape(Ng, 4, 2)
+                        # Check reference-config Jacobian at element centre (xi=eta=0)
+                        # det(J) < threshold → element degenerate in UL ref → fall back to TL
+                        _xr = coords_ref[:, :, 0]; _yr = coords_ref[:, :, 1]
+                        _dn_xi  = np.array([-1., 1., 1., -1.]) * 0.25
+                        _dn_eta = np.array([-1., -1., 1., 1.]) * 0.25
+                        _J11 = _xr @ _dn_xi;  _J12 = _yr @ _dn_xi
+                        _J21 = _xr @ _dn_eta; _J22 = _yr @ _dn_eta
+                        det_J_ref = _J11 * _J22 - _J12 * _J21  # (Ng,)
+                        good_J = det_J_ref > 1e-4  # TL fallback if reference J degenerate
+                        # Mix UL (good) and TL (bad) per element
+                        coords_b_np = np.where(good_J[:, None, None],
+                                               coords_ref,
+                                               self.elem_coords[elem_indices])
+                        u_b_np = np.where(good_J[:, None],
+                                          u_b_raw - u_ref_b,
+                                          u_b_raw)
+                        _eye2_b = np.broadcast_to(np.eye(2, dtype=np.float64),
+                                                   (Ng, 4, 2, 2)).copy()
+                        F_n_b_np = np.where(good_J[:, None, None, None],
+                                            self._ul_F_n[elem_indices],
+                                            _eye2_b)
+                        coords_b = jnp.asarray(coords_b_np)
+                        u_b      = jnp.asarray(u_b_np)
+                        F_n_b    = jnp.asarray(F_n_b_np)
+                    else:
+                        u_b = jnp.asarray(u_b_raw)
+                        coords_b = jnp.asarray(self.elem_coords[elem_indices])
+                        F_n_b = jnp.asarray(self._ul_F_n[elem_indices])  # (Ng, 4, 2, 2)
                     alpha_b = jnp.asarray(self.eas_alpha[elem_indices])
                     state_b = jnp.asarray(
                         self.state[elem_indices, :, :n_vars]
                     ) if self.state is not None else jnp.zeros((Ng, 4, n_vars))
                     t_b = jnp.asarray(self._elem_thickness[elem_indices])
 
-                    f_es, K_es, alpha_all, se_all = _vmap_fn(coords_b, u_b, alpha_b, state_b)
+                    f_es, K_es, alpha_all, se_all, F_n_new = _vmap_fn(
+                        coords_b, u_b, alpha_b, state_b, F_n_b
+                    )
                     f_es_np = np.asarray(f_es)
                     K_es_np = np.asarray(K_es)
+                    F_n_new_np = np.asarray(F_n_new)
 
                     nan_mask = ~np.all(np.isfinite(f_es_np), axis=(1,)) | ~np.all(np.isfinite(K_es_np), axis=(1, 2))
                     if np.any(nan_mask):
@@ -2091,22 +2437,31 @@ class DynamicSolver:
                         print(f"DEBUG: EAS JAX vmap NaN in {len(nan_idx)}/{Ng} elems (pid={pid}), falling back to sequential")
                         good_mask = ~nan_mask
                         if np.any(good_mask):
+                            # Only update F_n for elements that didn't NaN to avoid contamination
+                            self._ul_F_n[elem_indices[good_mask]] = F_n_new_np[good_mask]
                             good_f = f_es_np[good_mask] * np.asarray(t_b[good_mask])[:, None]
                             good_K = K_es_np[good_mask] * np.asarray(t_b[good_mask])[:, None, None]
                             good_dofs = self.dof_indices[elem_indices[good_mask]]
                             np.add.at(f_int, good_dofs.flatten(), good_f.flatten())
-                            all_K_rows.append(good_dofs.reshape(-1))
-                            all_K_cols.append(np.repeat(good_dofs, 8, axis=1).reshape(-1))
+                            all_K_rows.append(np.repeat(good_dofs, 8, axis=1).reshape(-1))
+                            all_K_cols.append(np.tile(good_dofs, (1, 8)).reshape(-1))
                             all_K_vals.append(good_K.reshape(-1))
                         from ..element.q4_eas import compute_eas_j2_contributions
                         for idx in nan_idx:
                             e = elem_indices[idx]
-                            coords = self.elem_coords[e]
-                            u_elem = u[self.dof_indices[e]]
+                            # In UL mode use incremental coords/disp so the numpy fallback
+                            # doesn't receive a TL-inverted element geometry
+                            if self.ul_mode:
+                                u_ref_e = self._ul_u_ref[self.dof_indices[e]]
+                                coords_e = self.elem_coords[e] + u_ref_e.reshape(4, 2)
+                                u_elem = u[self.dof_indices[e]] - u_ref_e
+                            else:
+                                coords_e = self.elem_coords[e]
+                                u_elem = u[self.dof_indices[e]]
                             state_elem = (self.state[e, :, :n_vars]
                                           if self.state is not None else None)
                             f_e, K_e, alpha_new, se_new = compute_eas_j2_contributions(
-                                coords, u_elem, self.eas_alpha[e], state_elem,
+                                coords_e, u_elem, self.eas_alpha[e], state_elem,
                                 mat_adapter.material, mat_adapter.params,
                                 self._elem_thickness[e],
                             )
@@ -2119,6 +2474,7 @@ class DynamicSolver:
                             all_K_cols.append(np.tile(dof_g, 8))
                             all_K_vals.append(K_e.flatten())
                     else:
+                        self._ul_F_n[elem_indices] = F_n_new_np
                         f_es_scaled = f_es_np * np.asarray(t_b)[:, None]
                         K_es_scaled = K_es_np * np.asarray(t_b)[:, None, None]
                         self.eas_alpha[elem_indices] = np.asarray(alpha_all)
@@ -2551,10 +2907,33 @@ class DynamicSolver:
 
         # --- Penalty constraints ---
         if self.penalty_constraints:
-            # Convert to lil for efficient element-wise modification
             K_T = K_T.tolil()
             for pc in self.penalty_constraints:
                 pc.apply_penalty(u, f_int, K_T)
+            K_T = K_T.tocsr()
+
+        # --- RBE2 Abaqus-style DOF elimination post-processing ---
+        # Redirect slave DOF contributions → master DOFs, then make slave DOFs dummy.
+        if self.rbe2_dof_map:
+            K_T = K_T.tolil()
+            for slave_dof, master_dof in self.rbe2_dof_map.items():
+                # Transfer f_int: slave force → master force
+                if not np.isnan(f_int[slave_dof]) and not np.isinf(f_int[slave_dof]):
+                    f_int[master_dof] += f_int[slave_dof]
+                f_int[slave_dof] = 0.0
+
+                # Transfer K_T row: K_T[slave, :] → K_T[master, :]
+                slave_row = K_T[slave_dof, :].toarray().ravel()
+                K_T[master_dof, :] = K_T[master_dof, :] + slave_row
+                K_T[slave_dof, :] = 0.0
+
+                # Transfer K_T col: K_T[:, slave] → K_T[:, master]
+                slave_col = K_T[:, slave_dof].toarray().ravel()
+                K_T[:, master_dof] = K_T[:, master_dof] + slave_col
+                K_T[:, slave_dof] = 0.0
+
+                # Set slave DOF to dummy identity equation
+                K_T[slave_dof, slave_dof] = 1.0
             K_T = K_T.tocsr()
 
         return f_int, K_T, state_new
