@@ -8,6 +8,10 @@ import jax
 import jax.numpy as jnp
 from typing import Tuple, Any
 from ..element import q4_jax
+from ..element.rbe2_jax import (
+    compute_rbe2_hinge_contributions_jax,
+    _notify_compile,
+)
 
 def _compute_F_jax(coords: jnp.ndarray, u_elem: jnp.ndarray, xi: float, eta: float) -> jnp.ndarray:
     _, _, invJ = q4_jax.jacobian(xi, eta, coords)
@@ -87,11 +91,51 @@ def build_hybrid_element_contributions_jax(params: dict):
     Returns a function: (coords, u_elem) -> (f_int, K_e)
     """
     from ..element.q4_up_jax import compute_hybrid_element_contributions
-    
+
     def _hybrid_element_contributions_jax(coords: jnp.ndarray, u_elem: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
         # Directly evaluate using static-condensation energy-based formulation
         f_int, K_e = compute_hybrid_element_contributions(coords, u_elem, params)
         return f_int, K_e
-        
+
     return _hybrid_element_contributions_jax
+
+
+def build_rbe2_element_contributions_jax():
+    """Return a JIT-compiled JAX function for a single RBE2 hinge element.
+
+    The returned function has the same signature as
+    `compute_rbe2_hinge_contributions_jax` and adds `jax.jit` compilation
+    for per-element speedup inside the solver Newton loop.
+
+    State (lam_n, theta_n) is passed in and returned out — the solver is
+    responsible for persisting the new state on the RBE2 element object.
+    """
+    @jax.jit
+    def _rbe2_contribs_jax(coords, u_elem, d0, lam_n, theta_n, penalty):
+        return compute_rbe2_hinge_contributions_jax(
+            coords, u_elem, d0, lam_n, theta_n, penalty,
+        )
+
+    return _rbe2_contribs_jax
+
+
+def build_rbe2_vmap_contributions_jax():
+    """Return a JIT+vmap'd JAX function for batched RBE2 evaluation.
+
+    The returned function batches over axis 0 of every input. The caller is
+    responsible for ensuring all elements in the batch share the same slave
+    count m (so coords, u_elem, d0, lam_n shapes are uniform).
+
+    The single-element dispatch goes through `compute_rbe2_hinge_contributions_jax`
+    which already uses fixed-iteration Newton and pure jnp ops, so vmap
+    requires no additional tracing support.
+    """
+    @jax.jit
+    def _rbe2_vmap_jax(coords, u_elem, d0, lam_n, theta_n, penalty):
+        return jax.vmap(
+            compute_rbe2_hinge_contributions_jax,
+            in_axes=(0, 0, 0, 0, 0, 0),
+        )(coords, u_elem, d0, lam_n, theta_n, penalty)
+
+    return _notify_compile("rbe2_vmap", _rbe2_vmap_jax)
 
