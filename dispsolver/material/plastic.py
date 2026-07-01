@@ -272,7 +272,7 @@ class J2Plasticity:
         det_Fp_inv_2d = float(F_p_inv[0, 0] * F_p_inv[1, 1] - F_p_inv[0, 1] * F_p_inv[1, 0])
         F_p_inv_3d = np.eye(3, dtype=np.float64)
         F_p_inv_3d[:2, :2] = F_p_inv
-        F_p_inv_3d[2, 2] = 1.0 / det_Fp_inv_2d
+        F_p_inv_3d[2, 2] = 1.0 / det_Fp_inv_2d if abs(det_Fp_inv_2d) > 1e-12 else 1.0
 
         # --- 1. Elastic predictor
         F_e_tr = F_3d @ F_p_inv_3d          # (3, 3)
