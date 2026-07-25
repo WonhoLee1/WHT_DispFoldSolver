@@ -283,8 +283,13 @@ class ViscoelasticMaterial:
         g_eff = self.g_inf
         for i in range(self.M):
             tau_eff = self.tau_i[i] * aT
-            beta_i = np.exp(-dt / max(tau_eff, 1e-30))
-            g_eff += self.g_i[i] * beta_i
+            ratio = dt / max(tau_eff, 1e-30)
+            if ratio < 1e-12:
+                gamma_i = 1.0
+            else:
+                beta_i = np.exp(-ratio)
+                gamma_i = (1.0 - beta_i) / ratio
+            g_eff += self.g_i[i] * gamma_i
 
         K = (C_el[0, 0] + C_el[0, 1] + C_el[1, 0] + C_el[1, 1]) / 4.0
         m = np.array([1.0, 1.0, 0.0], dtype=np.float64)
@@ -383,7 +388,7 @@ class ViscoelasticMaterial:
                 beta_i  = float(np.exp(-ratio))
                 gamma_i = (1.0 - beta_i) / ratio
             h_new[:, i] = beta_i * h_prev[:, i] + self.g_i[i] * gamma_i * dS_dev
-            g_eff += self.g_i[i] * beta_i
+            g_eff += self.g_i[i] * gamma_i
         h_new[:, M] = S_dev_el
 
         # 6. Effective stress (batch)

@@ -268,6 +268,7 @@ def compute_eas_j2_contributions(
     thickness: float = 1.0,
     max_local_iter: int = 12,
     local_tol: float = 1e-11,
+    F_n: Optional[np.ndarray] = None, # (4, 2, 2) or None for UL mode
 ):
     """Finite-strain EAS Q4 element contribution with internal alpha solve.
 
@@ -296,6 +297,8 @@ def compute_eas_j2_contributions(
         uy = u_elem[1::2]
         Hc = np.array([[ux @ gX, ux @ gY], [uy @ gX, uy @ gY]])
         Fc = np.eye(2) + Hc
+        if F_n is not None:
+            Fc = Fc @ F_n[k]
         gp_geom.append((xi, eta, gX, gY, Fenh, w, Fc))
 
     alpha = alpha.copy()

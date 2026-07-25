@@ -292,10 +292,34 @@ class AbaqusParser:
     # ----- Boundary / Load -----
 
     def _parse_boundary(self, block: AbaqusKeywordBlock):
-        rows = _parse_data_lines(block.data_lines, 4) if block.data_lines else []
-        for r in rows:
-            bc = AbaqusBoundary(nset=block.params.get("nset", ""), dof1=int(r[0]), dof2=int(r[1]), value=r[2])
-            self.model.boundaries.append(bc)
+        nset_param = block.params.get("nset", block.params.get("nset_name", ""))
+        for line in block.data_lines:
+            parts = [p.strip() for p in line.split(",") if p.strip()]
+            if not parts:
+                continue
+            if nset_param:
+                # Format: dof1, dof2, value
+                d1 = int(parts[0])
+                d2 = int(parts[1]) if len(parts) > 1 else d1
+                val = float(parts[2]) if len(parts) > 2 else 0.0
+                bc = AbaqusBoundary(nset=nset_param, dof1=d1, dof2=d2, value=val)
+                self.model.boundaries.append(bc)
+            else:
+                # Format: node_or_nset, dof1, dof2, value
+                # or: node_or_nset, dof, value
+                nset = parts[0]
+                d1 = int(parts[1])
+                if len(parts) >= 4:
+                    d2 = int(parts[2])
+                    val = float(parts[3])
+                elif len(parts) == 3:
+                    d2 = d1
+                    val = float(parts[2])
+                else:
+                    d2 = d1
+                    val = 0.0
+                bc = AbaqusBoundary(nset=nset, dof1=d1, dof2=d2, value=val)
+                self.model.boundaries.append(bc)
 
     def _parse_cload(self, block: AbaqusKeywordBlock):
         name = block.params.get("name", f"LOAD-{len(self.model.loads)}")
@@ -364,10 +388,25 @@ class AbaqusParser:
         self.model.mpcs.append(mpc)
 
     def _parse_tie(self, block: AbaqusKeywordBlock):
-        slave = block.params.get("slave", "")
-        master = block.params.get("master", "")
-        rows = _parse_data_lines(block.data_lines, 1)
-        pos_tol = rows[0][0] if rows else 0.0
+        pos_tol_str = block.params.get("position tolerance", "0.0")
+        try:
+            pos_tol = float(pos_tol_str)
+        except ValueError:
+            pos_tol = 0.0
+
+        slave = ""
+        master = ""
+        if block.data_lines:
+            parts = [p.strip() for p in block.data_lines[0].split(",") if p.strip()]
+            if len(parts) >= 2:
+                slave = parts[0]
+                master = parts[1]
+
+        if not slave:
+            slave = block.params.get("slave", "")
+        if not master:
+            master = block.params.get("master", "")
+
         tie = AbaqusTie(slave=slave, master=master, position_tolerance=pos_tol)
         self.model.ties.append(tie)
 
@@ -410,9 +449,16 @@ class AbaqusParser:
         surf_type = block.params.get("type", "ELEMENT").upper()
         definitions = []
         for line in block.data_lines:
-            parts = line.replace(",", " ").split()
-            if len(parts) >= 2:
-                definitions.append((parts[0], parts[1].upper()))
+            parts = [p.strip() for p in line.replace(",", " ").split() if p.strip()]
+            if not parts:
+                continue
+            if surf_type == "NODE":
+                definitions.append((parts[0], ""))
+            else:
+                if len(parts) >= 2:
+                    definitions.append((parts[0], parts[1].upper()))
+                else:
+                    definitions.append((parts[0], ""))
         surface = AbaqusSurface(name=name, surface_type=surf_type, definitions=definitions)
         self.model.surfaces[name] = surface
 
