@@ -138,8 +138,10 @@ def _compute_Kgeo_ua(grad_N, St, Fenh):
     return K
 
 
-# ── Number of Newton iterations for alpha (fixed for vmap) ─────────
-_ALPHA_ITER = 12
+# ── Newton convergence parameters for alpha condensation ────────────
+_ALPHA_MAX_ITER = 20
+_ALPHA_TOL = 1e-10
+_ALPHA_MAX = 5.0  # clamp |alpha| to prevent blow-up at near-inverted configs
 
 
 # ── Main entry point ────────────────────────────────────────────────
@@ -208,19 +210,21 @@ def compute_eas_j2_contributions_jax(
         Hc = jnp.array([[ux @ gX, ux @ gY], [uy @ gX, uy @ gY]])
         Fc_all = Fc_all.at[k].set(jnp.eye(2) + Hc)
 
-    # ── Fixed-iteration Newton for alpha condensation ────────────────
-    def _alpha_step(alpha_k, _):
+    # ── Newton for alpha condensation with convergence check ──────────
+    def _alpha_cond(state):
+        alpha_k, f_a_norm, iter_count = state
+        return (f_a_norm > _ALPHA_TOL) & (iter_count < _ALPHA_MAX_ITER)
+
+    def _alpha_body(state):
+        alpha_k, _, iter_count = state
         f_a = jnp.zeros(4, dtype=jnp.float64)
         K_aa = jnp.zeros((4, 4), dtype=jnp.float64)
         for k in range(4):
-            # Incremental total F (compatible + EAS enhancement)
             Ft_inc = Fc_all[k] + jnp.einsum('j,jab->ab', alpha_k, Fenh_all[k])
-            # Material total F (UL: compose with F_n; TL: same as Ft_inc)
             Ft_mat = Ft_inc @ F_n[k]
             S_v, C_v, _ = tangent_voigt_jax(
                 Ft_mat[:2, :2], state_elem[k], lam, mu, sigma_y0, H,
             )
-            # G uses Ft_inc (incremental frame for linearisation)
             G = _compute_G(Ft_inc, Fenh_all[k])
             St = jnp.array([[S_v[0], S_v[2]], [S_v[2], S_v[1]]])
 
@@ -230,9 +234,18 @@ def compute_eas_j2_contributions_jax(
         reg_scale = jnp.maximum(jnp.mean(jnp.abs(jnp.diag(K_aa))), 1e-30)
         K_reg = K_aa + 1e-10 * reg_scale * jnp.eye(4)
         dalpha = -jnp.linalg.solve(K_reg, f_a)
-        return alpha_k + dalpha, None
+        alpha_new = alpha_k + dalpha
 
-    alpha_final, _ = jax.lax.scan(_alpha_step, alpha, None, length=_ALPHA_ITER)
+        # --- NaN robustness: clamp alpha & freeze if NaN detected ---
+        alpha_new = jnp.clip(alpha_new, -_ALPHA_MAX, _ALPHA_MAX)
+        nan_detected = jnp.any(jnp.isnan(alpha_new)) | jnp.any(jnp.isnan(f_a))
+        alpha_new = jnp.where(nan_detected, alpha_k, alpha_new)
+        # If NaN → set norm to 0 so while_loop exits (alpha frozen at last good value)
+        f_a_new_norm = jnp.where(nan_detected, 0.0, jnp.linalg.norm(f_a))
+        return (alpha_new, f_a_new_norm, iter_count + 1)
+
+    init_state = (alpha, jnp.array(1.0), jnp.array(0))
+    alpha_final, _, _ = jax.lax.while_loop(_alpha_cond, _alpha_body, init_state)
 
     # ── Final assembly at converged alpha ────────────────────────────
     K_uu = jnp.zeros((8, 8), dtype=jnp.float64)
@@ -287,5 +300,12 @@ def compute_eas_j2_contributions_jax(
     K_aa_inv_KuaT = jnp.linalg.solve(K_aa_reg, K_ua.T)
     K_e = K_uu - K_ua @ K_aa_inv_KuaT
     f_e = f_u - K_ua @ jnp.linalg.solve(K_aa_reg, f_a)
+
+    # ── NaN guard: if element is unrecoverable, return zero contributions
+    #    so the solver's line search / time-step cutback handles it gracefully ──
+    elem_nan = jnp.any(jnp.isnan(f_e)) | jnp.any(jnp.isnan(K_e))
+    f_e = jnp.where(elem_nan, jnp.zeros_like(f_e), f_e)
+    K_e = jnp.where(elem_nan, jnp.zeros_like(K_e), K_e)
+    alpha_final = jnp.where(elem_nan, alpha, alpha_final)
 
     return f_e, K_e, alpha_final, state_new, F_n_new

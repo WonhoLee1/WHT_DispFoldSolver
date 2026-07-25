@@ -33,7 +33,7 @@ def test_elastic_force_and_tangent():
     f_np, K_np, alpha_np, sn_np = compute_eas_j2_contributions(
         coords, u_elem, alpha0, state, mat, {},
     )
-    f_jax, K_jax, alpha_jax, sn_jax = compute_eas_j2_contributions_jax(
+    f_jax, K_jax, alpha_jax, sn_jax, F_n_new_jax = compute_eas_j2_contributions_jax(
         jnp.asarray(coords), jnp.asarray(u_elem), jnp.asarray(alpha0),
         jnp.asarray(state), lam, mu, sigma_y0, H,
     )
@@ -83,7 +83,7 @@ def test_plastic_force():
     f_np, K_np, alpha_np, sn_np = compute_eas_j2_contributions(
         coords, u_elem, alpha0, state, mat, {},
     )
-    f_jax, K_jax, alpha_jax, sn_jax = compute_eas_j2_contributions_jax(
+    f_jax, K_jax, alpha_jax, sn_jax, F_n_new_jax = compute_eas_j2_contributions_jax(
         jnp.asarray(coords), jnp.asarray(u_elem), jnp.asarray(alpha0),
         jnp.asarray(state), lam, mu, sigma_y0, H,
     )
@@ -129,7 +129,7 @@ def test_vmap_batch():
             co, u, a, s, lam, mu, sigma_y0, H,
         ),
     )
-    f_batch, K_batch, alpha_batch_out, sn_batch = _vmap(
+    f_batch, K_batch, alpha_batch_out, sn_batch, F_n_new_batch = _vmap(
         jnp.asarray(coords_batch),
         jnp.asarray(u_batch),
         jnp.asarray(alpha_batch),

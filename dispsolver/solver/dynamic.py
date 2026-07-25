@@ -118,6 +118,25 @@ except ImportError:
 # factorisation announced, keyed by matrix dimension.
 _PARDISO_FACTOR_NOTIFIED: dict = {}
 
+# Process-wide cached PyPardisoSolver instance. `PyPardisoSolver()`'s own
+# __init__ does an expensive filesystem glob search (looking for the MKL
+# runtime), independent of any actual factorization -- profiling showed
+# this costing ~8.5s out of a ~10s Newton iteration (85% of wall time) on
+# a mere 1186-DOF system, because a *new* PyPardisoSolver() was being
+# constructed on every single call to `_solve_linear_system` (i.e. every
+# Newton iteration). Reusing one instance across calls still re-factorizes
+# per call (Js legitimately changes each iteration) but pays the glob-scan
+# init cost exactly once per process instead of once per iteration.
+_PARDISO_SOLVER_SINGLETON = None
+
+
+def _get_pardiso_solver():
+    global _PARDISO_SOLVER_SINGLETON
+    if _PARDISO_SOLVER_SINGLETON is None:
+        from pypardiso import PyPardisoSolver
+        _PARDISO_SOLVER_SINGLETON = PyPardisoSolver()
+    return _PARDISO_SOLVER_SINGLETON
+
 
 def _equilibrate(A: sps.csr_matrix, b: np.ndarray):
     """Diagonal equilibration (A * x = b) → (Ã * y = b̅),  x = D⁻¹·y.
@@ -143,11 +162,8 @@ def _equilibrate(A: sps.csr_matrix, b: np.ndarray):
     scale = np.where(mech_mask, 1.0 / np.sqrt(abs_diag), 1.0 / med_sqrt)
 
     # Symmetric scaling:  Ã_ij = A_ij · s_i · s_j
-    As = A.copy()
-    for row in range(A.shape[0]):
-        s, e = As.indptr[row], As.indptr[row + 1]
-        As.data[s:e] *= scale[row]
-        As.data[s:e] *= scale[As.indices[s:e]]
+    _D = sps.diags(scale, format='csr')
+    As = _D @ A @ _D
     bs = scale * b
     return As, bs, scale
 
@@ -179,25 +195,40 @@ def _solve_linear_system(J, b, n_refine: int = 4, tol: float = 1e-14):
         # Equilibration reduces κ(J) from ~10⁶ to <10², so the unsymmetric
         # solver no longer loses digits on the cross-block scaling.
         _t0 = time.perf_counter()
-        y = pardiso_spsolve(Js, bs)
-        _dt = time.perf_counter() - _t0
-        if _dt > 1.0 and not _PARDISO_FACTOR_NOTIFIED.get(Js.shape[0], False):
-            n = Js.shape[0]
-            nnz = Js.nnz
-            print(f"[PARDISO] factorising {n}x{n} system ({nnz} nnz) "
-                  f"took {_dt:.1f}s (one-time per matrix structure)",
-                  flush=True)
-            _PARDISO_FACTOR_NOTIFIED[n] = True
+        try:
+            p_solver = _get_pardiso_solver()
+            p_solver.factorize(Js)
+            y = p_solver.solve(Js, bs)
 
-        # ---- 3. Iterative refinement on SCALED system ----
-        b_norm = np.linalg.norm(bs) + 1e-30
-        for _ in range(n_refine):
-            r = bs - Js @ y
-            r_norm = np.linalg.norm(r)
-            if r_norm <= tol * b_norm or r_norm < 1e-30:
-                break
-            dy = pardiso_spsolve(Js, r)
-            y = y + dy
+            _dt = time.perf_counter() - _t0
+            if _dt > 1.0 and not _PARDISO_FACTOR_NOTIFIED.get(Js.shape[0], False):
+                n = Js.shape[0]
+                nnz = Js.nnz
+                print(f"[PARDISO] factorising {n}x{n} system ({nnz} nnz) "
+                      f"took {_dt:.1f}s (one-time per matrix structure)",
+                      flush=True)
+                _PARDISO_FACTOR_NOTIFIED[n] = True
+
+            b_norm = np.linalg.norm(bs) + 1e-30
+            for _ in range(n_refine):
+                r = bs - Js @ y
+                r_norm = np.linalg.norm(r)
+                if r_norm <= tol * b_norm or r_norm < 1e-30:
+                    break
+                dy = p_solver.solve(Js, r)
+                y = y + dy
+
+            p_solver.free_memory(Js)
+        except Exception:
+            y = pardiso_spsolve(Js, bs)
+            b_norm = np.linalg.norm(bs) + 1e-30
+            for _ in range(n_refine):
+                r = bs - Js @ y
+                r_norm = np.linalg.norm(r)
+                if r_norm <= tol * b_norm or r_norm < 1e-30:
+                    break
+                dy = pardiso_spsolve(Js, r)
+                y = y + dy
 
         # ---- 4. Unscale solution ----
         x = scale * y
@@ -219,6 +250,7 @@ from ..element.rbe2 import RBE2State
 from ..mesh import Mesh
 from ..material.base import MaterialModel
 from ..constraint.base import BaseConstraint
+from ..constraint.rbe2_condensed import RBE2CondensationManager
 
 
 # ------------------------------------------------------------------
@@ -568,6 +600,7 @@ class DynamicSolver:
         constraints: Optional[List[BaseConstraint]] = None,
         penalty_constraints: Optional[List] = None,
         rbe2_elements: Optional[List] = None,
+        rbe2_constraints: Optional[List] = None,
         beta: float = 0.25,
         gamma: float = 0.5,
         max_iter: int = 20,
@@ -625,6 +658,7 @@ class DynamicSolver:
         self.static_mode = static_mode
         self.alpha = alpha
         self.f_int_n = None  # for HHT-α alpha method
+        self.last_conv_rate = 1.0  # last Newton conv_rate, for AdaptiveDtController (B6)
         
         # element_type may be a single string (uniform) or a {pid: str} dict
         # (per-material) so e.g. viscoelastic layers use the Q1P0 hybrid while
@@ -638,6 +672,13 @@ class DynamicSolver:
         self.constraints = constraints if constraints is not None else []
         self.penalty_constraints = penalty_constraints if penalty_constraints is not None else []
         self.rbe2_elements = rbe2_elements if rbe2_elements is not None else []
+        self.rbe2_constraints = rbe2_constraints if rbe2_constraints is not None else []
+
+        if self.rbe2_constraints and self.rbe2_elements:
+            raise ValueError(
+                "Cannot use both rbe2_constraints (kinematic condensation) "
+                "and rbe2_elements (penalty-based). Use one or the other."
+            )
 
         # JAX acceleration path for RBE2 element assembly (per-element JIT).
         # Activated only when jax is importable; solver falls back to NumPy otherwise.
@@ -703,18 +744,49 @@ class DynamicSolver:
                         raise ValueError(
                             f"RBE2 slave node id {slave_id} not in mesh connectivity"
                         )
+                    slave_idx = nid_to_idx[slave_id]
                     for comp in (0, 1):
-                        slave_dof = slave_id * 2 + comp
+                        slave_dof = slave_idx * 2 + comp
                         master_dof = master_idx * 2 + comp
                         self.rbe2_dof_map[slave_dof] = master_dof
         
         # --- constraint setup
+        # Regular constraint extra DOFs (LM-based constraints like tie, penalty_hinge)
         self.n_extra = sum(c.n_extra_primal() for c in self.constraints)
+        # RBE2 kinematic constraints each contribute 1 extra DOF (θ) for the hinge rotation
+        n_rbe2_extra = len(self.rbe2_constraints)
+        self.n_extra += n_rbe2_extra
         self.n_lambdas = sum(c.n_multipliers() for c in self.constraints)
         self.n_total = self.n_dofs + self.n_extra + self.n_lambdas
 
         self.elem_coords = mesh.nodes_array()[conn]
         self.coords = mesh.nodes_array()
+
+        # --- Initialize kinematic RBE2 condensation manager ---
+        # Builds the T matrix for master-slave elimination, converting KKT → SPD.
+        self.use_kinematic_condensation = False
+        self.condensation_mgr = None
+        if self.rbe2_constraints:
+            # Validate master/slave node IDs exist in mesh
+            for c in self.rbe2_constraints:
+                if c.master_id not in nid_to_idx:
+                    raise ValueError(
+                        f"RBE2 condensation master node {c.master_id} not in mesh"
+                    )
+                for sid in c.slave_ids:
+                    if sid not in nid_to_idx:
+                        raise ValueError(
+                            f"RBE2 condensation slave node {sid} not in mesh"
+                        )
+            self.condensation_mgr = RBE2CondensationManager(
+                self.rbe2_constraints,
+                self.n_dofs,
+                self.n_extra,
+                nid_to_idx,
+                self.coords,
+                rbe2_extra_offset=self.n_extra - n_rbe2_extra,
+            )
+            self.use_kinematic_condensation = True
 
         # --- section (out-of-plane) thickness per element.
         # section_thickness may be a scalar (uniform) or a {pid: t} dict so each
@@ -740,6 +812,7 @@ class DynamicSolver:
         self.a_extra = np.zeros(self.n_extra, dtype=np.float64)
         
         self.lam = np.zeros(self.n_lambdas, dtype=np.float64)
+        self._condensed_T = None  # cached T matrix for kinematic condensation
 
         # --- precompute dof indices for assembly
         self.dof_indices = np.zeros((self.n_elem, 8), dtype=np.int32)
@@ -876,6 +949,32 @@ class DynamicSolver:
                             coords, u_e, a, s, lam, mu, sigma_y0, H, 1.0, fn,
                         )
                         self._eas_jax_vmap_by_pid[pid] = jax.jit(jax.vmap(_single))
+            except ImportError:
+                pass
+
+            # --- JAX Co-rotational Q4 + J2 vmap batch setup (per-pid groups) ---
+            # pid groups with identical (lam, mu, sigma_y0, H) share one
+            # jax.jit(jax.vmap(...)) closure — a distinct Python lambda per
+            # pid would force JAX to retrace/recompile once per pid even
+            # when the material is literally the same object (e.g. one
+            # J2Plasticity instance reused across several layer pids).
+            self._coro_jax_vmap_by_pid: Dict[int, object] = {}
+            _coro_vmap_cache: Dict[tuple, object] = {}
+            try:
+                import jax
+                from ..element.q4_corotational_jax import compute_corotational_j2_contributions_jax
+                for pid, mat_adapter in self.materials.items():
+                    if (self._pid_element_type(pid) == "Q4_COROTATIONAL"
+                            and isinstance(mat_adapter.material, J2Plasticity)):
+                        mat = mat_adapter.material
+                        mat_key = (float(mat.lam), float(mat.mu), float(mat.sigma_y0), float(mat.H))
+                        if mat_key not in _coro_vmap_cache:
+                            lam, mu, sigma_y0, H = mat_key
+                            _single_coro = lambda coords, u_e, s, _lam=lam, _mu=mu, _sy0=sigma_y0, _H=H: compute_corotational_j2_contributions_jax(
+                                coords, u_e, s, _lam, _mu, _sy0, _H, 1.0,
+                            )
+                            _coro_vmap_cache[mat_key] = jax.jit(jax.vmap(_single_coro))
+                        self._coro_jax_vmap_by_pid[pid] = _coro_vmap_cache[mat_key]
             except ImportError:
                 pass
 
@@ -1090,6 +1189,13 @@ class DynamicSolver:
         else:
             R_u = f_ext_mapped - self.M * a_k - f_int
         R_ext = np.zeros(self.n_extra)
+        _theta_k = float(getattr(self, 'theta_penalty_k', 0.0))
+        if _theta_k > 0.0 and self.rbe2_constraints:
+            n_extra_regular = self.n_extra - len(self.rbe2_constraints)
+            for rbe2_idx in range(len(self.rbe2_constraints)):
+                e_idx = n_extra_regular + rbe2_idx
+                target = float(getattr(self, 'theta_targets', {}).get(rbe2_idx, 0.0))
+                R_ext[e_idx] += _theta_k * (target - u_ext_k[e_idx])
         R_lam = np.zeros(self.n_lambdas)
         
         lam_offset = 0
@@ -1245,8 +1351,33 @@ class DynamicSolver:
                     f_ext_mapped[master_dof] += val
                     f_ext_mapped[slave_dof] = 0.0
 
+        # Build active_total mask once per step to use in line search and stall detection
+        active_dofs = np.ones(self.n_dofs, dtype=bool)
+        if len(self.bc_dofs) > 0:
+            node_bc_dofs = self.bc_dofs[self.bc_dofs < self.n_dofs]
+            active_dofs[node_bc_dofs] = False
+        
+        # Exclude RBE2 slave DOFs from active residuals
+        if self.rbe2_dof_map:
+            for slave_dof in self.rbe2_dof_map.keys():
+                if slave_dof < self.n_dofs:
+                    active_dofs[slave_dof] = False
+        if self.use_kinematic_condensation and getattr(self, "condensation_mgr", None) is not None:
+            for slave_dof in self.condensation_mgr.slave_dofs:
+                if slave_dof < self.n_dofs:
+                    active_dofs[slave_dof] = False
+
+        active_total = np.ones(self.n_total, dtype=bool)
+        active_total[:self.n_dofs] = active_dofs
+        if len(self.bc_dofs) > 0:
+            ext_bc_dofs = self.bc_dofs[self.bc_dofs >= self.n_dofs]
+            for dof in ext_bc_dofs:
+                active_total[dof] = False
+
         res_norm_0 = None
         converged = False
+        stall_count = 0          # Phase 3.3: consecutive stalled iterations
+        prev_res_ratio = 1.0     # previous res_ratio for convergence rate tracking
         rbe2_trial_states = []
         for n_iter in range(self.max_iter):
             # --- debug check
@@ -1254,6 +1385,14 @@ class DynamicSolver:
                 print(f"DEBUG: u_k has NaN before assembly at iter {n_iter+1}!", flush=True)
                 
             f_int, K_T, state_new = self._assemble(u_k, dt)
+
+            # --- Phase 3.5: Element inversion detection ---
+            # Check det(F) at all GPs; if any element has inverted (det <= 0)
+            # the Newton step is physically invalid → cut back dt.
+            if not self._check_element_inversion(u_k):
+                if getattr(self, 'verbose', False):
+                    print(f"  *** ELEMENT INVERSION: det(F) <= 0 detected at iteration {n_iter+1}. Cutting back dt.", flush=True)
+                return -(self.max_iter)
 
             # --- RBE2 element assembly (Abaqus-style: projected to master DOFs only) ---
             if self.rbe2_elements:
@@ -1365,6 +1504,13 @@ class DynamicSolver:
             else:
                 R_u = f_ext_mapped - self.M * a_k - f_int
             R_ext = np.zeros(self.n_extra)
+            _theta_k = float(getattr(self, 'theta_penalty_k', 0.0))
+            if _theta_k > 0.0 and self.rbe2_constraints:
+                n_extra_regular = self.n_extra - len(self.rbe2_constraints)
+                for rbe2_idx in range(len(self.rbe2_constraints)):
+                    e_idx = n_extra_regular + rbe2_idx
+                    target = float(getattr(self, 'theta_targets', {}).get(rbe2_idx, 0.0))
+                    R_ext[e_idx] += _theta_k * (target - u_ext_k[e_idx])
             R_lam = np.zeros(self.n_lambdas)
             
             # Constraints
@@ -1411,93 +1557,177 @@ class DynamicSolver:
                 K_eff = K_T.copy()
                 K_eff.setdiag(K_eff.diagonal() + inv_beta_dt2 * self.M)
             
-            # Convert to COO for global assembly
-            K_eff_coo = K_eff.tocoo()
-            global_row = list(K_eff_coo.row)
-            global_col = list(K_eff_coo.col)
-            global_val = list(K_eff_coo.data)
-            
-            # Assemble C_u^T and C_u
-            lam_start_idx = self.n_dofs + self.n_extra
-            for r, c, v in zip(C_row_u, C_col_u, C_val_u):
-                global_row.append(r + lam_start_idx)
-                global_col.append(c)
-                global_val.append(v)
-                
-                global_row.append(c)
-                global_col.append(r + lam_start_idx)
-                global_val.append(v)
-                
-            # Assemble C_ext^T and C_ext
-            ext_start_idx = self.n_dofs
-            for r, c, v in zip(C_row_ext, C_col_ext, C_val_ext):
-                global_row.append(r + lam_start_idx)
-                global_col.append(c + ext_start_idx)
-                global_val.append(v)
-                
-                global_row.append(c + ext_start_idx)
-                global_col.append(r + lam_start_idx)
-                global_val.append(v)
+            # ---- Kinematic RBE2 Condensation (KKT → SPD) ----
+            if self.use_kinematic_condensation:
+                from scipy.sparse import block_diag, eye as speye
 
-            # Extra primal inertia (0 for now, but add small regularization to avoid singular diagonal)
-            # Extra-primal (rotation θ) diagonal block. The CONSISTENT tangent
-            # requires the constraint geometric stiffness K_θθ = Σ λ·∂²g/∂θ²
-            # (the rigid rotation is nonlinear in θ). Without it the global
-            # tangent is inconsistent once θ≠0 and Newton stalls. A tiny 1e-12
-            # is kept on top to stabilize the otherwise-zero diagonal at θ=0.
-            k_extra_geo = np.zeros(self.n_extra, dtype=np.float64)
-            lam_off = 0
-            for c in self.constraints:
-                n_lam_c = c.n_multipliers()
-                if n_lam_c > 0 and hasattr(c, "extra_geometric_stiffness"):
-                    off, kval = c.extra_geometric_stiffness(
-                        u_ext_k, lam_k[lam_off:lam_off + n_lam_c]
-                    )
-                    k_extra_geo[off] += kval
-                lam_off += n_lam_c
-            for i in range(self.n_extra):
-                global_row.append(ext_start_idx + i)
-                global_col.append(ext_start_idx + i)
-                global_val.append(k_extra_geo[i] + 1e-12)
-                
-            # Lambda stabilization (optional, avoid saddle point issues, usually spsolve handles it)
-            # but sometimes zeros on diagonal cause UMFPACK to complain.
-            # We will rely on spsolve unless it fails.
-            
-            J = sps.coo_matrix((global_val, (global_row, global_col)), shape=(self.n_total, self.n_total)).tocsr()
+                # 1. Extend K_eff to (n_dofs + n_extra) with diagonal on extra block.
+                #    θ extra DOFs get theta_penalty_k (if set) for stabilization.
+                _theta_k = float(getattr(self, 'theta_penalty_k', 0.0))
+                if _theta_k > 0.0 and self.rbe2_constraints:
+                    extra_diag = np.full(self.n_extra, 1e-12, dtype=np.float64)
+                    n_extra_regular = self.n_extra - len(self.rbe2_constraints)
+                    for rbe2_idx in range(len(self.rbe2_constraints)):
+                        e_idx = n_extra_regular + rbe2_idx
+                        extra_diag[e_idx] += _theta_k
+                        # Penalty force is already pre-added to R_ext before R_total concatenation
+                        pass
+                    K_extra = sps.diags(extra_diag, format='csr')
+                else:
+                    K_extra = sps.csr_matrix((self.n_extra, self.n_extra))
+                K_full = block_diag([K_eff, K_extra]).tocsr()
+                R_mech = np.concatenate([R_u, R_ext])
 
-            # --- Eigenvalue regularization (Tikhonov / ridge) ---
-            # Adds ε·I to the entire KKT system.  For well-conditioned
-            # displacement blocks the perturbation is negligible (ε ≈ 1e-8
-            # of the mean diagonal).  At the flat C² amplitude start the
-            # displacement stiffness K_uu ≈ 0, making the Schur complement
-            # C_u·K_uu⁻¹·C_u^T singular; ε_min provides the minimum
-            # conditioning needed for PARDISO to produce a stable Newton
-            # direction (1e-2 is ~10⁻⁶ relative to element stiffnesses).
-            _diag_mean = np.abs(J.diagonal()[:self.n_dofs]).mean()
-            _eps_reg = max(1e-4, 1e-8 * _diag_mean)
-            J = J + _eps_reg * sps.eye(self.n_total, format='csr')
+                # 2. Condense: K_red = T^T @ K_full @ T,  R_red = T^T @ R_mech
+                K_red, R_red, T = self.condensation_mgr.condense_system(K_full, R_mech, u_ext_k)
+                self._condensed_T = T
 
-            if has_bc:
-                for i, idx in enumerate(self.bc_dofs):
-                    val = self.bc_vals[i]
-                    # Zero out row idx
-                    start_ptr = J.indptr[idx]
-                    end_ptr = J.indptr[idx+1]
-                    for ptr in range(start_ptr, end_ptr):
-                        col = J.indices[ptr]
-                        if col == idx:
-                            J.data[ptr] = 1.0
+                # 3. Convert to dense (system is small enough)
+                K_red = K_red.toarray()
+
+                # 4. Eigenvalue regularization (same purpose as KKT ridge)
+                _diag_abs_red = np.abs(np.diag(K_red))
+                _min_nz = np.min(_diag_abs_red[_diag_abs_red > 1e-30]) if np.any(_diag_abs_red > 1e-30) else 1.0
+                _eps_reg = max(1e-12, 1e-8 * _min_nz)
+                K_red += _eps_reg * np.eye(self.condensation_mgr.n_independent)
+
+                # 5. Apply BCs to reduced system (slave DOF BCs are skipped)
+                if has_bc:
+                    indep_dofs, indep_vals = self.condensation_mgr.map_bc_to_independent(
+                        self.bc_dofs, self.bc_vals, self.n_dofs)
+                    # Build current independent DOF vector from u_k, u_ext_k
+                    u_indep = np.zeros(self.condensation_mgr.n_independent)
+                    for idx in range(self.n_dofs):
+                        if idx in self.condensation_mgr.full_to_indep:
+                            u_indep[self.condensation_mgr.full_to_indep[idx]] = u_k[idx]
+                    for ext_idx in range(self.n_extra):
+                        idx = self.n_dofs + ext_idx
+                        if idx in self.condensation_mgr.full_to_indep:
+                            u_indep[self.condensation_mgr.full_to_indep[idx]] = u_ext_k[ext_idx]
+                    for i, red_idx in enumerate(indep_dofs):
+                        K_red[red_idx, :] = 0.0
+                        K_red[:, red_idx] = 0.0
+                        K_red[red_idx, red_idx] = 1.0
+                        R_red[red_idx] = indep_vals[i] - u_indep[red_idx]
+
+                # 6. Equilibrate + solve (SPD system — PARDISO mtype=2 efficient)
+                _diag_J = np.abs(np.diag(K_red))
+                _abs_diag = np.maximum(_diag_J, 1e-8)
+                _scale = 1.0 / np.sqrt(_abs_diag)
+                K_eq = _scale[:, None] * K_red * _scale[None, :]
+                R_eq = _scale * R_red
+                du_red = _solve_linear_system(sps.csr_matrix(K_eq), R_eq)
+                du_red = _scale * du_red
+
+                # 7. Expand solution: du_all = T @ du_red
+                du_all = self.condensation_mgr.expand_solution(du_red, T)
+
+                # 8. Residual for line search (mechanical only — no LM)
+                R_total = np.concatenate([R_u, R_ext])
+            else:
+                # ---- Standard KKT assembly + solve (unchanged) ----
+                K_eff_coo = K_eff.tocoo()
+                global_row = list(K_eff_coo.row)
+                global_col = list(K_eff_coo.col)
+                global_val = list(K_eff_coo.data)
+
+                # Assemble C_u^T and C_u
+                lam_start_idx = self.n_dofs + self.n_extra
+                for r, c, v in zip(C_row_u, C_col_u, C_val_u):
+                    global_row.append(r + lam_start_idx)
+                    global_col.append(c)
+                    global_val.append(v)
+
+                    global_row.append(c)
+                    global_col.append(r + lam_start_idx)
+                    global_val.append(v)
+
+                # Assemble C_ext^T and C_ext
+                ext_start_idx = self.n_dofs
+                for r, c, v in zip(C_row_ext, C_col_ext, C_val_ext):
+                    global_row.append(r + lam_start_idx)
+                    global_col.append(c + ext_start_idx)
+                    global_val.append(v)
+
+                    global_row.append(c + ext_start_idx)
+                    global_col.append(r + lam_start_idx)
+                    global_val.append(v)
+
+                # Extra primal inertia (0 for now, but add small regularization to avoid singular diagonal)
+                # Extra-primal (rotation θ) diagonal block. The CONSISTENT tangent
+                # requires the constraint geometric stiffness K_θθ = Σ λ·∂²g/∂θ²
+                # (the rigid rotation is nonlinear in θ). Without it the global
+                # tangent is inconsistent once θ≠0 and Newton stalls. A tiny 1e-12
+                # is kept on top to stabilize the otherwise-zero diagonal at θ=0.
+                k_extra_geo = np.zeros(self.n_extra, dtype=np.float64)
+                lam_off = 0
+                for c in self.constraints:
+                    n_lam_c = c.n_multipliers()
+                    if n_lam_c > 0 and hasattr(c, "extra_geometric_stiffness"):
+                        off, kval = c.extra_geometric_stiffness(
+                            u_ext_k, lam_k[lam_off:lam_off + n_lam_c]
+                        )
+                        k_extra_geo[off] += kval
+                    lam_off += n_lam_c
+                for i in range(self.n_extra):
+                    global_row.append(ext_start_idx + i)
+                    global_col.append(ext_start_idx + i)
+                    global_val.append(k_extra_geo[i] + 1e-12)
+
+                # Lambda stabilization (optional, avoid saddle point issues, usually spsolve handles it)
+                # but sometimes zeros on diagonal cause UMFPACK to complain.
+                # We will rely on spsolve unless it fails.
+
+                J = sps.coo_matrix((global_val, (global_row, global_col)), shape=(self.n_total, self.n_total)).tocsr()
+
+                # --- Eigenvalue regularization (Tikhonov / ridge) ---
+                # Adds ε·I to the entire KKT system.  For well-conditioned
+                # displacement blocks the perturbation is negligible (ε ≈ 1e-8
+                # of the mean diagonal).  At the flat C² amplitude start the
+                # displacement stiffness K_uu ≈ 0, making the Schur complement
+                # C_u·K_uu⁻¹·C_u^T singular; ε_min provides the minimum
+                # conditioning needed for PARDISO to produce a stable Newton
+                # direction (1e-2 is ~10⁻⁶ relative to element stiffnesses).
+                _diag_abs = np.abs(J.diagonal()[:self.n_dofs])
+                _min_nz = np.min(_diag_abs[_diag_abs > 1e-30]) if np.any(_diag_abs > 1e-30) else 1.0
+                _eps_reg = max(1e-12, 1e-8 * _min_nz)
+                J = J + _eps_reg * sps.eye(self.n_total, format='csr')
+
+                if has_bc:
+                    for i, idx in enumerate(self.bc_dofs):
+                        val = self.bc_vals[i]
+                        # Zero out row idx
+                        start_ptr = J.indptr[idx]
+                        end_ptr = J.indptr[idx+1]
+                        for ptr in range(start_ptr, end_ptr):
+                            col = J.indices[ptr]
+                            if col == idx:
+                                J.data[ptr] = 1.0
+                            else:
+                                J.data[ptr] = 0.0
+                        if idx < self.n_dofs:
+                            R_total[idx] = val - u_k[idx]
                         else:
-                            J.data[ptr] = 0.0
-                    if idx < self.n_dofs:
-                        R_total[idx] = val - u_k[idx]
-                    else:
-                        ext_idx = idx - self.n_dofs
-                        R_total[idx] = val - u_ext_k[ext_idx]
+                            ext_idx = idx - self.n_dofs
+                            R_total[idx] = val - u_ext_k[ext_idx]
 
-            # Solve (multithreaded direct + iterative refinement)
-            du_all = _solve_linear_system(J, R_total)
+                # --- Phase 3.1: KKT equilibration ---
+                # Scale rows/cols so ||J_ii|| ≈ 1 before the linear solve.
+                # PARDISO's internal scaling is purely numerical (rook pivoting),
+                # but the KKT can span 5+ orders of magnitude (K_uu ~ 10⁵ vs C ~ 1),
+                # and rook pivoting alone handles ±1e308; the broader issue is that
+                # the iterative refinement (see _solve_linear_system) converges
+                # faster when the system is diagonally-equilibrated a priori.
+                _diag_J = J.diagonal().copy()
+                _abs_diag = np.maximum(np.abs(_diag_J), 1e-8)
+                _scale = 1.0 / np.sqrt(_abs_diag)
+                _D = sps.diags(_scale)
+                J_eq = _D @ J @ _D
+                R_eq = _D @ R_total
+
+                # Solve (multithreaded direct + iterative refinement) on equilibrated system
+                du_all_eq = _solve_linear_system(J_eq, R_eq)
+                du_all = _D @ du_all_eq  # unscale
             
             # Check if search direction has NaN or Inf
             if np.any(np.isnan(du_all) | np.isinf(du_all)):
@@ -1532,7 +1762,7 @@ class DynamicSolver:
             alpha = 1.0
             alpha_min = 0.1
             alpha_max = 1.0        # no under-relaxation cap (full Newton allowed)
-            R_norm_current = np.linalg.norm(R_total)
+            R_norm_current = np.linalg.norm(R_total[active_total])
 
             while alpha > alpha_min + 1e-5:
                 u_temp = u_k + alpha * du
@@ -1545,22 +1775,30 @@ class DynamicSolver:
                     u_ext_n, v_ext_n, a_ext_n,
                     dt, inv_beta_dt2, self.beta
                 )
-                R_norm_temp = np.linalg.norm(R_temp)
+                R_norm_temp = np.linalg.norm(R_temp[active_total])
 
                 if np.isnan(R_norm_temp) or np.isinf(R_norm_temp):
                     alpha *= 0.5
                     continue
 
+                # --- Merit-function Line Search (Phase 3.2) ---
                 # Accept this α if:
-                #   (a) it is the full Newton step (subject to alpha_max cap), OR
-                #   (b) residual has dropped / not exploded, OR
-                #   (c) we are already deep in backtracking
-                if alpha == 1.0 or R_norm_temp < R_norm_current * 10.0 or alpha < 0.25:
+                #   (a) full Newton step (preserves quadratic convergence), OR
+                #   (b) Armijo sufficient decrease:  ||R||² ≤ (1 - 2·c·α)·||R_0||²
+                #       with c=1e-4 — standard for Newton-Krylov methods, OR
+                #   (c) residual dropped / not exploded (threshold tighter for
+                #       later iterations when the tangent is more reliable), OR
+                #   (d) already deep in backtracking.
+                armijo = (R_norm_temp**2 <= (1.0 - 2e-4 * alpha) * R_norm_current**2)
+                res_threshold = 50.0 if self.rbe2_elements else (3.0 if n_iter > 2 else 10.0)
+                if alpha == 1.0 or armijo or R_norm_temp < R_norm_current * res_threshold:
                     break
                 alpha *= 0.5
 
-            # Enforce under-relaxation cap
-            alpha = min(alpha, alpha_max)
+            if alpha <= alpha_min + 1e-5:
+                if getattr(self, 'verbose', False):
+                    print(f"  *** ERROR: Line search failed to resolve residual explosion at iteration {n_iter+1}.", flush=True)
+                return -(self.max_iter)
 
             # If line search failed to find a non-NaN/non-inf residual
             if np.isnan(R_norm_temp) or np.isinf(R_norm_temp):
@@ -1590,47 +1828,43 @@ class DynamicSolver:
                 
             u_norm = np.linalg.norm(u_k)
             rel_change = du_norm / (u_norm + 1e-12)
-            
+
+            # 1. Max active force residual (always computed — needed by Tier 1 convergence)
+            if np.any(active_dofs):
+                abs_R_active = np.abs(R_u) * active_dofs
+                max_R_val = np.max(abs_R_active)
+                max_R_dof = np.argmax(abs_R_active)
+                max_R_node_id = self.sorted_nids[max_R_dof // 2]
+                max_R_dof_name = 'UX' if max_R_dof % 2 == 0 else 'UY'
+                max_R_str = f"N{max_R_node_id}({max_R_dof_name})"
+            else:
+                max_R_val = 0.0
+                max_R_str = "N/A"
+
+            # 2. Max displacement correction (always computed — needed by Tier 2 convergence)
+            if self.n_dofs > 0:
+                abs_du = np.abs(du)
+                max_du_val = np.max(abs_du)
+                max_du_dof = np.argmax(abs_du)
+                max_du_node_id = self.sorted_nids[max_du_dof // 2]
+                max_du_dof_name = 'UX' if max_du_dof % 2 == 0 else 'UY'
+                max_du_str = f"N{max_du_node_id}({max_du_dof_name})"
+            else:
+                max_du_val = 0.0
+                max_du_str = "N/A"
+
+            # 3. Max displacement increment
+            delta_u = u_k - u_n
+            max_disp_incr = np.max(np.abs(delta_u)) if self.n_dofs > 0 else 0.0
+
+            energy_err = np.abs(np.dot(R_total, du_all))
+
             if getattr(self, 'verbose', False):
-                # 1. Max active force residual
-                active_dofs = np.ones(self.n_dofs, dtype=bool)
-                if len(self.bc_dofs) > 0:
-                    node_bc_dofs = self.bc_dofs[self.bc_dofs < self.n_dofs]
-                    active_dofs[node_bc_dofs] = False
-                
-                if np.any(active_dofs):
-                    abs_R_active = np.abs(R_u) * active_dofs
-                    max_R_val = np.max(abs_R_active)
-                    max_R_dof = np.argmax(abs_R_active)
-                    max_R_node_id = self.sorted_nids[max_R_dof // 2]
-                    max_R_dof_name = 'UX' if max_R_dof % 2 == 0 else 'UY'
-                    max_R_str = f"N{max_R_node_id}({max_R_dof_name})"
-                else:
-                    max_R_val = 0.0
-                    max_R_str = "N/A"
-
-                # 2. Max displacement correction
-                if self.n_dofs > 0:
-                    abs_du = np.abs(du)
-                    max_du_val = np.max(abs_du)
-                    max_du_dof = np.argmax(abs_du)
-                    max_du_node_id = self.sorted_nids[max_du_dof // 2]
-                    max_du_dof_name = 'UX' if max_du_dof % 2 == 0 else 'UY'
-                    max_du_str = f"N{max_du_node_id}({max_du_dof_name})"
-                else:
-                    max_du_val = 0.0
-                    max_du_str = "N/A"
-
-                # 3. Max displacement increment
-                delta_u = u_k - u_n
-                max_disp_incr = np.max(np.abs(delta_u)) if self.n_dofs > 0 else 0.0
-
-                energy_err = np.abs(np.dot(R_total, du_all))
                 n_contacts = 0
                 for pc in self.penalty_constraints:
                     if hasattr(pc, "n_active"):
                         n_contacts += getattr(pc, "n_active", 0)
-                
+
                 print(
                     f"  {n_iter+1:4d}   "
                     f"{max_R_val:11.4e}  {max_R_str:<13s} "
@@ -1650,7 +1884,6 @@ class DynamicSolver:
                     print(f"  *** ERROR: Divergence detected at iteration {n_iter+1}. (Time: {t_elapsed:.2f} s)\n", flush=True)
                 return -(self.max_iter)
 
-            energy_err = np.abs(np.dot(R_total, du_all))
             # ---- Residual-based convergence criterion ----
             # For KKT saddle-point systems the displacement ratio du_norm / u_norm
             # can plateau at ~0.006 even when the Newton direction is accurate
@@ -1666,9 +1899,16 @@ class DynamicSolver:
             # floors at the linear-solver precision ~1e-6 absolute) and never
             # fired, so steps with a near-zero displacement ratio stalled to
             # max_iter even when already converged.
+            # ---- Abaqus Standard Solution Control Criterion (Phase 2) ----
+            # Abaqus default: R_max <= 0.005 * q_avg AND c_max <= 0.01 * du_max
+            q_avg = np.mean(np.abs(f_int)) if len(f_int) > 0 else 1.0
+            abaqus_r_converged = max_R_val <= 0.005 * q_avg
+            abaqus_c_converged = max_du_val <= 0.01 * max_disp_incr
+            abaqus_converged = abaqus_r_converged and abaqus_c_converged
+
             residual_converged = (
                 res_norm_0 is not None and res_ratio < self.rtol
-            )
+            ) or abaqus_converged
             # Absolute convergence (P2): when the Newton correction itself is
             # negligibly small, the increment has converged regardless of the
             # *relative* disp ratio. This cures the near-zero-deformation stall
@@ -1717,8 +1957,9 @@ class DynamicSolver:
                         rbe2_trial_states[i].u_s_n = u_s_new
                         # Update global u for slave DOFs (were dummy during solve)
                         for j, slave_id in enumerate(rbe2_elem.slave_ids):
-                            u_k[slave_id*2]     = u_s_new[2*j]
-                            u_k[slave_id*2 + 1] = u_s_new[2*j + 1]
+                            s_idx = self.nid_to_idx[slave_id]
+                            u_k[s_idx*2]     = u_s_new[2*j]
+                            u_k[s_idx*2 + 1] = u_s_new[2*j + 1]
                         rbe2_elem.state = rbe2_trial_states[i]
                     # Update converged solution with recovered slave DOFs
                     self.u = u_k.copy()
@@ -1727,37 +1968,56 @@ class DynamicSolver:
                 if getattr(self, 'verbose', False):
                     t_elapsed = time.time() - t_start
                     print(f"  ---------------------------------------------------------------------------------------------------------------------", flush=True)
-                    print(f"  => Increment Converged. (Time: {t_elapsed:.2f} s)\n", flush=True)
+                    print(f"  => Increment Converged. (Time: {t_elapsed:.2f} s)", flush=True)
+                    # Mesh quality report every 5 steps to avoid spam
+                    if n_iter > 0 and (n_iter % 5 == 0 or n_iter == 1):
+                        q = self._check_mesh_quality(u_k)
+                        for w in q['warnings']:
+                            safe_w = str(w).encode('ascii', errors='replace').decode('ascii')
+                            print(f"  {safe_w}", flush=True)
+                    print(f"", flush=True)
                 break
+
+            # --- Phase 3.3: Adaptive stall detection ---
+            # If the residual ratio improves by less than 0.5% per iteration
+            # (conv_rate > 0.995) for 4+ consecutive iterations, the solver is
+            # stuck in linear convergence.  Early exit triggers dt cutback to
+            # find a smaller increment where quadratic convergence resumes.
+            conv_rate = res_ratio / max(prev_res_ratio, 1e-30)
+            self.last_conv_rate = float(conv_rate)  # exposed for AdaptiveDtController (B6)
+            if conv_rate > 0.995 and res_ratio > max(self.rtol * 0.1, 1e-6):
+                stall_count += 1
+            else:
+                stall_count = 0
+            prev_res_ratio = res_ratio
+            if stall_count > 3:
+                if getattr(self, 'verbose', False):
+                    print(f"  *** STALL DETECTED: conv_rate={conv_rate:.4f} for {stall_count} iters. Cutting back dt.", flush=True)
+                return -(self.max_iter)
 
             u_k += du
             u_ext_k += du_ext
             lam_k += dlam
 
-        self.u = u_k.copy()
-        if self.static_mode:
-            # In quasistatic mode the Newmark predictor v_n, a_n has no physical
-            # meaning — it is only a kinematic byproduct of the update formula
-            #   a_k = (u_k - u_n - dt·v_n) / (β·dt²) − ((1−2β)/2β)·a_n
-            # and accumulates unphysical values through successive tiny-dt
-            # cutbacks (v→±1000, a→±10⁴ after a few steps).  The predictor
-            #   u_k(Δt) = u_n + Δt·v_n + ½Δt²·a_n
-            # then perturbs the converged state by ~0.4 mm even for Δt = 0,
-            # pushing already-distorted root Q4 elements past their Jacobian
-            # singularity limit (~12° hinge rotation in ex03_v4).
-            self.a = np.zeros_like(a_k)
-            self.v = np.zeros_like(v_n)
-            self.a_extra = np.zeros_like(a_ext_k)
-            self.v_extra = np.zeros_like(v_ext_n)
-        else:
-            # Guard against unphysical acceleration / velocity spikes due to tiny dt cutbacks
-            self.a = np.clip(a_k.copy(), -1.0e4, 1.0e4)
-            self.v = np.clip(v_n + dt * ((1.0 - gamma) * a_n + gamma * a_k), -1.0e3, 1.0e3)
-            self.a_extra = np.clip(a_ext_k.copy(), -1.0e4, 1.0e4)
-            self.v_extra = np.clip(v_ext_n + dt * ((1.0 - gamma) * a_ext_n + gamma * a_ext_k), -1.0e3, 1.0e3)
-        
-        self.u_extra = u_ext_k.copy()
-        self.lam = lam_k.copy()
+            # Project slave DOFs to satisfy the exact non-linear kinematic constraints (avoid drift)
+            if self.use_kinematic_condensation and getattr(self, "condensation_mgr", None) is not None:
+                for c_idx, c in enumerate(self.condensation_mgr.constraints):
+                    theta = u_ext_k[self.condensation_mgr.constraint_extra_offsets[c_idx]]
+                    cost = np.cos(theta)
+                    sint = np.sin(theta)
+                    m_idx = self.nid_to_idx[c.master_id]
+                    u_mx = u_k[2 * m_idx]
+                    u_my = u_k[2 * m_idx + 1]
+                    x_m, y_m = self.coords[m_idx]
+
+                    for sid in c.slave_ids:
+                        s_idx = self.nid_to_idx[sid]
+                        x_s, y_s = self.coords[s_idx]
+                        dx, dy = x_s - x_m, y_s - y_m
+
+                        # Exact formula: u_s = u_m + (R(theta) - I) @ d
+                        u_k[2 * s_idx]     = u_mx + (cost - 1.0) * dx - sint * dy
+                        u_k[2 * s_idx + 1] = u_my + sint * dx + (cost - 1.0) * dy
 
         if not converged:
             if getattr(self, 'verbose', False):
@@ -1765,6 +2025,21 @@ class DynamicSolver:
                 print(f"  ---------------------------------------------------------------------------------------------------------------------", flush=True)
                 print(f"  *** ERROR: Failed to converge after {self.max_iter} iterations. (Time: {t_elapsed:.2f} s)\n", flush=True)
             return -(self.max_iter)
+
+        self.u = u_k.copy()
+        if self.static_mode:
+            self.a = np.zeros_like(a_k)
+            self.v = np.zeros_like(v_n)
+            self.a_extra = np.zeros_like(a_ext_k)
+            self.v_extra = np.zeros_like(v_ext_n)
+        else:
+            self.a = np.clip(a_k.copy(), -1.0e4, 1.0e4)
+            self.v = np.clip(v_n + dt * ((1.0 - gamma) * a_n + gamma * a_k), -1.0e3, 1.0e3)
+            self.a_extra = np.clip(a_ext_k.copy(), -1.0e4, 1.0e4)
+            self.v_extra = np.clip(v_ext_n + dt * ((1.0 - gamma) * a_ext_n + gamma * a_ext_k), -1.0e3, 1.0e3)
+
+        self.u_extra = u_ext_k.copy()
+        self.lam = lam_k.copy()
 
         return n_iter
 
@@ -2251,6 +2526,94 @@ class DynamicSolver:
             return self.element_type
         return self.element_type_by_pid.get(pid, "Q4")
 
+    def _check_element_inversion(self, u: np.ndarray) -> bool:
+        """Check det(F) > 0 at all GPs for all elements.
+
+        Returns True if ALL elements are valid (det(F) > 0), False if any
+        element has inverted (det(F) <= 0) — indicating the Newton step is
+        physically invalid and dt must be cut back.
+
+        Uses F = I + grad(u_total) with initial-configuration dN/dX
+        (precomputed in _dN_dX_all), which gives the total deformation
+        gradient from the initial configuration regardless of UL/TL mode.
+        No composition with _ul_F_n is needed — _dN_dX_all never changes.
+        """
+        detF_min = -0.1  # Allow large rigid body rotation without artificial cutback
+        u_elems = u[self.dof_indices]  # (n_elem, 8)
+        ux = u_elems[:, 0::2]          # (n_elem, 4)
+        uy = u_elems[:, 1::2]
+        gu = np.einsum('ea,egja->egj', ux, self._dN_dX_all)  # (n_elem, n_gp, 2)
+        gv = np.einsum('ea,egja->egj', uy, self._dN_dX_all)
+        F = np.zeros((self.n_elem, 4, 2, 2), dtype=np.float64)  # 4 GPs for Q4
+        F[:, :, 0, 0] = 1.0 + gu[:, :, 0]
+        F[:, :, 0, 1] = gu[:, :, 1]
+        F[:, :, 1, 0] = gv[:, :, 0]
+        F[:, :, 1, 1] = 1.0 + gv[:, :, 1]
+        detF = F[:, :, 0, 0] * F[:, :, 1, 1] - F[:, :, 0, 1] * F[:, :, 1, 0]
+        return bool(np.all(detF > detF_min))
+
+    def _check_mesh_quality(self, u: np.ndarray) -> dict:
+        """Compute mesh quality metrics from the current displacement.
+
+        Returns a dict with:
+          - 'min_detJ': minimum element Jacobian determinant across all GPs
+          - 'min_aspect_ratio': minimum element aspect ratio
+          - 'n_inverted': number of elements with det(F) ≤ 0
+          - 'n_warped':   number of elements with det(F) < 0.5 but > 0
+          - 'warnings':   list of human-readable warning strings
+        """
+        result = {'min_detJ': 1.0, 'min_aspect_ratio': 1.0,
+                  'n_inverted': 0, 'n_warped': 0, 'warnings': []}
+
+        u_elems = u[self.dof_indices]  # (n_elem, 8)
+        ux = u_elems[:, 0::2]
+        uy = u_elems[:, 1::2]
+        gu = np.einsum('ea,egja->egj', ux, self._dN_dX_all)
+        gv = np.einsum('ea,egja->egj', uy, self._dN_dX_all)
+        F = np.zeros((self.n_elem, 4, 2, 2), dtype=np.float64)
+        F[:, :, 0, 0] = 1.0 + gu[:, :, 0]
+        F[:, :, 0, 1] = gu[:, :, 1]
+        F[:, :, 1, 0] = gv[:, :, 0]
+        F[:, :, 1, 1] = 1.0 + gv[:, :, 1]
+
+        detF = F[:, :, 0, 0] * F[:, :, 1, 1] - F[:, :, 0, 1] * F[:, :, 1, 0]
+        min_det = float(np.min(detF))
+        result['min_detJ'] = min_det
+        result['n_inverted'] = int(np.sum(np.any(detF <= 0, axis=1)))
+        result['n_warped'] = int(np.sum(np.all(detF > 0, axis=1) & np.any(detF < 0.5, axis=1)))
+
+        # Element aspect ratio (based on reference element shape)
+        coords_0 = self.elem_coords  # (n_elem, 4, 2) initial coordinates
+        for e in range(self.n_elem):
+            x4 = coords_0[e, :, 0]
+            y4 = coords_0[e, :, 1]
+            # Edge lengths (for a QUAD4)
+            l01 = np.hypot(x4[1] - x4[0], y4[1] - y4[0])
+            l12 = np.hypot(x4[2] - x4[1], y4[2] - y4[1])
+            l23 = np.hypot(x4[3] - x4[2], y4[3] - y4[2])
+            l30 = np.hypot(x4[0] - x4[3], y4[0] - y4[3])
+            edges = np.array([l01, l12, l23, l30])
+            ar = np.max(edges) / max(np.min(edges), 1e-30)
+            if ar < result['min_aspect_ratio']:
+                result['min_aspect_ratio'] = ar
+
+        if min_det < 0.1:
+            result['warnings'].append(
+                f"Mesh quality WARNING: min det(J)={min_det:.3e}  "
+                f"inverted={result['n_inverted']}  warped={result['n_warped']}"
+            )
+        elif min_det < 0.5:
+            result['warnings'].append(
+                f"Mesh quality NOTICE: min det(J)={min_det:.3e} — approaching "
+                f"inversion threshold ({result['n_warped']} elements warped)"
+            )
+
+        if result['min_aspect_ratio'] > 20:
+            result['warnings'].append(
+                f"Element aspect ratio WARNING: max ratio={result['min_aspect_ratio']:.1f}")
+
+        return result
+
     def _assemble_multi_material_batch(self, u: np.ndarray, dt=None):
         """Mixed-strategy assembly for multi-material meshes.
 
@@ -2377,6 +2740,35 @@ class DynamicSolver:
                 all_K_vals.append(K_es.reshape(-1))
                 continue
 
+            if (self._pid_element_type(pid) == "Q4_COROTATIONAL"
+                    and isinstance(mat_adapter.material, J2Plasticity)
+                    and pid in self._coro_jax_vmap_by_pid):
+                import jax
+                import jax.numpy as jnp
+                n_vars = mat_adapter.n_internal_vars
+                _vmap_fn = self._coro_jax_vmap_by_pid[pid]
+
+                coords_b = jnp.asarray(self.elem_coords[elem_indices])
+                u_b = jnp.asarray(u[self.dof_indices[elem_indices]])
+                state_b = jnp.asarray(
+                    self.state[elem_indices, :, :n_vars]
+                ) if self.state is not None else jnp.zeros((len(elem_indices), 4, n_vars))
+                t_b = self._elem_thickness[elem_indices]
+
+                f_es, K_es, se_all = _vmap_fn(coords_b, u_b, state_b)
+                f_es = np.asarray(f_es) * t_b[:, None]
+                K_es = np.asarray(K_es) * t_b[:, None, None]
+                se_all = np.asarray(se_all)
+
+                np.add.at(f_int, self.dof_indices[elem_indices].flatten(), f_es.flatten())
+                if state_new is not None:
+                    state_new[elem_indices, :, :n_vars] = se_all
+
+                all_K_rows.append(self._pid_K_rows[pid])
+                all_K_cols.append(self._pid_K_cols[pid])
+                all_K_vals.append(K_es.reshape(-1))
+                continue
+
             if (self._pid_element_type(pid) == "Q4_EAS"
                     and isinstance(mat_adapter.material, J2Plasticity)):
                 n_vars = mat_adapter.n_internal_vars
@@ -2460,10 +2852,12 @@ class DynamicSolver:
                                 u_elem = u[self.dof_indices[e]]
                             state_elem = (self.state[e, :, :n_vars]
                                           if self.state is not None else None)
+                            F_n_elem = self._ul_F_n[e] if self.ul_mode else None
                             f_e, K_e, alpha_new, se_new = compute_eas_j2_contributions(
                                 coords_e, u_elem, self.eas_alpha[e], state_elem,
                                 mat_adapter.material, mat_adapter.params,
                                 self._elem_thickness[e],
+                                F_n=F_n_elem,
                             )
                             self.eas_alpha[e] = alpha_new
                             np.add.at(f_int, self.dof_indices[e], f_e)
@@ -2816,10 +3210,17 @@ class DynamicSolver:
             state_new = None
 
         elif self.use_j2_batch:
-            return self._assemble_j2_batch(u, dt)
+            # NOTE: must NOT `return` directly here — penalty_constraints
+            # (surface ties, etc.) and rbe2_dof_map post-processing below
+            # are applied once, after this if/elif chain, for *every* batch
+            # path. An early return here used to skip them silently (tie
+            # forces/stiffness never assembled for single-material J2 batch
+            # models — see AGENTS.md §4.8).
+            f_int, K_T, state_new = self._assemble_j2_batch(u, dt)
 
         elif self.use_multi_material_batch:
-            return self._assemble_multi_material_batch(u, dt)
+            # Same rationale as use_j2_batch above.
+            f_int, K_T, state_new = self._assemble_multi_material_batch(u, dt)
 
         elif self.use_jax_grouped_vmap:
             # --- Multi-material Grouped Vectorized JAX Assembly ---
@@ -2868,10 +3269,16 @@ class DynamicSolver:
                 pid = elem.pid if elem.pid is not None else 0
                 mat_adapter = self.materials.get(pid, self.material)
 
-                if self._pid_element_type(pid) == "Q4_UP":
+                elem_type = self._pid_element_type(pid)
+                if elem_type == "Q4_COROTATIONAL":
+                    from ..element.q4_corotational_jax import compute_corotational_internal_force
+                    f_e_jax, K_e_jax = compute_corotational_internal_force(coords, u_elem)
+                    f_e = np.asarray(f_e_jax) * self._elem_thickness[e]
+                    K_e = np.asarray(K_e_jax) * self._elem_thickness[e]
+                    se_new = None
+                elif elem_type == "Q4_UP":
                     from ..material.linear_viscoelastic import LinearViscoelastic
                     if isinstance(mat_adapter.material, LinearViscoelastic):
-                        # Stress-based hybrid (mean-dilatation) for linear viscoelasticity
                         from ..element.q4_visco_hybrid import compute_visco_hybrid_contributions
                         n_vars = mat_adapter.n_internal_vars
                         state_elem = (self.state[e][:, :n_vars]
@@ -2928,7 +3335,7 @@ class DynamicSolver:
                 K_T[slave_dof, :] = 0.0
 
                 # Transfer K_T col: K_T[:, slave] → K_T[:, master]
-                slave_col = K_T[:, slave_dof].toarray().ravel()
+                slave_col = K_T[:, slave_dof].toarray()
                 K_T[:, master_dof] = K_T[:, master_dof] + slave_col
                 K_T[:, slave_dof] = 0.0
 

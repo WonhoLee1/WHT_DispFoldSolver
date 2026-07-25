@@ -97,11 +97,18 @@ class ModelBuilderResult:
         self.dload_configs: List[dict] = []
         self.contact_pairs: List[dict] = []
         self.contact_surfaces: List[dict] = []
-        self.contact_pair_objects: List[ContactPair] = []
+        self.penalty_constraints: List = []
+        self.rbe2_elements: List = []
+        self.rbe2_constraints: List = []
+        self.boundaries: List[AbaqusBoundary] = []
+        self.contact_pair_objects: List = []
 
     def __repr__(self) -> str:
         n_mat = len(self.materials)
         n_con = len(self.constraints)
+        n_pen = len(self.penalty_constraints)
+        n_rbe_el = len(self.rbe2_elements)
+        n_rbe_co = len(self.rbe2_constraints)
         n_amp = len(self.amplitudes)
         n_dl = len(self.dload_configs)
         n_cp = len(self.contact_pairs)
@@ -110,7 +117,8 @@ class ModelBuilderResult:
         return (
             f"ModelBuilderResult("
             f"mesh={'yes' if self.mesh else 'no'}, "
-            f"materials={n_mat}, constraints={n_con}, "
+            f"materials={n_mat}, constraints={n_con}, penalty_constraints={n_pen}, "
+            f"rbe2_elements={n_rbe_el}, rbe2_constraints={n_rbe_co}, "
             f"amplitudes={n_amp}, dloads={n_dl}, "
             f"contact_pairs={n_cp}, surfaces={n_cs}, "
             f"contact_objects={n_cpo})"
@@ -191,6 +199,7 @@ class ModelBuilder:
         self._build_dloads()
         self._build_contact()
         self._build_solver_config()
+        self._result.boundaries = list(self._abq.boundaries)
         return self._result
 
     # ------------------------------------------------------------------
@@ -610,37 +619,75 @@ class ModelBuilder:
     # ------------------------------------------------------------------
 
     def _build_constraints(self):
-        """Convert TIE and MPC into solver constraint objects."""
+        """Convert TIE, MPC, and RIGID BODY into solver constraint objects."""
         mesh = self._result.mesh
+        if mesh is None:
+            return
 
-        # TIE constraints
+        # Build surface map to resolve element/node surfaces
+        surface_map = {}
+        for surf_name, abq_surf in self._abq.surfaces.items():
+            if abq_surf.surface_type.upper() == "ELEMENT":
+                for elset_name, side in abq_surf.definitions:
+                    try:
+                        from ..contact.contact_surface import auto_detect_exterior
+                        cs = auto_detect_exterior(mesh, elset_name)
+                        cs.name = surf_name
+                        surface_map[surf_name] = cs
+                    except Exception:
+                        pass
+            elif abq_surf.surface_type.upper() == "NODE":
+                node_ids = set()
+                for nset_name, _ in abq_surf.definitions:
+                    ns = mesh.node_sets.get(nset_name)
+                    if ns:
+                        node_ids.update(ns.node_ids)
+                from ..contact.contact_surface import ContactSurface
+                cs = ContactSurface(name=surf_name, surface_type="NODE", node_ids=node_ids)
+                surface_map[surf_name] = cs
+
+        def resolve_nodes(name):
+            # 1. Try surface map
+            if name in surface_map:
+                return list(surface_map[name].node_ids)
+            # 2. Try mesh node set
+            ns = mesh.node_sets.get(name)
+            if ns:
+                return list(ns.node_ids)
+            # 3. Try mesh element set
+            es = mesh.element_sets.get(name)
+            if es:
+                node_ids = set()
+                for eid in es:
+                    node_ids.update(mesh.elements[eid].node_ids)
+                return list(node_ids)
+            return []
+
+        # TIE constraints -> convert to SurfaceTieConstraint (penalty-based)
         for tie in self._abq.ties:
             try:
-                from ..constraint.tie import TieConstraint
+                from ..constraint.surface_tie import SurfaceTieConstraint
             except ImportError:
-                warnings.warn("TieConstraint not available — skipping TIE")
+                warnings.warn("SurfaceTieConstraint not available — skipping TIE")
                 continue
 
-            slave_nodes = set()
-            for s_name in tie.slave_surfaces:
-                ns = mesh.node_sets.get(s_name)
-                if ns:
-                    slave_nodes.update(ns.node_ids)
-            master_nodes = set()
-            for m_name in tie.master_surfaces:
-                ns = mesh.node_sets.get(m_name)
-                if ns:
-                    master_nodes.update(ns.node_ids)
+            slave_nodes = resolve_nodes(tie.slave)
+            master_nodes = resolve_nodes(tie.master)
 
             if slave_nodes and master_nodes:
-                constraint = TieConstraint(
-                    slave_nodes=list(slave_nodes),
-                    master_nodes=list(master_nodes),
-                    position_tolerance=tie.position_tolerance,
+                # Use position tolerance as penalty stiffness if it's large, otherwise default to 1e6
+                penalty = tie.position_tolerance if tie.position_tolerance > 1e3 else 1e6
+                constraint = SurfaceTieConstraint(
+                    slave_node_ids=slave_nodes,
+                    master_node_ids=master_nodes,
+                    nid_to_idx=mesh.node_id_to_index(),
+                    coords=mesh.nodes_array(),
+                    penalty_stiffness=penalty,
+                    name=f"{tie.slave}_{tie.master}_TIE",
                 )
-                self._result.constraints.append(constraint)
+                self._result.penalty_constraints.append(constraint)
 
-        # MPC constraints
+        # MPC constraints (legacy LM-based)
         for mpc in self._abq.mpcs:
             if mpc.mpc_type.upper() in ("RBE2", "BEAM"):
                 try:
@@ -648,29 +695,44 @@ class ModelBuilder:
                 except ImportError:
                     warnings.warn("RBE2HingeConstraint not available — skipping MPC")
                     continue
-                # Abaqus convention: first node = master, rest = slaves
                 if len(mpc.nodes) >= 2:
+                    ext_offset = self._next_extra_primal_offset()
                     constraint = RBE2HingeConstraint(
-                        master_node=mpc.nodes[0],
-                        slave_nodes=list(mpc.nodes[1:]),
+                        mesh, master_id=mpc.nodes[0],
+                        slave_ids=list(mpc.nodes[1:]),
+                        extra_primal_offset=ext_offset,
                     )
                     self._result.constraints.append(constraint)
 
         # Rigid body constraints (from *RIGID BODY)
         for rb in self._abq.rigid_bodies:
             try:
-                from ..constraint.rbe2 import RBE2HingeConstraint
-            except ImportError:
-                warnings.warn("RBE2HingeConstraint not available — skipping RIGID BODY")
-                continue
-            if len(rb.node_ids) > 0:
-                ext_offset = self._next_extra_primal_offset()
-                constraint = RBE2HingeConstraint(
-                    mesh, master_id=rb.ref_node,
-                    slave_ids=rb.node_ids,
-                    extra_primal_offset=ext_offset,
+                from ..element.rbe2 import RBE2HingeElement
+                nid_to_idx = mesh.node_id_to_index()
+                master_idx = nid_to_idx[rb.ref_node]
+                slave_indices = [nid_to_idx[nid] for nid in rb.node_ids]
+                rbe2_elem = RBE2HingeElement(
+                    master_id=master_idx,
+                    slave_ids=slave_indices,
+                    coords_initial=mesh.nodes_array(),
                 )
-                self._result.constraints.append(constraint)
+                rbe2_elem.master_id = rb.ref_node
+                rbe2_elem.slave_ids = list(rb.node_ids)
+                self._result.rbe2_elements.append(rbe2_elem)
+            except ImportError:
+                warnings.warn("RBE2HingeElement not available")
+
+            # 2. KinematicRBE2Constraint (kinematic condensed constraint)
+            try:
+                from ..constraint.rbe2_condensed import KinematicRBE2Constraint
+                rbe2_con = KinematicRBE2Constraint(
+                    mesh=mesh,
+                    master_id=rb.ref_node,
+                    slave_ids=rb.node_ids,
+                )
+                self._result.rbe2_constraints.append(rbe2_con)
+            except ImportError:
+                warnings.warn("KinematicRBE2Constraint not available")
 
     # ------------------------------------------------------------------
     # Phase 5: Distributed loads
