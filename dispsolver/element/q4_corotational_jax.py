@@ -89,7 +89,7 @@ def compute_corotational_internal_force(
     T8 = build_block_rotation(R_elem)
     
     # 2. Local Deformational Displacement (Rigid rotation subtracted)
-    u_local = T8.T @ u_global
+    u_local = (coords_curr @ R_elem - coords_init).flatten()
     
     # 3. Compute Local Internal Force & Local Stiffness in Corotational Frame
     J0, detJ0, invJ0 = jacobian(_GP0[0, 0], _GP0[0, 1], coords_init)
@@ -119,7 +119,7 @@ def compute_corotational_internal_force(
         c_curr = coords_init + u_g.reshape((4, 2))
         R = compute_element_rotation(coords_init, c_curr)
         T = build_block_rotation(R)
-        u_l = T.T @ u_g
+        u_l = (c_curr @ R - coords_init).flatten()
         
         f_l = jnp.zeros(8, dtype=jnp.float64)
         for i in range(4):
@@ -191,7 +191,7 @@ def compute_corotational_j2_contributions_jax(
     coords_curr = coords + u_elem.reshape((4, 2))
     R_elem = compute_element_rotation(coords, coords_curr)
     T8 = build_block_rotation(R_elem)
-    u_local = T8.T @ u_elem
+    u_local = (coords_curr @ R_elem - coords).flatten()
 
     f_local = jnp.zeros(8, dtype=jnp.float64)
     K_local = jnp.zeros((8, 8), dtype=jnp.float64)
