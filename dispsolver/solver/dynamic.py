@@ -2550,7 +2550,27 @@ class DynamicSolver:
         F[:, :, 1, 0] = gv[:, :, 0]
         F[:, :, 1, 1] = 1.0 + gv[:, :, 1]
         detF = F[:, :, 0, 0] * F[:, :, 1, 1] - F[:, :, 0, 1] * F[:, :, 1, 0]
-        return bool(np.all(detF > detF_min))
+        all_ok = np.all(detF > detF_min)
+        if not all_ok:
+            inverted_idxs = np.where(np.any(detF <= detF_min, axis=1))[0]
+            print(f"\n[DEBUG] Element inversion detected in element indexes: {inverted_idxs.tolist()}", flush=True)
+            for idx in inverted_idxs[:5]:
+                eid = self.elem_ids[idx]
+                elem = self.mesh.elements[eid]
+                pid = elem.pid if elem.pid is not None else 0
+                print(f"  Element ID: {eid} (index {idx}, pid {pid})", flush=True)
+                print(f"    detF: {detF[idx].tolist()}", flush=True)
+                # Nodes and coordinates
+                conn = elem.node_ids
+                print(f"    Nodes connectivity: {conn}", flush=True)
+                for nid in conn:
+                    n_idx = self.nid_to_idx[nid]
+                    coords_0 = self.coords[n_idx]
+                    u_n = u[2 * n_idx : 2 * n_idx + 2]
+                    coords_curr = coords_0 + u_n
+                    print(f"      Node {nid}: initial={coords_0.tolist()}, current={coords_curr.tolist()}, u={u_n.tolist()}", flush=True)
+            print("", flush=True)
+        return bool(all_ok)
 
     def _check_mesh_quality(self, u: np.ndarray) -> dict:
         """Compute mesh quality metrics from the current displacement.
