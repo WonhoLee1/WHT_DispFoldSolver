@@ -176,10 +176,14 @@ single-material script's diagnostic verdict the same way.
 
 ### 1.4 Display layup, size, thickness — ⚠️ NOT YET A REAL MULTI-LAYER STACKUP
 
-**Current code models the display as a single homogeneous material**, not
-the real polyimide/OCA/cover-layer stack of an actual foldable display.
-Document this honestly rather than presenting either example's numbers as
-a validated physical layup:
+**Update (2026-07-26): a true multi-material layup now exists** for the
+primary reference (`ex12_abaqus_inp_plate_fold.py` /
+`gen_ex12_inp.py`) — see the 14-layer PET-PSA stack below. The two
+examples immediately below (`ex03_corotational_v4.py`,
+`ex11_rigid_plate_display_fold.py`) still use a single homogeneous
+material, and are documented as such — don't assume *every* example has
+a layup, only that the capability now exists and is proven out on the
+primary reference:
 
 - `ex03_corotational_v4.py`: length 80 mm (`x ∈ [-40,40]`), total thickness
   **0.35 mm**, meshed as 7 y-direction "layers" (`pid=0..6`) — but all 7
@@ -189,10 +193,20 @@ a validated physical layup:
   material stackup.
 - `ex11_rigid_plate_display_fold.py`: length 80 mm, thickness **0.5 mm**,
   single `NeoHookean` material (`E=50 MPa, ν=0.45`).
-- **TODO / not implemented**: true multi-material layup (distinct
-  Young's modulus / thickness per physical layer — e.g. PI substrate, OCA,
-  cover window). If a task requires this, it must be added; don't assume
-  it exists.
+- **`ex12_abaqus_inp_plate_fold.py` / `gen_ex12_inp.py` — real
+  multi-material layup, implemented**: 14 rows through the 0.5 mm
+  thickness, alternating **PET** (elastic-plastic, `E=4000 MPa`,
+  same params as above) and **PSA** (Arruda-Boyce hyperelastic,
+  `mu=0.16785 MPa, λ_m=3.0 [assumed, not measured], K=8.3333 MPa`,
+  wrapped in `ViscoelasticMaterial` with a Prony term
+  `g1=0.20, τ1=3.33s` and WLF shift). Verified
+  (`dev_log/interlayer_shear_verification_20260726.md`) to deliver its
+  actual purpose — layer-to-layer shear — not just be present: 81 µm
+  book-page staircase at the free tips, 97-99.5% of it carried by the
+  PSA rows despite PET/PSA rows being equal thickness. Still a
+  simplified alternating layup, not a validated real display stackup
+  (PI substrate / OCA / cover window with measured properties) — the
+  λ_m assumption is the main gap if that's ever needed.
 
 ---
 
@@ -344,29 +358,23 @@ exactly the one you want the history for. The same history is stored in
 the result file under `slip__*` and can be plotted later with
 `plot_slip_history`.
 
-### 3.1 TODO (not yet implemented, 2026-07-26): before/after PNG capture for every folding example
+### 3.1 Before/after PNG capture — DONE, scoped to the ex11/ex12/ex13 family
 
-Proposed by the user: every folding example script (`ex03_*`, `ex11_*`,
-`ex12_*`, and any future one) should save **two** PNG snapshots of the
-deformed shape — one at `t=0` (flat, before) and one at the final
-converged state (after) — not just the single final-state PNG some
-scripts currently save (e.g. `ex12_abaqus_inp_plate_fold.py` only writes
-`ex12_final_folding_shape.png`, no before-shot).
+Every folding example script saves two PNG snapshots — `t=0` (flat,
+before) and the final converged state (after) — via
+`plot_and_save_deformed_shape_png` (`dispsolver/export/plotter.py`),
+called twice with `u=np.zeros_like(solver.u)` and `u=solver.u`.
 
-Preferred approach when this gets implemented: add one shared helper
-(e.g. `plot_fold_before_after(u_initial, u_final, mesh, ...)`) rather
-than duplicating matplotlib code per script — check
-`dispsolver/postprocess/viewer.py` first for reusable plotting code
-before writing new (it currently has no functions defined, so a new
-helper likely belongs there or in a new `postprocess/` module, not
-copy-pasted into each example).
-
-Open question not yet decided: apply to all `examples/ex*.py` folding
-scripts at once, or just the primary reference ones (`ex03_corotational_v4.py`,
-`ex11_rigid_plate_display_fold.py`, `ex12_abaqus_inp_plate_fold.py`,
-`ex12_rigid_plate_display_fold_corotational.py`) first. Ask the user
-before doing a repo-wide sweep — scope was not settled when this was
-recorded.
+**Scope decision (settled 2026-07-26, user chose explicitly)**: applied
+to the `ex11`/`ex12`/`ex13` family only —
+`ex11_rigid_plate_display_fold.py`, `ex12_abaqus_inp_plate_fold.py`
+(also gained a `before_png_name`/`after_png_name` parameter for reuse,
+see `run_folding_from_result`), `ex12_rigid_plate_display_fold_corotational.py`,
+and all three `ex13_unified_model_io.py --mode` variants (`read`/
+`roundtrip`/`build`, each with distinct filenames). **Not** applied
+repo-wide to every `examples/ex*.py` — the many `ex03_v*`/experimental
+scripts were deliberately left out; don't assume they have before/after
+capture.
 
 ---
 

@@ -1,0 +1,301 @@
+{
+  "timestamp": "2026-07-26T21:10:13.669414",
+  "runtime_seconds": 70.28284072875977,
+  "n_benchmarks": 9,
+  "n_passed": 9,
+  "results": [
+    {
+      "name": "Patch Test (Element Level)",
+      "category": "element",
+      "theory_value": 0.0010989010989010991,
+      "tolerance_pct": 0.1,
+      "unit": "N\u00b7mm",
+      "backends": {
+        "numpy_q4_bbar": {
+          "value": 0.0010989010989010991,
+          "error_pct": 0.0,
+          "symmetry_error": 1.1368683772161603e-13,
+          "min_eigenvalue": -3.771386883241476e-14,
+          "label": "strain energy U (N\u00b7mm)",
+          "passed": true
+        },
+        "numpy_q4_eas": {
+          "value": 0.0010989010989010991,
+          "error_pct": 0.0,
+          "symmetry_error": 5.684341886080802e-14,
+          "min_eigenvalue": -2.16807283548376e-13,
+          "label": "strain energy U (N\u00b7mm)",
+          "passed": true
+        },
+        "jax_q4_bbar": {
+          "value": 0.001098901098901099,
+          "error_pct": 1.9732479539236174e-14,
+          "symmetry_error": 5.684341886080802e-14,
+          "min_eigenvalue": -4.5215681922541645e-13,
+          "label": "strain energy U (N\u00b7mm)",
+          "passed": true
+        },
+        "jax_q4_eas": {
+          "value": 0.0010989010990203974,
+          "error_pct": 1.085613933818341e-08,
+          "symmetry_error": 1.1368683772161603e-13,
+          "min_eigenvalue": -4.1845398922539756e-13,
+          "label": "strain energy U (N\u00b7mm)",
+          "passed": true
+        },
+        "jax_q4_up": {
+          "value": 0.0010989010989010985,
+          "error_pct": 5.919743861770853e-14,
+          "symmetry_error": 5.684341886080802e-14,
+          "min_eigenvalue": -2.0128614538360468e-13,
+          "label": "strain energy U (N\u00b7mm)",
+          "passed": true
+        },
+        "jax_q4_visco_fs": {
+          "value": 0.0010989010989010985,
+          "error_pct": 5.919743861770853e-14,
+          "symmetry_error": 2.842170943040401e-14,
+          "min_eigenvalue": -2.1962369721867172e-13,
+          "label": "strain energy U (N\u00b7mm)",
+          "passed": true
+        },
+        "jax_q4_simo_fs": {
+          "value": 0.0010989010989010985,
+          "error_pct": 5.919743861770853e-14,
+          "symmetry_error": 5.684341886080802e-14,
+          "min_eigenvalue": -1.2157723128653998e-13,
+          "label": "strain energy U (N\u00b7mm)",
+          "passed": true
+        },
+        "numpy_q4_bbar_strain": {
+          "value": 0.0,
+          "error_pct": 0.0,
+          "label": "max|\u03b5 - \u03b5_exact| / |\u03b1| (%)",
+          "passed": true
+        }
+      },
+      "passed": true,
+      "details": "Single Q4 element (2.0\u00d71.0), \u03b1=1.0e-03. Strain: \u03b5_xx=1.000000e-03, \u03b5_yy=-4.285714e-04. Stress \u03c3_xx=1.0989. U_theory=1.098901e-03. NumPy strain error: 0.00e+00 (machine precision)."
+    },
+    {
+      "name": "Patch Test (Solver Level, Irregular Mesh)",
+      "category": "solver",
+      "theory_value": 0.0,
+      "tolerance_pct": 0.001,
+      "unit": "%",
+      "backends": {
+        "jax": {
+          "value": 1.0482666646743531e-07,
+          "error_pct": 1.0482666646743531e-07,
+          "n_iter": 1,
+          "ux_error": 1.003330339817421e-12,
+          "uy_error": 3.036300865680991e-13,
+          "label": "internal node displacement error (%)",
+          "passed": true
+        },
+        "numpy_sequential": {
+          "value": 9.5438532750119e-08,
+          "error_pct": 9.5438532750119e-08,
+          "n_iter": 1,
+          "ux_error": 9.074741826042843e-13,
+          "uy_error": 2.955367341909293e-13,
+          "label": "internal node displacement error (%)",
+          "passed": true
+        }
+      },
+      "passed": true,
+      "details": "Irregular 4-element patch, \u03b1=1.0e-03. Internal node (5) must settle at ux=5.000000e-04, uy=-2.142857e-04."
+    },
+    {
+      "name": "3-Point Bending",
+      "category": "solver",
+      "theory_value": 0.00023529999999999997,
+      "tolerance_pct": 5.0,
+      "unit": "mm",
+      "backends": {
+        "jax": {
+          "value": 0.00023697937112172237,
+          "error_pct": 0.7137148838599202,
+          "n_iter": 2,
+          "label": "center deflection |uy| (mm)",
+          "passed": true
+        },
+        "numpy_sequential": {
+          "value": 0.00024667333851226926,
+          "error_pct": 4.833548029013721,
+          "n_iter": 1,
+          "label": "center deflection |uy| (mm)",
+          "passed": true
+        }
+      },
+      "passed": true,
+      "details": "Beam 10.0\u00d71.0 mm, mesh 40\u00d74, P=0.001 N at center top. Timoshenko \u03b4=2.353000e-04 mm (EB: 2.275000e-04). E*=1098.90, I=0.083333."
+    },
+    {
+      "name": "4-Point Bending",
+      "category": "solver",
+      "theory_value": 0.0003167125,
+      "tolerance_pct": 5.0,
+      "unit": "mm",
+      "backends": {
+        "jax": {
+          "value": 0.00032214273978323026,
+          "error_pct": 1.7145644024881495,
+          "n_iter": 2,
+          "label": "center deflection |uy| (mm)",
+          "passed": true
+        },
+        "numpy_sequential": {
+          "value": 0.0003285293359290452,
+          "error_pct": 3.7310923721183156,
+          "n_iter": 2,
+          "label": "center deflection |uy| (mm)",
+          "passed": true
+        }
+      },
+      "passed": true,
+      "details": "Beam 10.0\u00d71.0, mesh 80\u00d78, P=0.001 at L/4 and 3L/4 (top surface). Timoshenko \u03b4=3.167125e-04 mm (EB: 3.128125e-04)."
+    },
+    {
+      "name": "Cantilever Bending",
+      "category": "solver",
+      "theory_value": 0.0036711999999999995,
+      "tolerance_pct": 5.0,
+      "unit": "mm",
+      "backends": {
+        "jax": {
+          "value": 0.0037327329214211225,
+          "error_pct": 1.6760983172020862,
+          "n_iter": 2,
+          "label": "tip deflection |uy| (mm)",
+          "passed": true
+        },
+        "numpy_sequential": {
+          "value": 0.00384198478419,
+          "error_pct": 4.652015259043378,
+          "n_iter": 2,
+          "label": "tip deflection |uy| (mm)",
+          "passed": true
+        }
+      },
+      "passed": true,
+      "details": "Beam 10.0\u00d71.0, mesh 40\u00d74, P=0.001 at top-right tip. Timoshenko \u03b4=3.671200e-03 mm (EB: 3.640000e-03)."
+    },
+    {
+      "name": "Uniaxial Tension (Plane Strain)",
+      "category": "solver",
+      "theory_value": 1.098901098901099,
+      "tolerance_pct": 1.0,
+      "unit": "MPa",
+      "backends": {
+        "jax": {
+          "value": 1.0989011095099066,
+          "error_pct": 9.654014925253307e-07,
+          "n_iter": 1,
+          "eps_xx_measured": 0.001,
+          "eps_xx_error_pct": 0.0,
+          "label": "\u03c3_xx (MPa)",
+          "passed": true
+        },
+        "numpy_sequential": {
+          "value": 1.098901107026342,
+          "error_pct": 7.393971059865834e-07,
+          "n_iter": 1,
+          "eps_xx_measured": 0.0009999999999999998,
+          "eps_xx_error_pct": 2.168404344971009e-14,
+          "label": "\u03c3_xx (MPa)",
+          "passed": true
+        }
+      },
+      "passed": true,
+      "details": "Block 2.0\u00d71.0, mesh 10\u00d75, \u03b5_xx=1.0000e-03. Theory: \u03c3_xx=1.0989, \u03b5_yy=-4.285714e-04. Plane strain modulus (constrained): E(1-\u03bd)/((1+\u03bd)(1-2\u03bd))=1346.15."
+    },
+    {
+      "name": "Uniaxial Compression (Plane Strain)",
+      "category": "solver",
+      "theory_value": -1.098901098901099,
+      "tolerance_pct": 1.0,
+      "unit": "MPa",
+      "backends": {
+        "jax": {
+          "value": -1.0989011095099066,
+          "error_pct": 9.654014925253307e-07,
+          "n_iter": 1,
+          "eps_xx_measured": -0.001,
+          "eps_xx_error_pct": 0.0,
+          "label": "\u03c3_xx (MPa)",
+          "passed": true
+        },
+        "numpy_sequential": {
+          "value": -1.098901107026342,
+          "error_pct": 7.393971059865834e-07,
+          "n_iter": 1,
+          "eps_xx_measured": -0.0009999999999999998,
+          "eps_xx_error_pct": 2.168404344971009e-14,
+          "label": "\u03c3_xx (MPa)",
+          "passed": true
+        }
+      },
+      "passed": true,
+      "details": "Block 2.0\u00d71.0, mesh 10\u00d75, \u03b5_xx=-1.0000e-03. Theory: \u03c3_xx=-1.0989, \u03b5_yy=4.285714e-04. Plane strain modulus (constrained): E(1-\u03bd)/((1+\u03bd)(1-2\u03bd))=1346.15."
+    },
+    {
+      "name": "Volumetric Compression (Plane Strain)",
+      "category": "solver",
+      "theory_value": -0.9615384615384616,
+      "tolerance_pct": 1.0,
+      "unit": "MPa",
+      "backends": {
+        "jax": {
+          "value": -0.9615384615384616,
+          "error_pct": 0.0,
+          "n_iter": 1,
+          "sigma_yy": -0.9615384615384616,
+          "hydrostatic_deviation_pct": 0.0,
+          "label": "\u03c3_xx (MPa)",
+          "passed": true
+        },
+        "numpy_sequential": {
+          "value": -0.9615384615384613,
+          "error_pct": 2.3092638912203256e-14,
+          "n_iter": 1,
+          "sigma_yy": -0.9615384615384613,
+          "hydrostatic_deviation_pct": 0.0,
+          "label": "\u03c3_xx (MPa)",
+          "passed": true
+        }
+      },
+      "passed": true,
+      "details": "Block 2.0\u00d72.0, mesh 10\u00d710, \u03b5_vol=-1.0000e-03 (\u03b5_xx=\u03b5_yy=-5.0000e-04). c=E/((1+\u03bd)(1-2\u03bd))=1923.08. \u03c3_hydro=-0.9615."
+    },
+    {
+      "name": "Volumetric Tension (Plane Strain)",
+      "category": "solver",
+      "theory_value": 0.9615384615384616,
+      "tolerance_pct": 1.0,
+      "unit": "MPa",
+      "backends": {
+        "jax": {
+          "value": 0.9615384615384616,
+          "error_pct": 0.0,
+          "n_iter": 1,
+          "sigma_yy": 0.9615384615384616,
+          "hydrostatic_deviation_pct": 0.0,
+          "label": "\u03c3_xx (MPa)",
+          "passed": true
+        },
+        "numpy_sequential": {
+          "value": 0.9615384615384613,
+          "error_pct": 2.3092638912203256e-14,
+          "n_iter": 1,
+          "sigma_yy": 0.9615384615384613,
+          "hydrostatic_deviation_pct": 0.0,
+          "label": "\u03c3_xx (MPa)",
+          "passed": true
+        }
+      },
+      "passed": true,
+      "details": "Block 2.0\u00d72.0, mesh 10\u00d710, \u03b5_vol=1.0000e-03 (\u03b5_xx=\u03b5_yy=5.0000e-04). c=E/((1+\u03bd)(1-2\u03bd))=1923.08. \u03c3_hydro=0.9615."
+    }
+  ]
+}
