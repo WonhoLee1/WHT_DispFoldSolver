@@ -129,15 +129,18 @@ def generate():
     _w("80.0, 0.0")
     _w("480.0, 1.0")
     _w("**")
-    # PSA: compliant pressure-sensitive-adhesive layer, Prony-series
-    # viscoelastic with WLF time-temperature shift
+    # PSA: compliant pressure-sensitive-adhesive layer, Arruda-Boyce
+    # hyperelastic base (target E=0.5MPa, nu=0.490 -- mu=E/(2(1+nu))=0.16785MPa,
+    # K=E/(3(1-2nu))=8.3333MPa -> D=2/K=0.24; lambda_m=3.0 is an assumed
+    # locking-stretch shape param, not measured) + Prony-series viscoelastic
+    # (single term, g1=0.20/tau1=3.33s -> ~19-20% stiffness drop by t~10s)
+    # with WLF time-temperature shift
     # (dispsolver.material.viscoelastic.ViscoelasticMaterial).
     _w("*MATERIAL, NAME=PSA")
-    _w("*ELASTIC")
-    _w("50.0, 0.45")
+    _w("*HYPERELASTIC, ARRUDA-BOYCE")
+    _w("0.16785, 3.0, 0.24")
     _w("*VISCOELASTIC, TIME=PRONY")
-    _w("0.6, 0.0, 0.1")
-    _w("0.3, 0.0, 1.0")
+    _w("0.20, 0.0, 3.33")
     _w("*TRS, DEFINITION=WLF")
     _w("25.0, 17.0, 51.6")
     _w("**")
