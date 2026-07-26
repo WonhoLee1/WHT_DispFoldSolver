@@ -1233,6 +1233,68 @@ class DynamicSolver:
         return R_total
 
     def solve_step(self, dt: float) -> int:
+        """Solve one time increment, then print an Abaqus-.sta-style status line.
+
+        Thin wrapper around `_solve_step_impl` (the actual Newton-Raphson
+        loop) so the increment/attempt bookkeeping and status line live in
+        one place regardless of which internal `return` path the solve
+        took. See `_solve_step_impl` for the algorithm itself.
+        """
+        t_wall_start = time.time()
+        result = self._solve_step_impl(dt)
+        self._print_sta_line(dt, result, time.time() - t_wall_start)
+        return result
+
+    def _print_sta_line(self, dt: float, result: int, t_wall: float) -> None:
+        """Print one Abaqus-.sta-style status row for this solve_step attempt.
+
+        Mirrors the classic Abaqus/Standard `.sta` file table (STEP / INC /
+        ATT / SEVERE DISCON / EQUIL ITERS / TOTAL TIME / STEP TIME / INC OF
+        TIME) so a folding run's progress reads like a familiar commercial
+        solver's job monitor, instead of only the ad-hoc per-example prints
+        examples currently add on top. Always on (not gated by `verbose`) --
+        this is a status summary, not the detailed per-iteration debug table.
+        """
+        if getattr(self, 'sta_status', True) is False:
+            return
+        converged = result >= 0
+        n_iter = result if converged else self.max_iter
+
+        if not getattr(self, '_sta_header_printed', False):
+            print("", flush=True)
+            print("  STEP   INC   ATT   SEVERE   EQUIL     TOTAL      STEP      INC OF", flush=True)
+            print("                     DISCON   ITERS      TIME       TIME       TIME", flush=True)
+            self._sta_header_printed = True
+            self._sta_inc = 0
+            self._sta_att = 0
+            self._sta_last_converged = True
+
+        if getattr(self, '_sta_last_converged', True):
+            self._sta_inc += 1
+            self._sta_att = 1
+        else:
+            self._sta_att += 1
+
+        severe_discon = 0
+        step_time = dt if converged else 0.0
+        # self.time is already advanced by dt internally on success (see
+        # _solve_step_impl); on a failed/cutback attempt it stays put.
+        total_time = self.time
+        if converged:
+            try:
+                severe_discon = int(self._check_mesh_quality(self.u).get('n_inverted', 0))
+            except Exception:
+                severe_discon = 0
+
+        print(
+            f"  {1:4d}  {self._sta_inc:4d}  {self._sta_att:4d}   {severe_discon:5d}   "
+            f"{n_iter:5d}   {total_time:8.4f}   {step_time:8.4f}   {dt:8.4f}"
+            + ("" if converged else "   *** NOT CONVERGED, CUTBACK ***"),
+            flush=True,
+        )
+        self._sta_last_converged = converged
+
+    def _solve_step_impl(self, dt: float) -> int:
         """Solve one time increment via Newton-Raphson.
 
         This is the core non-linear solver loop.  It takes the mechanical state
