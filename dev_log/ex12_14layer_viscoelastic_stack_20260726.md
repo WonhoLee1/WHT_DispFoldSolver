@@ -95,3 +95,12 @@ passed.
 `ViscoelasticMaterial`, always pair it with `"Q4_VISCO_SIMO"`, not plain
 `"Q4"` or `"Q4_EAS"` — the latter two either lock badly or silently
 degrade to the non-EAS path for this material type.
+
+## Rename: SUBSTRATE/ADHESIVE -> PET/PSA (same session, same properties)
+
+Renamed the two alternating materials to their real display-stack names
+(`gen_ex12_inp.py`): `SUBSTRATE` -> `PET`, `ADHESIVE` -> `PSA`
+(pressure-sensitive adhesive) — same physical params, no property change.
+Layup is now literally `PET-PSA-PET-PSA-...` x7 pairs = 14 rows. Re-ran
+end to end: still full 90deg/side, 101 steps, zero cutbacks, 289.57s,
+`pytest` 6 passed. No solver/material code touched, naming only.

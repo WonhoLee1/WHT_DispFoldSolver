@@ -54,14 +54,15 @@ def generate():
 
     # 1. Display Mesh (graded x -- see _graded_display_x() docstring)
     # 14-layer multi-material stack: alternating stiff substrate rows
-    # (SUBSTRATE, elastic-plastic PET-like) and compliant adhesive rows
-    # (ADHESIVE, Prony+WLF viscoelastic, OCA-like) -- see AGENTS.md 1.4,
-    # still a simplified alternating layup, not a validated real stackup.
+    # (PET, elastic-plastic) and compliant adhesive rows (PSA,
+    # Prony+WLF viscoelastic pressure-sensitive-adhesive) -- see
+    # AGENTS.md 1.4, still a simplified alternating layup (PET-PSA-PET-...),
+    # not a validated real stackup.
     xs_disp = _graded_display_x()
     nx_disp = len(xs_disp) - 1
     ny_disp = 14
     ys_disp = np.linspace(0.0, 0.5, ny_disp + 1)
-    LAYER_MATERIAL = ["SUBSTRATE" if j % 2 == 0 else "ADHESIVE" for j in range(ny_disp)]
+    LAYER_MATERIAL = ["PET" if j % 2 == 0 else "PSA" for j in range(ny_disp)]
 
     _w("*NODE")
     grid_nids = np.zeros((ny_disp + 1, nx_disp + 1), dtype=int)
@@ -120,18 +121,18 @@ def generate():
     _w("**")
 
     # 4. Materials
-    # SUBSTRATE: stiff elastic-plastic layer (PET/cover-window-like), same
-    # params as the previous single-material PET.
-    _w("*MATERIAL, NAME=SUBSTRATE")
+    # PET: stiff elastic-plastic substrate layer.
+    _w("*MATERIAL, NAME=PET")
     _w("*ELASTIC")
     _w("4000.0, 0.3")
     _w("*PLASTIC")
     _w("80.0, 0.0")
     _w("480.0, 1.0")
     _w("**")
-    # ADHESIVE: compliant OCA-like layer, Prony-series viscoelastic with
-    # WLF time-temperature shift (dispsolver.material.viscoelastic.ViscoelasticMaterial).
-    _w("*MATERIAL, NAME=ADHESIVE")
+    # PSA: compliant pressure-sensitive-adhesive layer, Prony-series
+    # viscoelastic with WLF time-temperature shift
+    # (dispsolver.material.viscoelastic.ViscoelasticMaterial).
+    _w("*MATERIAL, NAME=PSA")
     _w("*ELASTIC")
     _w("50.0, 0.45")
     _w("*VISCOELASTIC, TIME=PRONY")
