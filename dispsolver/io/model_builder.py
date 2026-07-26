@@ -91,6 +91,10 @@ class ModelBuilderResult:
         self.mesh: Optional[Mesh] = None
         self.materials: Dict[int, object] = {}
         self.material_params: Dict[int, dict] = {}
+        # pid -> *MATERIAL name from the deck. Kept because the material
+        # objects themselves don't carry the deck's name, and postprocessing
+        # needs it to label results (e.g. which display rows are PSA).
+        self.material_names: Dict[int, str] = {}
         self.constraints: List = []
         self.solver_config: Dict[str, Any] = {}
         self.amplitudes: Dict[str, Amplitude] = {}
@@ -388,6 +392,7 @@ class ModelBuilder:
                 pid += 1
                 seen_materials.add(mat_name)
                 self._material_name_to_pid[mat_name] = pid
+                self._result.material_names[pid] = mat_name
             else:
                 pid = self._material_name_to_pid[mat_name]
             # Assign PID to elements in this section's ELSET

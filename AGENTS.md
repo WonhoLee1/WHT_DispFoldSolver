@@ -263,6 +263,42 @@ python -u examples/ex11_rigid_plate_display_fold.py   # true plate+tie architect
   9/9 PASS, no harm done). Run it before committing solver-side changes,
   not after.
 
+### 3.0.0 Result persistence — re-analyze a finished run without re-solving
+
+`dispsolver/postprocess/result_io.py` saves a completed **or aborted**
+solve and reads it back, so a five-minute fold can be re-plotted,
+re-tabulated and animated in seconds. Before this existed, the only
+handle on a result was the live `DynamicSolver` object
+(`PostprocessViewer(solver)` takes a solver, not a file; the VTKHDF
+exporters are write-only with no reader), so every new question meant
+re-running the solve.
+
+```python
+from dispsolver.postprocess import load_result, animate, plot_slip_history
+r = load_result("examples/ex12_result.pkl")
+r.displacement()            # (n_nodes,2) last step;  r.displacement(step=10)
+r.deformed_points(step=10)  # (n_nodes,3) reference + u
+r.scalars["theta_deg"]      # per-step drive angle
+r.meta["reached_target"]    # did it finish, or abort?
+animate(r, "fold.gif")
+plot_slip_history(r, "slip.png")
+```
+
+- `ex12_abaqus_inp_plate_fold.py` writes `examples/ex12_result.pkl`
+  automatically at the end of **both** exit paths; `ex13` writes one per
+  mode. Nothing is written until the end (holding an HDF5 handle open
+  across a long solve locks the path on Windows — the failure
+  `TransientVTKHDFExporter` already had to work around).
+- **The layout is modeled on VTKHDF** (static topology + concatenated
+  per-step slabs + offset tables + named PointData/CellData), so
+  `to_vtkhdf(result, path)` is a thin projection rather than a
+  translation. The extra `model` block (node/element ids, pid, material
+  names, constraints, meta) is what VTKHDF has nowhere to put but
+  analysis needs.
+- Backend is chosen by extension: `.pkl` (default) or `.h5`. **What gets
+  pickled is a plain dict of arrays, never a class instance**, so
+  refactoring `Result` cannot invalidate previously saved runs.
+
 ### 3.0.1 Verifying interlayer shear (the PSA layers' actual purpose)
 
 `examples/check_interlayer_shear.py` measures the book-page/staircase
@@ -287,6 +323,15 @@ Two things to know before interpreting it:
 The script caches the converged displacement field to
 `examples/ex12_final_u.npy`; pass `--cached` to re-analyze in seconds
 instead of re-solving (~295 s).
+
+**Built into the solve loop** (so it is reported on every run, not only
+when you remember to check): `dispsolver/postprocess/interlayer.py`'s
+`LayerSlipTracker` records per-layer tip slip at each converged
+increment and `ex12`/`ex13` print it as a **slip-vs-fold-angle table**
+at the end — on the abort path too, since a run that stalled at 40° is
+exactly the one you want the history for. The same history is stored in
+the result file under `slip__*` and can be plotted later with
+`plot_slip_history`.
 
 ### 3.1 TODO (not yet implemented, 2026-07-26): before/after PNG capture for every folding example
 
