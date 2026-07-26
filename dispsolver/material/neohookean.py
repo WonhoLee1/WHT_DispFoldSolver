@@ -189,6 +189,33 @@ class NeoHookean(MaterialModel):
         S[:, 2, 2] = lam * lnJ
         return S
 
+    def pk2_tangent_voigt_batch(self, F_batch: np.ndarray, params: Dict,
+                                state_flat_batch: np.ndarray = None,
+                                dt: float = None, temperature: float = 20.0):
+        """Stress + tangent for N Gauss points at once, solver batch contract.
+
+        Exists so `DynamicSolver._assemble_multi_material_batch` picks this
+        material up in its vectorised branch. That branch dispatches on the
+        presence of `pk2_tangent_voigt_batch`; without it a NeoHookean part
+        drops into the per-element Python fallback, which for the ex12 rigid
+        plate meant ~120 `_element_contributions` calls on *every* Newton
+        iteration for elements that were already batched-capable.
+
+        Returns
+        -------
+        S_voigt        : (N, 3)     [S11, S22, S12]
+        C_voigt        : (N, 3, 3)
+        state_new_flat : unchanged input -- NeoHookean is stateless
+
+        Composed from the existing batch kernels, so it is exact-equal to
+        the sequential `pk2_voigt`/`tangent_voigt` path (verified to 2e-11).
+        """
+        S_full = self.pk2_tensor_batch(F_batch, params)
+        C_voigt = self.tangent_voigt_batch(F_batch, params)
+        S_voigt = np.stack([S_full[:, 0, 0], S_full[:, 1, 1], S_full[:, 0, 1]],
+                           axis=1)
+        return S_voigt, C_voigt, state_flat_batch
+
     def tangent_voigt_batch(self, F_batch: np.ndarray, params: Dict) -> np.ndarray:
         """Batched plane-strain Voigt tangent (N,2,2) -> (N,3,3). Matches tangent_voigt."""
         mu, lam = self._lame(params)

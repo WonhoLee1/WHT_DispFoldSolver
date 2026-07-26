@@ -74,7 +74,8 @@ def run_abaqus_inp_folding(inp_path: str = None, before_png_name: str = "ex12_be
 def run_folding_from_result(result, before_png_name: str = "ex12_before_folding_shape.png",
                              after_png_name: str = "ex12_final_folding_shape.png",
                              case_name: str = "in-memory",
-                             result_name: str = "ex12_result.pkl"):
+                             result_name: str = "ex12_result.pkl",
+                             max_steps: int = None):
     """Shared solve loop, driven by any object exposing the same fields as
     `dispsolver.io.model_builder.ModelBuilderResult` (`.mesh`, `.materials`,
     `.material_params`, `.solver_config`, `.rbe2_constraints`,
@@ -199,6 +200,12 @@ def run_folding_from_result(result, before_png_name: str = "ex12_before_folding_
     )
 
     while solver.time < t_total - 1e-10:
+        if max_steps is not None and step >= max_steps:
+            # Early stop for profiling/smoke runs. Unlike shrinking
+            # t_total this leaves the angle ramp untouched, so the steps
+            # taken are the same ones a full run would take.
+            print(f"  [MAX STEPS] stopping after {step} steps as requested.")
+            break
         dt = dt_ctrl.dt
         if solver.time + dt > t_total:
             dt = t_total - solver.time
