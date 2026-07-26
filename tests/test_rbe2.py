@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 from dispsolver.mesh import Mesh
 from dispsolver.constraint.rbe2 import RBE2HingeConstraint
+from dispsolver.constraint.rbe2_condensed import KinematicRBE2Constraint
 
 
 def test_rbe2_kinematics():
@@ -55,13 +56,15 @@ def test_rigid_body_parser():
         f.write('*STEP\n*STATIC\n0.1,1.0\n*BOUNDARY\n5,1,1\n*BOUNDARY\n5,2,2\n*END STEP\n')
 
     result = read_abaqus_input(inp)
-    assert len(result.constraints) == 1
-    c = result.constraints[0]
-    assert isinstance(c, RBE2HingeConstraint)
+    # *RIGID BODY now condenses to KinematicRBE2Constraint in
+    # result.rbe2_constraints (exact kinematic condensation, see
+    # AGENTS.md 4.10) -- result.constraints is only for *MPC.
+    assert len(result.rbe2_constraints) == 1
+    c = result.rbe2_constraints[0]
+    assert isinstance(c, KinematicRBE2Constraint)
     assert c.master_id == 5
     for nid in [1, 2, 3, 4]:
         assert nid in c.slave_ids
-    assert c.extra_primal_offset == 0
 
 
 def test_rigid_body_nset():
@@ -81,9 +84,9 @@ def test_rigid_body_nset():
         f.write('*STEP\n*STATIC\n0.1,1.0\n*BOUNDARY\n5,1,1\n*BOUNDARY\n5,2,2\n*END STEP\n')
 
     result = read_abaqus_input(inp)
-    assert len(result.constraints) == 1
-    c = result.constraints[0]
-    assert isinstance(c, RBE2HingeConstraint)
+    assert len(result.rbe2_constraints) == 1
+    c = result.rbe2_constraints[0]
+    assert isinstance(c, KinematicRBE2Constraint)
     assert c.master_id == 5
     assert sorted(c.slave_ids) == [1, 2, 3, 4]
 
@@ -105,8 +108,8 @@ def test_rigid_body_nset_generate():
         f.write('*STEP\n*STATIC\n0.1,1.0\n*BOUNDARY\n5,1,1\n*BOUNDARY\n5,2,2\n*END STEP\n')
 
     result = read_abaqus_input(inp)
-    assert len(result.constraints) == 1
-    c = result.constraints[0]
-    assert isinstance(c, RBE2HingeConstraint)
+    assert len(result.rbe2_constraints) == 1
+    c = result.rbe2_constraints[0]
+    assert isinstance(c, KinematicRBE2Constraint)
     assert c.master_id == 5
     assert sorted(c.slave_ids) == [1, 2, 3, 4]
