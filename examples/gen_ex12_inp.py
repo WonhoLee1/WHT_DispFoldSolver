@@ -53,10 +53,15 @@ def generate():
     _w("**")
 
     # 1. Display Mesh (graded x -- see _graded_display_x() docstring)
+    # 14-layer multi-material stack: alternating stiff substrate rows
+    # (SUBSTRATE, elastic-plastic PET-like) and compliant adhesive rows
+    # (ADHESIVE, Prony+WLF viscoelastic, OCA-like) -- see AGENTS.md 1.4,
+    # still a simplified alternating layup, not a validated real stackup.
     xs_disp = _graded_display_x()
     nx_disp = len(xs_disp) - 1
-    ny_disp = 4
+    ny_disp = 14
     ys_disp = np.linspace(0.0, 0.5, ny_disp + 1)
+    LAYER_MATERIAL = ["SUBSTRATE" if j % 2 == 0 else "ADHESIVE" for j in range(ny_disp)]
 
     _w("*NODE")
     grid_nids = np.zeros((ny_disp + 1, nx_disp + 1), dtype=int)
@@ -91,10 +96,14 @@ def generate():
 
     _w("**")
 
-    # 3. Elements
-    _w("*ELEMENT, TYPE=CPE4, ELSET=DISPLAY")
+    # 3. Elements -- one ELSET per display layer (row) so each can carry
+    # its own material via *SOLID SECTION below.
     eid = 1
+    display_elsets = []
     for j in range(ny_disp):
+        elset_name = f"DISP_L{j + 1:02d}"
+        display_elsets.append(elset_name)
+        _w(f"*ELEMENT, TYPE=CPE4, ELSET={elset_name}")
         for i in range(nx_disp):
             n1 = grid_nids[j, i]
             n2 = grid_nids[j, i + 1]
@@ -111,21 +120,35 @@ def generate():
     _w("**")
 
     # 4. Materials
-    _w("*MATERIAL, NAME=PET")
+    # SUBSTRATE: stiff elastic-plastic layer (PET/cover-window-like), same
+    # params as the previous single-material PET.
+    _w("*MATERIAL, NAME=SUBSTRATE")
     _w("*ELASTIC")
     _w("4000.0, 0.3")
     _w("*PLASTIC")
     _w("80.0, 0.0")
     _w("480.0, 1.0")
     _w("**")
+    # ADHESIVE: compliant OCA-like layer, Prony-series viscoelastic with
+    # WLF time-temperature shift (dispsolver.material.viscoelastic.ViscoelasticMaterial).
+    _w("*MATERIAL, NAME=ADHESIVE")
+    _w("*ELASTIC")
+    _w("50.0, 0.45")
+    _w("*VISCOELASTIC, TIME=PRONY")
+    _w("0.6, 0.0, 0.1")
+    _w("0.3, 0.0, 1.0")
+    _w("*TRS, DEFINITION=WLF")
+    _w("25.0, 17.0, 51.6")
+    _w("**")
     _w("*MATERIAL, NAME=STEEL")
     _w("*ELASTIC")
     _w("20000.0, 0.3")
     _w("**")
 
-    # Sections
-    _w("*SOLID SECTION, ELSET=DISPLAY, MATERIAL=PET")
-    _w("1.0,")
+    # Sections -- one per display layer, alternating SUBSTRATE/ADHESIVE
+    for elset_name, mat_name in zip(display_elsets, LAYER_MATERIAL):
+        _w(f"*SOLID SECTION, ELSET={elset_name}, MATERIAL={mat_name}")
+        _w("1.0,")
     _w("*SOLID SECTION, ELSET=PLATE_LEFT, MATERIAL=STEEL")
     _w("1.0,")
     _w("*SOLID SECTION, ELSET=PLATE_RIGHT, MATERIAL=STEEL")
