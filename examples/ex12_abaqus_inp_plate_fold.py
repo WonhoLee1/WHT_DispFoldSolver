@@ -174,16 +174,26 @@ def run_abaqus_inp_folding():
     print("=" * 100)
 
     # ------------------------------------------------------------------
-    # 4. Save visualization to PNG
+    # 4. Save before (flat, t=0) / after (final) visualization PNGs
     # ------------------------------------------------------------------
-    png_path = os.path.join(os.path.dirname(__file__), "ex12_final_folding_shape.png")
-    print(f"Saving deformed shape visualization to: {png_path}")
+    before_png_path = os.path.join(os.path.dirname(__file__), "ex12_before_folding_shape.png")
+    print(f"Saving before (flat) shape visualization to: {before_png_path}")
+    plot_and_save_deformed_shape_png(
+        mesh=mesh,
+        u=np.zeros_like(solver.u),
+        tie_constraints=result.penalty_constraints,
+        rbe2_elements=result.rbe2_elements,
+        save_path=before_png_path
+    )
+
+    after_png_path = os.path.join(os.path.dirname(__file__), "ex12_final_folding_shape.png")
+    print(f"Saving after (final) shape visualization to: {after_png_path}")
     plot_and_save_deformed_shape_png(
         mesh=mesh,
         u=solver.u,
         tie_constraints=result.penalty_constraints,
         rbe2_elements=result.rbe2_elements,
-        save_path=png_path
+        save_path=after_png_path
     )
     print("Done.")
 
