@@ -285,8 +285,19 @@ class _ResultCache:
         dN_dxi, dN_deta = shape_derivatives(xi, eta)
 
         # 재료 모델 — PK2 응력 계산에 사용.
-        # solver.material은 단일 재료 또는 dict의 첫 번째 재료.
-        mat = solver.material
+        # solver.material은 단일 재료 또는 dict의 첫 번째 재료 -- 이건 폴백일
+        # 뿐, 실제로는 각 요소의 pid로 solver.materials에서 찾는다. (버그 수정:
+        # 예전엔 이 폴백을 모든 요소에 그대로 썼기 때문에, 다중 재료 모델(PET/
+        # PSA/STEEL 등)에서 PSA/STEEL 요소도 PET 재료로 응력을 계산했다.)
+        mat_by_pid = getattr(solver, "materials", None) or {}
+        default_mat = solver.material
+        # pid -> numeric params dict, only populated (and only needed) for
+        # a file-backed ResultSolverAdapter -- ViscoelasticMaterial.pk2_voigt
+        # needs its base material's params (mu/lambda_m/K, ...) passed in
+        # each call; a live DynamicSolver's MaterialAdapter keeps that
+        # separately (`self.params`), which this cache never touched
+        # before because it always used solver.material's own state.
+        params_by_pid = getattr(solver, "material_params", None) or {}
 
         elem_vals = np.zeros(n_elem, dtype=np.float64)
 
@@ -296,6 +307,11 @@ class _ResultCache:
             # ------------------------------------------------------------
             nidx = conn[e]                # (4,) 절점 인덱스
             coords_e = coords_all[nidx]   # (4, 2) 요소 절점 좌표
+
+            # 이 요소의 실제 pid에 해당하는 재료 선택 (버그 수정, 위 주석 참고).
+            eid = solver.elem_ids[e]
+            elem_pid = getattr(solver.mesh.elements[eid], "pid", None)
+            mat = mat_by_pid.get(elem_pid, default_mat)
 
             # 절점별 변위 → 요소 변위 벡터 (8,)
             ux_e = u_all[2 * nidx]               # (4,)
@@ -335,7 +351,27 @@ class _ResultCache:
             #   σ = (1/detF) * F * S * F^T
             # 이 변환을 "push-forward"라고 함.
             if 'stress' in name or 'principal_stress' in name:
-                if state_all is not None and state_all.shape[0] > e:
+                # ViscoelasticMaterial(PSA 등)은 J2Plasticity와 pk2_voigt
+                # 호출 규약이 전혀 다르다: h_prev가 (M+1,3,3) 텐서여야 하고
+                # (J2는 5칸 flat), dt 인자가 필수(J2는 안 받음), params도
+                # base 재료(mu/lambda_m/K)용이 필요(J2는 무시). 예전엔 모든
+                # 요소가 pid=1(J2)의 solver.material로만 계산돼서 이 분기가
+                # 실행될 일이 없었다 -- per-pid 재료 선택을 고치면서 PSA
+                # 요소가 실제로 ViscoelasticMaterial.pk2_voigt를 타게 됐고,
+                # 옛 호출 방식(3-args, flat state)은 TypeError로 죽어서
+                # 조용히 응력 0으로 깔리고 있었다.
+                is_visco = hasattr(mat, "base") and hasattr(mat, "M") and hasattr(mat, "g_i")
+                mat_params = params_by_pid.get(elem_pid, {}) if is_visco else {}
+
+                if is_visco:
+                    from dispsolver.material.viscoelastic import _flat_batch_to_tensor_3d
+                    n_vars = mat.n_internal_vars  # 6*(M+1), may be < padded row width
+                    if state_all is not None and state_all.shape[0] > e:
+                        flat = state_all[e, 0, :n_vars]
+                    else:
+                        flat = np.zeros(n_vars, dtype=np.float64)
+                    gp_state = _flat_batch_to_tensor_3d(flat[None, :], mat.M)[0]
+                elif state_all is not None and state_all.shape[0] > e:
                     # 첫 번째 Gauss point의 내부변수 사용
                     # (J2 소성: [Fp_inv_00, Fp_inv_01, Fp_inv_10, Fp_inv_11, eqps])
                     gp_state = state_all[e, 0, :]
@@ -344,9 +380,18 @@ class _ResultCache:
                     gp_state = np.array([1.0, 0.0, 0.0, 1.0, 0.0])
 
                 try:
+                    if is_visco:
+                        # dt=0: 저장된 state는 이미 실제 해석에서 이 F로
+                        # 수렴한 시점의 값이므로, 여기서 dt=0으로 재평가하면
+                        # dS_dev(=S_dev_el-h_prev[M])가 0이 되어 Prony 항이
+                        # 갱신되지 않고 정확히 그 순간의 평형응력이 재현된다
+                        # (추가로 시간을 흘려보내는 근사가 아니라, 저장된
+                        # 상태를 그대로 재조회하는 것).
+                        S_res = mat.pk2_voigt(F, mat_params, gp_state, dt=0.0)
+                    else:
+                        S_res = mat.pk2_voigt(F, {}, gp_state)
                     # PK2 응력 (Voigt) 계산: S = pk2_voigt(F, params, state)
                     # 반환값: (S_voigt, C_tangent, state_new) 또는 S_voigt만
-                    S_res = mat.pk2_voigt(F, {}, gp_state)
                     S_v = S_res[0] if isinstance(S_res, tuple) else S_res
                     # S_v = [S11, S22, S12]
 
@@ -514,7 +559,16 @@ class PostprocessViewer(QtWidgets.QMainWindow):
         'principal_stress_abs_max': 'Principal Stress (abs max)',
     }
 
-    def __init__(self, solver, parent=None):
+    def __init__(self, solver, parent=None, result=None):
+        """
+        Args:
+            solver: DynamicSolver (live) or ResultSolverAdapter (saved
+                file, see `live_view.py`) -- duck-typed, no type check.
+            result: the backing `Result`, if any. Only needed to enable
+                the step slider (a live-solver session has exactly one
+                state and no history to scrub through). Passed
+                automatically by `launch_from_result`.
+        """
         super().__init__(parent)
 
         if QtWidgets is None:
@@ -525,6 +579,7 @@ class PostprocessViewer(QtWidgets.QMainWindow):
         # --- 데이터 ---
         self._solver = solver
         self._cache = _ResultCache(solver)
+        self._result = result   # None for a live-solver session
         self._current_field = 'disp'         # 초기 표시 필드: 변위
         self._deformed_scale: float = 1.0    # 변형 확대 배율
         self._show_mesh: bool = True         # 요소 경계선 표시 여부
@@ -613,6 +668,24 @@ class PostprocessViewer(QtWidgets.QMainWindow):
         panel_layout.addLayout(scale_layout)
         panel_layout.addSpacing(12)
 
+        # 2b. 스텝 슬라이더 -- 저장된 Result로 열었고 스텝이 2개 이상일 때만
+        # 표시. 라이브 solver 세션은 상태가 하나뿐이라 스크러빙할 이력이
+        # 없으므로 이 위젯 자체를 만들지 않는다 (동작 변경 없음).
+        self.step_slider = None
+        if self._result is not None and self._result.n_steps > 1:
+            panel_layout.addWidget(QtWidgets.QLabel("<b>Step</b>"))
+            step_layout = QtWidgets.QHBoxLayout()
+            self.step_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
+            self.step_slider.setRange(0, self._result.n_steps - 1)
+            self.step_slider.setValue(self._result.n_steps - 1)  # 기본: 마지막 스텝
+            self.step_slider.valueChanged.connect(self._on_step_changed)
+            step_layout.addWidget(self.step_slider)
+            self.step_label = QtWidgets.QLabel(f"{self._result.n_steps}/{self._result.n_steps}")
+            self.step_label.setFixedWidth(60)
+            step_layout.addWidget(self.step_label)
+            panel_layout.addLayout(step_layout)
+            panel_layout.addSpacing(12)
+
         # 3. 요소 경계선 표시 토글
         self.mesh_check = QtWidgets.QCheckBox("Show Element Lines")
         self.mesh_check.setChecked(True)
@@ -661,6 +734,20 @@ class PostprocessViewer(QtWidgets.QMainWindow):
     def _on_mesh_toggle(self, state: int):
         """요소 경계선 표시 체크박스 변경 시 호출."""
         self._show_mesh = (state == QtCore.Qt.CheckState.Checked.value)
+        self._update_plot()
+
+    def _on_step_changed(self, step: int):
+        """스텝 슬라이더 변경 시 호출.
+
+        `_ResultCache`는 자체적으로 무효화하지 않으므로(§118 주석 참고,
+        "향후 TimeHistory 지원 시 필요"라 적혀 있던 그 지점), 스텝이 바뀔
+        때마다 solver 어댑터와 캐시를 모두 다시 만든다 -- 라이브 solver
+        세션에서는 이 슬라이더 자체가 존재하지 않으므로 호출될 일이 없다.
+        """
+        from .live_view import ResultSolverAdapter
+        self._solver = ResultSolverAdapter(self._result, step=step)
+        self._cache = _ResultCache(self._solver)
+        self.step_label.setText(f"{step + 1}/{self._result.n_steps}")
         self._update_plot()
 
     def _on_pid_toggle(self, pid: int):
@@ -827,6 +914,44 @@ def launch_from_solver(solver):
     if app is None:
         app = QtWidgets.QApplication(sys.argv)
     viewer = PostprocessViewer(solver)
+    viewer.show()
+    return app.exec()
+
+
+def launch_from_result(result_or_path, step: int = -1):
+    """저장된 결과 파일(또는 이미 로드된 Result)로 뷰어를 실행.
+
+    `.pkl` 파일 하나만 있으면 재해석 없이 바로 열 수 있음 -- 5분짜리 폴딩
+    해석도 즉시 열림. `material_objects`/`state`가 저장돼 있으면(픽클
+    백엔드로 저장한 결과) stress/principal-stress 필드도 그대로 동작; 없으면
+    (예: .h5, 또는 이 기능 이전에 저장된 .pkl) disp/strain류만 동작.
+
+    Args:
+        result_or_path: `.pkl`/`.h5` 파일 경로, 또는 이미 `load_result()`한
+            `Result` 인스턴스.
+        step: 처음 열 때 표시할 스텝 (기본값 -1 = 마지막 스텝). 뷰어를 연
+            후에는 Step 슬라이더로 아무 스텝이나 오갈 수 있음.
+
+    Returns:
+        QApplication.exec()의 종료 코드.
+    """
+    from .live_view import ResultSolverAdapter
+    from .result_io import Result as _Result
+    from .result_io import load_result
+
+    result = (result_or_path if isinstance(result_or_path, _Result)
+              else load_result(result_or_path))
+    if not result.material_objects:
+        print(f"[launch_from_result] warning: {result.path!r} has no recorded "
+              f"material_objects (saved before this feature existed, or an "
+              f".h5 file) -- stress/principal-stress fields will show as 0.")
+
+    adapter = ResultSolverAdapter(result, step=step)
+
+    app = QtWidgets.QApplication.instance()
+    if app is None:
+        app = QtWidgets.QApplication(sys.argv)
+    viewer = PostprocessViewer(adapter, result=result)
     viewer.show()
     return app.exec()
 
