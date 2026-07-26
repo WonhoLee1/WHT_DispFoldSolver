@@ -194,6 +194,10 @@ def run_folding_from_result(result, before_png_name: str = "ex12_before_folding_
         meta={"case": case_name, "t_total": t_total,
               "theta_targets_rad": prescribed_rotations,
               "layer_materials": layer_materials},
+        # Live material objects (not the JSON-safe material_params above),
+        # so the Qt viewer can recompute stress from a saved result the
+        # same way it does from a live solver. Pickle-only.
+        material_objects=result.materials,
     )
     slip_tracker = LayerSlipTracker(
         mesh, probe_x=(-40.0, 40.0), layer_materials=layer_materials,
@@ -241,7 +245,8 @@ def run_folding_from_result(result, before_png_name: str = "ex12_before_folding_
             theta_deg = float(np.mean(np.abs(angles))) if angles else 0.0
             writer.add_step(solver.time, solver.u,
                             scalars={"theta_deg": theta_deg, "dt": dt,
-                                     "n_iter": float(conv_code)})
+                                     "n_iter": float(conv_code)},
+                            state=(solver.state.copy() if solver.state is not None else None))
             slip_tracker.record(solver.u, theta_deg=theta_deg, time=solver.time)
 
             dt = dt_ctrl.update(n_iter=conv_code, converged=True)

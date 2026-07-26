@@ -324,6 +324,49 @@ plot_slip_history(r, "slip.png")
   pickled is a plain dict of arrays, never a class instance**, so
   refactoring `Result` cannot invalidate previously saved runs.
 
+### 3.0.0b Opening a saved result in the interactive Qt viewer
+
+`dispsolver/postprocess/viewer.py`'s `PostprocessViewer` used to require
+a **live** `DynamicSolver`. `launch_from_result(path_or_result, step=-1)`
+(`viewer.py`) opens a saved `.pkl` instead — no re-solving — with a step
+slider to scrub through the whole run and full stress/principal-stress
+support (via `ResultSolverAdapter`, `dispsolver/postprocess/live_view.py`,
+a solver-shaped read-only view of one step of a `Result`). Requires the
+result to carry `material_objects`/`state` (pickle-only, see above —
+check `result.has_state`/`bool(result.material_objects)`; absent for
+`.h5` or pre-2026-07-26 `.pkl` files, in which case only disp/strain
+fields work).
+
+Fixing this surfaced and fixed three **pre-existing** bugs, none
+introduced by this change (`dev_log/qt_viewer_file_loading_20260726.md`):
+1. `viewer.py`'s stress computation used a single global material (the
+   first pid's) for every element regardless of its real pid — invisible
+   for a single-material model, wrong for a PET/PSA/STEEL one. Now looks
+   up the per-element material via `solver.materials[pid]`.
+2. That fix made `ViscoelasticMaterial.pk2_voigt` actually get called on
+   PSA elements for the first time — it was being called with the wrong
+   arity/state shape (flat 5-element J2-style state, no `dt`, empty
+   `params`) uniformly for every material. Fixed in `viewer.py`: detect
+   `ViscoelasticMaterial`, unflatten state via
+   `viscoelastic._flat_batch_to_tensor_3d`, pass the base material's own
+   params, call with `dt=0.0` (principled, not approximate — the stored
+   state is already the converged solution at that `F`, so `dt=0`
+   reproduces the exact equilibrium stress instead of advancing it).
+3. That call then hit `viscoelastic._extract_lam_mu` hard-coding
+   NeoHookean's own volumetric derivative for *any* base material and
+   requiring `E`/`nu` — Arruda-Boyce's `{mu, lambda_m, K}` has neither.
+   Fixed (scope deliberately limited to this one function): substituting
+   `mu=0, lam=K` into the existing formula reduces it to exactly the
+   Simo & Hughes (1998) logarithmic volumetric split
+   (`S_vol = K*lnJ*C^-1`) that the *actual* solve
+   (`q4_visco_simo_fs_jax._simo_pk2`) already uses — same K-preference
+   pattern as `simo_fs_args` (§ elsewhere), not a second approximation.
+   **The real 90°/side solve was never affected by bug 3** — it drives
+   PSA through `Q4_VISCO_SIMO`/`simo_fs_args` (already fixed earlier),
+   never through the numpy `pk2_voigt`/`pk2_tangent_voigt_batch` methods
+   this bug lived in; those were dead code for this model until the
+   viewer started calling them.
+
 ### 3.0.1 Verifying interlayer shear (the PSA layers' actual purpose)
 
 `examples/check_interlayer_shear.py` measures the book-page/staircase

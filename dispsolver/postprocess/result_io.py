@@ -166,7 +166,21 @@ class ResultWriter:
         materials: Optional[Dict] = None,
         constraints: Optional[Dict] = None,
         meta: Optional[Dict] = None,
+        material_objects: Optional[Dict] = None,
     ):
+        """
+        `material_objects` (optional): {pid: live MaterialModel instance},
+        e.g. `ModelBuilderResult.materials` -- NOT the same as `materials`
+        above, which is a JSON/pickle-safe *summary* (params only) used
+        everywhere else. These live objects exist purely so a saved result
+        can recompute stress the same way `PostprocessViewer` does for a
+        live solver (`pk2_voigt(F, params, state)` needs the real object,
+        not a param dict). Pickle-only: `save()` drops this field
+        entirely for the `.h5` backend, since arbitrary class instances
+        don't fit that backend's plain-array/JSON contract. Loading an
+        old file (or an `.h5` file) that has none of this is fine --
+        `Result.material_objects` defaults to `{}`.
+        """
         node_ids = mesh.node_ids()
         self.n_nodes = len(node_ids)
 
@@ -206,11 +220,15 @@ class ResultWriter:
             "Meta": _plain(meta or {}),
         }
 
+        self._material_objects: Dict = dict(material_objects or {})
         self._times: List[float] = []
         self._scalars: Dict[str, List[float]] = {}
         self._point_data: Dict[str, List[np.ndarray]] = {}
         self._cell_data: Dict[str, List[np.ndarray]] = {}
         self._arrays: Dict[str, np.ndarray] = {}
+        self._states: List[np.ndarray] = []
+        self._n_gp: Optional[int] = None
+        self._n_vars: Optional[int] = None
 
     # -- accumulation ---------------------------------------------------
 
@@ -238,12 +256,22 @@ class ResultWriter:
         point_data: Optional[Dict[str, np.ndarray]] = None,
         cell_data: Optional[Dict[str, np.ndarray]] = None,
         scalars: Optional[Dict[str, float]] = None,
+        state: Optional[np.ndarray] = None,
     ) -> None:
         """Buffer one converged increment. No file I/O happens here.
 
         `scalars` holds per-step single values (drive angle, iteration
         count, ...) that belong to the step rather than to a node or an
         element.
+
+        `state` (optional): the solver's `(n_elem, n_gp, n_vars)` internal
+        variable array for this step (plastic Fp_inv/eqps, Prony
+        overstress, ...) -- pass `solver.state.copy()`. Recorded purely so
+        stress/principal-stress fields can be recomputed later exactly as
+        `PostprocessViewer` does for a live solver; costs nothing to
+        record (the array already exists) but is not cheap to *compute*,
+        so this only stores what's already sitting on the solver, never
+        derives new fields itself. Pickle-only, same as `material_objects`.
         """
         u = np.asarray(u, dtype=np.float64).reshape(-1)
         if u.size < 2 * self.n_nodes:
@@ -266,15 +294,31 @@ class ResultWriter:
         for name, val in (scalars or {}).items():
             self._scalars.setdefault(name, []).append(float(val))
 
+        if state is not None:
+            state = np.asarray(state, dtype=np.float64)
+            if state.shape[0] != self.n_cells:
+                raise ValueError(
+                    f"state has {state.shape[0]} elements, expected "
+                    f"{self.n_cells} (n_cells)"
+                )
+            if self._n_gp is None:
+                self._n_gp, self._n_vars = state.shape[1], state.shape[2]
+            self._states.append(state)
+
     @property
     def n_steps(self) -> int:
         return len(self._times)
 
     # -- output ---------------------------------------------------------
 
-    def payload(self) -> Dict[str, Any]:
-        """The complete result as a plain dict (what actually gets saved)."""
-        return {
+    def payload(self, include_pickle_only: bool = True) -> Dict[str, Any]:
+        """The complete result as a plain dict (what actually gets saved).
+
+        `include_pickle_only=False` drops `material_objects`/`state` --
+        used by the `.h5` backend, which cannot hold arbitrary class
+        instances.
+        """
+        p = {
             "format": ROOT,
             "version": FORMAT_VERSION,
             "created": _dt.datetime.now().isoformat(timespec="seconds"),
@@ -292,14 +336,20 @@ class ResultWriter:
                           for k, v in self._cell_data.items()},
             "arrays": dict(self._arrays),
         }
+        if include_pickle_only:
+            p["material_objects"] = dict(self._material_objects)
+            if self._states:
+                p["state"] = np.concatenate(self._states, axis=0)
+                p["model"]["Meta"]["n_gp"] = self._n_gp
+                p["model"]["Meta"]["n_vars"] = self._n_vars
+        return p
 
     def save(self, filepath: str) -> str:
         """Write the buffered result. Backend chosen by file extension."""
-        payload = self.payload()
         if _backend(filepath) == "pickle":
-            _save_pickle(payload, filepath)
+            _save_pickle(self.payload(include_pickle_only=True), filepath)
         else:
-            _save_hdf5(payload, filepath)
+            _save_hdf5(self.payload(include_pickle_only=False), filepath)
         return str(filepath)
 
     def result(self) -> "Result":
@@ -449,6 +499,14 @@ class Result:
         self._cell_data = payload["cell_data"]
         self.arrays = payload.get("arrays", {})
 
+        # Pickle-only, absent for .h5 or pre-this-change .pkl files --
+        # always present as empty/None rather than a missing attribute,
+        # so callers can `if result.material_objects:` without a getattr.
+        self.material_objects: Dict = payload.get("material_objects", {}) or {}
+        self._state_flat = payload.get("state")
+        self._n_gp = self.meta.get("n_gp")
+        self._n_vars = self.meta.get("n_vars")
+
         self._nid_to_idx = {int(n): i for i, n in enumerate(self.node_ids)}
 
     # -- lookups --------------------------------------------------------
@@ -504,6 +562,35 @@ class Result:
 
     def elements_with_pid(self, pid: int) -> np.ndarray:
         return self.element_ids[self.element_pid == pid]
+
+    @property
+    def has_state(self) -> bool:
+        """Whether per-element internal-variable state was recorded.
+
+        False for `.h5`-backed results and any `.pkl` written before
+        `state=` was added to `add_step` -- stress/principal-stress
+        fields can't be recomputed without it (see
+        `dispsolver/postprocess/live_view.py`).
+        """
+        return self._state_flat is not None
+
+    def state(self, step: int = -1) -> np.ndarray:
+        """(n_cells, n_gp, n_vars) internal-variable state at `step`.
+
+        Raises if `has_state` is False -- callers that can tolerate its
+        absence should check that property first rather than catching
+        this.
+        """
+        if self._state_flat is None:
+            raise KeyError(
+                "no per-element state recorded in this result "
+                "(check .has_state before calling .state())"
+            )
+        rows = self._slab(
+            {"state": self._state_flat.reshape(self.n_steps * self.n_cells, -1)},
+            "state", step, self.n_cells,
+        )
+        return rows.reshape(self.n_cells, self._n_gp, self._n_vars)
 
     def save(self, filepath: str) -> str:
         """Re-serialize (e.g. pkl -> h5) without going through a solve."""

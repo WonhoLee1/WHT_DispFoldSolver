@@ -16,18 +16,23 @@ __all__ = [
     "plot_slip_history",
     "PostprocessViewer",
     "launch_from_solver",
+    "launch_from_result",
+    "ResultSolverAdapter",
 ]
 
 
 def __getattr__(name):
-    """Import the Qt viewer lazily.
+    """Import the Qt viewer (and its file-backed adapter) lazily.
 
     `viewer` pulls in PySide6, which is a heavy (and, on headless
     machines, unavailable) dependency. Loading a saved result for
     analysis must not require a GUI toolkit, so the viewer is only
     imported if something actually asks for it.
     """
-    if name in ("PostprocessViewer", "launch_from_solver"):
+    if name in ("PostprocessViewer", "launch_from_solver", "launch_from_result"):
         from . import viewer
         return getattr(viewer, name)
+    if name == "ResultSolverAdapter":
+        from .live_view import ResultSolverAdapter
+        return ResultSolverAdapter
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

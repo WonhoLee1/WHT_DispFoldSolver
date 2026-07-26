@@ -57,10 +57,33 @@ def wlf_shift(temperature: float, C1: float, C2: float, T_ref: float) -> float:
 # ------------------------------------------------------------------
 
 def _extract_lam_mu(params: Params) -> Tuple[float, float]:
-    mu = params.get('mu', None)
+    """Return (mu, lam) such that the volumetric pressure formula used
+    throughout this module, `p = (-mu + lam*lnJ)/J` (i.e.
+    `S_vol = J*p*C^-1`), gives the *correct* result for the base
+    material `params` actually describes -- not just for NeoHookean.
+
+    For a NeoHookean base, W_vol = -mu*lnJ + 0.5*lam*(lnJ)^2 and this
+    formula is its exact dW_vol/dJ, hence the ('mu','lambda') pair below.
+
+    For a base parameterized by its own bulk modulus 'K' directly
+    (Arruda-Boyce, Yeoh -- no Lame lambda/E-nu involved, see
+    `simo_fs_args`'s same K-preference), setting mu=0, lam=K makes this
+    formula reduce to `p = K*lnJ/J`, i.e.
+    `S_vol = K*lnJ*C^-1` -- the Simo & Hughes (1998) logarithmic
+    volumetric split (`U(J) = (K/2)*(lnJ)^2`) that
+    `q4_visco_simo_fs_jax._simo_pk2` actually solves with
+    (`S_vol = kappa*lnJ*Cinv`). This is not an approximation of the real
+    solve's volumetric term, it's the same formula reached through the
+    existing (mu, lam) parameterization -- picked so this function and
+    the batched variant below don't need their own separate volumetric
+    formula for every base type.
+    """
     lam = params.get('lambda', None)
+    mu = params.get('mu', None)
     if mu is not None and lam is not None:
         return float(mu), float(lam)
+    if 'K' in params and lam is None:
+        return 0.0, float(params['K'])
     E = float(params['E'])
     nu = float(params['nu'])
     mu = E / (2.0 * (1.0 + nu))
