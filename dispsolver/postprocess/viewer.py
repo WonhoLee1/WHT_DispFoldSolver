@@ -580,6 +580,7 @@ class PostprocessViewer(QtWidgets.QMainWindow):
         self._solver = solver
         self._cache = _ResultCache(solver)
         self._result = result   # None for a live-solver session
+        self._cbar = None       # 현재 컬러바 (매 _update_plot마다 제거 후 재생성)
         self._current_field = 'disp'         # 초기 표시 필드: 변위
         self._deformed_scale: float = 1.0    # 변형 확대 배율
         self._show_mesh: bool = True         # 요소 경계선 표시 여부
@@ -684,7 +685,23 @@ class PostprocessViewer(QtWidgets.QMainWindow):
             self.step_label.setFixedWidth(60)
             step_layout.addWidget(self.step_label)
             panel_layout.addLayout(step_layout)
+            panel_layout.addSpacing(4)
+
+            # 2c. 오버레이 스텝 수 -- N>1이면 0..현재 스텝 사이에서 균등
+            # 간격으로 N개를 뽑아 색까지 전부 입혀서 겹쳐 그린다(변형 진행
+            # 과정을 한 그림에서 보기 위한 용도). 슬라이더와 마찬가지로
+            # Result가 있을 때만 노출.
+            overlay_layout = QtWidgets.QHBoxLayout()
+            overlay_layout.addWidget(QtWidgets.QLabel("Overlay Steps (N)"))
+            self.overlay_spin = QtWidgets.QSpinBox()
+            self.overlay_spin.setRange(1, self._result.n_steps)
+            self.overlay_spin.setValue(1)
+            self.overlay_spin.valueChanged.connect(lambda _v: self._update_plot())
+            overlay_layout.addWidget(self.overlay_spin)
+            panel_layout.addLayout(overlay_layout)
             panel_layout.addSpacing(12)
+        else:
+            self.overlay_spin = None
 
         # 3. 요소 경계선 표시 토글
         self.mesh_check = QtWidgets.QCheckBox("Show Element Lines")
@@ -698,8 +715,12 @@ class PostprocessViewer(QtWidgets.QMainWindow):
         # 플롯에서 제외됨 (hide).
         panel_layout.addWidget(QtWidgets.QLabel("<b>Part / Layer</b>"))
         self.pid_checkboxes: Dict[int, QtWidgets.QCheckBox] = {}
+        # pid -> *MATERIAL 이름 (예: "PET_3") -- Result로 열었고 이 메타가
+        # 있을 때만; 없으면 그냥 "Layer {pid}"로 표시 (기존 동작 유지).
+        pid_names = (self._result.meta.get("pid_names", {}) if self._result is not None else {})
         for pid in self._pid_set:
-            cb = QtWidgets.QCheckBox(f"Layer {pid}")
+            label = f"Layer {pid} ({pid_names[str(pid)]})" if str(pid) in pid_names else f"Layer {pid}"
+            cb = QtWidgets.QCheckBox(label)
             cb.setChecked(True)
             # lambda에서 pid를 기본값으로 캡처 (루프 변수 참조 방지)
             cb.stateChanged.connect(lambda state, p=pid: self._on_pid_toggle(p))
@@ -759,31 +780,19 @@ class PostprocessViewer(QtWidgets.QMainWindow):
     # ------------------------------------------------------------------
     # 플로팅
     # ------------------------------------------------------------------
-    def _update_plot(self):
-        """matplotlib Figure를 현재 설정으로 다시 그림.
+    def _frame_patches(self, solver, cache):
+        """한 스텝(solver/cache 쌍)에서 (patches, face_colors) 구성.
 
-        플로팅 파이프라인:
-          1. FieldData 계산 (또는 캐시에서 로드)
-          2. 변형 후 절점 좌표 계산
-          3. PatchCollection 생성 — 요소별 면색/경계선
-          4. 컬러바 + 축 설정
-          5. Step Info 업데이트
+        오버레이(N>1)에서 여러 스텝을 같은 방식으로 그리기 위해
+        _update_plot에서 반복 호출할 수 있도록 분리.
         """
-        solver = self._solver
-        ax = self.canvas.axes
-        ax.clear()
-
-        # 1. 필드 데이터 로드
-        field = self._cache.compute_field(self._current_field)
+        field = cache.compute_field(self._current_field)
         vals = field.values
         per_node = field.per_node
 
-        # 2. 메시 데이터 추출
-        conn = solver.conn            # (n_elem, 4) 절점 인덱스 (0-based)
-        coords = solver.coords        # (n_nodes, 2) 기준 좌표
-        u_all = solver.u              # (n_dofs,) 변위
-
-        # 3. 변형 후 좌표 = 기준좌표 + 배율 × 변위
+        conn = solver.conn
+        coords = solver.coords
+        u_all = solver.u
         if self._deformed_scale > 1e-6:
             ux = u_all[0::2]
             uy = u_all[1::2]
@@ -791,56 +800,128 @@ class PostprocessViewer(QtWidgets.QMainWindow):
         else:
             coords_deformed = coords
 
-        # 4. 요소별 PatchCollection 구성
-        # 각 QUAD4 요소를 MplPolygon(4각형)으로 변환.
-        # 면색 = 필드값, 경계선 = 검정 또는 없음.
-        patches = []
-        face_colors = []
-        edge_colors = []
-        linewidths = []
-
+        patches, face_colors = [], []
         for e in range(solver.n_elem):
-            # PID 체크 — 숨김 레이어는 스킵
             eid = solver.elem_ids[e]
             elem_obj = solver.mesh.elements[eid]
             pid = elem_obj.pid if elem_obj.pid is not None else 0
             if not self._pid_visible.get(pid, True):
                 continue
-
-            nidx = conn[e]  # (4,) 절점 인덱스
-            xy = coords_deformed[nidx]  # (4, 2) 변형 후 절점 좌표
-
-            # 필드값: 절점 데이터면 요소 절점값 평균, 요소 데이터면 그대로
-            if per_node:
-                fc = float(np.mean(vals[nidx]))
-            else:
-                fc = float(vals[e])
-
+            nidx = conn[e]
+            xy = coords_deformed[nidx]
+            fc = float(np.mean(vals[nidx])) if per_node else float(vals[e])
             patches.append(MplPolygon(xy, closed=True))
             face_colors.append(fc)
-            edge_colors.append('k' if self._show_mesh else 'none')
-            linewidths.append(0.3 if self._show_mesh else 0.0)
 
-        if not patches:
+        return field, patches, face_colors
+
+    def _update_plot(self):
+        """matplotlib Figure를 현재 설정으로 다시 그림.
+
+        플로팅 파이프라인:
+          1. (오버레이 스텝 목록 결정 -> 스텝별 FieldData/패치 계산)
+          2. 컬러 스케일(vmin/vmax)을 전체 프레임 공통으로 결정
+          3. PatchCollection 생성 (프레임마다, 오래된 것일수록 투명하게) — 요소별 면색/경계선
+          4. 컬러바(ScalarMappable, 프레임 수와 무관하게 1개만) + 힌지 마커 + 축 설정
+          5. Step Info 업데이트
+
+        컬러바는 이전 호출에서 생성된 것을 반드시 제거하고 다시 만든다 --
+        `ax.clear()`는 이 axes만 지우지, `fig.colorbar()`가 Figure에 별도로
+        만드는 colorbar axes는 지우지 않아서, 그 참조를 안 챙기면 필드/스텝/
+        스케일을 바꿀 때마다 colorbar가 계속 쌓인다.
+        """
+        ax = self.canvas.axes
+        ax.clear()
+        if self._cbar is not None:
+            try:
+                self._cbar.remove()
+            except (KeyError, ValueError):
+                pass  # 이미 제거됐거나 axes가 재구성된 경우
+            self._cbar = None
+
+        # 1. 오버레이할 스텝 목록 결정. 라이브 solver 세션이거나 스핀박스가
+        # 1이면 현재 스텝 하나만 -- 기존 단일-스텝 동작 그대로.
+        overlay_n = self.overlay_spin.value() if self.overlay_spin is not None else 1
+        if self._result is not None and overlay_n > 1:
+            current_step = self.step_slider.value() if self.step_slider is not None else self._result.n_steps - 1
+            step_indices = sorted(set(
+                int(round(x)) for x in np.linspace(0, current_step, overlay_n)
+            ))
+        else:
+            step_indices = [None]  # None = 현재 self._solver/self._cache 그대로 사용
+
+        frames = []  # list of (field, patches, face_colors, time)
+        for step in step_indices:
+            if step is None:
+                solver, cache = self._solver, self._cache
+            else:
+                from .live_view import ResultSolverAdapter
+                solver = ResultSolverAdapter(self._result, step=step)
+                cache = _ResultCache(solver)
+            field, patches, face_colors = self._frame_patches(solver, cache)
+            frames.append((field, patches, face_colors, solver.time))
+
+        if not any(patches for _, patches, _, _ in frames):
             ax.set_title("No visible elements")
             self.canvas.draw()
             return
 
-        # 5. PatchCollection 생성 및 축에 추가
-        pc = PatchCollection(patches, array=np.array(face_colors),
-                             cmap='viridis', edgecolors=edge_colors,
-                             linewidths=linewidths)
-        ax.add_collection(pc)
+        # 2. 프레임 전체를 아우르는 공통 색상 스케일. 프레임마다 따로
+        # min/max를 잡으면 오버레이한 프레임들끼리 색이 비교가 안 돼서
+        # "겹쳐 보기"의 의미가 없어진다.
+        all_vals = np.concatenate([np.asarray(fc) for _, _, fc, _ in frames if fc])
+        vmin, vmax = float(all_vals.min()), float(all_vals.max())
+        if vmin == vmax:
+            vmin, vmax = vmin - 0.5, vmax + 0.5
+        import matplotlib as mpl
+        norm = mpl.colors.Normalize(vmin=vmin, vmax=vmax)
+        cmap = mpl.cm.get_cmap('viridis')
 
-        # 6. 컬러바 추가
-        cb_label = field.name
-        if field.unit:
-            cb_label += f" [{field.unit}]"
-        cbar = self.canvas.fig.colorbar(pc, ax=ax, label=cb_label)
+        # 3. 프레임마다 PatchCollection 추가 -- 오래된 스텝일수록 투명하게,
+        # 마지막(현재 선택) 스텝이 맨 위에 완전 불투명으로 그려지도록 순서대로.
+        n_frames = len(frames)
+        all_xy = []
+        for i, (field, patches, face_colors, _t) in enumerate(frames):
+            if not patches:
+                continue
+            alpha = 1.0 if n_frames == 1 else 0.25 + 0.75 * (i / (n_frames - 1))
+            pc = PatchCollection(patches, cmap=cmap, norm=norm,
+                                 edgecolors=('k' if self._show_mesh else 'none'),
+                                 linewidths=(0.3 if self._show_mesh else 0.0),
+                                 alpha=alpha)
+            pc.set_array(np.array(face_colors))
+            ax.add_collection(pc)
+            all_xy.append(np.vstack([p.xy for p in patches]))
 
-        # 7. 축 범위 자동 설정 (equal aspect)
-        all_xy = np.vstack([p.xy for p in patches])
-        if len(all_xy) > 0:
+        last_field = frames[-1][0]
+
+        # 4. 컬러바 -- 마지막 PatchCollection이 아니라 별도 ScalarMappable로
+        # 만들어서, 프레임 개수와 무관하게 항상 하나만 생긴다.
+        sm = mpl.cm.ScalarMappable(norm=norm, cmap=cmap)
+        sm.set_array([])
+        cb_label = last_field.name
+        if last_field.unit:
+            cb_label += f" [{last_field.unit}]"
+        self._cbar = self.canvas.fig.colorbar(sm, ax=ax, label=cb_label)
+
+        # 4b. 힌지 피벗 마커 -- Result로 열었을 때만(라이브 solver 세션은
+        # RBE2 master id 정보가 없어서 스킵). 항상 "현재" 스텝(오버레이의
+        # 마지막 프레임) 위치에만 찍어서 겹쳐 그려도 헷갈리지 않게 한다.
+        if self._result is not None:
+            master_ids = [int(nid) for nid in
+                          (self._result.meta.get("theta_targets_rad") or {}).keys()]
+            if master_ids:
+                last_step = step_indices[-1] if step_indices[-1] is not None else -1
+                hinge_xy = self._result.deformed_points(last_step)[:, :2]
+                for nid in master_ids:
+                    idx = self._result.node_index(nid)
+                    ax.plot(hinge_xy[idx, 0], hinge_xy[idx, 1], marker='^',
+                           color='red', markersize=9, markeredgecolor='k',
+                           linestyle='none', zorder=5)
+
+        # 5. 축 범위 자동 설정 (equal aspect)
+        if all_xy:
+            all_xy = np.vstack(all_xy)
             x_min, y_min = all_xy.min(axis=0)
             x_max, y_max = all_xy.max(axis=0)
             margin_x = max(1.0, (x_max - x_min) * 0.05)
@@ -851,14 +932,18 @@ class PostprocessViewer(QtWidgets.QMainWindow):
         ax.set_aspect('equal')           # 종횡비 1:1
         ax.set_xlabel('X [mm]')
         ax.set_ylabel('Y [mm]')
-        ax.set_title(f"{field.name}  (t = {solver.time:.4f} s)")
+        title = f"{last_field.name}  (t = {frames[-1][3]:.4f} s)"
+        if n_frames > 1:
+            title += f"  [overlay of {n_frames} steps]"
+        ax.set_title(title)
 
-        # 8. Step Info 업데이트
+        # 6. Step Info 업데이트
+        solver = self._solver
         self.info_label.setText(
             f"Time: {solver.time:.4f} s\n"
             f"DOFs: {solver.n_dofs}\n"
             f"Elements: {solver.n_elem}\n"
-            f"Field: {field.name}"
+            f"Field: {last_field.name}"
         )
 
         self.canvas.draw()

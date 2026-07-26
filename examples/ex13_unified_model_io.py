@@ -27,6 +27,7 @@ from types import SimpleNamespace
 import numpy as np
 
 from gen_ex12_inp import generate as generate_inp_text, _graded_display_x
+from fold_model_config import FoldModelConfig, DEFAULT_CONFIG
 from dispsolver.mesh import Mesh
 from dispsolver.mesh.plate_builder import create_folding_plate_parts
 from dispsolver.material.plastic import J2Plasticity
@@ -38,8 +39,14 @@ from dispsolver.constraint.surface_tie import SurfaceTieConstraint
 from ex12_abaqus_inp_plate_fold import run_abaqus_inp_folding, run_folding_from_result
 
 
-def run_read():
-    """Read the standard on-disk .inp deck and solve."""
+def run_read(config: FoldModelConfig = DEFAULT_CONFIG):
+    """Read the standard on-disk .inp deck and solve.
+
+    NOTE: `config` here only affects solver tuning/element type -- the
+    .inp file's geometry/materials are whatever gen_ex12_inp.py last
+    wrote. Re-run gen_ex12_inp.py to pick up a geometry/material config
+    change (see README_folding_model.md).
+    """
     inp_path = os.path.join(os.path.dirname(__file__), "ex12_rigid_plate_display_fold.inp")
     if not os.path.exists(inp_path):
         raise FileNotFoundError(f"{inp_path} not found. Run gen_ex12_inp.py first.")
@@ -48,14 +55,17 @@ def run_read():
         before_png_name="ex13_read_before_folding_shape.png",
         after_png_name="ex13_read_final_folding_shape.png",
         result_name="ex13_read_result.pkl",
+        config=config,
     )
 
 
-def run_roundtrip():
-    """Build the .inp text in-memory via gen_ex12_inp.generate(), write it
-    to a temp file, then read+solve it through the same path as `read`.
+def run_roundtrip(config: FoldModelConfig = DEFAULT_CONFIG):
+    """Build the .inp text in-memory via gen_ex12_inp.generate(config),
+    write it to a temp file, then read+solve it through the same path
+    as `read`. Unlike `read`, this DOES pick up geometry/material
+    config changes immediately (no stale .inp file involved).
     """
-    inp_text = generate_inp_text()
+    inp_text = generate_inp_text(config)
     fd, tmp_path = tempfile.mkstemp(suffix=".inp", prefix="ex13_roundtrip_")
     os.close(fd)
     try:
@@ -66,25 +76,50 @@ def run_roundtrip():
             before_png_name="ex13_roundtrip_before_folding_shape.png",
             after_png_name="ex13_roundtrip_final_folding_shape.png",
             result_name="ex13_roundtrip_result.pkl",
+            config=config,
         )
     finally:
         os.remove(tmp_path)
 
 
-def run_build():
-    """Construct the same 14-layer PET-PSA/Q4_VISCO_SIMO model directly as
-    Python objects (mirroring gen_ex12_inp.py's geometry/materials, but
-    with no .inp text produced or parsed anywhere), then hand it to the
-    same `run_folding_from_result` solve loop as `read`/`roundtrip`.
+def run_build(config: FoldModelConfig = DEFAULT_CONFIG):
+    """Construct the same physical-layer PET-PSA/Q4_VISCO_SIMO model
+    directly as Python objects (mirroring gen_ex12_inp.py's geometry/
+    materials, but with no .inp text produced or parsed anywhere), then
+    hand it to the same `run_folding_from_result` solve loop as
+    `read`/`roundtrip`.
+
+    Layer structure comes from `config.geometry.layer_pattern` x
+    `n_layer_pairs`, the SAME config object gen_ex12_inp.py reads --
+    there is no second copy of these numbers to drift out of sync.
+    Each physical layer gets its own pid so it shows up as its own
+    selectable Part/Layer in the Qt viewer, matching the .inp path
+    (there, distinct pids come from distinct *MATERIAL names; here, from
+    distinct dict keys directly -- no name-string trick needed since we
+    never serialize to .inp text).
     """
-    xs_disp = _graded_display_x()
+    xs_disp = _graded_display_x(config)
     nx_disp = len(xs_disp) - 1
-    ny_disp = 14
-    ys_disp = np.linspace(0.0, 0.5, ny_disp + 1)
-    # pid assignment matches model_builder._build_sections(): one pid per
-    # unique material name, first-seen order (PET first, then PSA, then
-    # STEEL) -- NOT one pid per row/elset.
-    LAYER_PID = [1 if j % 2 == 0 else 2 for j in range(ny_disp)]
+    geo = config.geometry
+    mats = config.materials
+    st = config.solver
+
+    family_counters = {}
+    row_heights, ROW_PID, PID_FAMILY, PID_NAME = [], [], {}, {}
+    next_pid = 1
+    for _pair in range(geo.n_layer_pairs):
+        for layer in geo.layer_pattern:
+            family_counters[layer.material_family] = family_counters.get(layer.material_family, 0) + 1
+            pid = next_pid
+            next_pid += 1
+            PID_FAMILY[pid] = layer.material_family
+            PID_NAME[pid] = f"{layer.material_family}_{family_counters[layer.material_family]}"
+            row_heights += [layer.thickness_mm / layer.n_rows] * layer.n_rows
+            ROW_PID += [pid] * layer.n_rows
+
+    ny_disp = len(row_heights)
+    ys_disp = np.concatenate([[0.0], np.cumsum(row_heights)])
+    STEEL_PID = next_pid  # one past the last physical layer pid
 
     mesh = Mesh()
     grid_nids = np.zeros((ny_disp + 1, nx_disp + 1), dtype=int)
@@ -100,8 +135,9 @@ def run_build():
 
     eid = 1
     for j in range(ny_disp):
-        pid = LAYER_PID[j]
-        etype = "Q4_COROTATIONAL" if pid == 1 else "Q4_VISCO_SIMO"
+        pid = ROW_PID[j]
+        family = PID_FAMILY[pid]
+        etype = st.pet_element_type if family == "PET" else st.psa_element_type
         for i in range(nx_disp):
             n1, n2 = grid_nids[j, i], grid_nids[j, i + 1]
             n3, n4 = grid_nids[j + 1, i + 1], grid_nids[j + 1, i]
@@ -109,33 +145,50 @@ def run_build():
             eid += 1
 
     plates = create_folding_plate_parts(
-        left_x_range=(-40.0, -10.0), right_x_range=(10.0, 40.0),
-        y_range=(-0.5, 0.0), left_pivot=(-3.0, 0.0), right_pivot=(3.0, 0.0),
-        nx=30, ny=2, base_node_id=10000, base_elem_id=10000,
+        left_x_range=(-geo.display_half_length, -geo.hinge_half_gap),
+        right_x_range=(geo.hinge_half_gap, geo.display_half_length),
+        y_range=(-geo.plate_thickness, 0.0),
+        left_pivot=(-geo.hinge_pivot_x, 0.0), right_pivot=(geo.hinge_pivot_x, 0.0),
+        nx=geo.plate_mesh_nx, ny=geo.plate_mesh_ny, base_node_id=10000, base_elem_id=10000,
     )
     left_plate, right_plate = plates["left"], plates["right"]
     for p_data in plates.values():
         for nid_p, coord in p_data["nodes_dict"].items():
             mesh.add_node(nid_p, coord[0], coord[1])
         for eid_p, conn in p_data["elements_dict"].items():
-            mesh.add_element(eid_p, conn, "Q4", pid=3)
+            mesh.add_element(eid_p, conn, "Q4", pid=STEEL_PID)
 
-    # Materials -- same params as gen_ex12_inp.py's PET/PSA/STEEL blocks.
-    mat_pet = J2Plasticity(E=4000.0, nu=0.3, sigma_y0=80.0, H=400.0)
-    params_pet = {"E": 4000.0, "nu": 0.3, "sigma_y0": 80.0, "H": 400.0}
+    # Materials -- same params as gen_ex12_inp.py's PET_n/PSA_n/STEEL
+    # blocks (both read from `config.materials`), one *object* per
+    # physical layer even though the numeric params are identical
+    # across all PET layers (and across all PSA layers) -- mirrors the
+    # .inp path's separate *MATERIAL blocks with distinct names but
+    # identical properties. Material objects are stateless (per-element
+    # internal variables live in solver.state, not on the object), so
+    # nothing would break if these were shared instances instead --
+    # kept separate only to mirror the .inp path's structure.
+    materials, material_params, material_names = {}, {}, {}
+    for pid, family in PID_FAMILY.items():
+        name = PID_NAME[pid]
+        material_names[pid] = name
+        if family == "PET":
+            m = mats.pet
+            materials[pid] = J2Plasticity(E=m["E"], nu=m["nu"], sigma_y0=m["sigma_y0"], H=m["H"])
+            material_params[pid] = dict(m)
+        elif family == "PSA":
+            m = mats.psa
+            base_psa = ArrudaBoyce()
+            wlf = {"T_ref": m["wlf_T_ref"], "C1": m["wlf_C1"], "C2": m["wlf_C2"], "definition": "WLF"}
+            prony = list(zip(m["prony_g"], [0.0] * len(m["prony_g"]), m["prony_tau"]))
+            materials[pid] = ViscoelasticMaterial(base_psa, m["prony_g"], m["prony_tau"], wlf_params=wlf)
+            material_params[pid] = {"mu": m["mu"], "lambda_m": m["lambda_m"], "K": m["K"],
+                                     "base": base_psa, "prony": prony, "wlf": wlf}
+        else:
+            raise ValueError(f"Unknown material family {family!r} in layer_pattern")
 
-    base_psa = ArrudaBoyce()
-    params_base_psa = {"mu": 0.16785, "lambda_m": 3.0, "K": 8.3333}
-    wlf = {"T_ref": 25.0, "C1": 17.0, "C2": 51.6, "definition": "WLF"}
-    prony = [(0.20, 0.0, 3.33)]
-    mat_psa = ViscoelasticMaterial(base_psa, [0.20], [3.33], wlf_params=wlf)
-    params_psa = {**params_base_psa, "base": base_psa, "prony": prony, "wlf": wlf}
-
-    mat_steel = NeoHookean()
-    params_steel = {"E": 20000.0, "nu": 0.3}
-
-    materials = {1: mat_pet, 2: mat_psa, 3: mat_steel}
-    material_params = {1: params_pet, 2: params_psa, 3: params_steel}
+    materials[STEEL_PID] = NeoHookean()
+    material_params[STEEL_PID] = {"E": mats.steel["E"], "nu": mats.steel["nu"]}
+    material_names[STEEL_PID] = "STEEL"
 
     # RBE2 exact kinematic condensation for both hinge pivots (same
     # mechanism as the .inp `*RIGID BODY` path, see AGENTS.md 4.10).
@@ -146,8 +199,8 @@ def run_build():
 
     nid_to_idx = mesh.node_id_to_index()
     coords = mesh.nodes_array()
-    left_disp_bot = [n for n in bottom_surface_nids if mesh.nodes[n].x <= -10.0]
-    right_disp_bot = [n for n in bottom_surface_nids if mesh.nodes[n].x >= 10.0]
+    left_disp_bot = [n for n in bottom_surface_nids if mesh.nodes[n].x <= -geo.hinge_half_gap]
+    right_disp_bot = [n for n in bottom_surface_nids if mesh.nodes[n].x >= geo.hinge_half_gap]
     tie_left = SurfaceTieConstraint(
         slave_node_ids=left_disp_bot, master_node_ids=left_plate["top_surface_nids"],
         nid_to_idx=nid_to_idx, coords=coords, penalty_stiffness=1e4, name="TIE_LEFT",
@@ -158,12 +211,13 @@ def run_build():
     )
 
     # Boundary conditions, matching the .inp *BOUNDARY blocks exactly:
-    # master RP translation fixed, rotation prescribed to +-90deg.
+    # master RP translation fixed, rotation prescribed to +-theta_max.
+    theta_rad = np.radians(config.drive.theta_max_deg)
     boundaries = [
         SimpleNamespace(nset=str(left_plate["master_rp_id"]), dof1=1, dof2=2, value=0.0),
         SimpleNamespace(nset=str(right_plate["master_rp_id"]), dof1=1, dof2=2, value=0.0),
-        SimpleNamespace(nset=str(left_plate["master_rp_id"]), dof1=6, dof2=6, value=-1.570796),
-        SimpleNamespace(nset=str(right_plate["master_rp_id"]), dof1=6, dof2=6, value=1.570796),
+        SimpleNamespace(nset=str(left_plate["master_rp_id"]), dof1=6, dof2=6, value=-theta_rad),
+        SimpleNamespace(nset=str(right_plate["master_rp_id"]), dof1=6, dof2=6, value=theta_rad),
     ]
 
     result = SimpleNamespace(
@@ -172,8 +226,8 @@ def run_build():
         material_params=material_params,
         # Same pid -> *MATERIAL name map the .inp path produces, so
         # postprocessing labels the layers PET/PSA identically in all modes.
-        material_names={1: "PET", 2: "PSA", 3: "STEEL"},
-        solver_config={"density": 1e-9, "t_total": 1.0, "dt_init": 0.005, "dt_max": 0.01, "dt_min": 1e-5},
+        material_names=material_names,
+        solver_config={"density": 1e-9},
         rbe2_constraints=[rbe2_left, rbe2_right],
         penalty_constraints=[tie_left, tie_right],
         rbe2_elements=[],
@@ -185,6 +239,7 @@ def run_build():
         after_png_name="ex13_build_final_folding_shape.png",
         case_name="build (pure Python objects)",
         result_name="ex13_build_result.pkl",
+        config=config,
     )
 
 
@@ -198,12 +253,13 @@ def main():
     )
     args = parser.parse_args()
 
+    config = DEFAULT_CONFIG
     if args.mode == "read":
-        info = run_read()
+        info = run_read(config)
     elif args.mode == "roundtrip":
-        info = run_roundtrip()
+        info = run_roundtrip(config)
     else:
-        info = run_build()
+        info = run_build(config)
 
     print("=" * 100)
     print(f" EX13 [{args.mode}] SUMMARY: nodes={info['n_nodes']}  elements={info['n_elements']}  "

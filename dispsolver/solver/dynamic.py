@@ -1008,6 +1008,63 @@ class DynamicSolver:
             except ImportError:
                 pass
 
+            # --- JAX finite-strain Simo viscoelastic vmap batch setup
+            #     (per-pid groups, Q4_VISCO_SIMO) ---
+            # Same problem/fix as the Q4_COROTATIONAL cache above: the
+            # per-assembly-call dispatch used to build a *fresh, un-jitted*
+            # jax.vmap(...) every single Newton iteration for every
+            # Q4_VISCO_SIMO pid (see _assemble_multi_material_batch). With
+            # one PSA pid that was merely slow; splitting the display into
+            # 14 physical layers (7 PSA pids sharing identical material
+            # params) turned it into 7x that cost *per iteration*, with no
+            # jit compilation cache at all -- first-iteration wall time
+            # went from tens of seconds to 20+ minutes before this fix
+            # (confirmed by CPU-time inspection: the process was genuinely
+            # computing, not deadlocked -- just doing eager-mode JAX
+            # dispatch of the whole finite-strain kernel from scratch,
+            # every element-batch, every call). Pre-build and cache one
+            # jax.jit(jax.vmap(...)) per unique material-parameter tuple,
+            # exactly like the coro cache: pid groups with identical
+            # (base_name, kappa, bparams, g_i, tau_i, g_inf) share one
+            # compiled closure. `dt` stays a genuine traced argument (not
+            # baked into the cache key) since it changes every step.
+            self._visco_simo_jax_vmap_by_pid: Dict[int, object] = {}
+            _visco_simo_vmap_cache: Dict[tuple, object] = {}
+            try:
+                import jax
+                import jax.numpy as jnp
+                from functools import partial as _partial
+                from ..material.viscoelastic import ViscoelasticMaterial as _VEM
+                from ..element.q4_visco_simo_fs_jax import compute_single as _visco_simo_single
+                for pid, mat_adapter in self.materials.items():
+                    if (self._pid_element_type(pid) == "Q4_VISCO_SIMO"
+                            and isinstance(mat_adapter.material, _VEM)):
+                        vmat = mat_adapter.material
+                        base_name, bparams, kappa = vmat.simo_fs_args(mat_adapter.params)
+                        mat_key = (base_name, float(kappa), tuple(float(b) for b in bparams),
+                                  tuple(float(g) for g in vmat.g_i),
+                                  tuple(float(t) for t in vmat.tau_i),
+                                  float(vmat.g_inf))
+                        if mat_key not in _visco_simo_vmap_cache:
+                            _base_name = base_name
+                            _kappa = float(kappa)
+                            _bparams = jnp.asarray(bparams)
+                            _g_i = jnp.asarray(vmat.g_i)
+                            _tau_i = jnp.asarray(vmat.tau_i)
+                            _g_inf = float(vmat.g_inf)
+                            _fn = _partial(_visco_simo_single, base=_base_name)
+                            _single_visco_simo = (
+                                lambda coords, u_e, s, dt, t, _fn=_fn, _kappa=_kappa,
+                                _bparams=_bparams, _g_i=_g_i, _tau_i=_tau_i, _g_inf=_g_inf:
+                                _fn(coords, u_e, s, _kappa, _bparams, _g_i, _tau_i, _g_inf, dt, t)
+                            )
+                            _visco_simo_vmap_cache[mat_key] = jax.jit(jax.vmap(
+                                _single_visco_simo, in_axes=(0, 0, 0, None, 0),
+                            ))
+                        self._visco_simo_jax_vmap_by_pid[pid] = _visco_simo_vmap_cache[mat_key]
+            except ImportError:
+                pass
+
         # --- EAS internal parameters (4 per element); only Q4_EAS elements use
         #     them, others stay zero. Persisted/rolled back like material state.
         self.eas_alpha = np.zeros((self.n_elem, 4), dtype=np.float64)
@@ -2825,18 +2882,20 @@ class DynamicSolver:
 
             if self._pid_element_type(pid) == "Q4_VISCO_SIMO":
                 # ---- Complete finite-strain Simo viscoelasticity (Flory split,
-                #      pluggable hyperelastic base) — q4_visco_simo_fs_jax. ----
-                import jax
+                #      pluggable hyperelastic base) — q4_visco_simo_fs_jax.
+                # Uses the pre-built, jit-cached vmap from __init__
+                # (self._visco_simo_jax_vmap_by_pid) -- building a fresh,
+                # un-jitted jax.vmap(...) here on every Newton iteration for
+                # every pid used to cost 20+ minutes on a first iteration
+                # once this element type had more than one pid group (see
+                # the cache pre-build's comment for the full story). ----
                 import jax.numpy as jnp
-                from functools import partial as _partial
                 from ..material.viscoelastic import ViscoelasticMaterial as _VEM
-                from ..element.q4_visco_simo_fs_jax import compute_single as _visco_simo
                 vmat = mat_adapter.material
                 if not isinstance(vmat, _VEM):
                     raise TypeError("Q4_VISCO_SIMO requires a ViscoelasticMaterial")
                 n_vars = mat_adapter.n_internal_vars   # = 6*(M+1)
                 dt_h = dt if dt is not None else 1.0
-                base, bparams, kappa = vmat.simo_fs_args(mat_adapter.params)
 
                 coords_b = jnp.asarray(self.elem_coords[elem_indices])
                 u_b = jnp.asarray(u[self.dof_indices[elem_indices]])
@@ -2845,13 +2904,8 @@ class DynamicSolver:
                 ) if self.state is not None else jnp.zeros((len(elem_indices), 4, n_vars))
                 t_b = jnp.asarray(self._elem_thickness[elem_indices])
 
-                _fn = _partial(_visco_simo, base=base)   # bind static base out of vmap
-                _vmap = jax.vmap(_fn, in_axes=(0, 0, 0, None, None, None, None, None, None, 0))
-                f_es, K_es, se_all = _vmap(
-                    coords_b, u_b, state_b, float(kappa), jnp.asarray(bparams),
-                    jnp.asarray(vmat.g_i), jnp.asarray(vmat.tau_i), float(vmat.g_inf),
-                    dt_h, t_b,
-                )
+                _vmap = self._visco_simo_jax_vmap_by_pid[pid]
+                f_es, K_es, se_all = _vmap(coords_b, u_b, state_b, dt_h, t_b)
                 f_es = np.asarray(f_es); K_es = np.asarray(K_es); se_all = np.asarray(se_all)
                 np.add.at(f_int, self.dof_indices[elem_indices].flatten(), f_es.flatten())
                 if state_new is not None:
