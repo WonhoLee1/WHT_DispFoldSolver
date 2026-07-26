@@ -34,18 +34,23 @@ smooth rounded U required by AGENTS.md §1.0's success criterion --
 `check_smooth_curvature()` (`dispsolver/solver/diagnostics.py:125`)
 flags `max_curv_ratio` over its warn threshold.
 
-**Likely cause (not confirmed)**: this script builds its display mesh
-manually with a **uniform** `nx_disp=80` grid (`np.linspace(-40,40,81)`)
--- the graded/clustered mesh fix from §4.12
-(`gen_ex12_inp.py::_graded_display_x()`) was introduced for the
-`.inp`-based script and was never ported to this script's inline mesh
-construction. §4.12's precedent suggests mesh grading near the
-plate/hinge boundary (x=+-10) and free hinge span, not a solver/material
-change, is the more likely fix -- worth trying before touching solver
-code.
+**User correction (2026-07-26): a sharp kink here is expected, normal
+physics for this model, not a bug to fix.** This script's display is a
+single homogeneous `J2Plasticity` layer (no real bend-radius-limiting
+multi-layer stack, unlike the 14-layer PET-PSA model in
+`ex12_abaqus_inp_plate_fold.py`) with a uniform `nx_disp=80` mesh -- with
+nothing in the model actually enforcing a minimum bend radius, folding
+this simplified structure to 90deg/side has no physical reason to stay
+smooth; a crease at the hinge is the expected result, not evidence of a
+meshing or solver defect. **Do not port the §4.12 graded-mesh fix here
+chasing kink_detected -- that would be solving a diagnostic flag, not an
+actual problem.** `check_smooth_curvature()`'s warn threshold is tuned
+for the 14-layer stack's physical assumptions (§1.0), not this
+single-material script; a "u_shape_ok=False" verdict here doesn't mean
+the run is wrong.
 
 ## Not done this session
 
-Did not attempt the mesh-grading fix -- flagged here as the next concrete
-step for this script. AGENTS.md §1.0 and §1.2 updated to reflect current
-status; do not cite the old "~7.9deg stall" note as current.
+No further action taken on `kink_detected` -- see correction above.
+AGENTS.md §1.0 and §1.2 updated to reflect current dt-stall status; do
+not cite the old "~7.9deg stall" note as current.
