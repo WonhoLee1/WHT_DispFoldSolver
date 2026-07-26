@@ -47,11 +47,68 @@ round-trips consistently. `pytest tests/test_convergence_fixes.py
 tests/test_rigid_plate_tie.py` still 6 passed (ex12 signature change is
 backward compatible, no existing caller broke).
 
-## Remaining (deferred)
+## `build` mode added (same session, follow-up)
 
-`build` mode: construct the model directly as Python objects (mirroring
-`ex12_rigid_plate_display_fold_corotational.py`'s `create_folding_plate_parts`
-/ `RigidBodyPart` / `SurfaceTieConstraint` usage) with the *same* 14-layer
-PET-PSA/Q4_VISCO_SIMO layup as `gen_ex12_inp.py`, so all three modes are
-truly comparable. Not started -- flagged as the next step if full
-three-way parity is wanted.
+Implemented `run_build()` in `ex13_unified_model_io.py`: constructs the
+identical 14-layer PET-PSA mesh (reusing `gen_ex12_inp._graded_display_x()`
+and `create_folding_plate_parts`), materials (`J2Plasticity`,
+`ViscoelasticMaterial(ArrudaBoyce(), ...)`, `NeoHookean`), RBE2 hinge
+constraints (`KinematicRBE2Constraint`, same as the .inp `*RIGID BODY`
+path -- not `RigidBodyPart`/Dirichlet, so it plugs into the same
+`theta_targets`-driven solve loop), and `SurfaceTieConstraint` ties --
+all as plain Python objects, no `.inp` text anywhere. Refactored
+`ex12_abaqus_inp_plate_fold.py`'s solve loop out into
+`run_folding_from_result(result, ...)`, taking any object with the same
+fields as `ModelBuilderResult` (`mesh`/`materials`/`material_params`/
+`solver_config`/`rbe2_constraints`/`penalty_constraints`/`rbe2_elements`/
+`boundaries`) -- `build` mode passes a `types.SimpleNamespace` built
+directly, `read`/`roundtrip` pass the real `ModelBuilderResult`.
+
+### Critical bugs found and fixed while verifying `build` mode
+
+Comparing `build`'s freshly-constructed `ArrudaBoyce`/`ViscoelasticMaterial`
+params against what `read_abaqus_input` actually produced from the same
+`.inp` text turned up **two silent parser/builder bugs that had been
+active since the PSA-Arruda-Boyce material was introduced**:
+
+1. `abaqus_parser.py::_parse_hyperelastic` detected the hyperelastic
+   model type via `params.get("neo hooke", params.get("type", "NEO HOOKE"))`
+   -- but Abaqus writes the model name as a bare flag
+   (`*HYPERELASTIC, ARRUDA-BOYCE"), which the lexer stores as
+   `params["arruda-boyce"] = "yes"`, never checked. Every `ARRUDA-BOYCE`
+   block was silently misread as the `NEO HOOKE` default, reinterpreting
+   the `mu, lambda_m, D` data row as `C10, D1` -- i.e. the PSA layer's
+   base material was actually **NeoHookean(mu=0.3357, lambda=0.4429)**,
+   not Arruda-Boyce(mu=0.16785, lambda_m=3.0), this whole time. Fixed by
+   checking for each known model's bare-flag key
+   (`"arruda-boyce"`/`"arruda boyce"`, `"yeoh"`, `"neo hooke"`) before
+   falling back to `type=`/default.
+2. `model_builder.py`'s two ARRUDA-BOYCE branches (composite path and
+   legacy-flat path) read `hyper.get("K", 100.0)` directly, but the
+   parser stores the compressibility parameter as `"D"` (matching the
+   `mu, lambda_m, D` Abaqus data-row convention), never `"K"` -- so `K`
+   silently defaulted to 100.0 regardless of the actual `D` value.
+   Fixed to convert `K = 2.0/D if D > 0 else 100.0`, mirroring the
+   NEO HOOKE branch's existing `D1`->`K` conversion.
+3. `viscoelastic.py::ViscoelasticMaterial.simo_fs_args()` computed
+   `kappa` only via `_extract_lam_mu(params)`, which requires either
+   `('mu','lambda')` or `('E','nu')` -- Arruda-Boyce/Yeoh's own params
+   (`mu, lambda_m, K`) have neither, so once bug #1/#2 were fixed and the
+   base material was genuinely `ArrudaBoyce`, this raised
+   `KeyError: 'E'` the first time `Q4_VISCO_SIMO` actually evaluated it.
+   Fixed by using `params['K']` directly as kappa when present, before
+   falling back to the Lame-based derivation for `NeoHookean`.
+
+After all three fixes: PSA is now genuinely Arruda-Boyce
+(mu=0.16785 MPa, lambda_m=3.0, **K=8.3333 MPa** -- previously silently
+100.0), `read`/`roundtrip`/`build` all re-verified end to end (full
+90deg/side closure, zero cutbacks, ~290-294s each), and
+`pytest tests/test_convergence_fixes.py tests/test_rigid_plate_tie.py
+tests/test_hyperelastic.py` 22 passed.
+
+**Takeaway**: this bug was invisible from convergence output alone (the
+run "succeeded" the whole time) -- it only surfaced by cross-checking the
+*same* material spec built two independent ways (`.inp` text vs. raw
+Python objects) and comparing the actual resolved `material_params` dict.
+This is exactly the kind of silent-wrong-material class of bug the
+`build`/`read` parity check was meant to catch.

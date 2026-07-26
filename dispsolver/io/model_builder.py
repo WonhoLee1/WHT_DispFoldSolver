@@ -444,7 +444,13 @@ class ModelBuilder:
                     elif "ARRUDA-BOYCE" in model_type or "ARRUDA BOYCE" in model_type:
                         mu = hyper.get("mu", 1.0)
                         lambda_m = hyper.get("lambda_m", 3.0)
-                        K_val = hyper.get("K", 100.0)
+                        # abaqus_parser stores the compressibility param as
+                        # "D" (Abaqus data-row convention, mu/lambda_m/D),
+                        # not "K" directly -- convert like the NEO HOOKE
+                        # branch above (K = 2/D), or this silently falls
+                        # back to the 100.0 default every time.
+                        D = hyper.get("D", 0.0)
+                        K_val = 2.0 / D if D > 0 else 100.0
                         mat = ArrudaBoyce()
                         mat_params = {"mu": mu, "lambda_m": lambda_m, "K": K_val}
                     else:
@@ -540,7 +546,8 @@ class ModelBuilder:
                 elif "ARRUDA-BOYCE" in model_type or "ARRUDA BOYCE" in model_type:
                     mu = abq_mat.params.get("mu", 1.0)
                     lambda_m = abq_mat.params.get("lambda_m", 3.0)
-                    K = abq_mat.params.get("K", 100.0)
+                    D = abq_mat.params.get("D", 0.0)
+                    K = 2.0 / D if D > 0 else 100.0
                     mat = ArrudaBoyce()
                     mat_params = {"mu": mu, "lambda_m": lambda_m, "K": K}
                 else:

@@ -37,6 +37,22 @@ def run_abaqus_inp_folding(inp_path: str = None, before_png_name: str = "ex12_be
     result = read_abaqus_input(inp_path)
     print(f"Parsed result: {result}")
 
+    return run_folding_from_result(result, before_png_name, after_png_name)
+
+
+def run_folding_from_result(result, before_png_name: str = "ex12_before_folding_shape.png",
+                             after_png_name: str = "ex12_final_folding_shape.png"):
+    """Shared solve loop, driven by any object exposing the same fields as
+    `dispsolver.io.model_builder.ModelBuilderResult` (`.mesh`, `.materials`,
+    `.material_params`, `.solver_config`, `.rbe2_constraints`,
+    `.penalty_constraints`, `.rbe2_elements`, `.boundaries`).
+
+    `run_abaqus_inp_folding` builds this via `read_abaqus_input`;
+    `ex13_unified_model_io.py`'s `build` mode constructs an equivalent
+    result directly as Python objects (no .inp text at all) and calls
+    this function directly, so all three model sources (read/roundtrip/
+    build) drive the exact same solve loop with no duplication.
+    """
     mesh = result.mesh
     nid_to_idx = mesh.node_id_to_index()
 
