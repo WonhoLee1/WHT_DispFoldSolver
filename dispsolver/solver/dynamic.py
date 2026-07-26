@@ -1029,6 +1029,10 @@ class DynamicSolver:
         self._bc_base_vals = np.array([], dtype=np.float64)
         self._bc_amplitudes = None      # None, single Amplitude, or per-dof list
         self.time = 0.0                 # accumulated analysis time
+        # Why the last increment failed, set by _fail(). None after a
+        # successful step -- the return code alone cannot distinguish the
+        # seven failure paths.
+        self.last_failure_reason: Optional[str] = None
 
     def set_prescribed_dofs(
         self,
@@ -1241,9 +1245,26 @@ class DynamicSolver:
         took. See `_solve_step_impl` for the algorithm itself.
         """
         t_wall_start = time.time()
+        self.last_failure_reason = None
         result = self._solve_step_impl(dt)
         self._print_sta_line(dt, result, time.time() - t_wall_start)
         return result
+
+    def _fail(self, reason: str, code: Optional[int] = None) -> int:
+        """Record *why* an increment failed and return the cut-back code.
+
+        Callers only branch on the sign of `solve_step`'s return value, so
+        seven different failure paths all used to collapse to the same
+        integer (`-max_iter`, or `-(n_iter+1)` for the two NaN paths).
+        That made a failing run indistinguishable from any other: a test
+        reporting `-40` could mean element inversion, divergence, a
+        line-search collapse, a stall, or plain iteration exhaustion.
+
+        The integer contract is unchanged -- this only preserves the
+        reason so `_print_sta_line` and post-mortems can name it.
+        """
+        self.last_failure_reason = reason
+        return code if code is not None else -(self.max_iter)
 
     def _print_sta_line(self, dt: float, result: int, t_wall: float) -> None:
         """Print one Abaqus-.sta-style status row for this solve_step attempt.
@@ -1289,7 +1310,8 @@ class DynamicSolver:
         print(
             f"  {1:4d}  {self._sta_inc:4d}  {self._sta_att:4d}   {severe_discon:5d}   "
             f"{n_iter:5d}   {total_time:8.4f}   {step_time:8.4f}   {dt:8.4f}"
-            + ("" if converged else "   *** NOT CONVERGED, CUTBACK ***"),
+            + ("" if converged else
+               f"   *** CUTBACK: {self.last_failure_reason or 'unknown'} ***"),
             flush=True,
         )
         self._sta_last_converged = converged
@@ -1454,7 +1476,7 @@ class DynamicSolver:
             if not self._check_element_inversion(u_k):
                 if getattr(self, 'verbose', False):
                     print(f"  *** ELEMENT INVERSION: det(F) <= 0 detected at iteration {n_iter+1}. Cutting back dt.", flush=True)
-                return -(self.max_iter)
+                return self._fail("element inversion (det(F) <= 0)")
 
             # --- RBE2 element assembly (Abaqus-style: projected to master DOFs only) ---
             if self.rbe2_elements:
@@ -1797,7 +1819,7 @@ class DynamicSolver:
                     t_elapsed = time.time() - t_start
                     print(f"  ---------------------------------------------------------------------------------------------------------------------", flush=True)
                     print(f"  *** ERROR: Search direction contains NaN/Inf at iteration {n_iter+1}. (Time: {t_elapsed:.2f} s)\n", flush=True)
-                return -(n_iter + 1)
+                return self._fail("NaN/Inf in search direction", -(n_iter + 1))
             
             du = du_all[:self.n_dofs]
             du_ext = du_all[self.n_dofs:self.n_dofs+self.n_extra]
@@ -1860,7 +1882,7 @@ class DynamicSolver:
             if alpha <= alpha_min + 1e-5:
                 if getattr(self, 'verbose', False):
                     print(f"  *** ERROR: Line search failed to resolve residual explosion at iteration {n_iter+1}.", flush=True)
-                return -(self.max_iter)
+                return self._fail("line search collapsed (residual explosion)")
 
             # If line search failed to find a non-NaN/non-inf residual
             if np.isnan(R_norm_temp) or np.isinf(R_norm_temp):
@@ -1868,7 +1890,7 @@ class DynamicSolver:
                     t_elapsed = time.time() - t_start
                     print(f"  ---------------------------------------------------------------------------------------------------------------------", flush=True)
                     print(f"  *** ERROR: Line search failed to resolve NaN/Inf residual at iteration {n_iter+1}. (Time: {t_elapsed:.2f} s)\n", flush=True)
-                return -(n_iter + 1)
+                return self._fail("NaN/Inf residual after line search", -(n_iter + 1))
 
             du *= alpha
             du_ext *= alpha
@@ -1877,8 +1899,21 @@ class DynamicSolver:
             
             res_norm = R_norm_current
             if res_norm_0 is None:
-                res_norm_0 = res_norm + 1e-16
-            res_ratio = res_norm / res_norm_0
+                # Do NOT anchor the reference on a residual that is zero to
+                # machine precision. On the first iteration of a purely
+                # displacement-driven step the residual is legitimately ~0
+                # (the load enters through BC row elimination, so nothing
+                # is out of balance yet). The old `res_norm + 1e-16` turned
+                # that into a 1e-16 denominator, which made res_ratio blow
+                # past the 1e15 divergence threshold on the very next
+                # iteration and aborted a perfectly healthy step. Leave the
+                # reference unset until a residual with real magnitude
+                # appears -- every consumer already guards on
+                # `res_norm_0 is not None`.
+                force_scale = float(np.mean(np.abs(f_int))) if f_int.size else 0.0
+                if res_norm > 1e-12 * max(force_scale, 1.0):
+                    res_norm_0 = res_norm
+            res_ratio = res_norm / res_norm_0 if res_norm_0 is not None else 1.0
             du_norm = np.linalg.norm(du)
             if self.max_step is not None and du_norm > self.max_step:
                 scale = self.max_step / du_norm
@@ -1944,7 +1979,7 @@ class DynamicSolver:
                     t_elapsed = time.time() - t_start
                     print(f"  ---------------------------------------------------------------------------------------------------------------------", flush=True)
                     print(f"  *** ERROR: Divergence detected at iteration {n_iter+1}. (Time: {t_elapsed:.2f} s)\n", flush=True)
-                return -(self.max_iter)
+                return self._fail("divergence (NaN/Inf du_norm or res_ratio > 1e15)")
 
             # ---- Residual-based convergence criterion ----
             # For KKT saddle-point systems the displacement ratio du_norm / u_norm
@@ -2047,15 +2082,19 @@ class DynamicSolver:
             # find a smaller increment where quadratic convergence resumes.
             conv_rate = res_ratio / max(prev_res_ratio, 1e-30)
             self.last_conv_rate = float(conv_rate)  # exposed for AdaptiveDtController (B6)
-            if conv_rate > 0.995 and res_ratio > max(self.rtol * 0.1, 1e-6):
+            if (res_norm_0 is not None and conv_rate > 0.995
+                    and res_ratio > max(self.rtol * 0.1, 1e-6)):
                 stall_count += 1
             else:
+                # While no residual reference exists yet, res_ratio is a
+                # placeholder 1.0 -- counting that as "no progress" would
+                # manufacture a stall out of missing information.
                 stall_count = 0
             prev_res_ratio = res_ratio
             if stall_count > 3:
                 if getattr(self, 'verbose', False):
                     print(f"  *** STALL DETECTED: conv_rate={conv_rate:.4f} for {stall_count} iters. Cutting back dt.", flush=True)
-                return -(self.max_iter)
+                return self._fail(f"convergence stalled (conv_rate={conv_rate:.4f} for {stall_count} iters)")
 
             u_k += du
             u_ext_k += du_ext
@@ -2086,7 +2125,7 @@ class DynamicSolver:
                 t_elapsed = time.time() - t_start
                 print(f"  ---------------------------------------------------------------------------------------------------------------------", flush=True)
                 print(f"  *** ERROR: Failed to converge after {self.max_iter} iterations. (Time: {t_elapsed:.2f} s)\n", flush=True)
-            return -(self.max_iter)
+            return self._fail(f"not converged within max_iter={self.max_iter}")
 
         self.u = u_k.copy()
         if self.static_mode:
