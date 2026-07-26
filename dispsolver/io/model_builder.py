@@ -716,21 +716,30 @@ class ModelBuilder:
 
         # Rigid body constraints (from *RIGID BODY)
         for rb in self._abq.rigid_bodies:
-            try:
-                from ..element.rbe2 import RBE2HingeElement
-                nid_to_idx = mesh.node_id_to_index()
-                master_idx = nid_to_idx[rb.ref_node]
-                slave_indices = [nid_to_idx[nid] for nid in rb.node_ids]
-                rbe2_elem = RBE2HingeElement(
-                    master_id=master_idx,
-                    slave_ids=slave_indices,
-                    coords_initial=mesh.nodes_array(),
-                )
-                rbe2_elem.master_id = rb.ref_node
-                rbe2_elem.slave_ids = list(rb.node_ids)
-                self._result.rbe2_elements.append(rbe2_elem)
-            except ImportError:
-                warnings.warn("RBE2HingeElement not available")
+            # NOTE: RBE2HingeElement (penalty+Augmented-Lagrangian) build was
+            # commented out here -- it was never passed to DynamicSolver for
+            # this .inp-driven path (only self._result.rbe2_constraints /
+            # KinematicRBE2Constraint below is used for the actual solve),
+            # so this was pure dead computation on every *RIGID BODY block.
+            # See AGENTS.md 4.10: RBE2HingeElement was already tried and
+            # abandoned as the rigid-plate driving mechanism -- don't revive
+            # this for solving, only re-enable if something (e.g. plotting)
+            # is later found to genuinely need populated rbe2_elements.
+            # try:
+            #     from ..element.rbe2 import RBE2HingeElement
+            #     nid_to_idx = mesh.node_id_to_index()
+            #     master_idx = nid_to_idx[rb.ref_node]
+            #     slave_indices = [nid_to_idx[nid] for nid in rb.node_ids]
+            #     rbe2_elem = RBE2HingeElement(
+            #         master_id=master_idx,
+            #         slave_ids=slave_indices,
+            #         coords_initial=mesh.nodes_array(),
+            #     )
+            #     rbe2_elem.master_id = rb.ref_node
+            #     rbe2_elem.slave_ids = list(rb.node_ids)
+            #     self._result.rbe2_elements.append(rbe2_elem)
+            # except ImportError:
+            #     warnings.warn("RBE2HingeElement not available")
 
             # 2. KinematicRBE2Constraint (kinematic condensed constraint)
             try:
