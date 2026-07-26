@@ -255,6 +255,17 @@ python -u examples/ex11_rigid_plate_display_fold.py   # true plate+tie architect
   iterations (don't just trust the accept/reject decision) and check
   `solver._check_mesh_quality(solver.u)` for `n_inverted`/`n_warped`.
 
+- **Known-failing baseline (verify against this, not against zero)**:
+  `pytest tests/` is **135 passed, 10 failed** on a clean tree —
+  `test_solver.py` 5 (`NR should converge, got -40`), `test_rbe2.py` 3
+  (`assert len(result.constraints) == 1`; rigid bodies land in
+  `rbe2_constraints`, not `constraints`), `test_linear_visco_hybrid.py`
+  2 (`assert -20 >= 0`). All confirmed pre-existing by A/B comparison
+  (2026-07-26). The two-file subset in the command above is a fast
+  smoke check, **not** the suite — don't report its "6 passed" as if it
+  were. When you change solver code, A/B the failing set with
+  `git stash` rather than assuming a failure is pre-existing.
+
 - **Mandatory**: `verification/RULES.md` requires running
   `python -m verification.run_all` (9 benchmarks, ~75s) after **any**
   change to `dispsolver/solver/`, `/element/`, `/material/`,
@@ -582,8 +593,21 @@ avoided). **Effect: full `pytest tests/` runtime dropped from 410.85s to
 151.90s (63% reduction)**, same 142 passed / 3 pre-existing-unrelated
 failed. Do not reintroduce a per-call `PyPardisoSolver()` construction.
 
-**Known remaining performance issue (not yet fixed, documented for
-whoever picks this up next)**: with the plate now fully Dirichlet-BC
+**[SOLVED 2026-07-26 — 301s -> 204s, 32% faster]** See
+`dev_log/perf_assembly_batch_neohookean_20260726.md`. Two fixes, both
+verified to change results only at roundoff level (relative 3.6e-13):
+(a) the sequential fallback in `_assemble_multi_material_batch` now
+emits COO triplets instead of scattering into a `lil_matrix` (~1e6
+Python-level `__setitem__` calls per solve, and every other branch
+already emitted triplets); (b) `NeoHookean` gained
+`pk2_tangent_voigt_batch`, the composite method the batch dispatcher
+keys on — it already had `pk2_tensor_batch`/`tangent_voigt_batch` but
+not that name, so the rigid plate fell through to the per-element path.
+Both the sequential kernel and the batch branch use reference-config
+B-bar, so this is not a formulation change. Use `max_steps=` on
+`run_folding_from_result` to profile without distorting the angle ramp.
+
+**Original note (kept for context)**: with the plate now fully Dirichlet-BC
 driven (§4.10), `ex12`'s plate elements (pid=2, plain `Q4` + `NeoHookean`,
 480 elements) still get assembled through the slow sequential
 `_element_contributions()` Python loop on *every* Newton iteration, even

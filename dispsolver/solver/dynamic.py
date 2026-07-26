@@ -3090,37 +3090,47 @@ class DynamicSolver:
 
             else:
                 # ---- Sequential fallback for any remaining material types ----
-                K_seq = sps.lil_matrix((self.n_dofs, self.n_dofs), dtype=np.float64)
-                for e in elem_indices:
-                    coords  = self.elem_coords[e]
-                    nids    = self.conn[e]
-                    u_elem  = np.zeros(8, dtype=np.float64)
-                    for a in range(4):
-                        dof = int(nids[a]) * 2
-                        u_elem[2*a]   = u[dof]
-                        u_elem[2*a+1] = u[dof+1]
+                # The element loop stays per-element (these materials expose
+                # no batched kernel), but the *assembly* does not need to be:
+                # scattering into a lil_matrix cost 64 Python-level
+                # __setitem__/__getitem__ pairs per element -- ~1e6 calls per
+                # ex12 solve, several seconds of pure overhead -- while every
+                # branch above already emits COO triplets that the caller
+                # concatenates once. Emit triplets here too. Same arithmetic,
+                # same duplicate-summing (coo_matrix sums repeated indices).
+                n_e = len(elem_indices)
+                seq_rows = np.empty(n_e * 64, dtype=np.int64)
+                seq_cols = np.empty(n_e * 64, dtype=np.int64)
+                seq_vals = np.empty(n_e * 64, dtype=np.float64)
+                edofs = np.empty(8, dtype=np.int64)
 
-                    n_vars     = mat_adapter.n_internal_vars
+                for k, e in enumerate(elem_indices):
+                    coords = self.elem_coords[e]
+                    nids = self.conn[e]
+                    edofs[0::2] = np.asarray(nids, dtype=np.int64) * 2
+                    edofs[1::2] = edofs[0::2] + 1
+                    u_elem = u[edofs]
+
+                    n_vars = mat_adapter.n_internal_vars
                     state_elem = self.state[e, :, :n_vars] if self.state is not None else None
                     f_e, K_e, se_new = _element_contributions(
                         coords, u_elem, state_elem, mat_adapter, dt, self._elem_thickness[e])
 
-                    for a in range(4):
-                        dof_a = int(nids[a]) * 2
-                        for i in range(2):
-                            f_int[dof_a+i] += f_e[2*a+i]
-                            for b in range(4):
-                                dof_b = int(nids[b]) * 2
-                                for j in range(2):
-                                    K_seq[dof_a+i, dof_b+j] += K_e[2*a+i, 2*b+j]
+                    # The 8 DOFs of a Q4 are distinct, so a plain += cannot
+                    # drop a repeated index here.
+                    f_int[edofs] += f_e
+
+                    sl = slice(k * 64, (k + 1) * 64)
+                    seq_rows[sl] = np.repeat(edofs, 8)
+                    seq_cols[sl] = np.tile(edofs, 8)
+                    seq_vals[sl] = K_e.ravel()
 
                     if state_new is not None and se_new is not None:
                         state_new[e, :, :n_vars] = se_new
 
-                K_seq_coo = K_seq.tocoo()
-                all_K_rows.append(K_seq_coo.row)
-                all_K_cols.append(K_seq_coo.col)
-                all_K_vals.append(K_seq_coo.data)
+                all_K_rows.append(seq_rows)
+                all_K_cols.append(seq_cols)
+                all_K_vals.append(seq_vals)
 
         K_T = sps.coo_matrix(
             (np.concatenate(all_K_vals),
