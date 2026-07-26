@@ -233,9 +233,20 @@ def run_rigid_plate_display_fold():
     print("=" * 100)
 
     # ------------------------------------------------------------------
-    # 6. Export Final Shape PNG
+    # 6. Export before (flat, t=0) / after (final) Shape PNGs
     # ------------------------------------------------------------------
     artifact_dir = r"C:\Users\GOODMAN\.gemini\antigravity-cli\brain\17751c1b-5d61-4d49-980f-528b2d8cf463"
+    before_png_path = plot_and_save_deformed_shape_png(
+        mesh=mesh,
+        u=np.zeros_like(solver.u),
+        save_path="output/ex11_before_folding_shape.png",
+        title_prefix="EX11: 90° Display Folding Before (Flat)",
+        rbe2_elements=[rbe2_left, rbe2_right],
+        tie_constraints=[tie_left, tie_right],
+        artifact_dir=artifact_dir,
+    )
+    print(f"Before (flat) shape PNG exported successfully to {before_png_path}")
+
     png_path = plot_and_save_deformed_shape_png(
         mesh=mesh,
         u=solver.u,

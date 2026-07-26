@@ -22,7 +22,7 @@ from dispsolver.mesh import Mesh
 from dispsolver.material import J2Plasticity, LinearViscoelastic
 from dispsolver.solver import DynamicSolver
 from dispsolver.solver.dt_controller import AdaptiveDtController
-from dispsolver.export.plotter import generate_folding_gif
+from dispsolver.export.plotter import generate_folding_gif, plot_and_save_deformed_shape_png
 
 class SmoothAmplitude:
     def __init__(self, t0=0.0, t1=1.0):
@@ -195,6 +195,25 @@ def run_corotational_v4():
         fps=8
     )
     print(f"1x2 Subplot Animation complete! Saved to {gif_output_path}")
+
+    # ------------------------------------------------------------------
+    # Export before (flat, t=0) / after (final) Shape PNGs
+    # ------------------------------------------------------------------
+    before_png_path = plot_and_save_deformed_shape_png(
+        mesh=mesh,
+        u=history_u[0],
+        save_path="output/ex03_before_folding_shape.png",
+        title_prefix="EX03: 90 deg Display Folding Before (Flat)",
+    )
+    print(f"Before (flat) shape PNG exported successfully to {before_png_path}")
+
+    after_png_path = plot_and_save_deformed_shape_png(
+        mesh=mesh,
+        u=history_u[-1],
+        save_path="output/ex03_final_folding_shape.png",
+        title_prefix="EX03: 90 deg Display Folding Final State",
+    )
+    print(f"Final deformed shape PNG exported successfully to {after_png_path}")
 
 if __name__ == "__main__":
     run_corotational_v4()

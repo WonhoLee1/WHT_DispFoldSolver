@@ -225,6 +225,30 @@ python -u examples/ex11_rigid_plate_display_fold.py   # true plate+tie architect
   iterations (don't just trust the accept/reject decision) and check
   `solver._check_mesh_quality(solver.u)` for `n_inverted`/`n_warped`.
 
+### 3.1 TODO (not yet implemented, 2026-07-26): before/after PNG capture for every folding example
+
+Proposed by the user: every folding example script (`ex03_*`, `ex11_*`,
+`ex12_*`, and any future one) should save **two** PNG snapshots of the
+deformed shape — one at `t=0` (flat, before) and one at the final
+converged state (after) — not just the single final-state PNG some
+scripts currently save (e.g. `ex12_abaqus_inp_plate_fold.py` only writes
+`ex12_final_folding_shape.png`, no before-shot).
+
+Preferred approach when this gets implemented: add one shared helper
+(e.g. `plot_fold_before_after(u_initial, u_final, mesh, ...)`) rather
+than duplicating matplotlib code per script — check
+`dispsolver/postprocess/viewer.py` first for reusable plotting code
+before writing new (it currently has no functions defined, so a new
+helper likely belongs there or in a new `postprocess/` module, not
+copy-pasted into each example).
+
+Open question not yet decided: apply to all `examples/ex*.py` folding
+scripts at once, or just the primary reference ones (`ex03_corotational_v4.py`,
+`ex11_rigid_plate_display_fold.py`, `ex12_abaqus_inp_plate_fold.py`,
+`ex12_rigid_plate_display_fold_corotational.py`) first. Ask the user
+before doing a repo-wide sweep — scope was not settled when this was
+recorded.
+
 ---
 
 ## 4. Numerical obstacles solved this session (2026-07-25) — don't re-break these

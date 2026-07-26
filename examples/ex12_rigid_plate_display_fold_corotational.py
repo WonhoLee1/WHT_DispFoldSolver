@@ -318,8 +318,17 @@ def run_rigid_plate_display_fold_corotational():
     print("=" * 100)
 
     # ------------------------------------------------------------------
-    # 7. Export Final Shape PNG
+    # 7. Export before (flat, t=0) / after (final) Shape PNGs
     # ------------------------------------------------------------------
+    before_png_path = plot_and_save_deformed_shape_png(
+        mesh=mesh,
+        u=np.zeros_like(solver.u),
+        save_path="output/ex12_before_folding_shape.png",
+        title_prefix="EX12: 90 deg Display Folding Before (Flat, Co-rotational)",
+        tie_constraints=[tie_left, tie_right],
+    )
+    print(f"Before (flat) shape PNG exported successfully to {before_png_path}")
+
     png_path = plot_and_save_deformed_shape_png(
         mesh=mesh,
         u=solver.u,
