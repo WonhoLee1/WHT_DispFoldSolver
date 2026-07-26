@@ -146,7 +146,7 @@ class DriveConfig:
     theta_max_deg: float = 90.0
     t_total: float = 1.0
     dt_init: float = 0.005
-    dt_max: float = 0.01
+    dt_max: float = 0.1
     dt_min: float = 1e-5
 
 

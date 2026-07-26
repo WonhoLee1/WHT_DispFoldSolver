@@ -724,6 +724,44 @@ evidence is that stiffness changes there are counterproductive.
 
 ---
 
+## 4.13 TODO (not started) — skip element assembly for fully-prescribed elements
+
+Performance idea from §4.11's "Original note", not yet implemented.
+The rigid plate's elements (all DOFs Dirichlet-prescribed once
+`RigidBodyPart.get_slave_displacements()` drives them, see §4.10) still
+get assembled through `_assemble_multi_material_batch()` every Newton
+iteration even though their internal force/stiffness can never affect
+the free-DOF residual. Profiling showed this costing up to 58% of a
+warm Newton iteration on `ex12`.
+
+**Why this needs care, not a quick patch** (don't just add the skip
+without reading this):
+
+1. `_assemble_multi_material_batch()` is the **one shared assembly path
+   for every multi-material model** (ex11/ex12/ex13 and any future
+   display+plate model). A mistake here is a mistake everywhere — §4.8
+   was exactly this kind of bug (one early-return skipped tie/RBE2 for
+   this same function and silently froze the display for the whole
+   run, no error, no non-convergence, just wrong physics).
+2. The skip condition must be "every DOF of this element is currently
+   prescribed" **and nothing else provides an indirect path** from this
+   element into a free DOF (RBE2/tie coupling). Get this wrong and you
+   silently zero out force/stiffness that should have coupled the
+   plate to the display — the same failure signature as §4.8: clean
+   convergence, wrong displacement field.
+3. Verification can't stop at `pytest`/`verification.run_all` passing
+   — per §4.9, convergence success is not proof of physical
+   correctness. Must re-run `dispsolver/solver/diagnostics.py`'s
+   `sanity_report()`/`check_region_tracking()` after the change to
+   confirm the display is still actually tracking the plate's motion,
+   not just that Newton is happy.
+
+If picked up: implement the skip, then run the full ex12 solve with
+`sanity_report()` enabled every step (as `ex12_rigid_plate_display_fold_corotational.py`
+already does, §4.9) before trusting any speedup number.
+
+---
+
 ## 5. Where things live
 
 ```
