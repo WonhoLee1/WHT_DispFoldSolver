@@ -212,7 +212,23 @@ class AbaqusParser:
             target[mat_name] = mat
 
     def _parse_hyperelastic(self, block: AbaqusKeywordBlock):
-        model_type = block.params.get("neo hooke", block.params.get("type", "NEO HOOKE")).upper()
+        # Abaqus writes the model name as a bare flag (e.g.
+        # `*HYPERELASTIC, ARRUDA-BOYCE`), which the lexer stores as
+        # params["arruda-boyce"] = "yes" (bare keywords -> boolean flags,
+        # see abaqus_lexer._parse_keyword_params), NOT as params["type"].
+        # Check for each known bare-flag model name before falling back to
+        # an explicit `TYPE=...` param or the NEO HOOKE default -- checking
+        # only "type"/"neo hooke" here silently misreads e.g. ARRUDA-BOYCE
+        # as NEO HOOKE (its data row gets reinterpreted as C10/D1 instead
+        # of mu/lambda_m/D) with no error raised.
+        if "arruda-boyce" in block.params or "arruda boyce" in block.params:
+            model_type = "ARRUDA-BOYCE"
+        elif "yeoh" in block.params:
+            model_type = "YEOH"
+        elif "neo hooke" in block.params:
+            model_type = "NEO HOOKE"
+        else:
+            model_type = block.params.get("type", "NEO HOOKE").upper()
         rows = _parse_data_lines(block.data_lines, 2)
         if not rows:
             return

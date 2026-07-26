@@ -433,9 +433,17 @@ class ViscoelasticMaterial:
             arruda     -> bparams = [mu, lambda_m]
         kappa (bulk modulus) is taken from the ground-state E, nu.
         """
-        mu, lam = _extract_lam_mu(params)
-        kappa = lam + 2.0 * mu / 3.0
         name = type(self.base).__name__.lower()
+        # Arruda-Boyce/Yeoh are parameterized with their own bulk modulus
+        # 'K' directly (no Lame lambda/E-nu involved) -- use it straight
+        # when present instead of routing through _extract_lam_mu, which
+        # requires 'lambda' or 'E'/'nu' and would KeyError otherwise.
+        if "K" in params:
+            mu = float(params.get("mu", 0.0))
+            kappa = float(params["K"])
+        else:
+            mu, lam = _extract_lam_mu(params)
+            kappa = lam + 2.0 * mu / 3.0
         if "neohookean" in name:
             return "neohookean", np.array([mu], dtype=np.float64), kappa
         if "yeoh" in name:
