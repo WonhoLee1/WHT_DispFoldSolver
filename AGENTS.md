@@ -82,8 +82,14 @@ script + `examples/gen_ex12_inp.py` (graded mesh) as the starting point for
 further work. `ex12_rigid_plate_display_fold_corotational.py` also now
 reaches full 90°/side (see §1.2 2026-07-26 update — the dt-stall
 previously noted here does not reproduce), but with `kink_detected=True`
-(sharp crease, not a smooth U) — use the `.inp`-based script above as the
-primary reference until that's resolved.
+(sharp crease, not a smooth U). **This is expected, not a defect**: that
+script's display is a single homogeneous `J2Plasticity` layer with
+nothing modeling a minimum bend radius (unlike the 14-layer PET-PSA stack
+in the `.inp`-based script), so a crease at the hinge is the physically
+correct outcome for that simplified model — don't chase mesh/solver
+changes trying to smooth it out. The §1.0 "smooth U" criterion assumes
+the multi-layer bend-radius physics; it doesn't apply to this
+single-material script's diagnostic verdict the same way.
 
 ### 1.1 Hinge structure & location
 
@@ -134,13 +140,16 @@ primary reference until that's resolved.
   still blocks this script**. What full closure now reveals instead:
   `fold_success_verdict` reports `u_shape_ok=False, kink_detected=True`
   (`closure_both_ok=True`, `plate_gap_mm=6.00` — the plates themselves
-  close correctly) — i.e. the hinge-zone curvature has a sharp-crease
-  kink rather than the smooth rounded U required by §1.0's success
-  criterion. **This (not the dt-stall) is the next real issue to
-  investigate for this script** — likely a mesh-grading problem in the
-  free hinge span (`nx_disp=80` uniform, `_graded_display_x()`'s §4.12
-  fix was never ported to this script's manually-built mesh) rather than
-  a solver bug, per the precedent in §4.12.
+  close correctly) — i.e. the hinge-zone curvature has a sharp crease
+  rather than a smooth rounded U. **User confirmed this is expected,
+  correct physics for this script, not a defect to fix**: the display
+  here is a single homogeneous `J2Plasticity` layer with nothing modeling
+  a minimum bend radius (unlike the 14-layer PET-PSA stack in
+  `ex12_abaqus_inp_plate_fold.py`), so a crease is the physically right
+  outcome at full closure. Do not port the §4.12 graded-mesh fix here to
+  chase `kink_detected` — that would be solving a diagnostic flag, not an
+  actual problem. The §1.0 "smooth U" criterion assumes multi-layer
+  bend-radius physics that this single-material script doesn't have.
 
   <details><summary>Original 2026-07-25 note (kept for history, see
   correction above)</summary>
