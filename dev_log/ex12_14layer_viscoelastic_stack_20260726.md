@@ -104,3 +104,41 @@ Renamed the two alternating materials to their real display-stack names
 Layup is now literally `PET-PSA-PET-PSA-...` x7 pairs = 14 rows. Re-ran
 end to end: still full 90deg/side, 101 steps, zero cutbacks, 289.57s,
 `pytest` 6 passed. No solver/material code touched, naming only.
+
+## PSA material upgrade: linear-elastic -> Arruda-Boyce hyperelastic + faster relaxation (same session)
+
+User requested PSA be modeled as Arruda-Boyce hyperelastic targeting
+E=0.5MPa/nu=0.490 (near-incompressible), with viscoelastic relaxation
+tuned to ~20% stiffness drop within ~10s (vs. the earlier, arbitrary
+OCA-like Prony constants).
+
+Derived Arruda-Boyce params (`gen_ex12_inp.py`, `*HYPERELASTIC,
+ARRUDA-BOYCE` data row = `mu, lambda_m, D`):
+- `mu = E/(2(1+nu)) = 0.5/(2*1.49) = 0.16785 MPa`
+- `K = E/(3(1-2nu)) = 0.5/(3*0.02) = 8.3333 MPa` -> `D = 2/K = 0.24 MPa^-1`
+  (builder maps `K = 2/D` back, `model_builder.py` hyperelastic branch)
+- `lambda_m = 3.0` — **assumed** locking-stretch shape parameter, not
+  measured/given; flag if a real value becomes available.
+
+Prony (single term): `g1=0.20, tau1=3.33s` -> relaxed fraction at t=10s
+= `g1*(1-exp(-10/3.33)) ~= 19.3%`, i.e. ~20% stiffness drop by ~10s as
+requested. WLF shift params left unchanged (T_ref=25, C1=17, C2=51.6 --
+not requested to change).
+
+Composite `*MATERIAL` scoping in `model_builder.py` already supports
+hyperelastic-base + viscoelastic-wrap (the `has_hyper` branch builds
+`ArrudaBoyce`, then the shared `if has_visco:` wrap applies regardless of
+which branch built the base) and `ViscoelasticMaterial.simo_fs_args()`
+already has an `"arruda"` case (`viscoelastic.py:446-448`,
+`q4_visco_simo_fs_jax.py:89`) — no new solver code needed, `Q4_VISCO_SIMO`
+element assignment from the earlier fix carries over unchanged.
+
+**Result**: full 90deg/side closure, 101 steps, zero cutbacks, 287.55s,
+`pytest` 6 passed. **Caveat**: mesh-quality NOTICE appeared near the end
+(`min det(J)~0.31`, 42-44 elements "warped" — approaching but not
+reaching inversion, `n_inverted` still 0) in the last few steps. This is
+new relative to the PET/PSA-with-linear-elastic run (no such notice
+there) — the softer, more compliant Arruda-Boyce PSA at large rotation is
+closer to the locking/inversion boundary than the previous linear-elastic
+PSA was. Not a failure, but worth watching if lambda_m or the
+substrate/PSA stiffness ratio changes further.

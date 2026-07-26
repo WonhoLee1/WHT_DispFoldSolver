@@ -3835,11 +3835,10 @@ Display folding with rigid plate and tie constraints
 480.0, 1.0
 **
 *MATERIAL, NAME=PSA
-*ELASTIC
-50.0, 0.45
+*HYPERELASTIC, ARRUDA-BOYCE
+0.16785, 3.0, 0.24
 *VISCOELASTIC, TIME=PRONY
-0.6, 0.0, 0.1
-0.3, 0.0, 1.0
+0.20, 0.0, 3.33
 *TRS, DEFINITION=WLF
 25.0, 17.0, 51.6
 **
