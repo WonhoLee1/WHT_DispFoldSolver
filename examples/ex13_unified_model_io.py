@@ -47,6 +47,7 @@ def run_read():
         inp_path=inp_path,
         before_png_name="ex13_read_before_folding_shape.png",
         after_png_name="ex13_read_final_folding_shape.png",
+        result_name="ex13_read_result.pkl",
     )
 
 
@@ -64,6 +65,7 @@ def run_roundtrip():
             inp_path=tmp_path,
             before_png_name="ex13_roundtrip_before_folding_shape.png",
             after_png_name="ex13_roundtrip_final_folding_shape.png",
+            result_name="ex13_roundtrip_result.pkl",
         )
     finally:
         os.remove(tmp_path)
@@ -168,6 +170,9 @@ def run_build():
         mesh=mesh,
         materials=materials,
         material_params=material_params,
+        # Same pid -> *MATERIAL name map the .inp path produces, so
+        # postprocessing labels the layers PET/PSA identically in all modes.
+        material_names={1: "PET", 2: "PSA", 3: "STEEL"},
         solver_config={"density": 1e-9, "t_total": 1.0, "dt_init": 0.005, "dt_max": 0.01, "dt_min": 1e-5},
         rbe2_constraints=[rbe2_left, rbe2_right],
         penalty_constraints=[tie_left, tie_right],
@@ -178,6 +183,8 @@ def run_build():
         result,
         before_png_name="ex13_build_before_folding_shape.png",
         after_png_name="ex13_build_final_folding_shape.png",
+        case_name="build (pure Python objects)",
+        result_name="ex13_build_result.pkl",
     )
 
 
