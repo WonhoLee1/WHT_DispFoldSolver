@@ -91,7 +91,7 @@ def run_abaqus_inp_folding():
         rtol=1e-4,
         atol=1e-6,
         max_iter=25,
-        element_type={1: "Q4_COROTATIONAL", 2: "Q4"},
+        element_type={1: "Q4_COROTATIONAL", 2: "Q4_VISCO_SIMO"},
         rbe2_constraints=result.rbe2_constraints,
         penalty_constraints=result.penalty_constraints,
         ul_mode=True,

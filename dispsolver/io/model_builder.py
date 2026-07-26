@@ -476,14 +476,21 @@ class ModelBuilder:
 
                 # Wrap in ViscoelasticMaterial if viscoelastic data present
                 if has_visco:
+                    base_mat = mat
+                    base_mat_params = mat_params
                     gi_list = [p[0] for p in abq_mat.viscoelastic_prony]
                     tau_list = [p[2] for p in abq_mat.viscoelastic_prony]
                     wlf_params = abq_mat.trs
                     mat = ViscoelasticMaterial(
-                        mat, gi_list, tau_list, wlf_params=wlf_params,
+                        base_mat, gi_list, tau_list, wlf_params=wlf_params,
                     )
+                    # base_mat.pk2_tensor_batch/tangent_voigt_batch (called by
+                    # ViscoelasticMaterial._base_batch) needs the base's own
+                    # E/nu (or mu/lambda) params, not just the visco-specific
+                    # ones -- keep them merged in, don't replace wholesale.
                     mat_params = {
-                        "base": mat, "prony": abq_mat.viscoelastic_prony,
+                        **base_mat_params,
+                        "base": base_mat, "prony": abq_mat.viscoelastic_prony,
                         "wlf": wlf_params,
                     }
 
@@ -563,8 +570,8 @@ class ModelBuilder:
 
             elif mat_type == "VISCOELASTIC":
                 # Base material must be defined first in the .inp
-                base_mat_key = mat_name  # VISCO uses same name as base
                 base_mat = self._result.materials.get(pid)
+                base_mat_params = self._result.material_params.get(pid, {})
                 if base_mat is None:
                     # Fallback: use elastic base
                     warnings.warn("Viscoelastic material without preceding elastic — "
@@ -579,7 +586,10 @@ class ModelBuilder:
                     base_mat, gi_list, tau_list,
                     wlf_params=wlf_params,
                 )
-                mat_params = {"base": base_mat, "prony": prony,
+                # Keep base's own E/nu (etc.) params merged in -- the base
+                # material's pk2_tensor_batch/tangent_voigt_batch still
+                # needs them at runtime (see COMPOSITE branch above).
+                mat_params = {**base_mat_params, "base": base_mat, "prony": prony,
                               "wlf": wlf_params}
                 # VISCO replaces the pid entry
                 self._result.materials[pid] = mat
