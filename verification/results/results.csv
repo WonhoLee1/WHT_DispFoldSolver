@@ -1,0 +1,25 @@
+benchmark,category,backend,value,theory,error_pct,tolerance_pct,n_iter,passed,unit
+Patch Test (Element Level),element,numpy_q4_bbar,0.0010989010989010991,0.0010989010989010991,0.0,0.1,,True,N·mm
+Patch Test (Element Level),element,numpy_q4_eas,0.0010989010989010991,0.0010989010989010991,0.0,0.1,,True,N·mm
+Patch Test (Element Level),element,jax_q4_bbar,0.001098901098901099,0.0010989010989010991,1.9732479539236174e-14,0.1,,True,N·mm
+Patch Test (Element Level),element,jax_q4_eas,0.0010989010990203974,0.0010989010989010991,1.085613933818341e-08,0.1,,True,N·mm
+Patch Test (Element Level),element,jax_q4_up,0.0010989010989010985,0.0010989010989010991,5.919743861770853e-14,0.1,,True,N·mm
+Patch Test (Element Level),element,jax_q4_visco_fs,0.0010989010989010985,0.0010989010989010991,5.919743861770853e-14,0.1,,True,N·mm
+Patch Test (Element Level),element,jax_q4_simo_fs,0.0010989010989010985,0.0010989010989010991,5.919743861770853e-14,0.1,,True,N·mm
+Patch Test (Element Level),element,numpy_q4_bbar_strain,0.0,0.0010989010989010991,0.0,0.1,,True,N·mm
+"Patch Test (Solver Level, Irregular Mesh)",solver,jax,1.0482666646743531e-07,0.0,1.0482666646743531e-07,0.001,1,True,%
+"Patch Test (Solver Level, Irregular Mesh)",solver,numpy_sequential,9.5438532750119e-08,0.0,9.5438532750119e-08,0.001,1,True,%
+3-Point Bending,solver,jax,0.00023697937112172237,0.00023529999999999997,0.7137148838599202,5.0,2,True,mm
+3-Point Bending,solver,numpy_sequential,0.00024667333851226926,0.00023529999999999997,4.833548029013721,5.0,1,True,mm
+4-Point Bending,solver,jax,0.00032214273978323026,0.0003167125,1.7145644024881495,5.0,2,True,mm
+4-Point Bending,solver,numpy_sequential,0.0003285293359290452,0.0003167125,3.7310923721183156,5.0,2,True,mm
+Cantilever Bending,solver,jax,0.0037327329214211225,0.0036711999999999995,1.6760983172020862,5.0,2,True,mm
+Cantilever Bending,solver,numpy_sequential,0.00384198478419,0.0036711999999999995,4.652015259043378,5.0,2,True,mm
+Uniaxial Tension (Plane Strain),solver,jax,1.0989011095099066,1.098901098901099,9.654014925253307e-07,1.0,1,True,MPa
+Uniaxial Tension (Plane Strain),solver,numpy_sequential,1.098901107026342,1.098901098901099,7.393971059865834e-07,1.0,1,True,MPa
+Uniaxial Compression (Plane Strain),solver,jax,-1.0989011095099066,-1.098901098901099,9.654014925253307e-07,1.0,1,True,MPa
+Uniaxial Compression (Plane Strain),solver,numpy_sequential,-1.098901107026342,-1.098901098901099,7.393971059865834e-07,1.0,1,True,MPa
+Volumetric Compression (Plane Strain),solver,jax,-0.9615384615384616,-0.9615384615384616,0.0,1.0,1,True,MPa
+Volumetric Compression (Plane Strain),solver,numpy_sequential,-0.9615384615384613,-0.9615384615384616,2.3092638912203256e-14,1.0,1,True,MPa
+Volumetric Tension (Plane Strain),solver,jax,0.9615384615384616,0.9615384615384616,0.0,1.0,1,True,MPa
+Volumetric Tension (Plane Strain),solver,numpy_sequential,0.9615384615384613,0.9615384615384616,2.3092638912203256e-14,1.0,1,True,MPa
