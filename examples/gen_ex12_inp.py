@@ -1,46 +1,76 @@
 import numpy as np
 import os
+import sys
 from dispsolver.mesh.plate_builder import create_folding_plate_parts
+
+sys.path.insert(0, os.path.dirname(__file__))
+from fold_model_config import FoldModelConfig, DEFAULT_CONFIG
 
 OUTPUT = os.path.join(os.path.dirname(__file__), "ex12_rigid_plate_display_fold.inp")
 
 
-def _graded_display_x() -> np.ndarray:
+def _n_pts(length: float, dx: float) -> int:
+    """Point count for a `np.linspace` segment of the given length/dx.
+
+    +1 for the linspace endpoint; `max(2,...)` guards a zero-length or
+    dx-larger-than-length segment from collapsing to <2 points.
+    """
+    return max(2, round(length / dx) + 1)
+
+
+def _graded_display_x(config: FoldModelConfig = DEFAULT_CONFIG) -> np.ndarray:
     """Graded (clustered) x-coordinates for the display mesh.
 
     Uniform 1mm spacing lets shear/rotation gradient concentrate into a
     single element wherever the plate (exactly rigid, RBE2 condensation)
     meets a compliant region -- worst at the two free-edge tip elements
-    (x=+-40, no outboard neighbor to redistribute strain into) and at the
-    plate/hinge boundary (x=+-10). Clustering columns there spreads that
-    gradient across more, narrower elements, keeping det(F) > 0 to a much
-    larger fold angle -- see AGENTS.md section 4.10-era plan (fix for the
-    tip-element inversion observed at ~47.9 deg/side).
+    (x=+-half_length, no outboard neighbor to redistribute strain into)
+    and at the plate/hinge boundary (x=+-hinge_half_gap). Clustering
+    columns there spreads that gradient across more, narrower elements,
+    keeping det(F) > 0 to a much larger fold angle -- see AGENTS.md
+    section 4.10-era plan (fix for the tip-element inversion observed
+    at ~47.9 deg/side).
 
-    Segments (mirrored about x=0): fine near the tips (+-40) and the
-    hinge/plate boundary (+-10), moderately fine through the free hinge
-    span (+-8, where curvature must resolve smoothly per AGENTS.md 1.0),
-    coarser 1mm spacing under the rigid plate body in between.
+    Segments (mirrored about x=0): fine near the tips and the hinge/
+    plate boundary, moderately fine through the free hinge span (where
+    curvature must resolve smoothly per AGENTS.md 1.0), coarser spacing
+    under the rigid plate body in between. Segment point counts are
+    derived from `grading.*_dx` (length/dx), not hardcoded integers, so
+    geometry changes don't silently change element size in some zone.
     """
-    def seg(a, b, n):
-        return np.linspace(a, b, n)
+    g = config.grading
+    half_len = config.geometry.display_half_length
+    half_gap = config.geometry.hinge_half_gap
+    span = g.hinge_span_half_width
+    hinge_lo = half_gap - g.hinge_edge_cluster_width  # inner edge of hinge cluster
+    assert span <= hinge_lo, "hinge_span_half_width must be <= hinge_half_gap - hinge_edge_cluster_width"
+
+    tip_lo = half_len - g.tip_cluster_width
+
+    def seg(a, b, dx):
+        return np.linspace(a, b, _n_pts(b - a, dx))
 
     segments = [
-        seg(-40.0, -38.0, 9),   # tip cluster (0.25mm)
-        seg(-38.0, -10.0, 29),  # under-plate, coarse (1.0mm)
-        seg(-10.0, -8.0, 9),    # hinge-edge cluster (0.25mm)
-        seg(-8.0, 8.0, 33),     # free hinge span, moderate (0.5mm)
-        seg(8.0, 10.0, 9),      # hinge-edge cluster (0.25mm)
-        seg(10.0, 38.0, 29),    # under-plate, coarse (1.0mm)
-        seg(38.0, 40.0, 9),     # tip cluster (0.25mm)
+        seg(-half_len, -tip_lo, g.tip_dx),          # tip cluster
+        seg(-tip_lo, -half_gap, g.plate_body_dx),   # under-plate, coarse
+        seg(-half_gap, -hinge_lo, g.hinge_edge_dx), # hinge-edge cluster
+        seg(-hinge_lo, span, g.hinge_span_dx),      # free hinge span
+        seg(span, hinge_lo, g.hinge_edge_dx),       # hinge-edge cluster (dropped if span==hinge_lo)
+        seg(hinge_lo, half_gap, g.hinge_edge_dx),   # hinge-edge cluster
+        seg(half_gap, tip_lo, g.plate_body_dx),     # under-plate, coarse
+        seg(tip_lo, half_len, g.tip_dx),            # tip cluster
     ]
+    # Drop degenerate (zero-length) segments -- e.g. the middle hinge-edge
+    # cluster collapses to a point whenever span == hinge_lo (the default),
+    # since the free-hinge-span segment already reaches exactly that x.
+    segments = [s for s in segments if s[-1] > s[0]]
     parts = [segments[0]] + [s[1:] for s in segments[1:]]
     xs = np.concatenate(parts)
     assert np.all(np.diff(xs) > 0), "graded x-coordinates must be strictly increasing"
     return xs
 
 
-def generate():
+def generate(config: FoldModelConfig = DEFAULT_CONFIG):
     lines = []
     _w = lines.append
 
@@ -53,16 +83,43 @@ def generate():
     _w("**")
 
     # 1. Display Mesh (graded x -- see _graded_display_x() docstring)
-    # 14-layer multi-material stack: alternating stiff substrate rows
-    # (PET, elastic-plastic) and compliant adhesive rows (PSA,
-    # Prony+WLF viscoelastic pressure-sensitive-adhesive) -- see
-    # AGENTS.md 1.4, still a simplified alternating layup (PET-PSA-PET-...),
-    # not a validated real stackup.
-    xs_disp = _graded_display_x()
+    # 14 REAL PHYSICAL LAYERS (not just mesh rows): 7 repeats of
+    # [PET substrate, 0.05mm, 3 element rows] + [PSA adhesive, 0.03mm,
+    # 1 element row] -- see AGENTS.md 1.4, still a simplified alternating
+    # layup, not a validated real stackup. Total thickness
+    # 7*(0.05+0.03) = 0.56mm (was 0.5mm with the old uniform 14-row model).
+    #
+    # Each of the 14 physical layers gets its OWN *MATERIAL name (PET_1..
+    # PET_7, PSA_1..PSA_7), all with IDENTICAL properties to what used to
+    # be one shared "PET"/"PSA" block -- this is deliberate, not a material
+    # change. model_builder.py assigns one pid per unique *MATERIAL name
+    # (_build_sections), so distinct names are what make each physical
+    # layer independently selectable/inspectable (e.g. in the Qt viewer's
+    # Part/Layer list) instead of all 7 PET rows collapsing into one pid.
+    xs_disp = _graded_display_x(config)
     nx_disp = len(xs_disp) - 1
-    ny_disp = 14
-    ys_disp = np.linspace(0.0, 0.5, ny_disp + 1)
-    LAYER_MATERIAL = ["PET" if j % 2 == 0 else "PSA" for j in range(ny_disp)]
+
+    geo = config.geometry
+    n_pairs = geo.n_layer_pairs
+    # Per-family running counter -- e.g. layer_pattern=[PET,PSA] -> both
+    # get "_1".."_n_pairs"; a longer pattern (e.g. [PET,PSA,PET]) would
+    # give PET_1, PSA_1, PET_2, PSA_2, ... independently numbered per
+    # family, matching how model_builder.py keys pids off *MATERIAL name.
+    family_counters = {}
+    row_heights = []          # mm, one entry per mesh row
+    ROW_MATERIAL = []         # *MATERIAL name, one entry per mesh row
+    layer_names_in_order = []  # unique *MATERIAL names, in first-seen order
+    for _pair in range(n_pairs):
+        for layer in geo.layer_pattern:
+            family_counters[layer.material_family] = family_counters.get(layer.material_family, 0) + 1
+            name = f"{layer.material_family}_{family_counters[layer.material_family]}"
+            layer_names_in_order.append((name, layer.material_family))
+            row_heights += [layer.thickness_mm / layer.n_rows] * layer.n_rows
+            ROW_MATERIAL += [name] * layer.n_rows
+
+    ny_disp = len(row_heights)
+    ys_disp = np.concatenate([[0.0], np.cumsum(row_heights)])
+    LAYER_MATERIAL = ROW_MATERIAL  # kept name for the sections loop below
 
     _w("*NODE")
     grid_nids = np.zeros((ny_disp + 1, nx_disp + 1), dtype=int)
@@ -78,13 +135,13 @@ def generate():
 
     # 2. Plate Meshes
     plates = create_folding_plate_parts(
-        left_x_range=(-40.0, -10.0),
-        right_x_range=(10.0, 40.0),
-        y_range=(-0.5, 0.0),
-        left_pivot=(-3.0, 0.0),
-        right_pivot=(3.0, 0.0),
-        nx=30,
-        ny=2,
+        left_x_range=(-geo.display_half_length, -geo.hinge_half_gap),
+        right_x_range=(geo.hinge_half_gap, geo.display_half_length),
+        y_range=(-geo.plate_thickness, 0.0),
+        left_pivot=(-geo.hinge_pivot_x, 0.0),
+        right_pivot=(geo.hinge_pivot_x, 0.0),
+        nx=geo.plate_mesh_nx,
+        ny=geo.plate_mesh_ny,
         base_node_id=10000,
         base_elem_id=10000,
     )
@@ -120,33 +177,46 @@ def generate():
 
     _w("**")
 
-    # 4. Materials
-    # PET: stiff elastic-plastic substrate layer.
-    _w("*MATERIAL, NAME=PET")
-    _w("*ELASTIC")
-    _w("4000.0, 0.3")
-    _w("*PLASTIC")
-    _w("80.0, 0.0")
-    _w("480.0, 1.0")
-    _w("**")
-    # PSA: compliant pressure-sensitive-adhesive layer, Arruda-Boyce
-    # hyperelastic base (target E=0.5MPa, nu=0.490 -- mu=E/(2(1+nu))=0.16785MPa,
-    # K=E/(3(1-2nu))=8.3333MPa -> D=2/K=0.24; lambda_m=3.0 is an assumed
-    # locking-stretch shape param, not measured) + Prony-series viscoelastic
-    # (single term, g1=0.20/tau1=3.33s -> ~19-20% stiffness drop by t~10s)
-    # with WLF time-temperature shift
-    # (dispsolver.material.viscoelastic.ViscoelasticMaterial).
-    _w("*MATERIAL, NAME=PSA")
-    _w("*HYPERELASTIC, ARRUDA-BOYCE")
-    _w("0.16785, 3.0, 0.24")
-    _w("*VISCOELASTIC, TIME=PRONY")
-    _w("0.20, 0.0, 3.33")
-    _w("*TRS, DEFINITION=WLF")
-    _w("25.0, 17.0, 51.6")
-    _w("**")
+    # 4. Materials -- one *MATERIAL block per physical layer (14 total),
+    # all PET_n identical to each other and all PSA_n identical to each
+    # other; only the *name* differs, so model_builder.py's per-material-
+    # name pid assignment gives each of the 14 physical layers its own
+    # pid without any change to model_builder.py itself.
+    mats = config.materials
+    written_names = set()
+    for name, family in layer_names_in_order:
+        if name in written_names:
+            continue
+        written_names.add(name)
+        if family == "PET":
+            m = mats.pet
+            _w(f"*MATERIAL, NAME={name}")
+            _w("*ELASTIC")
+            _w(f"{m['E']}, {m['nu']}")
+            _w("*PLASTIC")
+            _w(f"{m['sigma_y0']}, 0.0")
+            _w(f"{m['sigma_y0'] + m['H']}, 1.0")
+            _w("**")
+        elif family == "PSA":
+            # Arruda-Boyce hyperelastic base + Prony-series viscoelastic
+            # + WLF time-temperature shift
+            # (dispsolver.material.viscoelastic.ViscoelasticMaterial).
+            m = mats.psa
+            d_param = 2.0 / m["K"]
+            _w(f"*MATERIAL, NAME={name}")
+            _w("*HYPERELASTIC, ARRUDA-BOYCE")
+            _w(f"{m['mu']}, {m['lambda_m']}, {d_param}")
+            _w("*VISCOELASTIC, TIME=PRONY")
+            for g_i, tau_i in zip(m["prony_g"], m["prony_tau"]):
+                _w(f"{g_i}, 0.0, {tau_i}")
+            _w("*TRS, DEFINITION=WLF")
+            _w(f"{m['wlf_T_ref']}, {m['wlf_C1']}, {m['wlf_C2']}")
+            _w("**")
+        else:
+            raise ValueError(f"Unknown material family {family!r} in layer_pattern")
     _w("*MATERIAL, NAME=STEEL")
     _w("*ELASTIC")
-    _w("20000.0, 0.3")
+    _w(f"{mats.steel['E']}, {mats.steel['nu']}")
     _w("**")
 
     # Sections -- one per display layer, alternating SUBSTRATE/ADHESIVE
@@ -161,8 +231,8 @@ def generate():
 
     # 5. Node sets and Surfaces
     # Display bottom left (x <= -10) and right (x >= 10)
-    left_disp_bot = [nid for nid in bottom_surface_nids if xs_disp[(nid - 1) % (nx_disp + 1)] <= -10.0]
-    right_disp_bot = [nid for nid in bottom_surface_nids if xs_disp[(nid - 1) % (nx_disp + 1)] >= 10.0]
+    left_disp_bot = [nid for nid in bottom_surface_nids if xs_disp[(nid - 1) % (nx_disp + 1)] <= -geo.hinge_half_gap]
+    right_disp_bot = [nid for nid in bottom_surface_nids if xs_disp[(nid - 1) % (nx_disp + 1)] >= geo.hinge_half_gap]
 
     _w("*NSET, NSET=DISP_BOT_L_NODES")
     _w(", ".join(str(nid) for nid in left_disp_bot))
@@ -203,9 +273,11 @@ def generate():
     _w("**")
 
     # 7. Step with boundary conditions
+    drv = config.drive
+    theta_rad = np.radians(drv.theta_max_deg)
     _w("*STEP")
     _w("*STATIC")
-    _w("0.005, 1.0, 1e-5, 0.01")
+    _w(f"{drv.dt_init}, {drv.t_total}, {drv.dt_min}, {drv.dt_max}")
     _w("**")
 
     # Fix hinge translations
@@ -214,10 +286,10 @@ def generate():
     _w(f"{right_plate['master_rp_id']}, 1, 2, 0.0")
     _w("**")
 
-    # Prescribe hinge rotations (90 degrees = 1.570796 radians)
+    # Prescribe hinge rotations
     _w("*BOUNDARY")
-    _w(f"{left_plate['master_rp_id']}, 6, 6, -1.570796")
-    _w(f"{right_plate['master_rp_id']}, 6, 6, 1.570796")
+    _w(f"{left_plate['master_rp_id']}, 6, 6, {-theta_rad:.6f}")
+    _w(f"{right_plate['master_rp_id']}, 6, 6, {theta_rad:.6f}")
     _w("**")
     _w("*END STEP")
 

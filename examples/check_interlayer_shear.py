@@ -59,15 +59,20 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 sys.path.insert(0, os.path.dirname(__file__))
-from ex12_abaqus_inp_plate_fold import run_abaqus_inp_folding
+from ex12_abaqus_inp_plate_fold import run_abaqus_inp_folding, _laminate_layer_materials
 from dispsolver.io import read_abaqus_input
 
 HERE = os.path.dirname(__file__)
 INP = os.path.join(HERE, "ex12_rigid_plate_display_fold.inp")
 U_CACHE = os.path.join(HERE, "ex12_final_u.npy")
 TOL = 1e-6
-N_LAYERS = 14
-LAYER_MATERIAL = ["PET" if j % 2 == 0 else "PSA" for j in range(N_LAYERS)]
+# Set by main() from the actual mesh via _laminate_layer_materials() --
+# NOT hard-coded, since gen_ex12_inp.py's layup is no longer a uniform
+# 14-row PET/PSA alternation (see AGENTS.md 1.4): it's now 14 physical
+# layers of uneven row counts (3 PET rows + 1 PSA row, repeated 7x = 28
+# mesh rows). Hard-coding this here once already went stale once.
+N_LAYERS = None
+LAYER_MATERIAL = None
 
 
 def _display_columns(mesh):
@@ -196,6 +201,8 @@ def plot(profile, save_path):
 
 
 def main():
+    global N_LAYERS, LAYER_MATERIAL
+
     ap = argparse.ArgumentParser()
     ap.add_argument("--cached", action="store_true",
                     help="reuse examples/ex12_final_u.npy instead of re-solving")
@@ -204,13 +211,20 @@ def main():
     if args.cached and os.path.exists(U_CACHE):
         print(f"Using cached displacement field: {U_CACHE}")
         u = np.load(U_CACHE)
-        mesh = read_abaqus_input(INP).mesh
+        result = read_abaqus_input(INP)
+        mesh = result.mesh
     else:
         info = run_abaqus_inp_folding()
         u = info["solver"].u
-        mesh = info["result"].mesh
+        result = info["result"]
+        mesh = result.mesh
         np.save(U_CACHE, u)
         print(f"Saved displacement field for fast re-analysis: {U_CACHE}")
+
+    LAYER_MATERIAL = _laminate_layer_materials(
+        mesh, getattr(result, "material_names", {}) or {}
+    ) or []
+    N_LAYERS = len(LAYER_MATERIAL)
 
     print("\n\n" + "#" * 80)
     print("# INTERLAYER SHEAR CHECK -- do the soft PSA layers actually slip?")
