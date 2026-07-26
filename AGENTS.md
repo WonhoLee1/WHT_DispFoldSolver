@@ -255,6 +255,39 @@ python -u examples/ex11_rigid_plate_display_fold.py   # true plate+tie architect
   iterations (don't just trust the accept/reject decision) and check
   `solver._check_mesh_quality(solver.u)` for `n_inverted`/`n_warped`.
 
+- **Mandatory**: `verification/RULES.md` requires running
+  `python -m verification.run_all` (9 benchmarks, ~75s) after **any**
+  change to `dispsolver/solver/`, `/element/`, `/material/`,
+  `/constraint/`, or `/mesh/`. This is easy to forget — it was missed
+  for most of the 2026-07-26 session and only caught late (result was
+  9/9 PASS, no harm done). Run it before committing solver-side changes,
+  not after.
+
+### 3.0.1 Verifying interlayer shear (the PSA layers' actual purpose)
+
+`examples/check_interlayer_shear.py` measures the book-page/staircase
+offset between the 14 PET-PSA layers at full fold — i.e. whether the
+soft PSA rows are actually shearing, which is the entire reason they are
+in the stack. Confirmed 2026-07-26: **81 µm staircase at the free tips,
+203 µm at the hinge edges, with 97-99.5% of the slip carried by the PSA
+rows** (equal-thickness PET rows carry ~0.5%), max PSA shear angle
+~53°. See `dev_log/interlayer_shear_verification_20260726.md`.
+
+Two things to know before interpreting it:
+1. **The staircase is invisible in the full-model PNG and that is
+   expected** — 81 µm across an 80 mm model is 0.1% of the width,
+   thinner than the plot line. Use this script's zoomed column view
+   (`examples/ex12_interlayer_slip_profile.png`), not the overview PNG.
+2. The metric conflates interlayer shear with bending-induced column
+   tilt where the column is no longer perpendicular to the surface (at
+   the hinge centre it reports a near-50/50 PSA/PET split with identical
+   per-row angles — that's tilt, not shear). **Read it as interlayer
+   shear only where the PSA/PET split is strongly asymmetric.**
+
+The script caches the converged displacement field to
+`examples/ex12_final_u.npy`; pass `--cached` to re-analyze in seconds
+instead of re-solving (~295 s).
+
 ### 3.1 TODO (not yet implemented, 2026-07-26): before/after PNG capture for every folding example
 
 Proposed by the user: every folding example script (`ex03_*`, `ex11_*`,
