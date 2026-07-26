@@ -212,6 +212,15 @@ python -u examples/ex03_corotational_v4.py     # simplified hinge-only, 90 deg, 
 python -u examples/ex11_rigid_plate_display_fold.py   # true plate+tie architecture, not yet re-validated with corotational element
 ```
 
+- `DynamicSolver.solve_step()` (`dispsolver/solver/dynamic.py`) is a thin
+  wrapper around `_solve_step_impl()` (the actual Newton-Raphson loop) that
+  always prints one Abaqus-`.sta`-style status row per attempt (STEP / INC
+  / ATT / SEVERE DISCON / EQUIL ITERS / TOTAL TIME / STEP TIME / INC OF
+  TIME), independent of `verbose`. Set `solver.sta_status = False` to
+  suppress it. If you add a new internal early-`return` path inside
+  `_solve_step_impl`, you don't need to touch the status line — it's
+  computed once from the wrapper's return value, not per-branch.
+
 - **Always run with `python -u`** (unbuffered) or add `flush=True` to any
   debug prints when redirecting to a file — block-buffered stdout makes a
   perfectly healthy long-running solve look hung for minutes (see §4.6).
