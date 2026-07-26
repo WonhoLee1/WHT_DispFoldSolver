@@ -79,8 +79,11 @@ reaches **full 90°/side (180° combined), t=1.0, 101 steps, zero cutbacks,
 satisfied (see §4.12 for the fix that got it there). This is the current
 reference result for "does the U-shape fold work end to end." Use this
 script + `examples/gen_ex12_inp.py` (graded mesh) as the starting point for
-further work, not the earlier `ex12_rigid_plate_display_fold_corotational.py`
-(still stalls around 7.9°/side per §1.2, unfixed).
+further work. `ex12_rigid_plate_display_fold_corotational.py` also now
+reaches full 90°/side (see §1.2 2026-07-26 update — the dt-stall
+previously noted here does not reproduce), but with `kink_detected=True`
+(sharp crease, not a smooth U) — use the `.inp`-based script above as the
+primary reference until that's resolved.
 
 ### 1.1 Hinge structure & location
 
@@ -118,31 +121,40 @@ further work, not the earlier `ex12_rigid_plate_display_fold_corotational.py`
   shown not to work). `ex12` (correct, see §4.10) enforces it via
   `RigidBodyPart.get_slave_displacements()` applied as an exact Dirichlet
   BC on every plate node every step — no penalty, no gap, by construction.
-- **Status as of 2026-07-25 (end of session), after the §4.8/§4.10/§4.11
-  fixes**: `examples/ex12_rigid_plate_display_fold_corotational.py`
-  (display: `Q4_COROTATIONAL` + `J2Plasticity`; plate: exact
-  `RigidBodyPart` Dirichlet BC, **not** `RBE2HingeElement` — see §4.10)
-  reaches **~7.9°/side with zero cutbacks and a genuinely tight tie**
-  (`max_gap ≈ 1e-5 mm` at `max|u| ≈ 5 mm`, i.e. ratio ~1e-5 — the tie is
-  doing its job). Progress then stalls in wall-clock terms: Newton
-  iteration count plateaus around 9-10 (vs. `target_iters=8`), so
-  `AdaptiveDtController` keeps shrinking `dt` every step
-  (`5/(iters+1) < 1` whenever `iters ≥ 5`) with no step small enough to
-  bring iters back down to reset the trend — `dt` decays toward
-  `dt_min=1e-5` and simulated-time progress crawls to a near-halt well
-  before `t=1.0` (90°/side). **This is a different, milder problem than
-  the RBE2 approach's hard divergence at ~3.7°/side (§4.10)** — no
-  physical/tie failure, just a dt-controller/iteration-budget mismatch —
-  but full 180°-combined closure (the true U-shape target, §1.0) was
-  **not** achieved in this session. Earlier same-session claims of "55
-  steps to 101° combined, zero cutbacks" for `ex12` were made *before*
-  the §4.8 tie-assembly-skip bug and §4.10 RBE2-regression were found and
-  fixed — those numbers are invalid (measured on a model where the tie
-  had no effect at all) and should not be cited. `ex12` (this corrected
-  version) is still the right reference starting point; getting past the
-  ~8° dt-decay stall (try: higher `target_iters`/`max_iter`, or address
-  the §4.11 plate-assembly-waste performance issue first so more Newton
-  iterations per step is cheaper) is the next concrete task.
+- **Status update (2026-07-26): the dt-decay stall described below no
+  longer reproduces.** Re-ran `examples/ex12_rigid_plate_display_fold_corotational.py`
+  unmodified (no solver/controller code touched this session) and it now
+  reaches **full 90°/side (180° combined), 101 steps, zero cutbacks,
+  ~313s wall time**, `dt` staying pinned at `dt_max=0.01` for effectively
+  the whole run (Newton iterations ranged 4-7, never sustained ≥9, so the
+  `target_iters=8` growth/shrink formula never entered sustained decay).
+  Root cause of the discrepancy with the note below is unconfirmed — no
+  code in this file's solve loop or `dt_controller.py` changed between
+  sessions — but the stall is not present now, so **do not assume it
+  still blocks this script**. What full closure now reveals instead:
+  `fold_success_verdict` reports `u_shape_ok=False, kink_detected=True`
+  (`closure_both_ok=True`, `plate_gap_mm=6.00` — the plates themselves
+  close correctly) — i.e. the hinge-zone curvature has a sharp-crease
+  kink rather than the smooth rounded U required by §1.0's success
+  criterion. **This (not the dt-stall) is the next real issue to
+  investigate for this script** — likely a mesh-grading problem in the
+  free hinge span (`nx_disp=80` uniform, `_graded_display_x()`'s §4.12
+  fix was never ported to this script's manually-built mesh) rather than
+  a solver bug, per the precedent in §4.12.
+
+  <details><summary>Original 2026-07-25 note (kept for history, see
+  correction above)</summary>
+
+  Status as of 2026-07-25 (end of session), after the §4.8/§4.10/§4.11
+  fixes: reached ~7.9°/side with zero cutbacks and a genuinely tight tie
+  (`max_gap ≈ 1e-5 mm` at `max|u| ≈ 5 mm`), then appeared to stall as
+  Newton iteration count plateaued around 9-10 (vs. `target_iters=8`),
+  with `AdaptiveDtController` decaying `dt` toward `dt_min` with no
+  recovery. Earlier same-session claims of "55 steps to 101° combined,
+  zero cutbacks" predated the §4.8 tie-assembly-skip bug fix and were
+  invalid (tie had no effect at all in that measurement).
+
+  </details>
 
 ### 1.3 Rotation condition
 
