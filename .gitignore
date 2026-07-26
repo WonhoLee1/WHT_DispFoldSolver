@@ -38,3 +38,6 @@ _old_*.py
 .DS_Store
 Thumbs.db
 
+
+# Solver output caches (derived; go stale when the model changes)
+examples/*_u.npy
