@@ -63,18 +63,42 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, List
 
+from dispsolver.material.type_tags import J2_PLASTIC, ARRUDA_BOYCE_VISCO, NEOHOOKEAN
+
+
+@dataclass
+class MaterialDef:
+    """One entry in the materials registry (`MaterialsConfig.definitions`).
+
+    `id` is a small stable display-order integer used only by the
+    startup review print (`dispsolver/postprocess/model_review.py`) --
+    it is NOT the solver pid. `name` is the literal *MATERIAL name
+    written to .inp text and the exact string `LayerSpec.material_name`
+    must reference. `type` is one of the canonical tags in
+    `dispsolver/material/type_tags.py`, used by `material_factory.py` to
+    build either a live object or .inp text, and later to pick which
+    properties to show in the review print.
+    """
+    id: int
+    name: str
+    type: str
+    params: Dict
+
 
 @dataclass
 class LayerSpec:
     """One physical layer within a repeating unit of the display stack.
 
-    `material_family` selects which `MaterialsConfig` entry (by matching
-    prefix, e.g. "PET" -> materials.pet) this layer uses -- it is not a
-    literal *MATERIAL name; those are generated per physical layer
-    (PET_1, PET_2, ... ) so each layer gets its own pid, see
-    `gen_ex12_inp.py`/`ex13_unified_model_io.py::run_build()`.
+    `material_name` must be an exact key into
+    `MaterialsConfig.definitions` -- it is the literal *MATERIAL name
+    that multiple physical layers share (e.g. every PET layer uses
+    material_name="PET"), not a per-layer-unique generated name. Each
+    physical layer still gets its own pid, but that now comes purely
+    from *SOLID SECTION/ELSET structure (one section per physical
+    layer) -- see `dispsolver/io/model_builder.py::_build_sections` --
+    independent of whether its material name repeats across layers.
     """
-    material_family: str
+    material_name: str
     thickness_mm: float
     n_rows: int
 
@@ -92,9 +116,10 @@ class GeometryConfig:
     # One repeating unit of the layer stack + how many times to repeat
     # it. Total physical layers = n_layer_pairs * len(layer_pattern);
     # total thickness = n_layer_pairs * sum(l.thickness_mm for l in layer_pattern).
+    # PSA first, then PET -- layer 1 = PSA, layer 2 = PET, layer 3 = PSA, ...
     layer_pattern: List[LayerSpec] = field(default_factory=lambda: [
-        LayerSpec("PET", 0.05, 3),
         LayerSpec("PSA", 0.03, 1),
+        LayerSpec("PET", 0.05, 3),
     ])
     n_layer_pairs: int = 7
 
@@ -127,18 +152,41 @@ class MeshGradingConfig:
 
 @dataclass
 class MaterialsConfig:
-    pet: Dict = field(default_factory=lambda: {
-        "E": 4000.0, "nu": 0.3, "sigma_y0": 80.0, "H": 400.0,
+    """Registry of distinct materials, keyed by name -- the same string
+    used as `*MATERIAL, NAME=...` in .inp text and as
+    `LayerSpec.material_name`. A name appears here exactly once no
+    matter how many physical layers/sections reference it: dedup is
+    structural now, not a naming convention. `gen_ex12_inp.py` emits
+    exactly one `*MATERIAL` block per entry; `dispsolver/io/
+    model_builder.py`'s `_build_sections`/`_build_materials` assign one
+    pid per `*SOLID SECTION` but share the built material object/params
+    across every pid whose section names the same material.
+    """
+    definitions: Dict[str, MaterialDef] = field(default_factory=lambda: {
+        "PET": MaterialDef(
+            id=1, name="PET", type=J2_PLASTIC,
+            params={"E": 4000.0, "nu": 0.3, "sigma_y0": 80.0, "H": 400.0},
+        ),
+        # Arruda-Boyce base (mu/lambda_m/K) + Prony (single term) + WLF.
+        # lambda_m is an assumed locking-stretch shape parameter, not
+        # measured -- see AGENTS.md 1.4. mu/K derived from a target small-
+        # strain modulus E=0.05 MPa (nu=0.49, near-incompressible) via the
+        # standard isotropic relations mu=E/(2*(1+nu)), K=E/(3*(1-2*nu)) --
+        # same derivation/nu as the previous E=0.5 MPa values, just 10x
+        # softer (both mu and K are linear in E for fixed nu).
+        "PSA": MaterialDef(
+            id=2, name="PSA", type=ARRUDA_BOYCE_VISCO,
+            params={
+                "mu": 0.016779, "lambda_m": 3.0, "K": 0.83333,
+                "prony_g": [0.20], "prony_tau": [3.33],
+                "wlf_T_ref": 25.0, "wlf_C1": 17.0, "wlf_C2": 51.6,
+            },
+        ),
+        "STEEL": MaterialDef(
+            id=3, name="STEEL", type=NEOHOOKEAN,
+            params={"E": 20000.0, "nu": 0.3},
+        ),
     })
-    # Arruda-Boyce base (mu/lambda_m/K) + Prony (single term) + WLF.
-    # lambda_m is an assumed locking-stretch shape parameter, not
-    # measured -- see AGENTS.md 1.4.
-    psa: Dict = field(default_factory=lambda: {
-        "mu": 0.16785, "lambda_m": 3.0, "K": 8.3333,
-        "prony_g": [0.20], "prony_tau": [3.33],
-        "wlf_T_ref": 25.0, "wlf_C1": 17.0, "wlf_C2": 51.6,
-    })
-    steel: Dict = field(default_factory=lambda: {"E": 20000.0, "nu": 0.3})
 
 
 @dataclass
@@ -160,8 +208,8 @@ class SolverTuningConfig:
     alpha: float = -0.15
     theta_penalty_k: float = 1e8
     target_iters: int = 5
-    # Element formulation per material family -- keyed the same way as
-    # LayerSpec.material_family. Anything not PET/PSA (i.e. the rigid
+    # Element formulation per material name -- keyed the same way as
+    # LayerSpec.material_name. Anything not PET/PSA (i.e. the rigid
     # plate's STEEL) is left to DynamicSolver's "Q4" default.
     pet_element_type: str = "Q4_COROTATIONAL"
     psa_element_type: str = "Q4_VISCO_SIMO"
