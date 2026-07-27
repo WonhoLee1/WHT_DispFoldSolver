@@ -28,12 +28,10 @@ import numpy as np
 
 from gen_ex12_inp import generate as generate_inp_text, _graded_display_x
 from fold_model_config import FoldModelConfig, DEFAULT_CONFIG
+from material_factory import build_material_instance
+from dispsolver.material.type_tags import J2_PLASTIC
 from dispsolver.mesh import Mesh
 from dispsolver.mesh.plate_builder import create_folding_plate_parts
-from dispsolver.material.plastic import J2Plasticity
-from dispsolver.material.arruda_boyce import ArrudaBoyce
-from dispsolver.material.neohookean import NeoHookean
-from dispsolver.material.viscoelastic import ViscoelasticMaterial
 from dispsolver.constraint.rbe2_condensed import KinematicRBE2Constraint
 from dispsolver.constraint.surface_tie import SurfaceTieConstraint
 from ex12_abaqus_inp_plate_fold import run_abaqus_inp_folding, run_folding_from_result
@@ -94,9 +92,12 @@ def run_build(config: FoldModelConfig = DEFAULT_CONFIG):
     there is no second copy of these numbers to drift out of sync.
     Each physical layer gets its own pid so it shows up as its own
     selectable Part/Layer in the Qt viewer, matching the .inp path
-    (there, distinct pids come from distinct *MATERIAL names; here, from
-    distinct dict keys directly -- no name-string trick needed since we
-    never serialize to .inp text).
+    (there, distinct pids come from distinct *SOLID SECTION statements,
+    see dispsolver/io/model_builder.py::_build_sections; here, from a
+    fresh pid per layer-loop iteration -- same pid granularity, no
+    *MATERIAL-name trick needed either way since materials are now
+    defined once in `config.materials.definitions` and referenced by
+    name).
     """
     xs_disp = _graded_display_x(config)
     nx_disp = len(xs_disp) - 1
@@ -104,22 +105,18 @@ def run_build(config: FoldModelConfig = DEFAULT_CONFIG):
     mats = config.materials
     st = config.solver
 
-    family_counters = {}
-    row_heights, ROW_PID, PID_FAMILY, PID_NAME = [], [], {}, {}
+    row_heights, ROW_PID, PID_NAME = [], [], {}
     next_pid = 1
     for _pair in range(geo.n_layer_pairs):
         for layer in geo.layer_pattern:
-            family_counters[layer.material_family] = family_counters.get(layer.material_family, 0) + 1
             pid = next_pid
             next_pid += 1
-            PID_FAMILY[pid] = layer.material_family
-            PID_NAME[pid] = f"{layer.material_family}_{family_counters[layer.material_family]}"
+            PID_NAME[pid] = layer.material_name
             row_heights += [layer.thickness_mm / layer.n_rows] * layer.n_rows
             ROW_PID += [pid] * layer.n_rows
 
     ny_disp = len(row_heights)
     ys_disp = np.concatenate([[0.0], np.cumsum(row_heights)])
-    STEEL_PID = next_pid  # one past the last physical layer pid
 
     mesh = Mesh()
     grid_nids = np.zeros((ny_disp + 1, nx_disp + 1), dtype=int)
@@ -136,8 +133,8 @@ def run_build(config: FoldModelConfig = DEFAULT_CONFIG):
     eid = 1
     for j in range(ny_disp):
         pid = ROW_PID[j]
-        family = PID_FAMILY[pid]
-        etype = st.pet_element_type if family == "PET" else st.psa_element_type
+        mdef = mats.definitions[PID_NAME[pid]]
+        etype = st.pet_element_type if mdef.type == J2_PLASTIC else st.psa_element_type
         for i in range(nx_disp):
             n1, n2 = grid_nids[j, i], grid_nids[j, i + 1]
             n3, n4 = grid_nids[j + 1, i + 1], grid_nids[j + 1, i]
@@ -152,43 +149,48 @@ def run_build(config: FoldModelConfig = DEFAULT_CONFIG):
         nx=geo.plate_mesh_nx, ny=geo.plate_mesh_ny, base_node_id=10000, base_elem_id=10000,
     )
     left_plate, right_plate = plates["left"], plates["right"]
-    for p_data in plates.values():
+    # Each side gets its OWN pid (previously both shared one STEEL_PID) --
+    # matches the .inp path, which now has separate PLATE_LEFT/PLATE_RIGHT
+    # *SOLID SECTION pids (model_builder.py::_build_sections). This is also
+    # what lets part_names label them "Plate Left"/"Plate Right" distinctly
+    # instead of one shared "Layer N (STEEL)" entry.
+    plate_pids = {}
+    for side_name in plates:            # "left", "right" -- insertion order
+        plate_pids[side_name] = next_pid
+        next_pid += 1
+    for side_name, p_data in plates.items():
+        pid = plate_pids[side_name]
         for nid_p, coord in p_data["nodes_dict"].items():
             mesh.add_node(nid_p, coord[0], coord[1])
         for eid_p, conn in p_data["elements_dict"].items():
-            mesh.add_element(eid_p, conn, "Q4", pid=STEEL_PID)
+            mesh.add_element(eid_p, conn, "Q4", pid=pid)
 
-    # Materials -- same params as gen_ex12_inp.py's PET_n/PSA_n/STEEL
-    # blocks (both read from `config.materials`), one *object* per
-    # physical layer even though the numeric params are identical
-    # across all PET layers (and across all PSA layers) -- mirrors the
-    # .inp path's separate *MATERIAL blocks with distinct names but
-    # identical properties. Material objects are stateless (per-element
-    # internal variables live in solver.state, not on the object), so
-    # nothing would break if these were shared instances instead --
-    # kept separate only to mirror the .inp path's structure.
-    materials, material_params, material_names = {}, {}, {}
-    for pid, family in PID_FAMILY.items():
-        name = PID_NAME[pid]
+    # Materials -- built ONCE per distinct name via material_factory
+    # (the same dispatch gen_ex12_inp.py's *MATERIAL-block emission
+    # uses), then reused across every pid that references it. Materials
+    # are stateless (per-element internal variables live in
+    # solver.state, not on the object), so sharing one instance across
+    # multiple pids is safe.
+    materials, material_params, material_names, material_types = {}, {}, {}, {}
+    material_cache = {}  # material name -> (obj, params), built lazily
+    for pid, name in PID_NAME.items():
         material_names[pid] = name
-        if family == "PET":
-            m = mats.pet
-            materials[pid] = J2Plasticity(E=m["E"], nu=m["nu"], sigma_y0=m["sigma_y0"], H=m["H"])
-            material_params[pid] = dict(m)
-        elif family == "PSA":
-            m = mats.psa
-            base_psa = ArrudaBoyce()
-            wlf = {"T_ref": m["wlf_T_ref"], "C1": m["wlf_C1"], "C2": m["wlf_C2"], "definition": "WLF"}
-            prony = list(zip(m["prony_g"], [0.0] * len(m["prony_g"]), m["prony_tau"]))
-            materials[pid] = ViscoelasticMaterial(base_psa, m["prony_g"], m["prony_tau"], wlf_params=wlf)
-            material_params[pid] = {"mu": m["mu"], "lambda_m": m["lambda_m"], "K": m["K"],
-                                     "base": base_psa, "prony": prony, "wlf": wlf}
-        else:
-            raise ValueError(f"Unknown material family {family!r} in layer_pattern")
+        material_types[pid] = mats.definitions[name].type
+        if name not in material_cache:
+            material_cache[name] = build_material_instance(mats.definitions[name])
+        obj, params = material_cache[name]
+        materials[pid] = obj
+        material_params[pid] = params
 
-    materials[STEEL_PID] = NeoHookean()
-    material_params[STEEL_PID] = {"E": mats.steel["E"], "nu": mats.steel["nu"]}
-    material_names[STEEL_PID] = "STEEL"
+    steel_mdef = mats.definitions["STEEL"]
+    steel_obj, steel_params = build_material_instance(steel_mdef)  # built once, shared
+    part_names = {}
+    for side_name, pid in plate_pids.items():
+        materials[pid] = steel_obj
+        material_params[pid] = steel_params
+        material_names[pid] = "STEEL"
+        material_types[pid] = steel_mdef.type
+        part_names[pid] = f"Plate {side_name.capitalize()}"
 
     # RBE2 exact kinematic condensation for both hinge pivots (same
     # mechanism as the .inp `*RIGID BODY` path, see AGENTS.md 4.10).
@@ -227,6 +229,11 @@ def run_build(config: FoldModelConfig = DEFAULT_CONFIG):
         # Same pid -> *MATERIAL name map the .inp path produces, so
         # postprocessing labels the layers PET/PSA identically in all modes.
         material_names=material_names,
+        material_types=material_types,
+        # pid -> human display-name override for the two plate parts,
+        # mirroring model_builder.py's part_names so the Qt viewer/
+        # model_review show "Plate Left"/"Plate Right" in build-mode too.
+        part_names=part_names,
         solver_config={"density": 1e-9},
         rbe2_constraints=[rbe2_left, rbe2_right],
         penalty_constraints=[tie_left, tie_right],
@@ -251,7 +258,24 @@ def main():
              "(generate() in-memory -> temp .inp -> read+solve), or "
              "'build' (pure Python objects, no .inp at all).",
     )
+    parser.add_argument(
+        "--viewer", action="store_true",
+        help="Open the Qt postprocess viewer automatically once the "
+             "solve finishes (loads the just-saved .pkl -- same as "
+             "running with --open <result_path> afterward).",
+    )
+    parser.add_argument(
+        "--open", metavar="PKL_PATH", default=None,
+        help="Skip solving entirely and just open an existing saved "
+             ".pkl result in the Qt viewer (e.g. --open "
+             "examples/ex13_build_result.pkl). Ignores --mode/--viewer.",
+    )
     args = parser.parse_args()
+
+    if args.open:
+        from dispsolver.postprocess.viewer import launch_from_result
+        launch_from_result(args.open)
+        return
 
     config = DEFAULT_CONFIG
     if args.mode == "read":
@@ -266,6 +290,10 @@ def main():
           f"rbe2_constraints={info['n_rbe2_constraints']}  penalty_constraints={info['n_penalty_constraints']}  "
           f"reached_target={info['reached_target']}")
     print("=" * 100)
+
+    if args.viewer:
+        from dispsolver.postprocess.viewer import launch_from_result
+        launch_from_result(info["result_path"])
 
 
 if __name__ == "__main__":

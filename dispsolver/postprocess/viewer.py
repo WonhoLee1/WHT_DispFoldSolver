@@ -22,7 +22,7 @@ matplotlib + PySide6로 각 프레임의 해석 결과를 2D 컨투어 플롯으
 
 데이터 흐름:
     DynamicSolver → _ResultCache.compute_field() → FieldData
-    FieldData.values → PatchCollection (element-wise fill)
+    FieldData.values → PolyCollection (element-wise fill, vectorized)
     사용자 조작 (field combo, scale slider, PID 체크박스) → _update_plot() 재호출
 
 필드 종류:
@@ -64,8 +64,14 @@ try:
     import matplotlib.pyplot as plt
     from matplotlib.figure import Figure
     import matplotlib.tri as mtri
-    from matplotlib.collections import PatchCollection
-    from matplotlib.patches import Polygon as MplPolygon
+    from matplotlib.collections import PolyCollection
+    import matplotlib as _mpl
+    # 전체 UI 폰트 통일(Cascadia Code, 9pt) -- Qt 쪽은 PostprocessViewer.__init__
+    # 에서 self.setFont()로 적용, matplotlib 쪽(축 라벨/제목/컬러바/틱)은
+    # Figure 생성 전에 rcParams를 바꿔야 이후 만들어지는 Text 아티스트들이
+    # 기본값으로 이 폰트를 집어간다.
+    _mpl.rcParams['font.family'] = 'Cascadia Code'
+    _mpl.rcParams['font.size'] = 9
 except ImportError:
     MplCanvas = None
     MplToolbar = None
@@ -509,7 +515,18 @@ class _MplCanvas(MplCanvas):
         self.axes = self.fig.add_subplot(111)  # 단일 축
         super().__init__(self.fig)
         self.setParent(parent)
-        self.fig.tight_layout()
+        # 메인 axes와 컬러바 axes 위치를 고정 rect로 직접 지정 -- 둘 다
+        # add_subplot(111)/tight_layout()의 자동 배치에 맡기지 않는다.
+        # fig.colorbar(sm, ax=self.axes)처럼 컬러바를 메인 axes 기준으로
+        # 매번 새로 만들면 make_axes_gridspec()이 self.axes의 SubplotSpec
+        # 자체를 새 gridspec으로 바꿔치기한다 (ax.set_position()으로는
+        # 되돌릴 수 없는 상태) -- 그래서 재호출마다 self.axes가 그
+        # 바꿔치기된(이미 줄어든) SubplotSpec을 기준으로 또 줄어들어 계속
+        # 누적된다. 여기서는 두 axes의 rect를 __init__에서 한 번만 정해두고,
+        # 매 redraw마다 cax=self.cax로 그 axes에만 그려서 self.axes의
+        # SubplotSpec/position은 아예 건드리지 않는다.
+        self.axes.set_position([0.09, 0.10, 0.72, 0.85])
+        self.cax = self.fig.add_axes([0.86, 0.15, 0.03, 0.7])
 
 
 # ===================================================================
@@ -576,14 +593,37 @@ class PostprocessViewer(QtWidgets.QMainWindow):
                 "PySide6 is required. Install with: pip install pyside6"
             )
 
+        # 전체 UI 폰트 통일(Cascadia Code, 9pt) -- matplotlib 쪽은 모듈
+        # 로드 시 rcParams로 이미 적용됨(위 import 블록 참고). QApplication
+        # 레벨에 걸어두면 이 창의 모든 자식 위젯(라벨/체크박스/버튼/콤보/
+        # 스핀박스)이 상속받는다.
+        _font = QtGui.QFont("Cascadia Code", 9)
+        app = QtWidgets.QApplication.instance()
+        if app is not None:
+            app.setFont(_font)
+        self.setFont(_font)
+
         # --- 데이터 ---
         self._solver = solver
         self._cache = _ResultCache(solver)
         self._result = result   # None for a live-solver session
-        self._cbar = None       # 현재 컬러바 (매 _update_plot마다 제거 후 재생성)
+        self._cbar = None       # 현재 컬러바 (지속 아티스트, __init__ 이후 첫 _update_plot에서 1회 생성)
         self._current_field = 'disp'         # 초기 표시 필드: 변위
         self._deformed_scale: float = 1.0    # 변형 확대 배율
         self._show_mesh: bool = True         # 요소 경계선 표시 여부
+
+        # 성능 캐시 -- overlay_n<=1(기본, 가장 흔한 조작)일 때 매 재조작마다
+        # ax.clear()+PatchCollection 통째로 재생성하는 대신, PolyCollection/
+        # 컬러바/힌지 마커를 한 번만 만들고 이후엔 배열/속성만 갱신한다.
+        # (원인: 요소별 Polygon 객체 3480개를 Python for문으로 새로 만드는
+        # 비용 + ax.clear() 후 컬러바/축 재구성 비용이 실제 병목이었음 --
+        # matplotlib 자체 렌더링 비용이 아니었음.)
+        self._pc = None                 # 지속 PolyCollection (overlay<=1 전용)
+        self._hinge_line = None         # 지속 힌지 마커 Line2D
+        self._fast_artists_valid = False  # overlay(N>1) 경로가 ax.clear()한 뒤엔 무효화
+        self._pids_key = None           # 마지막으로 pid 배열을 계산한 solver의 id()
+        self._pids_val = None           # 그 solver의 요소별 pid 배열 (캐시)
+        self._panning = False           # 중간 마우스 버튼 드래그 팬 진행 중 여부
 
         # PID (Part ID) 기반 요소 가시성.
         # mesh.elements의 모든 고유 pid를 수집하여 각각 체크박스 생성.
@@ -628,6 +668,16 @@ class PostprocessViewer(QtWidgets.QMainWindow):
         canvas_container = QtWidgets.QVBoxLayout()
         self.canvas = _MplCanvas(self)
         canvas_container.addWidget(self.canvas)
+
+        # 항상 켜진 pyvista 스타일 줌/팬 -- 기존 NavigationToolbar2QT(홈/
+        # 뒤로/앞으로/팬 버튼/줌 사각형/저장)는 그대로 두고 추가로 붙인다.
+        # 버튼 충돌 없음: 툴바의 자체 pan/zoom 모드는 왼쪽 버튼 드래그만
+        # 반응하고(toolbar.mode로 게이팅됨), 우리 핸들러는 스크롤/중간
+        # 버튼만 본다.
+        self.canvas.mpl_connect('scroll_event', self._on_scroll)
+        self.canvas.mpl_connect('button_press_event', self._on_pan_press)
+        self.canvas.mpl_connect('motion_notify_event', self._on_pan_motion)
+        self.canvas.mpl_connect('button_release_event', self._on_pan_release)
 
         # matplotlib 기본 툴바 (줌, 팬, 홈, 저장 등)
         self.toolbar = MplToolbar(self.canvas, self)
@@ -710,24 +760,52 @@ class PostprocessViewer(QtWidgets.QMainWindow):
         panel_layout.addWidget(self.mesh_check)
         panel_layout.addSpacing(12)
 
+        # 3b. 뷰 리셋 버튼 -- 스크롤/팬으로 어디에 있든 현재 표시 요소
+        # 전체가 보이도록 되돌린다.
+        self.fit_view_btn = QtWidgets.QPushButton("Fit View")
+        self.fit_view_btn.clicked.connect(self._on_fit_view_clicked)
+        panel_layout.addWidget(self.fit_view_btn)
+        panel_layout.addSpacing(12)
+
         # 4. PID별 요소 가시성 (Layer별 Show/Hide)
         # 각 pid에 대해 QCheckBox 생성. 체크 해제 시 해당 레이어의 요소가
-        # 플롯에서 제외됨 (hide).
+        # 플롯에서 제외됨 (hide). 레이어가 많으면(예: 14 레이어 + 플레이트
+        # 2개) 패널 세로 공간을 넘치므로, 스크롤 영역 안에 넣어 나머지
+        # 패널(Step Info 등)이 밀려나지 않게 한다.
         panel_layout.addWidget(QtWidgets.QLabel("<b>Part / Layer</b>"))
         self.pid_checkboxes: Dict[int, QtWidgets.QCheckBox] = {}
-        # pid -> *MATERIAL 이름 (예: "PET_3") -- Result로 열었고 이 메타가
+        # pid -> *MATERIAL 이름 (예: "PET") -- Result로 열었고 이 메타가
         # 있을 때만; 없으면 그냥 "Layer {pid}"로 표시 (기존 동작 유지).
         pid_names = (self._result.meta.get("pid_names", {}) if self._result is not None else {})
+        # pid -> 사람이 읽을 이름 오버라이드(예: "Plate Left") -- 힌지 강체
+        # 플레이트처럼 "Layer N" 표기가 안 맞는 파트용. 먼저 확인하고, 없으면
+        # 기존 pid_names/"Layer N" 로직으로 폴백 (일반 표시 레이어는 여기
+        # 항목이 없어서 자연히 폴백됨).
+        pid_part_names = (self._result.meta.get("pid_part_names", {}) if self._result is not None else {})
+
+        layer_scroll = QtWidgets.QScrollArea()
+        layer_scroll.setWidgetResizable(True)
+        layer_scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        layer_container = QtWidgets.QWidget()
+        layer_layout = QtWidgets.QVBoxLayout(layer_container)
+        layer_layout.setContentsMargins(0, 0, 0, 0)
+        layer_layout.setSpacing(2)
         for pid in self._pid_set:
-            label = f"Layer {pid} ({pid_names[str(pid)]})" if str(pid) in pid_names else f"Layer {pid}"
+            if str(pid) in pid_part_names:
+                label = pid_part_names[str(pid)]
+            elif str(pid) in pid_names:
+                label = f"Layer {pid} ({pid_names[str(pid)]})"
+            else:
+                label = f"Layer {pid}"
             cb = QtWidgets.QCheckBox(label)
             cb.setChecked(True)
             # lambda에서 pid를 기본값으로 캡처 (루프 변수 참조 방지)
             cb.stateChanged.connect(lambda state, p=pid: self._on_pid_toggle(p))
-            panel_layout.addWidget(cb)
+            layer_layout.addWidget(cb)
             self.pid_checkboxes[pid] = cb
-
-        panel_layout.addStretch()
+        layer_layout.addStretch()
+        layer_scroll.setWidget(layer_container)
+        panel_layout.addWidget(layer_scroll, stretch=1)
 
         # 5. 스텝 정보 표시
         info_group = QtWidgets.QGroupBox("Step Info")
@@ -777,20 +855,96 @@ class PostprocessViewer(QtWidgets.QMainWindow):
         self._pid_visible[pid] = cb.isChecked() if cb else True
         self._update_plot()
 
+    def _on_fit_view_clicked(self):
+        """'Fit View' 버튼 -- 현재 표시 중인 요소 전체가 보이도록 뷰 리셋."""
+        self._fit_view()
+        self.canvas.draw_idle()
+
+    def _on_scroll(self, event):
+        """마우스 휠 = 커서 위치 고정 줌 (pyvista 스타일).
+
+        event.step > 0(휠 위) = 확대, < 0(휠 아래) = 축소. x/y 범위를
+        동일 배율로 스케일 -- _fit_view()가 세워둔 "x span == y span"
+        불변식을 계속 유지해야 정사각 렌더링이 깨지지 않는다
+        (adjustable='box'로는 더 이상 이걸 대신 맞춰주지 않으므로,
+        _configure_static_axes 참고).
+        """
+        ax = self.canvas.axes
+        if event.inaxes is not ax or event.xdata is None or event.ydata is None:
+            return  # 커서가 메인 axes 밖(컬러바 axes 포함)이면 무시
+
+        factor = 0.9 ** event.step
+        x0, x1 = ax.get_xlim()
+        y0, y1 = ax.get_ylim()
+        xdata, ydata = event.xdata, event.ydata
+
+        new_x0 = xdata - (xdata - x0) * factor
+        new_x1 = xdata + (x1 - xdata) * factor
+        new_y0 = ydata - (ydata - y0) * factor
+        new_y1 = ydata + (y1 - ydata) * factor
+        ax.set_xlim(new_x0, new_x1)
+        ax.set_ylim(new_y0, new_y1)
+        self._view_ready = True
+        self.canvas.draw_idle()
+
+    def _on_pan_press(self, event):
+        """중간 마우스 버튼 누름 -- 팬 시작점(픽셀, xlim/ylim) 기록."""
+        ax = self.canvas.axes
+        if event.button != 2 or event.inaxes is not ax or event.x is None:
+            return
+        self._panning = True
+        self._pan_start_px = (event.x, event.y)
+        self._pan_start_xlim = ax.get_xlim()
+        self._pan_start_ylim = ax.get_ylim()
+
+    def _on_pan_motion(self, event):
+        """드래그 중 -- 시작점 대비 누적 픽셀 델타를 데이터 델타로 환산해
+        xlim/ylim을 이동 (시작 시점 값 기준, 프레임마다 재적산 없음)."""
+        if not self._panning:
+            return
+        from matplotlib.backend_bases import MouseButton
+        if event.buttons is not None and MouseButton.MIDDLE not in event.buttons:
+            self._panning = False
+            return
+        if event.x is None or event.y is None:
+            return
+
+        ax = self.canvas.axes
+        bbox = ax.get_window_extent()  # 픽셀 단위 axes 사각형 (event.x/y와 동일 좌표계)
+        x0, x1 = self._pan_start_xlim
+        y0, y1 = self._pan_start_ylim
+        dpx = event.x - self._pan_start_px[0]
+        dpy = event.y - self._pan_start_px[1]
+        dx = dpx * (x1 - x0) / bbox.width
+        dy = dpy * (y1 - y0) / bbox.height
+        ax.set_xlim(x0 - dx, x1 - dx)
+        ax.set_ylim(y0 - dy, y1 - dy)
+        self.canvas.draw_idle()
+
+    def _on_pan_release(self, event):
+        """중간 마우스 버튼 뗌 -- 팬 종료."""
+        if event.button == 2:
+            self._panning = False
+
     # ------------------------------------------------------------------
     # 플로팅
     # ------------------------------------------------------------------
-    def _frame_patches(self, solver, cache):
-        """한 스텝(solver/cache 쌍)에서 (patches, face_colors) 구성.
+    def _compute_frame_arrays(self, solver, cache):
+        """한 스텝(solver/cache 쌍)에서 (field, verts, face_colors) 구성.
 
-        오버레이(N>1)에서 여러 스텝을 같은 방식으로 그리기 위해
-        _update_plot에서 반복 호출할 수 있도록 분리.
+        전체 요소(pid 필터링 전) 기준으로 완전히 벡터화되어 있다 -- 이전
+        구현은 `for e in range(solver.n_elem):` Python 루프에서 요소마다
+        `MplPolygon(xy, closed=True)` 객체를 새로 만들었는데(3480개 요소면
+        매 재조작마다 3480번), 이게 실측상 진짜 병목이었다(matplotlib
+        렌더링 자체가 아니라). `coords_deformed[conn]` 팬시 인덱싱 한 번으로
+        (n_elem,4,2) 정점 배열을, `vals[conn].mean(axis=1)` 한 번으로
+        요소별 색상을 얻는다 -- Python 객체 생성이 전혀 없다.
         """
         field = cache.compute_field(self._current_field)
         vals = field.values
         per_node = field.per_node
 
-        conn = solver.conn
+        conn = solver.conn                 # (n_elem, 4) node-index array
         coords = solver.coords
         u_all = solver.u
         if self._deformed_scale > 1e-6:
@@ -800,76 +954,247 @@ class PostprocessViewer(QtWidgets.QMainWindow):
         else:
             coords_deformed = coords
 
-        patches, face_colors = [], []
-        for e in range(solver.n_elem):
-            eid = solver.elem_ids[e]
-            elem_obj = solver.mesh.elements[eid]
-            pid = elem_obj.pid if elem_obj.pid is not None else 0
-            if not self._pid_visible.get(pid, True):
-                continue
-            nidx = conn[e]
-            xy = coords_deformed[nidx]
-            fc = float(np.mean(vals[nidx])) if per_node else float(vals[e])
-            patches.append(MplPolygon(xy, closed=True))
-            face_colors.append(fc)
+        verts = coords_deformed[conn]      # (n_elem, 4, 2), vectorized
+        if per_node:
+            face_colors = vals[conn].mean(axis=1)   # (n_elem,), vectorized
+        else:
+            face_colors = np.asarray(vals, dtype=float)
 
-        return field, patches, face_colors
+        return field, verts, face_colors
+
+    def _get_elem_pids(self, solver):
+        """요소별 pid 배열, solver 정체성(id()) 기준으로 캐싱.
+
+        pid는 메시 토폴로지에 속한 값이라 필드/스케일이 바뀌어도 절대
+        바뀌지 않는다 -- 같은 solver(같은 스텝)에 머무는 한(필드 콤보박스,
+        Deformation Scale, Layer 체크박스, Show Element Lines 조작) 이
+        dict-lookup 루프를 다시 돌 필요가 없다. 스텝이 바뀌면(`_on_step_changed`
+        가 매번 새 `ResultSolverAdapter`를 만듦) id()가 달라지므로 자연히
+        재계산된다.
+        """
+        key = id(solver)
+        if self._pids_key != key:
+            self._pids_key = key
+            self._pids_val = np.array([
+                (solver.mesh.elements[eid].pid if solver.mesh.elements[eid].pid is not None else 0)
+                for eid in solver.elem_ids
+            ], dtype=np.int64)
+        return self._pids_val
+
+    def _visible_mask(self, pids: np.ndarray) -> np.ndarray:
+        """pid 배열 -> 가시성 boolean 배열, 벡터화(룩업 테이블 인덱싱).
+
+        `self._pid_visible.get(pid, True)`를 요소마다 Python으로 부르는
+        대신, pid가 조밀한 작은 정수(1..pid 개수)라는 점을 이용해 룩업
+        배열 하나를 만들고 `lut[pids]`로 한 번에 인덱싱한다.
+        """
+        if pids.size == 0:
+            return np.zeros(0, dtype=bool)
+        max_pid = int(pids.max())
+        lut = np.ones(max_pid + 1, dtype=bool)
+        for pid, visible in self._pid_visible.items():
+            if 0 <= pid <= max_pid:
+                lut[pid] = visible
+        return lut[pids]
+
+    def _configure_static_axes(self, ax):
+        """축 종횡비/라벨 등, 매번 안 바뀌는 설정 -- fast 경로는 지속 아티스트
+        생성 시 1회, overlay 경로는 매 ax.clear() 직후(그래서 두 경로 모두
+        이 수정이 자동 적용됨).
+
+        adjustable='box'(기본값)를 쓴다 -- 이전엔 'datalim'이었는데,
+        matplotlib은 매 draw마다 Axes.apply_aspect()를 부르고 'datalim'
+        분기는 self.dataLim(PolyCollection.set_verts()가 매 프레임 갱신하는
+        값) 기준으로 xlim/ylim(viewLim)을 직접 덮어쓴다 -- autoscale을
+        꺼도 이 분기는 경고 로그만 남기고 그대로 강행된다(matplotlib
+        3.10 axes/_base.py 확인). 그래서 스텝/레이어/필드를 바꿔서
+        dataLim이 바뀔 때마다 뷰가 조용히 재조정됐다. 'box' 분기는
+        반대로 우리가 관리하는 xlim/ylim 비율에 맞춰 배정된 고정 rect
+        안에서 렌더링 박스의 위치/크기만 letterbox 조정 -- viewLim은
+        아예 읽지도 쓰지도 않는다.
+
+        set_box_aspect()는 여기서 호출하지 않는다: 호출하는 순간
+        matplotlib이 adjustable을 강제로 'datalim'으로 되돌리고(공식
+        동작), 그 뒤에 다시 adjustable='box'로 덮어써서 이겨도 'box'
+        분기는 self._box_aspect를 아예 참조하지 않으므로 effect가 없다.
+        정사각형 렌더링은 _fit_view()/_on_scroll()/_on_pan_motion()이
+        항상 x/y span을 동일하게 유지하는 것으로 우리가 직접 보장한다.
+
+        set_autoscale_on(False)는 'box' 분기 자체를 막진 못하지만(그건
+        adjustable 전환으로 이미 막힘), 매 draw마다 도는 별도의
+        autoscale_view() 경로를 추가로 차단하는 두 번째 안전장치다.
+        """
+        ax.set_aspect('equal', adjustable='box')
+        ax.set_autoscale_on(False)
+        ax.set_xlabel('X [mm]')
+        ax.set_ylabel('Y [mm]')
+
+    def _fit_view(self, verts_vis: Optional[np.ndarray] = None):
+        """뷰를 현재 표시 중인 요소 전체에 맞춰 리셋 -- 5% 마진, x/y span 동일화.
+
+        matplotlib의 aspect 기계(adjustable='box')는 렌더링 박스 모양만
+        맞출 뿐 xlim/ylim 자체를 정사각으로 맞춰주지 않으므로, 정사각 뷰를
+        만드는 책임은 전부 여기 있다: 더 큰 쪽 span으로 두 축을 통일하고,
+        각 축을 그 데이터의 중점에 맞춰 중앙정렬한다. 최초 렌더링과
+        "Fit View" 버튼 양쪽에서 호출.
+
+        Args:
+            verts_vis: 이미 계산된 (n_visible_elem, 4, 2) 정점 배열이 있으면
+                전달(최초 draw 시 재계산 방지). None이면(예: Fit View 버튼)
+                현재 solver/cache/가시성 상태로부터 새로 계산한다.
+        """
+        if verts_vis is None:
+            solver, cache = self._solver, self._cache
+            _field, verts, _face_colors = self._compute_frame_arrays(solver, cache)
+            pids = self._get_elem_pids(solver)
+            mask = self._visible_mask(pids)
+            verts_vis = verts[mask]
+
+        if verts_vis.size == 0:
+            return  # 표시할 요소가 없으면 현재 뷰를 그대로 둔다
+
+        ax = self.canvas.axes
+        v = verts_vis.reshape(-1, 2)
+        x_min, y_min = v.min(axis=0)
+        x_max, y_max = v.max(axis=0)
+        x_mid = 0.5 * (x_min + x_max)
+        y_mid = 0.5 * (y_min + y_max)
+        span = max(x_max - x_min, y_max - y_min, 1.0)
+        half = span * 0.5 * 1.05
+        ax.set_xlim(x_mid - half, x_mid + half)
+        ax.set_ylim(y_mid - half, y_mid + half)
+        self._view_ready = True
 
     def _update_plot(self):
-        """matplotlib Figure를 현재 설정으로 다시 그림.
-
-        플로팅 파이프라인:
-          1. (오버레이 스텝 목록 결정 -> 스텝별 FieldData/패치 계산)
-          2. 컬러 스케일(vmin/vmax)을 전체 프레임 공통으로 결정
-          3. PatchCollection 생성 (프레임마다, 오래된 것일수록 투명하게) — 요소별 면색/경계선
-          4. 컬러바(ScalarMappable, 프레임 수와 무관하게 1개만) + 힌지 마커 + 축 설정
-          5. Step Info 업데이트
-
-        컬러바는 이전 호출에서 생성된 것을 반드시 제거하고 다시 만든다 --
-        `ax.clear()`는 이 axes만 지우지, `fig.colorbar()`가 Figure에 별도로
-        만드는 colorbar axes는 지우지 않아서, 그 참조를 안 챙기면 필드/스텝/
-        스케일을 바꿀 때마다 colorbar가 계속 쌓인다.
-        """
-        ax = self.canvas.axes
-        ax.clear()
-        if self._cbar is not None:
-            try:
-                self._cbar.remove()
-            except (KeyError, ValueError):
-                pass  # 이미 제거됐거나 axes가 재구성된 경우
-            self._cbar = None
-
-        # 1. 오버레이할 스텝 목록 결정. 라이브 solver 세션이거나 스핀박스가
-        # 1이면 현재 스텝 하나만 -- 기존 단일-스텝 동작 그대로.
+        """현재 설정으로 다시 그림 -- overlay_n<=1(기본/가장 흔한 조작)이면
+        지속 아티스트 갱신(빠른 경로), N>1(겹쳐 보기, 드물게 사용)이면
+        기존처럼 전체 재구성(느린 경로)."""
         overlay_n = self.overlay_spin.value() if self.overlay_spin is not None else 1
         if self._result is not None and overlay_n > 1:
-            current_step = self.step_slider.value() if self.step_slider is not None else self._result.n_steps - 1
-            step_indices = sorted(set(
-                int(round(x)) for x in np.linspace(0, current_step, overlay_n)
-            ))
+            self._update_plot_overlay(overlay_n)
         else:
-            step_indices = [None]  # None = 현재 self._solver/self._cache 그대로 사용
+            self._update_plot_fast()
 
-        frames = []  # list of (field, patches, face_colors, time)
-        for step in step_indices:
-            if step is None:
-                solver, cache = self._solver, self._cache
-            else:
-                from .live_view import ResultSolverAdapter
-                solver = ResultSolverAdapter(self._result, step=step)
-                cache = _ResultCache(solver)
-            field, patches, face_colors = self._frame_patches(solver, cache)
-            frames.append((field, patches, face_colors, solver.time))
+    def _update_plot_fast(self):
+        """단일 프레임(overlay<=1) 전용 빠른 경로.
 
-        if not any(patches for _, patches, _, _ in frames):
+        `ax.clear()`도, 요소별 `Polygon`/`PatchCollection`/컬러바 재생성도
+        하지 않는다 -- PolyCollection/컬러바/힌지 마커를 한 번만 만들어
+        두고(`_fast_artists_valid`), 이후 재조작마다 배열/속성만 갱신한다
+        (`set_verts`/`set_array`/`set_clim`/`set_edgecolor`). 뷰(줌/팬)도
+        건드리지 않으므로 확대한 채로 Layer 체크박스/필드를 바꿔도 그대로
+        유지된다. overlay(N>1) 경로가 직전에 ax.clear()를 했다면(모드
+        전환) `_fast_artists_valid`가 꺼져 있어 여기서 다시 만든다.
+        """
+        ax = self.canvas.axes
+        solver, cache = self._solver, self._cache
+        field, verts, face_colors = self._compute_frame_arrays(solver, cache)
+        pids = self._get_elem_pids(solver)
+        mask = self._visible_mask(pids)
+
+        verts_vis = verts[mask]
+        colors_vis = face_colors[mask]
+
+        if not self._fast_artists_valid or self._pc is None:
+            ax.clear()
+            self.canvas.cax.clear()
+            import matplotlib as mpl
+            self._pc = PolyCollection([], cmap=mpl.cm.get_cmap('viridis'))
+            ax.add_collection(self._pc)
+            self._configure_static_axes(ax)
+            self._hinge_line = ax.plot([], [], marker='^', color='red', markersize=9,
+                                        markeredgecolor='k', linestyle='none', zorder=5)[0]
+            self._cbar = self.canvas.fig.colorbar(self._pc, cax=self.canvas.cax)
+            self._view_ready = False
+            self._fast_artists_valid = True
+
+        if verts_vis.size == 0:
+            self._pc.set_verts([])
             ax.set_title("No visible elements")
-            self.canvas.draw()
+            self.canvas.draw_idle()
             return
 
-        # 2. 프레임 전체를 아우르는 공통 색상 스케일. 프레임마다 따로
-        # min/max를 잡으면 오버레이한 프레임들끼리 색이 비교가 안 돼서
-        # "겹쳐 보기"의 의미가 없어진다.
-        all_vals = np.concatenate([np.asarray(fc) for _, _, fc, _ in frames if fc])
+        vmin, vmax = float(colors_vis.min()), float(colors_vis.max())
+        if vmin == vmax:
+            vmin, vmax = vmin - 0.5, vmax + 0.5
+
+        self._pc.set_verts(verts_vis)
+        self._pc.set_array(colors_vis)
+        self._pc.set_clim(vmin, vmax)
+        self._pc.set_edgecolor('k' if self._show_mesh else 'none')
+        self._pc.set_linewidth(0.3 if self._show_mesh else 0.0)
+
+        cb_label = field.name + (f" [{field.unit}]" if field.unit else "")
+        self._cbar.set_label(cb_label)
+        self._cbar.update_normal(self._pc)
+
+        # 힌지 피벗 마커 -- Result로 열었을 때만(라이브 solver 세션은 RBE2
+        # master id 정보가 없음). 매번 새 아티스트를 만들지 않고 좌표만 갱신.
+        if self._result is not None:
+            master_ids = [int(nid) for nid in
+                          (self._result.meta.get("theta_targets_rad") or {}).keys()]
+            if master_ids:
+                step = self.step_slider.value() if self.step_slider is not None else -1
+                hinge_xy = self._result.deformed_points(step)[:, :2]
+                idxs = [self._result.node_index(nid) for nid in master_ids]
+                self._hinge_line.set_data(hinge_xy[idxs, 0], hinge_xy[idxs, 1])
+            else:
+                self._hinge_line.set_data([], [])
+        else:
+            self._hinge_line.set_data([], [])
+
+        # 뷰(줌/팬) -- 이 캔버스의 첫 렌더링일 때만 _fit_view(), 이후로는
+        # 절대 xlim/ylim을 건드리지 않아 확대 상태가 유지된다.
+        if not self._view_ready:
+            self._fit_view(verts_vis)
+
+        ax.set_title(f"{field.name}  (t = {solver.time:.4f} s)")
+
+        self.info_label.setText(
+            f"Time: {solver.time:.4f} s\n"
+            f"DOFs: {solver.n_dofs}\n"
+            f"Elements: {solver.n_elem}\n"
+            f"Field: {field.name}"
+        )
+
+        self.canvas.draw_idle()
+
+    def _update_plot_overlay(self, overlay_n: int):
+        """겹쳐 보기(Overlay Steps N>1) 전용 -- 드물게 쓰이는 모드라 기존처럼
+        매번 전체(ax.clear() + 프레임별 PatchCollection) 재구성한다. 빠른
+        경로의 지속 아티스트는 다음 단일-프레임 호출 때 다시 만들도록
+        무효화해둔다."""
+        self._fast_artists_valid = False
+
+        ax = self.canvas.axes
+        had_view = getattr(self, "_view_ready", False)
+        prev_xlim = ax.get_xlim() if had_view else None
+        prev_ylim = ax.get_ylim() if had_view else None
+        ax.clear()
+        self.canvas.cax.clear()
+        self._cbar = None
+
+        current_step = self.step_slider.value() if self.step_slider is not None else self._result.n_steps - 1
+        step_indices = sorted(set(
+            int(round(x)) for x in np.linspace(0, current_step, overlay_n)
+        ))
+
+        frames = []  # list of (field, verts, face_colors, pids, time)
+        for step in step_indices:
+            from .live_view import ResultSolverAdapter
+            solver = ResultSolverAdapter(self._result, step=step)
+            cache = _ResultCache(solver)
+            field, verts, face_colors = self._compute_frame_arrays(solver, cache)
+            pids = self._get_elem_pids(solver)
+            mask = self._visible_mask(pids)
+            frames.append((field, verts[mask], face_colors[mask], solver.time))
+
+        if not any(v.size for _, v, _, _ in frames):
+            ax.set_title("No visible elements")
+            self.canvas.draw_idle()
+            return
+
+        all_vals = np.concatenate([fc for _, _, fc, _ in frames if fc.size])
         vmin, vmax = float(all_vals.min()), float(all_vals.max())
         if vmin == vmax:
             vmin, vmax = vmin - 0.5, vmax + 0.5
@@ -877,50 +1202,44 @@ class PostprocessViewer(QtWidgets.QMainWindow):
         norm = mpl.colors.Normalize(vmin=vmin, vmax=vmax)
         cmap = mpl.cm.get_cmap('viridis')
 
-        # 3. 프레임마다 PatchCollection 추가 -- 오래된 스텝일수록 투명하게,
-        # 마지막(현재 선택) 스텝이 맨 위에 완전 불투명으로 그려지도록 순서대로.
         n_frames = len(frames)
         all_xy = []
-        for i, (field, patches, face_colors, _t) in enumerate(frames):
-            if not patches:
+        for i, (field, verts, face_colors, _t) in enumerate(frames):
+            if not verts.size:
                 continue
             alpha = 1.0 if n_frames == 1 else 0.25 + 0.75 * (i / (n_frames - 1))
-            pc = PatchCollection(patches, cmap=cmap, norm=norm,
-                                 edgecolors=('k' if self._show_mesh else 'none'),
-                                 linewidths=(0.3 if self._show_mesh else 0.0),
-                                 alpha=alpha)
-            pc.set_array(np.array(face_colors))
+            pc = PolyCollection(verts, cmap=cmap, norm=norm,
+                                edgecolors=('k' if self._show_mesh else 'none'),
+                                linewidths=(0.3 if self._show_mesh else 0.0),
+                                alpha=alpha)
+            pc.set_array(face_colors)
             ax.add_collection(pc)
-            all_xy.append(np.vstack([p.xy for p in patches]))
+            all_xy.append(verts.reshape(-1, 2))
 
         last_field = frames[-1][0]
 
-        # 4. 컬러바 -- 마지막 PatchCollection이 아니라 별도 ScalarMappable로
-        # 만들어서, 프레임 개수와 무관하게 항상 하나만 생긴다.
         sm = mpl.cm.ScalarMappable(norm=norm, cmap=cmap)
         sm.set_array([])
         cb_label = last_field.name
         if last_field.unit:
             cb_label += f" [{last_field.unit}]"
-        self._cbar = self.canvas.fig.colorbar(sm, ax=ax, label=cb_label)
+        self._cbar = self.canvas.fig.colorbar(sm, cax=self.canvas.cax, label=cb_label)
 
-        # 4b. 힌지 피벗 마커 -- Result로 열었을 때만(라이브 solver 세션은
-        # RBE2 master id 정보가 없어서 스킵). 항상 "현재" 스텝(오버레이의
-        # 마지막 프레임) 위치에만 찍어서 겹쳐 그려도 헷갈리지 않게 한다.
         if self._result is not None:
             master_ids = [int(nid) for nid in
                           (self._result.meta.get("theta_targets_rad") or {}).keys()]
             if master_ids:
-                last_step = step_indices[-1] if step_indices[-1] is not None else -1
+                last_step = step_indices[-1]
                 hinge_xy = self._result.deformed_points(last_step)[:, :2]
-                for nid in master_ids:
-                    idx = self._result.node_index(nid)
-                    ax.plot(hinge_xy[idx, 0], hinge_xy[idx, 1], marker='^',
-                           color='red', markersize=9, markeredgecolor='k',
-                           linestyle='none', zorder=5)
+                idxs = [self._result.node_index(nid) for nid in master_ids]
+                ax.plot(hinge_xy[idxs, 0], hinge_xy[idxs, 1], marker='^',
+                       color='red', markersize=9, markeredgecolor='k',
+                       linestyle='none', zorder=5)
 
-        # 5. 축 범위 자동 설정 (equal aspect)
-        if all_xy:
+        if prev_xlim is not None:
+            ax.set_xlim(prev_xlim)
+            ax.set_ylim(prev_ylim)
+        elif all_xy:
             all_xy = np.vstack(all_xy)
             x_min, y_min = all_xy.min(axis=0)
             x_max, y_max = all_xy.max(axis=0)
@@ -928,16 +1247,13 @@ class PostprocessViewer(QtWidgets.QMainWindow):
             margin_y = max(1.0, (y_max - y_min) * 0.05)
             ax.set_xlim(x_min - margin_x, x_max + margin_x)
             ax.set_ylim(y_min - margin_y, y_max + margin_y)
+        self._view_ready = True
 
-        ax.set_aspect('equal')           # 종횡비 1:1
-        ax.set_xlabel('X [mm]')
-        ax.set_ylabel('Y [mm]')
+        self._configure_static_axes(ax)
         title = f"{last_field.name}  (t = {frames[-1][3]:.4f} s)"
-        if n_frames > 1:
-            title += f"  [overlay of {n_frames} steps]"
+        title += f"  [overlay of {n_frames} steps]"
         ax.set_title(title)
 
-        # 6. Step Info 업데이트
         solver = self._solver
         self.info_label.setText(
             f"Time: {solver.time:.4f} s\n"
@@ -945,6 +1261,8 @@ class PostprocessViewer(QtWidgets.QMainWindow):
             f"Elements: {solver.n_elem}\n"
             f"Field: {last_field.name}"
         )
+
+        self.canvas.draw_idle()
 
         self.canvas.draw()
 
@@ -1030,6 +1348,9 @@ def launch_from_result(result_or_path, step: int = -1):
         print(f"[launch_from_result] warning: {result.path!r} has no recorded "
               f"material_objects (saved before this feature existed, or an "
               f".h5 file) -- stress/principal-stress fields will show as 0.")
+
+    from .model_review import print_model_review_from_result
+    print_model_review_from_result(result)
 
     adapter = ResultSolverAdapter(result, step=step)
 

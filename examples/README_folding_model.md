@@ -11,6 +11,9 @@ tuning) live in one place: `examples/fold_model_config.py`
 python examples/ex13_unified_model_io.py --mode read        # read the on-disk .inp deck
 python examples/ex13_unified_model_io.py --mode roundtrip   # generate .inp in-memory, then read+solve
 python examples/ex13_unified_model_io.py --mode build       # build the model as pure Python objects, no .inp
+
+python examples/ex13_unified_model_io.py --mode build --viewer   # solve, then open the Qt viewer on the result
+python examples/ex13_unified_model_io.py --open examples/ex13_build_result.pkl  # skip solving, just open a saved result
 ```
 
 All three modes solve the same physical model and print an identical
@@ -52,15 +55,15 @@ they take effect immediately in every mode regardless of `.inp` state.
 | `geometry.display_half_length` | Display half-length (mm), \|x\| at the free tip | 40.0 | .inp geometry, build geometry |
 | `geometry.hinge_half_gap` | Plate inner edge / free-hinge-span boundary, \|x\| | 10.0 | .inp geometry, build geometry, tie node selection |
 | `geometry.hinge_pivot_x` | Hinge pivot offset from center | 3.0 | plate rigid-body pivot |
-| `geometry.layer_pattern` | List of `LayerSpec(material_family, thickness_mm, n_rows)`, one repeating unit | `[PET 0.05mm/3 rows, PSA 0.03mm/1 row]` | display layer stack |
+| `geometry.layer_pattern` | List of `LayerSpec(material_name, thickness_mm, n_rows)`, one repeating unit -- `material_name` must be a key in `materials.definitions` | `[PSA 0.03mm/1 row, PET 0.05mm/3 rows]` (layer 1 = PSA, layer 2 = PET, ...) | display layer stack |
 | `geometry.n_layer_pairs` | Times `layer_pattern` repeats | 7 | total layer count / thickness |
 | `geometry.plate_thickness` | Rigid plate thickness (mm) | 0.5 | plate mesh |
 | `geometry.plate_mesh_nx` / `plate_mesh_ny` | Plate mesh density | 30 / 2 | plate mesh |
 | `grading.tip_dx` / `hinge_edge_dx` / `hinge_span_dx` / `plate_body_dx` | Element size (mm) per x-zone | 0.25 / 0.25 / 0.5 / 1.0 | display mesh element count |
 | `grading.tip_cluster_width` / `hinge_edge_cluster_width` / `hinge_span_half_width` | Zone widths (mm) | 2.0 / 2.0 / 8.0 | display mesh zone boundaries |
-| `materials.pet` | `{E, nu, sigma_y0, H}` | E=4000, nu=0.3, sigma_y0=80, H=400 | PET layers |
-| `materials.psa` | `{mu, lambda_m, K, prony_g, prony_tau, wlf_T_ref, wlf_C1, wlf_C2}` | see file | PSA layers |
-| `materials.steel` | `{E, nu}` | E=20000, nu=0.3 | plate material (E forced ~0 at solve time regardless, see `run_folding_from_result`) |
+| `materials.definitions["PET"]` | `MaterialDef(id, name, type, params={E, nu, sigma_y0, H})` | E=4000, nu=0.3, sigma_y0=80, H=400 | PET layers |
+| `materials.definitions["PSA"]` | `MaterialDef(..., params={mu, lambda_m, K, prony_g, prony_tau, wlf_T_ref, wlf_C1, wlf_C2})`. `mu`/`K` derived from a target small-strain modulus `E` via `mu=E/(2*(1+nu))`, `K=E/(3*(1-2*nu))` at `nu=0.49` | `E=0.05 MPa` -> `mu=0.016779, K=0.83333` | PSA layers |
+| `materials.definitions["STEEL"]` | `MaterialDef(..., params={E, nu})` | E=20000, nu=0.3 | plate material (E forced ~0 at solve time regardless, see `run_folding_from_result`) |
 | `drive.theta_max_deg` | Fold angle per plate (deg) | 90.0 | hinge rotation BC |
 | `drive.t_total` / `dt_init` / `dt_max` / `dt_min` | Adaptive-dt time bounds | 1.0 / 0.005 / 0.01 / 1e-5 | time stepping |
 | `solver.tol` / `rtol` / `atol` / `max_iter` | Newton convergence | 1e-3 / 1e-4 / 1e-6 / 25 | Newton solve |
@@ -104,6 +107,25 @@ e.g. `"Q4"`, `"Q4_EAS"`).
 
 **Change Newton tolerances**: `solver.tol` / `rtol` / `atol` /
 `max_iter`.
+
+## Postprocess viewer
+
+`--viewer` (open the just-solved result) / `--open PKL_PATH` (skip
+solving, open an existing saved result) both launch
+`dispsolver.postprocess.viewer.launch_from_result()`. In the viewer:
+
+- Mouse scroll = zoom in/out anchored at the cursor; middle-button drag
+  = pan (in addition to the standard matplotlib toolbar's pan/zoom-
+  rectangle/home buttons). "Fit View" button resets to the full current
+  shape. The view no longer resets when you change field/step/layer
+  visibility.
+- The Part/Layer panel labels rigid-plate parts as "Plate Left"/"Plate
+  Right" (they aren't display layers); ordinary display layers keep
+  "Layer N (material)". Scrolls independently if the layer list is
+  taller than the panel.
+- A console "MODEL REVIEW" (distinct materials + representative
+  properties, per-part element counts) prints once at solver startup
+  and once when a saved result is opened in the viewer.
 
 ## Building a custom config
 

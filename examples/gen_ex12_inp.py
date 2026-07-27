@@ -5,6 +5,7 @@ from dispsolver.mesh.plate_builder import create_folding_plate_parts
 
 sys.path.insert(0, os.path.dirname(__file__))
 from fold_model_config import FoldModelConfig, DEFAULT_CONFIG
+from material_factory import emit_abaqus_material_block
 
 OUTPUT = os.path.join(os.path.dirname(__file__), "ex12_rigid_plate_display_fold.inp")
 
@@ -89,37 +90,31 @@ def generate(config: FoldModelConfig = DEFAULT_CONFIG):
     # layup, not a validated real stackup. Total thickness
     # 7*(0.05+0.03) = 0.56mm (was 0.5mm with the old uniform 14-row model).
     #
-    # Each of the 14 physical layers gets its OWN *MATERIAL name (PET_1..
-    # PET_7, PSA_1..PSA_7), all with IDENTICAL properties to what used to
-    # be one shared "PET"/"PSA" block -- this is deliberate, not a material
-    # change. model_builder.py assigns one pid per unique *MATERIAL name
-    # (_build_sections), so distinct names are what make each physical
-    # layer independently selectable/inspectable (e.g. in the Qt viewer's
-    # Part/Layer list) instead of all 7 PET rows collapsing into one pid.
+    # Materials are defined ONCE per distinct name (PET/PSA/STEEL, via
+    # config.materials.definitions) -- no more duplicating identical
+    # properties under 14 unique per-layer names. Each physical layer
+    # still gets its own pid: dispsolver/io/model_builder.py assigns one
+    # pid per *SOLID SECTION statement (not per unique *MATERIAL name
+    # anymore), so grouping this layer's element rows into one ELSET
+    # per physical layer (layer_row_spans below) is what makes each
+    # layer independently selectable/inspectable (e.g. in the Qt
+    # viewer's Part/Layer list), independent of material-name reuse.
     xs_disp = _graded_display_x(config)
     nx_disp = len(xs_disp) - 1
 
     geo = config.geometry
     n_pairs = geo.n_layer_pairs
-    # Per-family running counter -- e.g. layer_pattern=[PET,PSA] -> both
-    # get "_1".."_n_pairs"; a longer pattern (e.g. [PET,PSA,PET]) would
-    # give PET_1, PSA_1, PET_2, PSA_2, ... independently numbered per
-    # family, matching how model_builder.py keys pids off *MATERIAL name.
-    family_counters = {}
-    row_heights = []          # mm, one entry per mesh row
-    ROW_MATERIAL = []         # *MATERIAL name, one entry per mesh row
-    layer_names_in_order = []  # unique *MATERIAL names, in first-seen order
+    row_heights = []       # mm, one entry per mesh row
+    layer_row_spans = []   # (row_start, row_end_exclusive, material_name) per physical layer
+    row_cursor = 0
     for _pair in range(n_pairs):
         for layer in geo.layer_pattern:
-            family_counters[layer.material_family] = family_counters.get(layer.material_family, 0) + 1
-            name = f"{layer.material_family}_{family_counters[layer.material_family]}"
-            layer_names_in_order.append((name, layer.material_family))
             row_heights += [layer.thickness_mm / layer.n_rows] * layer.n_rows
-            ROW_MATERIAL += [name] * layer.n_rows
+            layer_row_spans.append((row_cursor, row_cursor + layer.n_rows, layer.material_name))
+            row_cursor += layer.n_rows
 
     ny_disp = len(row_heights)
     ys_disp = np.concatenate([[0.0], np.cumsum(row_heights)])
-    LAYER_MATERIAL = ROW_MATERIAL  # kept name for the sections loop below
 
     _w("*NODE")
     grid_nids = np.zeros((ny_disp + 1, nx_disp + 1), dtype=int)
@@ -154,21 +149,26 @@ def generate(config: FoldModelConfig = DEFAULT_CONFIG):
 
     _w("**")
 
-    # 3. Elements -- one ELSET per display layer (row) so each can carry
-    # its own material via *SOLID SECTION below.
+    # 3. Elements -- one ELSET per PHYSICAL LAYER (spanning that layer's
+    # n_rows element rows) so each layer carries its own *SOLID SECTION/
+    # pid below, independent of how many rows it has or whether its
+    # material name repeats across other layers.
     eid = 1
     display_elsets = []
-    for j in range(ny_disp):
-        elset_name = f"DISP_L{j + 1:02d}"
+    elset_material = []
+    for layer_idx, (r0, r1, mat_name) in enumerate(layer_row_spans):
+        elset_name = f"DISP_LAYER{layer_idx + 1:02d}"
         display_elsets.append(elset_name)
+        elset_material.append(mat_name)
         _w(f"*ELEMENT, TYPE=CPE4, ELSET={elset_name}")
-        for i in range(nx_disp):
-            n1 = grid_nids[j, i]
-            n2 = grid_nids[j, i + 1]
-            n3 = grid_nids[j + 1, i + 1]
-            n4 = grid_nids[j + 1, i]
-            _w(f"{eid}, {n1}, {n2}, {n3}, {n4}")
-            eid += 1
+        for j in range(r0, r1):
+            for i in range(nx_disp):
+                n1 = grid_nids[j, i]
+                n2 = grid_nids[j, i + 1]
+                n3 = grid_nids[j + 1, i + 1]
+                n4 = grid_nids[j + 1, i]
+                _w(f"{eid}, {n1}, {n2}, {n3}, {n4}")
+                eid += 1
 
     for p_name, p_data in plates.items():
         _w(f"*ELEMENT, TYPE=CPE4, ELSET=PLATE_{p_name.upper()}")
@@ -177,50 +177,16 @@ def generate(config: FoldModelConfig = DEFAULT_CONFIG):
 
     _w("**")
 
-    # 4. Materials -- one *MATERIAL block per physical layer (14 total),
-    # all PET_n identical to each other and all PSA_n identical to each
-    # other; only the *name* differs, so model_builder.py's per-material-
-    # name pid assignment gives each of the 14 physical layers its own
-    # pid without any change to model_builder.py itself.
-    mats = config.materials
-    written_names = set()
-    for name, family in layer_names_in_order:
-        if name in written_names:
-            continue
-        written_names.add(name)
-        if family == "PET":
-            m = mats.pet
-            _w(f"*MATERIAL, NAME={name}")
-            _w("*ELASTIC")
-            _w(f"{m['E']}, {m['nu']}")
-            _w("*PLASTIC")
-            _w(f"{m['sigma_y0']}, 0.0")
-            _w(f"{m['sigma_y0'] + m['H']}, 1.0")
-            _w("**")
-        elif family == "PSA":
-            # Arruda-Boyce hyperelastic base + Prony-series viscoelastic
-            # + WLF time-temperature shift
-            # (dispsolver.material.viscoelastic.ViscoelasticMaterial).
-            m = mats.psa
-            d_param = 2.0 / m["K"]
-            _w(f"*MATERIAL, NAME={name}")
-            _w("*HYPERELASTIC, ARRUDA-BOYCE")
-            _w(f"{m['mu']}, {m['lambda_m']}, {d_param}")
-            _w("*VISCOELASTIC, TIME=PRONY")
-            for g_i, tau_i in zip(m["prony_g"], m["prony_tau"]):
-                _w(f"{g_i}, 0.0, {tau_i}")
-            _w("*TRS, DEFINITION=WLF")
-            _w(f"{m['wlf_T_ref']}, {m['wlf_C1']}, {m['wlf_C2']}")
-            _w("**")
-        else:
-            raise ValueError(f"Unknown material family {family!r} in layer_pattern")
-    _w("*MATERIAL, NAME=STEEL")
-    _w("*ELASTIC")
-    _w(f"{mats.steel['E']}, {mats.steel['nu']}")
-    _w("**")
+    # 4. Materials -- one *MATERIAL block per DISTINCT material (PET,
+    # PSA, STEEL -- 3 total, was 15), sourced from config.materials.definitions.
+    for mdef in config.materials.definitions.values():
+        for line in emit_abaqus_material_block(mdef):
+            _w(line)
 
-    # Sections -- one per display layer, alternating SUBSTRATE/ADHESIVE
-    for elset_name, mat_name in zip(display_elsets, LAYER_MATERIAL):
+    # Sections -- one per physical layer (elset_material repeats e.g.
+    # "PET" seven times across the 7 pairs, referencing the ONE PET
+    # *MATERIAL block above).
+    for elset_name, mat_name in zip(display_elsets, elset_material):
         _w(f"*SOLID SECTION, ELSET={elset_name}, MATERIAL={mat_name}")
         _w("1.0,")
     _w("*SOLID SECTION, ELSET=PLATE_LEFT, MATERIAL=STEEL")

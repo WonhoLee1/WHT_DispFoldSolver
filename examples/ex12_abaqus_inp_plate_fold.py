@@ -15,6 +15,7 @@ from dispsolver.solver import DynamicSolver
 from dispsolver.solver.dt_controller import AdaptiveDtController
 from dispsolver.export.plotter import plot_and_save_deformed_shape_png
 from dispsolver.postprocess import LayerSlipTracker, ResultWriter
+from dispsolver.postprocess.model_review import print_model_review_from_builder_result
 
 sys.path.insert(0, os.path.dirname(__file__))
 from fold_model_config import FoldModelConfig, DEFAULT_CONFIG
@@ -194,6 +195,8 @@ def run_folding_from_result(result, before_png_name: str = "ex12_before_folding_
 
     solver.theta_penalty_k = st.theta_penalty_k
 
+    print_model_review_from_builder_result(result)
+
     # Set translation boundaries
     if translation_bc_dofs:
         solver.set_prescribed_dofs(
@@ -231,7 +234,17 @@ def run_folding_from_result(result, before_png_name: str = "ex12_before_folding_
               # pid -> *MATERIAL name, so the Qt viewer's Part/Layer
               # checkboxes can show e.g. "Layer 3 (PET_2)" instead of a
               # bare pid number.
-              "pid_names": getattr(result, "material_names", {}) or {}},
+              "pid_names": getattr(result, "material_names", {}) or {},
+              # pid -> canonical type tag (dispsolver.material.type_tags),
+              # so a loaded Result can print representative material
+              # properties (model_review.py) without re-inferring the
+              # material kind from raw param-dict key presence.
+              "pid_types": getattr(result, "material_types", {}) or {},
+              # pid -> human display-name override for non-layer parts
+              # (e.g. rigid plates: "Plate Left"/"Plate Right"). Additive,
+              # backward compatible -- viewer.py/model_review.py .get()
+              # this with a {} fallback for older saved results.
+              "pid_part_names": getattr(result, "part_names", {}) or {}},
         # Live material objects (not the JSON-safe material_params above),
         # so the Qt viewer can recompute stress from a saved result the
         # same way it does from a live solver. Pickle-only.
@@ -361,6 +374,7 @@ def run_folding_from_result(result, before_png_name: str = "ex12_before_folding_
         "n_rbe2_constraints": len(result.rbe2_constraints),
         "n_penalty_constraints": len(result.penalty_constraints),
         "reached_target": solver.time >= t_total - 1e-10,
+        "result_path": result_path,
     }
 
 if __name__ == "__main__":

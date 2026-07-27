@@ -95,6 +95,17 @@ class ModelBuilderResult:
         # objects themselves don't carry the deck's name, and postprocessing
         # needs it to label results (e.g. which display rows are PSA).
         self.material_names: Dict[int, str] = {}
+        # pid -> canonical type tag (dispsolver.material.type_tags), so
+        # postprocessing (model_review.py) can pick representative
+        # properties to print without re-inferring the material kind
+        # from raw param-dict key presence.
+        self.material_types: Dict[int, str] = {}
+        # pid -> human display-name override for non-layer parts (e.g.
+        # rigid plates: "Plate Left"/"Plate Right"). Absent for ordinary
+        # display-layer pids -- callers (viewer.py Part/Layer panel,
+        # model_review.py) fall back to "Layer {pid} ({material})" when a
+        # pid has no entry here.
+        self.part_names: Dict[int, str] = {}
         self.constraints: List = []
         self.solver_config: Dict[str, Any] = {}
         self.amplitudes: Dict[str, Amplitude] = {}
@@ -376,25 +387,35 @@ class ModelBuilder:
     def _build_sections(self):
         """Assign PIDs to elements from *SOLID SECTION definitions.
 
-        Iterates sections in order; each unique material gets the next PID.
-        Elements in the section's ELSET receive that PID.
-        Builds self._material_name_to_pid for _build_materials to use.
+        One pid per *SOLID SECTION statement (i.e. per physical
+        layer/part), regardless of whether its MATERIAL= name repeats
+        across sections -- previously a repeated material name reused
+        the SAME pid for every section referencing it (a deliberate
+        workaround that required a unique *MATERIAL name per physical
+        layer just to get one pid per layer, see gen_ex12_inp.py history).
+        Now section identity alone determines pid count;
+        self._material_name_to_pids (plural, one name -> many pids) lets
+        _build_materials build the material object/params ONCE per
+        distinct name and fan them out to every pid that shares it.
         """
-        self._material_name_to_pid: Dict[str, int] = {}
+        self._material_name_to_pids: Dict[str, List[int]] = {}
         if not self._abq.sections:
             return
         mesh = self._result.mesh
         pid = 0
-        seen_materials: set = set()
         for sec in self._abq.sections.values():
+            pid += 1
             mat_name = sec.material
-            if mat_name not in seen_materials:
-                pid += 1
-                seen_materials.add(mat_name)
-                self._material_name_to_pid[mat_name] = pid
-                self._result.material_names[pid] = mat_name
-            else:
-                pid = self._material_name_to_pid[mat_name]
+            self._material_name_to_pids.setdefault(mat_name, []).append(pid)
+            self._result.material_names[pid] = mat_name
+            # Rigid-plate parts get a human display-name override (e.g.
+            # elset "PLATE_LEFT" -> "Plate Left") so the Qt viewer's
+            # Part/Layer panel shows "Plate Left" instead of "Layer 15
+            # (STEEL)". Ordinary display-layer elsets (DISP_LAYER*, or
+            # anything else) are left unset -- fall back to Layer-N.
+            if sec.elset.upper().startswith("PLATE_"):
+                suffix = sec.elset[len("PLATE_"):]
+                self._result.part_names[pid] = f"Plate {suffix.title()}"
             # Assign PID to elements in this section's ELSET
             elem_ids = mesh.element_sets.get(sec.elset)
             if elem_ids:
@@ -417,6 +438,7 @@ class ModelBuilder:
         """
         from ..material import NeoHookean, Yeoh, ArrudaBoyce
         from ..material import J2Plasticity, ViscoelasticMaterial
+        from ..material.type_tags import J2_PLASTIC, ARRUDA_BOYCE_VISCO, NEOHOOKEAN
 
         # Collect material configurations; PID assignment happens in the loop.
         pid = 0
@@ -509,17 +531,52 @@ class ModelBuilder:
                 if abq_mat.density is not None:
                     self._abq.density = abq_mat.density
 
-                # PID from sections, or fallback sequential
-                sec_pid = self._material_name_to_pid.get(mat_name) if hasattr(self, '_material_name_to_pid') else None
-                if sec_pid is not None:
-                    pid = sec_pid
+                # Canonical type tag for postprocessing (model_review.py),
+                # derived once from the already-built objects rather than
+                # re-classifying the has_hyper/has_elastic/has_plastic
+                # flags a second time.
+                if has_visco:
+                    type_tag = ARRUDA_BOYCE_VISCO if isinstance(base_mat, ArrudaBoyce) else "viscoelastic"
+                elif isinstance(mat, J2Plasticity):
+                    type_tag = J2_PLASTIC
+                elif isinstance(mat, NeoHookean):
+                    type_tag = NEOHOOKEAN
+                else:
+                    type_tag = type(mat).__name__.lower()  # Yeoh / unknown-hyperelastic fallback
+
+                # Fan the ONE built (mat, mat_params) out to every pid
+                # whose *SOLID SECTION named this material -- was
+                # previously "first section wins one pid, name reuse
+                # collapses onto it"; now it's "every section gets its
+                # own pid, all sharing this one material object+params".
+                # Falls back to a fresh sequential pid only for a
+                # material with no *SOLID SECTION referencing it at all.
+                pids_for_name = self._material_name_to_pids.get(mat_name) if hasattr(self, '_material_name_to_pids') else None
+                if pids_for_name:
+                    for p in pids_for_name:
+                        self._result.materials[p] = mat
+                        self._result.material_params[p] = mat_params
+                        self._result.material_types[p] = type_tag
                 else:
                     pid += 1
-                self._result.materials[pid] = mat
-                self._result.material_params[pid] = mat_params
+                    self._result.materials[pid] = mat
+                    self._result.material_params[pid] = mat_params
+                    self._result.material_types[pid] = type_tag
                 continue  # ← COMPOSITE done
 
             # ── Legacy flat materials ──
+            # NOTE: this branch is provably unreachable for every
+            # *MATERIAL block in this project's .inp decks (including
+            # gen_ex12_inp.py's output and every tests/test_rbe2.py
+            # fixture) -- abaqus_parser.py's _parse_elastic/_parse_plastic/
+            # ... only produce this mat_type when called OUTSIDE a
+            # `*MATERIAL, NAME=...` scope, and every block here opens with
+            # that keyword first, routing through the COMPOSITE branch
+            # above instead. Left as one-pid-per-material (not per
+            # section, no material_types tagging) since there is no known
+            # caller to verify a fix against -- revisit if a future .inp
+            # legitimately hits this path with a repeated flat material
+            # name referenced by multiple sections.
             pid += 1
             mat_type = abq_mat.mat_type.upper()
 
