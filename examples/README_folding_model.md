@@ -1,6 +1,4 @@
-# Display-Folding Model — Usage Guide
-
-Entry point: `examples/ex13_unified_model_io.py`. All model parameters
+Primary entry point: **`examples/DispFoldApp.py`**. All model parameters
 (geometry, layer structure, materials, mesh grading, drive/solver
 tuning) live in one place: `dispsolver/fold_model_config.py`
 (`FoldModelConfig`, default instance `DEFAULT_CONFIG`).
@@ -8,12 +6,15 @@ tuning) live in one place: `dispsolver/fold_model_config.py`
 ## Quick start
 
 ```bash
-python examples/ex13_unified_model_io.py --mode read        # read the on-disk .inp deck
-python examples/ex13_unified_model_io.py --mode roundtrip   # generate .inp in-memory, then read+solve
-python examples/ex13_unified_model_io.py --mode build       # build the model as pure Python objects, no .inp
+# 1. Main Unified Application Entry Point
+python examples/DispFoldApp.py --mode inp --elem_jit numba       # read Abaqus .inp deck, solve with Numba
+python examples/DispFoldApp.py --mode build --elem_jit numba     # build model directly in-memory, solve
+python examples/DispFoldApp.py --mode roundtrip --elem_jit jax   # generate .inp in-memory, parse & solve
 
+# 2. Legacy / Mode-specific Entry Points
+python examples/ex13_unified_model_io.py --mode read --elem_jit numba
 python examples/ex13_unified_model_io.py --mode build --viewer   # solve, then open the Qt viewer on the result
-python examples/ex13_unified_model_io.py --open examples/ex13_build_result.pkl  # skip solving, just open a saved result
+python examples/ex13_unified_model_io.py --open examples/ex12_result.pkl  # skip solving, open saved result
 ```
 
 All three modes solve the same physical model and print an identical
