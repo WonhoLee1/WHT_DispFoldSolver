@@ -69,6 +69,12 @@ def numpy_q4_eas_K(coords: np.ndarray, E: float, nu: float) -> np.ndarray:
     return compute_eas_linear_K(coords, D)
 
 
+def numpy_t3_K(coords: np.ndarray, E: float, nu: float) -> np.ndarray:
+    """T3 Constant Strain Triangle stiffness via pure NumPy."""
+    from dispsolver.element.t3 import compute_K_elem
+    return compute_K_elem(coords[:3], E, nu)
+
+
 # ------------------------------------------------------------------
 # JAX Q4 B-bar (via dynamic_jax builder + NeoHookean)
 # ------------------------------------------------------------------
@@ -293,6 +299,108 @@ def jax_q4_simo_fs_f_int(coords: np.ndarray, u_elem: np.ndarray,
 
 
 # ------------------------------------------------------------------
+# Numba Q4 B-bar (LLVM JIT)
+# ------------------------------------------------------------------
+
+def numba_q4_bbar_K(coords: np.ndarray, E: float, nu: float) -> np.ndarray:
+    """Q4 B-bar stiffness via Numba LLVM JIT 2x2 Gauss quadrature."""
+    from dispsolver.element.q4_numba import compute_q4_bbar_element
+    u_zero = np.zeros(8, dtype=np.float64)
+    _, K = compute_q4_bbar_element(coords, u_zero, E, nu, thickness=1.0)
+    return K
+
+
+def numba_q4_bbar_f_int(coords: np.ndarray, u_elem: np.ndarray,
+                        E: float, nu: float) -> np.ndarray:
+    from dispsolver.element.q4_numba import compute_q4_bbar_element
+    f_int, _ = compute_q4_bbar_element(coords, u_elem, E, nu, thickness=1.0)
+    return f_int
+
+
+def numba_q4_eas_K(coords: np.ndarray, E: float, nu: float) -> np.ndarray:
+    """Q4 EAS-4 stiffness via Numba LLVM JIT 4-mode static condensation."""
+    from dispsolver.element.q4_numba import compute_q4_eas_element
+    u_zero = np.zeros(8, dtype=np.float64)
+    _, K = compute_q4_eas_element(coords, u_zero, E, nu, thickness=1.0)
+    return K
+
+
+def numba_q4_up_K(coords: np.ndarray, E: float, nu: float) -> np.ndarray:
+    """Q1P0 hybrid stiffness via Numba LLVM JIT."""
+    from dispsolver.element.q4_numba import compute_q4_up_element
+    u_zero = np.zeros(8, dtype=np.float64)
+    _, K = compute_q4_up_element(coords, u_zero, E, nu, thickness=1.0)
+    return K
+
+
+def numba_q4_up_f_int(coords: np.ndarray, u_elem: np.ndarray,
+                      E: float, nu: float) -> np.ndarray:
+    from dispsolver.element.q4_numba import compute_q4_up_element
+    f_int, _ = compute_q4_up_element(coords, u_elem, E, nu, thickness=1.0)
+    return f_int
+
+
+def numba_q4_corotational_K(coords: np.ndarray, E: float, nu: float) -> np.ndarray:
+    """Co-rotational Q4 stiffness via Numba LLVM JIT."""
+    from dispsolver.element.q4_numba import compute_q4_corotational_element
+    u_zero = np.zeros(8, dtype=np.float64)
+    _, K = compute_q4_corotational_element(coords, u_zero, E, nu, thickness=1.0)
+    return K
+
+
+def numba_t3_K(coords: np.ndarray, E: float, nu: float) -> np.ndarray:
+    """T3 Constant Strain Triangle stiffness via Numba LLVM JIT."""
+    from dispsolver.element.q4_numba import compute_t3_element
+    u_zero = np.zeros(6, dtype=np.float64)
+    coords_3 = coords[:3]
+    _, K = compute_t3_element(coords_3, u_zero, E, nu, thickness=1.0)
+    return K
+
+
+def jax_t3_K(coords: np.ndarray, E: float, nu: float) -> np.ndarray:
+    """T3 Constant Strain Triangle stiffness via JAX energy-based autodiff."""
+    import jax
+    import jax.numpy as jnp
+    coords_3 = jnp.asarray(coords[:3], dtype=jnp.float64)
+
+    # Linear plane strain D matrix
+    c = E / ((1.0 + nu) * (1.0 - 2.0 * nu))
+    D = c * jnp.array([
+        [1.0 - nu, nu, 0.0],
+        [nu, 1.0 - nu, 0.0],
+        [0.0, 0.0, (1.0 - 2.0 * nu) / 2.0]
+    ], dtype=jnp.float64)
+
+    def t3_energy(u_e):
+        dN_dxi = jnp.array([-1.0, 1.0, 0.0], dtype=jnp.float64)
+        dN_deta = jnp.array([-1.0, 0.0, 1.0], dtype=jnp.float64)
+        J00 = jnp.sum(dN_dxi * coords_3[:, 0])
+        J01 = jnp.sum(dN_dxi * coords_3[:, 1])
+        J10 = jnp.sum(dN_deta * coords_3[:, 0])
+        J11 = jnp.sum(dN_deta * coords_3[:, 1])
+        detJ = J00 * J11 - J01 * J10
+        area = 0.5 * jnp.abs(detJ)
+        invJ = jnp.array([[J11, -J01], [-J10, J00]], dtype=jnp.float64) / detJ
+
+        gX = invJ[0, 0] * dN_dxi + invJ[0, 1] * dN_deta
+        gY = invJ[1, 0] * dN_dxi + invJ[1, 1] * dN_deta
+
+        ux = u_e[0::2]
+        uy = u_e[1::2]
+        exx = jnp.sum(ux * gX)
+        eyy = jnp.sum(uy * gY)
+        gxy = jnp.sum(ux * gY) + jnp.sum(uy * gX)
+        strain = jnp.array([exx, eyy, gxy], dtype=jnp.float64)
+
+        W = 0.5 * jnp.dot(strain, jnp.dot(D, strain))
+        return W * area
+
+    u_zero = jnp.zeros(6, dtype=jnp.float64)
+    K = jax.hessian(t3_energy)(u_zero)
+    return np.asarray(K)
+
+
+# ------------------------------------------------------------------
 # Backend registry
 # ------------------------------------------------------------------
 
@@ -310,6 +418,61 @@ BACKENDS: Dict[str, Dict[str, Callable]] = {
         'compute_strain': None,
         'compute_stress': None,
         'element_type': 'Q4_EAS',
+    },
+    'numpy_t3': {
+        'name': 'NumPy T3 Triangle',
+        'compute_K': numpy_t3_K,
+        'compute_strain': None,
+        'compute_stress': None,
+        'element_type': 'T3',
+    },
+    'numba_q4_bbar': {
+        'name': 'Numba Q4 B-bar (LLVM JIT)',
+        'compute_K': numba_q4_bbar_K,
+        'compute_f_int': numba_q4_bbar_f_int,
+        'compute_strain': numpy_q4_bbar_strain,
+        'compute_stress': numpy_q4_bbar_stress,
+        'element_type': 'Q4',
+    },
+    'numba_q4_eas': {
+        'name': 'Numba Q4 EAS-4 (LLVM JIT)',
+        'compute_K': numba_q4_eas_K,
+        'compute_f_int': None,
+        'compute_strain': None,
+        'compute_stress': None,
+        'element_type': 'Q4_EAS',
+    },
+    'numba_q4_up': {
+        'name': 'Numba Q1P0 Hybrid (LLVM JIT)',
+        'compute_K': numba_q4_up_K,
+        'compute_f_int': numba_q4_up_f_int,
+        'compute_strain': None,
+        'compute_stress': None,
+        'element_type': 'Q4_UP',
+    },
+    'numba_q4_corotational': {
+        'name': 'Numba Co-rotational Q4 (LLVM JIT)',
+        'compute_K': numba_q4_corotational_K,
+        'compute_f_int': None,
+        'compute_strain': None,
+        'compute_stress': None,
+        'element_type': 'Q4',
+    },
+    'numba_t3': {
+        'name': 'Numba T3 Triangle (LLVM JIT)',
+        'compute_K': numba_t3_K,
+        'compute_f_int': None,
+        'compute_strain': None,
+        'compute_stress': None,
+        'element_type': 'T3',
+    },
+    'jax_t3': {
+        'name': 'JAX T3 Triangle (NeoHookean)',
+        'compute_K': jax_t3_K,
+        'compute_f_int': None,
+        'compute_strain': None,
+        'compute_stress': None,
+        'element_type': 'T3',
     },
     'jax_q4_bbar': {
         'name': 'JAX Q4 B-bar (NeoHookean)',
@@ -390,7 +553,21 @@ def make_solver(mesh, E: float, nu: float, backend: str = 'jax',
 
     # Use NeoHookean for Q4/Q4_UP (pure JAX path), J2Plasticity (high yield)
     # for Q4_EAS (requires J2 for the JAX vmap path).
-    if element_type == 'Q4_EAS':
+    # Q4_COROTATIONAL requires BOTH material and element_type as dicts
+    # (see Finding 1 in AGENTS.md — plain string routes to Q4 B-bar silently).
+    if element_type == 'Q4_COROTATIONAL':
+        if backend == 'numpy_sequential':
+            raise ValueError(
+                "Q4_COROTATIONAL has no working numpy_sequential path. "
+                "Finding 2: dynamic.py:_assemble() sequential fallback "
+                "(line ~3458) calls compute_corotational_internal_force(coords, u_elem) "
+                "with wrong arity (missing material_stress_fn 3rd arg) -- "
+                "would TypeError if reachable. Use backend='jax'."
+            )
+        mat = {0: J2Plasticity(E=E, nu=nu, sigma_y0=1e12, H=0.0)}
+        element_type_arg = {0: 'Q4_COROTATIONAL'}
+        material_params = {}
+    elif element_type == 'Q4_EAS':
         # J2Plasticity with very high yield stays in the elastic regime
         mat = J2Plasticity(E=E, nu=nu, sigma_y0=1e12, H=0.0)
         material_params = {}
@@ -399,6 +576,10 @@ def make_solver(mesh, E: float, nu: float, backend: str = 'jax',
         material_params = {'E': E, 'nu': nu}
 
     fast_assembly = (backend == 'jax')
+
+    # For dict-form element_type, override element_type to the dict version
+    if element_type == 'Q4_COROTATIONAL':
+        element_type = element_type_arg
 
     solver = DynamicSolver(
         mesh, mat, rho=rho, material_params=material_params,

@@ -269,9 +269,9 @@ def run_rigid_plate_display_fold_corotational():
             continue
 
         max_u = float(np.max(np.abs(solver.u)))
-        print(f"  STEP {step:2d} | t={solver.time:.4f}s | dt={dt_step:.3f}s | "
-              f"Iters={n_iter+1:2d} | theta=[{np.degrees(theta_L):6.1f}deg, {np.degrees(theta_R):6.1f}deg] | "
-              f"max|u|={max_u:6.2f}mm")
+        print(f"  STEP {step:2d} | t={solver.time:.4f}s | dt={dt_step:.4f}s | "
+              f"Iters={n_iter+1:2d} | θ=[{float(np.degrees(theta_L)):.4f}°, {float(np.degrees(theta_R)):.4f}°] | "
+              f"max|u|={max_u:.2f}mm")
 
         # Autonomous physical sanity check every step: Newton "converged"
         # is necessary but not sufficient -- verify the display is

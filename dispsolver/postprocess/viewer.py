@@ -66,11 +66,14 @@ try:
     import matplotlib.tri as mtri
     from matplotlib.collections import PolyCollection
     import matplotlib as _mpl
-    # 전체 UI 폰트 통일(Cascadia Code, 9pt) -- Qt 쪽은 PostprocessViewer.__init__
-    # 에서 self.setFont()로 적용, matplotlib 쪽(축 라벨/제목/컬러바/틱)은
-    # Figure 생성 전에 rcParams를 바꿔야 이후 만들어지는 Text 아티스트들이
-    # 기본값으로 이 폰트를 집어간다.
-    _mpl.rcParams['font.family'] = 'Cascadia Code'
+    import logging
+    logging.getLogger('matplotlib.font_manager').setLevel(logging.ERROR)
+    try:
+        import koreanize_matplotlib
+    except ImportError:
+        pass
+    _mpl.rcParams['font.sans-serif'] = ['Cascadia Code', 'DejaVu Sans', 'Arial', 'sans-serif']
+    _mpl.rcParams['font.family'] = 'sans-serif'
     _mpl.rcParams['font.size'] = 9
 except ImportError:
     MplCanvas = None

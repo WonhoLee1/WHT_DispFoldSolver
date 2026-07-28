@@ -223,6 +223,65 @@ def volumetric_pressure_volume_change(eps_vol: float, E: float, nu: float) -> fl
     return c * eps_vol / 2.0
 
 
+# ------------------------------------------------------------------
+# Large-rotation elastica: pure end moment (no elliptic integrals)
+# ------------------------------------------------------------------
+
+def elastica_pure_moment_tip_state(M: float, L: float, E_star: float,
+                                   I: float) -> dict:
+    """Exact large-rotation tip state of a cantilever under pure end moment.
+
+    For a pure moment M applied at the tip of a cantilever, the curvature
+    is constant along the beam: κ = M / (E*·I). This is the one elastica
+    case with a closed form that does not involve elliptic integrals.
+
+    Parameters
+    ----------
+    M : float — applied end moment (force·length per unit depth)
+    L : float — beam length
+    E_star : float — plane-strain modulus E*=E/(1-ν²)
+    I : float — second moment of area per unit depth (H³/12)
+
+    Returns
+    -------
+    dict with keys:
+        'kappa'  : curvature = M/(E*·I)
+        'theta'  : tip rotation angle (radians) = κ·L
+        'x_tip'  : deformed tip x-coordinate (relative to root)
+        'y_tip'  : deformed tip y-coordinate (relative to root)
+        'M'      : input moment (echoed back)
+        'L'      : input length (echoed back)
+
+    Reference
+    ---------
+    Large-rotation elastica under pure end moment — constant curvature
+    along the beam.  See e.g. Bower (2009) Applied Mechanics of Solids, 
+    Ch. 5, or any mechanics-of-materials text on beam bending.
+    """
+    if abs(M) < 1e-30:
+        # Zero moment → no deformation
+        return {
+            'kappa': 0.0, 'theta': 0.0,
+            'x_tip': float(L), 'y_tip': 0.0,
+            'M': float(M), 'L': float(L),
+        }
+
+    kappa = M / (E_star * I)
+    theta = kappa * L
+    # Tip position for a beam bent into a circular arc
+    x_tip = np.sin(theta) / kappa if abs(kappa) > 1e-30 else float(L)
+    y_tip = (1.0 - np.cos(theta)) / kappa if abs(kappa) > 1e-30 else 0.0
+
+    return {
+        'kappa': float(kappa),
+        'theta': float(theta),
+        'x_tip': float(x_tip),
+        'y_tip': float(y_tip),
+        'M': float(M),
+        'L': float(L),
+    }
+
+
 def volumetric_strain_from_pressure(p: float, E: float, nu: float) -> float:
     """Inverse of volumetric_pressure_volume_change."""
     c = E / ((1.0 + nu) * (1.0 - 2.0 * nu))

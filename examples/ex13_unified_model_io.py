@@ -27,8 +27,8 @@ from types import SimpleNamespace
 import numpy as np
 
 from gen_ex12_inp import generate as generate_inp_text, _graded_display_x
-from fold_model_config import FoldModelConfig, DEFAULT_CONFIG
-from material_factory import build_material_instance
+from dispsolver.fold_model_config import FoldModelConfig, DEFAULT_CONFIG
+from dispsolver.material.factory import build_material_instance
 from dispsolver.material.type_tags import J2_PLASTIC
 from dispsolver.mesh import Mesh
 from dispsolver.mesh.plate_builder import create_folding_plate_parts
@@ -257,6 +257,10 @@ def main():
         help="Model source: 'read' (existing .inp), 'roundtrip' "
              "(generate() in-memory -> temp .inp -> read+solve), or "
              "'build' (pure Python objects, no .inp at all).",
+    )
+    parser.add_argument(
+        "--elem_jit", choices=["jax", "numba", "numpy"], default="jax",
+        help="Element JIT backend (default: jax)",
     )
     parser.add_argument(
         "--viewer", action="store_true",

@@ -61,6 +61,7 @@ def _warmup_jax():
     fn_simo, kappa, bparams, g_i, tau_i, g_inf = _get_jax_simo_fs_fn(1000.0, 0.3)
     state6 = jnp.zeros((4, 12))
     fn_simo(coords, u_zero, state6, kappa, bparams, g_i, tau_i, g_inf, 1.0, 1.0)
+    # Corotational kernel is compiled on first use during benchmarks 11-12
     print("JAX warm-up complete.", flush=True)
 
 
@@ -166,7 +167,26 @@ def _generate_markdown_report(results: List[dict], runtime_s: float) -> str:
             val_str = f"{val:.6e}" if not np.isnan(val) else "N/A"
             err_str = f"{err:.4f}" if not np.isnan(err) else "N/A"
             lines.append(f"| {bk} | {val_str} | {err_str} | {n_iter} | {bk_status} |")
-        lines.append("")
+
+        # Convergence-study sub-table (benchmarks 10-12)
+        if 'refinement_levels' in r:
+            fit = r.get('fit', {})
+            lines.append("")
+            lines.append("**Convergence Refinement Levels**")
+            lines.append("")
+            lines.append("| h | Error |")
+            lines.append("|---|-------|")
+            for hl, err_val in r.get('refinement_levels', []):
+                lines.append(f"| {hl:.4e} | {err_val:.2e} |")
+            lines.append("")
+            order_str = f"{fit.get('order', 'N/A'):.4f}" if not np.isnan(fit.get('order', float('nan'))) else "N/A"
+            r2_str = f"{fit.get('r_squared', 'N/A'):.4f}" if not np.isnan(fit.get('r_squared', float('nan'))) else "N/A"
+            lines.append(
+                f"**Fitted order**: {order_str}  "
+                f"(expected {r.get('theory_value', '?'):.4f})  "
+                f"**r²**: {r2_str}"
+            )
+            lines.append("")
 
     # Backend notes
     lines.append("## Backend Notes")
@@ -289,10 +309,14 @@ def main():
     parser = argparse.ArgumentParser(description="Run FEM verification benchmarks")
     parser.add_argument('--benchmark', '-b', type=str, default=None,
                         help="Run only the named benchmark")
+    parser.add_argument('--elem_jit', choices=['jax', 'numba', 'numpy'], default='jax',
+                        help="Element JIT backend option (default: jax)")
     parser.add_argument('--no-jit-warmup', action='store_true',
                         help="Skip JAX JIT warm-up (first benchmark will be slower)")
     parser.add_argument('--quiet', '-q', action='store_true',
                         help="Suppress per-benchmark progress output")
+    parser.add_argument('--include-speed', action='store_true',
+                        help="Also run speed benchmarks (opt-in, informational only)")
     args = parser.parse_args()
 
     if not args.no_jit_warmup:
@@ -315,6 +339,19 @@ def main():
     runtime = time.time() - t0
 
     _save_results(results, runtime)
+
+    # Speed benchmark (opt-in)
+    if args.include_speed:
+        print("\nRunning speed benchmarks (opt-in, informational only)...", flush=True)
+        from .speed_bench import speed_benchmark_cantilever, generate_speed_report
+        t_speed = time.time()
+        speed_results = speed_benchmark_cantilever(n_repeats=5, n_warmup=2)
+        speed_runtime = time.time() - t_speed
+        speed_md = generate_speed_report(speed_results)
+        speed_path = os.path.join(RESULTS_DIR, "speed_report.md")
+        with open(speed_path, 'w', encoding='utf-8') as f:
+            f.write(speed_md)
+        print(f"Saved speed report: {speed_path} ({speed_runtime:.1f}s)", flush=True)
 
     # Print summary
     n_pass = sum(1 for r in results if r.get('passed', False))
