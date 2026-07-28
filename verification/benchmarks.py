@@ -28,7 +28,7 @@ Benchmark list
 from __future__ import annotations
 
 import numpy as np
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Callable
 
 from .mesh_utils import (
     build_block_mesh, build_beam_mesh,
@@ -125,11 +125,17 @@ def patch_test_element(E: float = E_DEFAULT, nu: float = NU_DEFAULT,
             continue
         try:
             K_num = bk['compute_K'](coords_4, E, nu)
-            U_num = 0.5 * float(u_elem @ K_num @ u_elem)
-            err_pct = abs(U_num - U_theory) / (abs(U_theory) + 1e-30) * 100.0
+            if K_num.shape == (6, 6):
+                u_eval = u_elem[:6]
+                U_ref = 0.5 * U_theory  # triangle volume = 0.5 * quad volume
+            else:
+                u_eval = u_elem
+                U_ref = U_theory
+            U_num = 0.5 * float(u_eval @ K_num @ u_eval)
+            err_pct = abs(U_num - U_ref) / (abs(U_ref) + 1e-30) * 100.0
 
-            sym_err = np.max(np.abs(K_num - K_num.T)) if K_num.shape == (8, 8) else float('nan')
-            eigvals = np.linalg.eigvalsh(K_num) if K_num.shape == (8, 8) else np.array([0.0])
+            sym_err = np.max(np.abs(K_num - K_num.T))
+            eigvals = np.linalg.eigvalsh(K_num)
             min_eig = float(eigvals[0])
 
             backend_results[bk_name] = {
@@ -732,6 +738,11 @@ def run_benchmark(name: str, **kwargs) -> dict:
         if bm['name'] == name:
             return bm['fn'](**kwargs)
     raise KeyError(f"Unknown benchmark {name!r}. Available: {[b['name'] for b in ALL_BENCHMARKS]}")
+
+
+# Register convergence-order benchmarks
+from .convergence import ALL_CONVERGENCE_BENCHMARKS
+ALL_BENCHMARKS += ALL_CONVERGENCE_BENCHMARKS
 
 
 def run_all_benchmarks(verbose: bool = True) -> List[dict]:

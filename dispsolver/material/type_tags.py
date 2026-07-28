@@ -5,7 +5,7 @@ Canonical material "type" tag strings, shared by every layer that needs
 to classify a material without depending on isinstance() checks or
 re-deriving it from raw property dicts:
 
-- examples/fold_model_config.py -- MaterialDef.type (config source)
+- dispsolver/fold_model_config.py -- MaterialDef.type (config source)
 - dispsolver/io/model_builder.py -- tags each pid parsed from a .inp
   deck's *MATERIAL block, so the .inp-parsed path and the pure-Python
   config-built path (examples/ex13_unified_model_io.py::run_build())

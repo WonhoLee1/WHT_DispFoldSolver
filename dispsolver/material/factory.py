@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from typing import Dict, List, Tuple
 
-from fold_model_config import MaterialDef
+from dispsolver.fold_model_config import MaterialDef
 from dispsolver.material.type_tags import J2_PLASTIC, ARRUDA_BOYCE_VISCO, NEOHOOKEAN
 from dispsolver.material.plastic import J2Plasticity
 from dispsolver.material.arruda_boyce import ArrudaBoyce

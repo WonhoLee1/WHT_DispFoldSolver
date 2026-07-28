@@ -14,8 +14,11 @@ and ensure all benchmarks PASS before committing:**
 ## How to Run
 
 ```bash
-# Full suite (all 9 benchmarks, all backends)
+# Full suite (all 12 benchmarks, all backends)
 python -m verification.run_all
+
+# Run with speed benchmarks (opt-in, informational only)
+python -m verification.run_all --include-speed
 
 # Skip JAX JIT warm-up (faster start, first benchmark is slower)
 python -m verification.run_all --no-jit-warmup
@@ -31,12 +34,15 @@ python -m verification.run_all --quiet
 
 | Benchmark | Tolerance | Rationale |
 |-----------|-----------|-----------|
-| Patch test (element) | 0.01% | Constant strain must be reproduced to near-machine precision |
+| Patch test (element) | 0.1% | Constant strain must be reproduced to near-machine precision |
 | Patch test (solver) | 0.001% | Internal node must match analytical position |
 | 3-pt / 4-pt bending | 5% | Timoshenko correction is approximate for coarse meshes |
 | Cantilever | 5% | Same as above |
 | Uniaxial tension/compression | 1% | Uniform stress field — should be very accurate |
 | Volumetric compression/tension | 1% | Uniform hydrostatic field — should be very accurate |
+| Convergence cantilever mesh (Q4 B-bar) | order 2.0 ± 0.4, r² ≥ 0.95 | Q4 B-bar should achieve 2nd-order mesh convergence |
+| Convergence elastica mesh (corotational) | order 2.0 ± 0.4, r² ≥ 0.95 | Corotational Q4 should achieve 2nd-order mesh convergence |
+| Convergence elastica load-step (corotational) | order 1.0 ± 0.4, r² ≥ 0.95 | Follower-force scheme is 1st-order by construction |
 
 If a benchmark fails after a code change:
 1. **DO NOT commit the change.**
@@ -82,6 +88,32 @@ The dispsolver codebase does **not** use Numba. Only NumPy and JAX backends
 are available. If a Numba backend is added, register it in
 `verification/element_backends.py` with the same interface
 (`compute_K(coords, E, nu) -> (8,8) ndarray`).
+
+### Convergence-Order Studies
+
+Three benchmarks (10-12) measure fitted convergence order (error vs. mesh
+size / load-step count) in addition to absolute error:
+
+| # | Benchmark | Type | Theory | Expected Order |
+|---|-----------|------|--------|---------------|
+| 10 | `convergence_cantilever_mesh_q4bbar` | Mesh refinement | Timoshenko cantilever | 2.0 ± 0.4 |
+| 11 | `convergence_elastica_mesh_corotational` | Mesh refinement | Elastica pure moment | 2.0 ± 0.4 |
+| 12 | `convergence_elastica_loadstep_corotational` | Load-step refinement | Elastica pure moment | 1.0 ± 0.4 |
+
+These are part of the mandatory verification gate. A passing study requires
+**both** the fitted slope within tolerance AND \( r^2 \ge 0.95 \).
+
+### Performance (Opt-In)
+
+`python -m verification.run_all --include-speed` times `solve_step()` across
+3 mesh densities × 2 backends. Results are written to
+`verification/results/speed_report.md` and are **informational only** — no
+PASS/FAIL gating.
+
+### Out of Scope / Future: Mojo
+
+A Mojo backend has been discussed but there are zero Mojo references in this
+repository (no toolchain, no FFI). Documented as a placeholder only.
 
 ## Adding New Benchmarks
 

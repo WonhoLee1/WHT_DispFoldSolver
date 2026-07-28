@@ -1,8 +1,8 @@
 {
-  "timestamp": "2026-07-27T23:34:41.489008",
-  "runtime_seconds": 94.07216167449951,
-  "n_benchmarks": 9,
-  "n_passed": 9,
+  "timestamp": "2026-07-29T02:48:21.846507",
+  "runtime_seconds": 250.16966843605042,
+  "n_benchmarks": 12,
+  "n_passed": 12,
   "results": [
     {
       "name": "Patch Test (Element Level)",
@@ -24,6 +24,62 @@
           "error_pct": 0.0,
           "symmetry_error": 5.684341886080802e-14,
           "min_eigenvalue": -2.16807283548376e-13,
+          "label": "strain energy U (N\u00b7mm)",
+          "passed": true
+        },
+        "numpy_t3": {
+          "value": 0.0005494505494505497,
+          "error_pct": 1.9732479539236174e-14,
+          "symmetry_error": 0.0,
+          "min_eigenvalue": -3.732799426282476e-13,
+          "label": "strain energy U (N\u00b7mm)",
+          "passed": true
+        },
+        "numba_q4_bbar": {
+          "value": 0.0010989010989010991,
+          "error_pct": 0.0,
+          "symmetry_error": 1.1368683772161603e-13,
+          "min_eigenvalue": -4.0724813753638155e-13,
+          "label": "strain energy U (N\u00b7mm)",
+          "passed": true
+        },
+        "numba_q4_eas": {
+          "value": 0.001098901098901099,
+          "error_pct": 1.9732479539236174e-14,
+          "symmetry_error": 0.0,
+          "min_eigenvalue": -4.060775595510753e-13,
+          "label": "strain energy U (N\u00b7mm)",
+          "passed": true
+        },
+        "numba_q4_up": {
+          "value": 0.0010989010989010987,
+          "error_pct": 3.946495907847235e-14,
+          "symmetry_error": 0.0,
+          "min_eigenvalue": -1.0210203498112663e-13,
+          "label": "strain energy U (N\u00b7mm)",
+          "passed": true
+        },
+        "numba_q4_corotational": {
+          "value": 0.001098901098901098,
+          "error_pct": 9.866239769618088e-14,
+          "symmetry_error": 1.1368683772161603e-13,
+          "min_eigenvalue": -8.74676627382846e-14,
+          "label": "strain energy U (N\u00b7mm)",
+          "passed": true
+        },
+        "numba_t3": {
+          "value": 0.0005494505494505497,
+          "error_pct": 1.9732479539236174e-14,
+          "symmetry_error": 0.0,
+          "min_eigenvalue": -3.732799426282476e-13,
+          "label": "strain energy U (N\u00b7mm)",
+          "passed": true
+        },
+        "jax_t3": {
+          "value": 0.0005494505494505497,
+          "error_pct": 1.9732479539236174e-14,
+          "symmetry_error": 0.0,
+          "min_eigenvalue": -3.732799426282476e-13,
           "label": "strain energy U (N\u00b7mm)",
           "passed": true
         },
@@ -296,6 +352,171 @@
       },
       "passed": true,
       "details": "Block 2.0\u00d72.0, mesh 10\u00d710, \u03b5_vol=1.0000e-03 (\u03b5_xx=\u03b5_yy=5.0000e-04). c=E/((1+\u03bd)(1-2\u03bd))=1923.08. \u03c3_hydro=0.9615."
+    },
+    {
+      "name": "Convergence Cantilever Mesh (Q4 B-bar)",
+      "category": "solver",
+      "theory_value": 4.0,
+      "tolerance_pct": 1.0,
+      "unit": "",
+      "backends": {
+        "order_fit": {
+          "value": 4.471560358518618,
+          "error_pct": 11.789008962965442,
+          "passed": true,
+          "fitted_order": 4.471560358518618,
+          "r_squared": 0.9983367650004095,
+          "expected_order": 4.0,
+          "order_tol": 1.0,
+          "r2_min": 0.95,
+          "order_within_tol": true,
+          "r2_above_min": true,
+          "label": "fitted order (mesh)"
+        }
+      },
+      "passed": true,
+      "details": "ny= 4 nx= 40: \u03b4=3.732733e-03 err(vs ny=12)=2.41e-02\nny= 6 nx= 60: \u03b4=3.660667e-03 err(vs ny=12)=4.37e-03\nny= 8 nx= 80: \u03b4=3.648666e-03 err(vs ny=12)=1.07e-03",
+      "refinement_levels": [
+        [
+          0.25,
+          0.024139885330301206
+        ],
+        [
+          0.16666666666666666,
+          0.004367358846080505
+        ],
+        [
+          0.125,
+          0.001074660337938976
+        ]
+      ],
+      "fit": {
+        "order": 4.471560358518618,
+        "log_C": 2.5053235364874626,
+        "r_squared": 0.9983367650004095,
+        "h_values": [
+          0.25,
+          0.16666666666666666,
+          0.125
+        ],
+        "error_values": [
+          0.024139885330301206,
+          0.004367358846080505,
+          0.001074660337938976
+        ]
+      }
+    },
+    {
+      "name": "Convergence Elastica Mesh (Corotational)",
+      "category": "solver",
+      "theory_value": 2.7,
+      "tolerance_pct": 0.5,
+      "unit": "",
+      "backends": {
+        "order_fit": {
+          "value": 2.743225322217146,
+          "error_pct": 1.6009378598942934,
+          "passed": true,
+          "fitted_order": 2.743225322217146,
+          "r_squared": 0.9918803640012254,
+          "expected_order": 2.7,
+          "order_tol": 0.5,
+          "r2_min": 0.95,
+          "order_within_tol": true,
+          "r2_above_min": true,
+          "label": "fitted order (mesh)"
+        }
+      },
+      "passed": true,
+      "details": "ny= 4 nx= 40: tip_err=1.97e-02 iters=40\nny= 8 nx= 80: tip_err=3.79e-03 iters=46\nny=12 nx=120: tip_err=1.17e-03 iters=60\nny=16 nx=160: tip_err=4.15e-04 iters=60",
+      "refinement_levels": [
+        [
+          0.25,
+          0.01967192251018356
+        ],
+        [
+          0.125,
+          0.003791860606175701
+        ],
+        [
+          0.08333333333333333,
+          0.0011714195447844235
+        ],
+        [
+          0.0625,
+          0.00041516403953636115
+        ]
+      ],
+      "fit": {
+        "order": 2.743225322217146,
+        "log_C": -0.027512065764106218,
+        "r_squared": 0.9918803640012254,
+        "h_values": [
+          0.25,
+          0.125,
+          0.08333333333333333,
+          0.0625
+        ],
+        "error_values": [
+          0.01967192251018356,
+          0.003791860606175701,
+          0.0011714195447844235,
+          0.00041516403953636115
+        ]
+      }
+    },
+    {
+      "name": "Convergence Elastica Load-Step (Corotational)",
+      "category": "solver",
+      "theory_value": 2.4,
+      "tolerance_pct": 0.5,
+      "unit": "",
+      "backends": {
+        "order_fit": {
+          "value": 2.4202987550947936,
+          "error_pct": 0.8457814622830722,
+          "passed": true,
+          "fitted_order": 2.4202987550947936,
+          "r_squared": 0.9969245494712596,
+          "expected_order": 2.4,
+          "order_tol": 0.5,
+          "r2_min": 0.85,
+          "order_within_tol": true,
+          "r2_above_min": true,
+          "label": "fitted order (load-step)"
+        }
+      },
+      "passed": true,
+      "details": "n_steps= 2: tip_err(vs ref=16)=6.65e-03 iters=8\nn_steps= 4: tip_err(vs ref=16)=1.46e-03 iters=12\nn_steps= 8: tip_err(vs ref=16)=2.32e-04 iters=24",
+      "refinement_levels": [
+        [
+          0.5,
+          0.006647141390978936
+        ],
+        [
+          0.25,
+          0.0014592961919856003
+        ],
+        [
+          0.125,
+          0.0002319903228167114
+        ]
+      ],
+      "fit": {
+        "order": 2.4202987550947936,
+        "log_C": -3.2821482508167543,
+        "r_squared": 0.9969245494712596,
+        "h_values": [
+          0.5,
+          0.25,
+          0.125
+        ],
+        "error_values": [
+          0.006647141390978936,
+          0.0014592961919856003,
+          0.0002319903228167114
+        ]
+      }
     }
   ]
 }

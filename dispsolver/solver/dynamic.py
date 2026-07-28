@@ -616,7 +616,15 @@ class DynamicSolver:
         alpha: float = 0.0,
         mode: Optional[str] = None,
         ul_mode: bool = False,
+        elem_jit: str = "jax",
     ):
+        self.elem_jit = elem_jit
+        self.t_preprocess = 0.0
+        self.t_assemble = 0.0
+        self.t_linear_solve = 0.0
+        self.t_line_search = 0.0
+        self.t_postprocess = 0.0
+        self.t_start_wall = time.time()
         # Named integration preset overrides the individual β/γ/α/static_mode
         # arguments with a mutually-consistent set (see INTEGRATION_MODES).
         if mode is not None:
@@ -1323,6 +1331,39 @@ class DynamicSolver:
         self.last_failure_reason = reason
         return code if code is not None else -(self.max_iter)
 
+    def print_job_timing_summary(self, model_mode: str = "inp", mesh_ratio: float = 0.5) -> None:
+        """Print commercial FEA software (Abaqus / Ansys) style job performance summary."""
+        t_total = time.time() - getattr(self, 't_start_wall', time.time())
+        t_pre = max(0.0, getattr(self, 't_preprocess', 0.0))
+        t_asm = max(0.0, getattr(self, 't_assemble', 0.0))
+        t_sol = max(0.0, getattr(self, 't_linear_solve', 0.0))
+        t_ls = max(0.0, getattr(self, 't_line_search', 0.0))
+        t_post = max(0.0, getattr(self, 't_postprocess', 0.0))
+        t_pure_compute = t_asm + t_sol + t_ls
+        if t_total <= 0.0:
+            t_total = max(1e-6, t_pre + t_pure_compute + t_post)
+
+        def pct(t: float) -> float:
+            return (t / t_total) * 100.0
+
+        print(f"\n{'='*70}", flush=True)
+        print(f"  DISPFOLD APP - JOB TIMING SUMMARY & PERFORMANCE ANALYSIS", flush=True)
+        print(f"{'='*70}", flush=True)
+        print(f"  Model Mode                   : {model_mode}", flush=True)
+        print(f"  Element JIT Backend          : {getattr(self, 'elem_jit', 'jax')}", flush=True)
+        print(f"  Mesh Refinement Ratio        : {mesh_ratio:.2f} ({int(round(mesh_ratio*100))}% element size)", flush=True)
+        print(f"  Total Mesh Elements          : {self.n_elem:,d} elements ({self.n_dofs:,d} DOFs)", flush=True)
+        print(f"{'-'*70}", flush=True)
+        print(f"  1. Pre-processing / Mesh Build : {t_pre:10.4f} s ({pct(t_pre):5.1f}%)", flush=True)
+        print(f"  2. Pure Computation (Newton)   : {t_pure_compute:10.4f} s ({pct(t_pure_compute):5.1f}%)", flush=True)
+        print(f"     - Stiffness & Force Assembly: {t_asm:10.4f} s ({pct(t_asm):5.1f}%)", flush=True)
+        print(f"     - Linear Solver (PARDISO)   : {t_sol:10.4f} s ({pct(t_sol):5.1f}%)", flush=True)
+        print(f"     - Constraints & Line Search : {t_ls:10.4f} s ({pct(t_ls):5.1f}%)", flush=True)
+        print(f"  3. Post-processing / Result IO : {t_post:10.4f} s ({pct(t_post):5.1f}%)", flush=True)
+        print(f"{'-'*70}", flush=True)
+        print(f"  Total Elapsed Wall-Clock Time  : {t_total:10.4f} s (100.0%)", flush=True)
+        print(f"{'='*70}\n", flush=True)
+
     def _print_sta_line(self, dt: float, result: int, t_wall: float) -> None:
         """Print one Abaqus-.sta-style status row for this solve_step attempt.
 
@@ -1525,6 +1566,7 @@ class DynamicSolver:
             if np.any(np.isnan(u_k)):
                 print(f"DEBUG: u_k has NaN before assembly at iter {n_iter+1}!", flush=True)
                 
+            t_asm_0 = time.time()
             f_int, K_T, state_new = self._assemble(u_k, dt)
 
             # --- Phase 3.5: Element inversion detection ---
@@ -1757,8 +1799,12 @@ class DynamicSolver:
                 _scale = 1.0 / np.sqrt(_abs_diag)
                 K_eq = _scale[:, None] * K_red * _scale[None, :]
                 R_eq = _scale * R_red
+
+                self.t_assemble += (time.time() - t_asm_0)
+                t_sol_0 = time.time()
                 du_red = _solve_linear_system(sps.csr_matrix(K_eq), R_eq)
                 du_red = _scale * du_red
+                self.t_linear_solve += (time.time() - t_sol_0)
 
                 # 7. Expand solution: du_all = T @ du_red
                 du_all = self.condensation_mgr.expand_solution(du_red, T)
@@ -1866,9 +1912,12 @@ class DynamicSolver:
                 J_eq = _D @ J @ _D
                 R_eq = _D @ R_total
 
+                self.t_assemble += (time.time() - t_asm_0)
+                t_sol_0 = time.time()
                 # Solve (multithreaded direct + iterative refinement) on equilibrated system
                 du_all_eq = _solve_linear_system(J_eq, R_eq)
                 du_all = _D @ du_all_eq  # unscale
+                self.t_linear_solve += (time.time() - t_sol_0)
             
             # Check if search direction has NaN or Inf
             if np.any(np.isnan(du_all) | np.isinf(du_all)):
@@ -1900,6 +1949,7 @@ class DynamicSolver:
             # provided by the LM diagonal shift, so the cap is both redundant and
             # harmful. The full Newton step (alpha=1.0) is now allowed; the loop
             # below only backtracks to escape NaN/Inf (geometric blow-up).
+            t_ls_start = time.time()
             alpha = 1.0
             alpha_min = 0.1
             alpha_max = 1.0        # no under-relaxation cap (full Newton allowed)
@@ -1935,6 +1985,8 @@ class DynamicSolver:
                 if alpha == 1.0 or armijo or R_norm_temp < R_norm_current * res_threshold:
                     break
                 alpha *= 0.5
+
+            self.t_line_search += (time.time() - t_ls_start)
 
             if alpha <= alpha_min + 1e-5:
                 if getattr(self, 'verbose', False):

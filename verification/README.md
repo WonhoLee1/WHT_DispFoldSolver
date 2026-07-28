@@ -8,6 +8,9 @@ Verification benchmarks for the **dispsolver** JAX-based 2D plane-strain FEM sol
 # Run all benchmarks (generates results/verification_report.md)
 python -m verification.run_all
 
+# Run all benchmarks with performance data (opt-in)
+python -m verification.run_all --include-speed
+
 # Run a single benchmark
 python -m verification.run_all --benchmark cantilever
 ```
@@ -25,6 +28,9 @@ python -m verification.run_all --benchmark cantilever
 | 7 | Uniaxial compression | Solver | Same as tension (negative) | JAX, NumPy sequential |
 | 8 | Volumetric compression | Solver | σ = K_ps · ε_vol | JAX, NumPy sequential |
 | 9 | Volumetric tension | Solver | Same as compression (positive) | JAX, NumPy sequential |
+| 10 | Convergence cantilever mesh (Q4 B-bar) | Solver | Mesh refinement order ≈ 2.0 | Fitted order only |
+| 11 | Convergence elastica mesh (corotational) | Solver | Mesh refinement order ≈ 2.0 | Fitted order only |
+| 12 | Convergence elastica load-step (corotational) | Solver | Load-step refinement order ≈ 1.0 | Fitted order only |
 
 ## Directory Structure
 
@@ -36,12 +42,15 @@ verification/
 ├── theory.py              ← analytical solutions (plane strain)
 ├── mesh_utils.py          ← mesh builders (block, beam, patch, single-element)
 ├── element_backends.py    ← unified NumPy/JAX element API
-├── benchmarks.py          ← 9 benchmark implementations
+├── convergence.py         ← convergence-order studies (3 benchmarks)
+├── speed_bench.py         ← performance benchmarks (opt-in)
+├── benchmarks.py          ← 12 benchmark implementations
 ├── run_all.py             ← orchestrator + report generator
 └── results/               ← output (auto-created)
     ├── verification_report.md
     ├── results.json
-    └── results.csv
+    ├── results.csv
+    └── speed_report.md
 ```
 
 ## Key Design Decisions
@@ -68,6 +77,20 @@ Both must agree with theory. Disagreement indicates a vectorization bug.
 For beam benchmarks, Timoshenko shear correction (κ_s = 5/6) is included
 because the L/H ratios used (10:1) are not large enough for Euler-Bernoulli
 to be sufficient. The verification uses L/H = 10 with 40×4 mesh.
+
+### Large-Rotation / Corotational Verification
+
+Benchmarks 11-12 exercise the ``Q4_COROTATIONAL`` element, which requires
+the solver's ``element_type`` and ``material`` arguments to be passed as
+``{pid: ...}`` dicts (not strings) to reach the corotational kernel
+(see ``AGENTS.md`` Finding 1). The ``make_solver`` function in
+``element_backends.py`` handles this wrapping automatically — do not pass
+``element_type='Q4_COROTATIONAL'`` as a plain string, as this silently uses
+the standard Q4 B-bar kernel with no rotation extraction.
+
+There is no working ``numpy_sequential`` path for the corotational element
+(Finding 2 — a pre-existing bug in ``dynamic.py``). The convergence study
+uses only the JAX backend for corotational cases.
 
 ## See Also
 

@@ -237,6 +237,11 @@ energy error < `1e-15`, KKT residual ratio < `rtol`, Abaqus-style
 reverted** (see §4.4) — don't reintroduce it without re-validating against
 `examples/ex03_corotational_v4.py` end-to-end, not just unit tests.
 
+### Element JIT Strategy: JAX (R&D) → Numba (Production)
+
+- **Development / R&D Phase (`--elem_jit jax`, default)**: Use JAX for new material laws, constitutive models, and element formulations. JAX AutoDiff (`jax.grad`, `jax.vmap`) eliminates hand-deriving analytical tangent matrices, enabling rapid prototyping and error-free formulation development.
+- **Production / Performance Phase (`--elem_jit numba`)**: Once formulations are verified, convert element assembly to Numba `@numba.njit` parallel kernels. Numba delivers **3.15× faster element assembly microbenchmarks** and reduces overall solve time. Any un-implemented elements automatically fall back to JAX smoothly.
+
 ---
 
 ## 3. How to run / verify

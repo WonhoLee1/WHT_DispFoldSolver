@@ -4,8 +4,8 @@ import sys
 from dispsolver.mesh.plate_builder import create_folding_plate_parts
 
 sys.path.insert(0, os.path.dirname(__file__))
-from fold_model_config import FoldModelConfig, DEFAULT_CONFIG
-from material_factory import emit_abaqus_material_block
+from dispsolver.fold_model_config import FoldModelConfig, DEFAULT_CONFIG
+from dispsolver.material.factory import emit_abaqus_material_block
 
 OUTPUT = os.path.join(os.path.dirname(__file__), "ex12_rigid_plate_display_fold.inp")
 

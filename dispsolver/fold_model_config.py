@@ -124,7 +124,7 @@ class GeometryConfig:
     n_layer_pairs: int = 7
 
     plate_thickness: float = 0.5
-    plate_mesh_nx: int = 30
+    plate_mesh_nx: int = 60
     plate_mesh_ny: int = 2
 
 
@@ -142,12 +142,12 @@ class MeshGradingConfig:
     clusters, per the original tip-inversion fix, AGENTS.md 4.12).
     """
     tip_cluster_width: float = 2.0
-    tip_dx: float = 0.25
+    tip_dx: float = 0.125
     hinge_edge_cluster_width: float = 2.0
-    hinge_edge_dx: float = 0.25
+    hinge_edge_dx: float = 0.125
     hinge_span_half_width: float = 8.0
-    hinge_span_dx: float = 0.5
-    plate_body_dx: float = 1.0
+    hinge_span_dx: float = 0.25
+    plate_body_dx: float = 0.5
 
 
 @dataclass

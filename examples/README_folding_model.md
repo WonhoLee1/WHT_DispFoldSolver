@@ -2,7 +2,7 @@
 
 Entry point: `examples/ex13_unified_model_io.py`. All model parameters
 (geometry, layer structure, materials, mesh grading, drive/solver
-tuning) live in one place: `examples/fold_model_config.py`
+tuning) live in one place: `dispsolver/fold_model_config.py`
 (`FoldModelConfig`, default instance `DEFAULT_CONFIG`).
 
 ## Quick start
@@ -23,7 +23,7 @@ with default config — this is how `build`/`read` parity is verified.
 ## How the pieces connect
 
 ```
-FoldModelConfig (fold_model_config.py)
+FoldModelConfig (dispsolver/fold_model_config.py)
         |
         +-- read/roundtrip: gen_ex12_inp.generate(config) -> .inp text
         |                         -> read_abaqus_input() -> ModelBuilderResult
@@ -130,7 +130,7 @@ solving, open an existing saved result) both launch
 ## Building a custom config
 
 ```python
-from fold_model_config import FoldModelConfig, DEFAULT_CONFIG
+from dispsolver.fold_model_config import FoldModelConfig, DEFAULT_CONFIG
 import dataclasses
 
 my_config = dataclasses.replace(
