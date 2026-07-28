@@ -1,0 +1,2 @@
+JAX devices: [CpuDevice(id=0)]
+JAX warm: 0.06s
