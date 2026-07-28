@@ -1,0 +1,30 @@
+Ignoring fixed y limits to fulfill fixed data aspect with adjustable data limits.
+Ignoring fixed y limits to fulfill fixed data aspect with adjustable data limits.
+Ignoring fixed x limits to fulfill fixed data aspect with adjustable data limits.
+D:\PythonCodeStudy\WHT_DispFoldSolver\dispsolver\postprocess\viewer.py:1188: UserWarning: This figure includes Axes that are not compatible with tight_layout, so results might be incorrect.
+  return app.exec()
+====================================================================================================
+ MODEL REVIEW
+====================================================================================================
+Materials (3 distinct):
+  - PET: J2 plasticity: E=4000.0, nu=0.3, sigma_y0=80.0, H=400.0
+  - PSA: Arruda-Boyce + Prony viscoelastic: mu=0.16785, lambda_m=3.0, K=8.3333
+  - STEEL: NeoHookean: E=1e-06, nu=0.3
+Parts / Layers (15 total):
+  - pid 1: 360 elements, material=PET
+  - pid 2: 120 elements, material=PSA
+  - pid 3: 360 elements, material=PET
+  - pid 4: 120 elements, material=PSA
+  - pid 5: 360 elements, material=PET
+  - pid 6: 120 elements, material=PSA
+  - pid 7: 360 elements, material=PET
+  - pid 8: 120 elements, material=PSA
+  - pid 9: 360 elements, material=PET
+  - pid 10: 120 elements, material=PSA
+  - pid 11: 360 elements, material=PET
+  - pid 12: 120 elements, material=PSA
+  - pid 13: 360 elements, material=PET
+  - pid 14: 120 elements, material=PSA
+  - pid 15: 120 elements, material=STEEL
+Total elements: 3480, total layers/parts: 15
+====================================================================================================
