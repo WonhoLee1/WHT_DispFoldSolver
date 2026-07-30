@@ -350,6 +350,28 @@ def _compute_F(coords: np.ndarray, u_elem: np.ndarray, xi: float, eta: float) ->
 _GP2 = q4._GP2
 _W2 = q4._W2
 
+# Short-form aliases for element_type strings, resolved once at
+# DynamicSolver construction (both the uniform-string and per-pid dict
+# forms) so every downstream `self.element_type` / `self.element_type_by_pid`
+# comparison in this file only ever sees the canonical long-form name --
+# no need to duplicate aliases into every dispatch tuple.
+_ELEMENT_TYPE_ALIASES = {
+    "Q4_CR": "Q4_COROTATIONAL",
+    "Q4_CR_EAS": "Q4_COROTATIONAL_EAS",
+    "Q4_CR_SRI": "Q4_COROTATIONAL_SRI",
+    "Q4_CR_HYBRID": "Q4_COROTATIONAL_HYBRID",
+    "Q4_CR_HYBRID_SRI": "Q4_COROTATIONAL_HYBRID_SRI",
+    "Q4_CR_HYBRID_EAS": "Q4_COROTATIONAL_HYBRID_EAS",
+    # Deliberately NOT aliasing "Q4_CR_REDUCED" -> "Q4_COROTATIONAL_REDUCED":
+    # that element (dispsolver/element/q4_reduced_jax.py) was abandoned --
+    # reduced-integration+hourglass structurally can't distinguish real
+    # bending from spurious hourglassing (see
+    # dev_log/session_20260730_reduced_integration_failure.md) -- and it
+    # was never wired into this file's dispatch tuples at all. Aliasing an
+    # unrecognized-downstream name here would be the exact AGENTS.md §4.8
+    # silent-fallthrough-to-plain-Q4-B-bar bug class.
+}
+
 def _element_contributions(
     coords: np.ndarray, u_elem: np.ndarray, state_elem: np.ndarray, material: MaterialAdapter,
     dt: Optional[float] = None, thickness: float = 1.0,
@@ -668,11 +690,13 @@ class DynamicSolver:
         # (per-material) so e.g. viscoelastic layers use the Q1P0 hybrid while
         # plastic layers use standard Q4 B-bar.
         if isinstance(element_type, dict):
-            self.element_type_by_pid = dict(element_type)
+            self.element_type_by_pid = {
+                pid: _ELEMENT_TYPE_ALIASES.get(et, et) for pid, et in element_type.items()
+            }
             self.element_type = "MIXED"
         else:
             self.element_type_by_pid = None
-            self.element_type = element_type
+            self.element_type = _ELEMENT_TYPE_ALIASES.get(element_type, element_type)
         self.constraints = constraints if constraints is not None else []
         self.penalty_constraints = penalty_constraints if penalty_constraints is not None else []
         self.rbe2_elements = rbe2_elements if rbe2_elements is not None else []
