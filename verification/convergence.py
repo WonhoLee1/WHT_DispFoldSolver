@@ -19,7 +19,7 @@ from typing import Dict, List, Tuple
 
 from .theory import (
     plane_strain_modulus, beam_I, cantilever_tip_deflection,
-    elastica_pure_moment_tip_state,
+    elastica_pure_moment_tip_state, elastic_plastic_pure_moment_tip_state,
 )
 from .mesh_utils import build_beam_mesh
 from .element_backends import make_solver
@@ -151,11 +151,20 @@ def _run_pure_moment_case(
     theta_target_deg: float,
     n_steps: int,
     element_type: str = 'Q4_COROTATIONAL',
+    sigma_y0: float = 1e12,
+    H_hardening: float = 0.0,
 ) -> dict:
     """Run a cantilever under a follower pure end moment.
 
     Left end fixed.  Moment is applied as a self-equilibrated follower
     force couple at the right tip, ramped linearly over n_steps.
+
+    sigma_y0/H_hardening: J2Plasticity yield stress / hardening modulus.
+    Defaults (1e12, 0.0) keep the beam elastic, matching every existing
+    caller. Pass real values (e.g. PET's sigma_y0=80, H_hardening=400) to
+    combine large rotation with real plasticity -- the tip comparison
+    then automatically switches from the purely-elastic elastica formula
+    to `elastic_plastic_pure_moment_tip_state`.
 
     Returns detailed result dict including tip error, iteration
     count, and a flag recording whether the solver actually used the
@@ -174,7 +183,9 @@ def _run_pure_moment_case(
 
     backend = 'jax'
     solver = make_solver(mesh, E, nu, backend=backend,
-                         element_type=element_type, **SOLVER_KWARGS)
+                         element_type=element_type,
+                         sigma_y0=sigma_y0, H=H_hardening,
+                         **SOLVER_KWARGS)
     solver.sta_status = False
 
     use_mm = getattr(solver, 'use_multi_material_batch', None)
@@ -240,8 +251,15 @@ def _run_pure_moment_case(
     x_tip_num = float(x_def[mid_idx])
     y_tip_num = float(y_def[mid_idx])
 
-    # Exact solution for the total applied moment
-    exact = elastica_pure_moment_tip_state(M_target, L, E_star, I_beam)
+    # Exact solution for the total applied moment -- elastic-plastic
+    # moment-curvature relation once a real (finite) yield stress is
+    # given, otherwise the purely-elastic elastica formula (unchanged
+    # for every existing caller, which all use the default sigma_y0=1e12).
+    if sigma_y0 < 1e11:
+        exact = elastic_plastic_pure_moment_tip_state(
+            M_target, L, H, 1.0, E_star, sigma_y0, H_hardening)
+    else:
+        exact = elastica_pure_moment_tip_state(M_target, L, E_star, I_beam)
     x_exact = float(exact['x_tip'])
     y_exact = float(exact['y_tip'])
 
