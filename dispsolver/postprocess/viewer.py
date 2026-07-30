@@ -310,27 +310,35 @@ class _ResultCache:
 
         elem_vals = np.zeros(n_elem, dtype=np.float64)
 
+        # ------------------------------------------------------------
+        # Pass 1: geometry + strain (unchanged per-element loop -- no
+        # material call here, just small 2x2 linear algebra per element,
+        # which is fast even for thousands of elements). Stores F for
+        # every valid element so Pass 2 can batch the material call by
+        # pid instead of calling it once per element in Python.
+        # ------------------------------------------------------------
+        F_all = np.tile(np.eye(2), (n_elem, 1, 1))
+        e11_all = np.zeros(n_elem)
+        e22_all = np.zeros(n_elem)
+        e12_all = np.zeros(n_elem)      # tensor shear (E12)
+        e12_2_all = np.zeros(n_elem)    # engineering shear (2*E12)
+        valid = np.zeros(n_elem, dtype=bool)
+        elem_pid_all = np.empty(n_elem, dtype=object)
+
         for e in range(n_elem):
-            # ------------------------------------------------------------
-            # 요소별 데이터 추출
-            # ------------------------------------------------------------
             nidx = conn[e]                # (4,) 절점 인덱스
             coords_e = coords_all[nidx]   # (4, 2) 요소 절점 좌표
 
-            # 이 요소의 실제 pid에 해당하는 재료 선택 (버그 수정, 위 주석 참고).
             eid = solver.elem_ids[e]
             elem_pid = getattr(solver.mesh.elements[eid], "pid", None)
-            mat = mat_by_pid.get(elem_pid, default_mat)
+            elem_pid_all[e] = elem_pid
 
-            # 절점별 변위 → 요소 변위 벡터 (8,)
-            ux_e = u_all[2 * nidx]               # (4,)
-            uy_e = u_all[2 * nidx + 1]           # (4,)
+            ux_e = u_all[2 * nidx]
+            uy_e = u_all[2 * nidx + 1]
             u_elem = np.zeros(8, dtype=np.float64)
             u_elem[0::2] = ux_e
             u_elem[1::2] = uy_e
 
-            # Jacobian: 자연좌표(ξ,η)와 물리좌표(X,Y) 간 변환.
-            # detJ > 0이어야 요소가 올바른 방향 (면적 > 0).
             try:
                 J, detJ, invJ = jacobian(xi, eta, coords_e)
                 if detJ <= 0:
@@ -338,134 +346,145 @@ class _ResultCache:
             except Exception:
                 continue
 
-            # ------------------------------------------------------------
-            # 변형구배 F = I + ∇u
-            # ------------------------------------------------------------
             grad_u = self._grad_u_elem(coords_e, u_elem, dN_dxi, dN_deta, invJ)
             F = self._deformation_gradient(grad_u)
+            F_all[e] = F
+            valid[e] = True
 
-            # ------------------------------------------------------------
-            # Green-Lagrange 변형률 E
-            # ------------------------------------------------------------
             # E = 0.5*(F^T·F - I), Voigt: [E11, E22, 2*E12]
             E_v = self._green_lagrange_strain(F)
-            e11, e22, e12_2 = E_v
-            e12 = e12_2 / 2.0  # 공학적 전단 → 텐서 전단
+            e11_all[e], e22_all[e], e12_2_all[e] = E_v
+            e12_all[e] = e12_2_all[e] / 2.0  # 공학적 전단 → 텐서 전단
 
-            # ------------------------------------------------------------
-            # Cauchy 응력 σ = F·S·F^T / det(F)
-            # ------------------------------------------------------------
-            # solver는 PK2 응력 S를 저장함 (참조형상 정의).
-            # 물리적 응력 시각화를 위해 Cauchy 응력(현재형상)으로 변환:
-            #   σ = (1/detF) * F * S * F^T
-            # 이 변환을 "push-forward"라고 함.
-            if 'stress' in name or 'principal_stress' in name:
-                # ViscoelasticMaterial(PSA 등)은 J2Plasticity와 pk2_voigt
-                # 호출 규약이 전혀 다르다: h_prev가 (M+1,3,3) 텐서여야 하고
-                # (J2는 5칸 flat), dt 인자가 필수(J2는 안 받음), params도
-                # base 재료(mu/lambda_m/K)용이 필요(J2는 무시). 예전엔 모든
-                # 요소가 pid=1(J2)의 solver.material로만 계산돼서 이 분기가
-                # 실행될 일이 없었다 -- per-pid 재료 선택을 고치면서 PSA
-                # 요소가 실제로 ViscoelasticMaterial.pk2_voigt를 타게 됐고,
-                # 옛 호출 방식(3-args, flat state)은 TypeError로 죽어서
-                # 조용히 응력 0으로 깔리고 있었다.
+        # ------------------------------------------------------------
+        # Pass 2: Cauchy stress sigma = F.S.F^T / det(F), batched by pid.
+        # ------------------------------------------------------------
+        # solver는 PK2 응력 S를 저장함 (참조형상 정의). 물리적 응력
+        # 시각화를 위해 Cauchy 응력(현재형상)으로 변환:
+        #   σ = (1/detF) * F * S * F^T  ("push-forward")
+        #
+        # 배치화 이유: 요소별로 material.pk2_voigt()를 순수 Python 루프에서
+        # 개별 호출하면(요소 수천 개 x 뷰어 필드 전환마다) J2 소성/점탄성의
+        # 비선형 재료 계산(고유분해, Prony 재귀 등) 오버헤드가 그대로 쌓여
+        # "응력/변형률 선택 시 한참 기다림" 현상의 원인이 됨. pid별로 그룹핑해
+        # 이미 솔버 조립(dynamic.py::_assemble_multi_material_batch)이 쓰는
+        # pk2_voigt_batch/pk2_tangent_voigt_batch로 한 번에 처리하면 같은
+        # 결과를 수십~수백 배 빠르게 얻는다.
+        s11_all = np.zeros(n_elem)
+        s22_all = np.zeros(n_elem)
+        s12_all = np.zeros(n_elem)
+
+        if 'stress' in name or 'principal_stress' in name:
+            unique_pids = set(elem_pid_all[valid].tolist())
+            for pid in unique_pids:
+                mask = valid & (elem_pid_all == pid)
+                idx = np.where(mask)[0]
+                if len(idx) == 0:
+                    continue
+                mat = mat_by_pid.get(pid, default_mat)
+                F_batch = F_all[idx]
+
                 is_visco = hasattr(mat, "base") and hasattr(mat, "M") and hasattr(mat, "g_i")
-                mat_params = params_by_pid.get(elem_pid, {}) if is_visco else {}
-
-                if is_visco:
-                    from dispsolver.material.viscoelastic import _flat_batch_to_tensor_3d
-                    n_vars = mat.n_internal_vars  # 6*(M+1), may be < padded row width
-                    if state_all is not None and state_all.shape[0] > e:
-                        flat = state_all[e, 0, :n_vars]
-                    else:
-                        flat = np.zeros(n_vars, dtype=np.float64)
-                    gp_state = _flat_batch_to_tensor_3d(flat[None, :], mat.M)[0]
-                elif state_all is not None and state_all.shape[0] > e:
-                    # 첫 번째 Gauss point의 내부변수 사용
-                    # (J2 소성: [Fp_inv_00, Fp_inv_01, Fp_inv_10, Fp_inv_11, eqps])
-                    gp_state = state_all[e, 0, :]
-                else:
-                    # 기본 상태: 탄성 (Fp_inv = I, eqps = 0)
-                    gp_state = np.array([1.0, 0.0, 0.0, 1.0, 0.0])
-
                 try:
                     if is_visco:
+                        mat_params = params_by_pid.get(pid, {})
+                        n_vars = mat.n_internal_vars
+                        if state_all is not None and state_all.shape[0] >= n_elem:
+                            flat_batch = state_all[idx, 0, :n_vars]
+                        else:
+                            flat_batch = np.zeros((len(idx), n_vars), dtype=np.float64)
                         # dt=0: 저장된 state는 이미 실제 해석에서 이 F로
-                        # 수렴한 시점의 값이므로, 여기서 dt=0으로 재평가하면
-                        # dS_dev(=S_dev_el-h_prev[M])가 0이 되어 Prony 항이
-                        # 갱신되지 않고 정확히 그 순간의 평형응력이 재현된다
-                        # (추가로 시간을 흘려보내는 근사가 아니라, 저장된
-                        # 상태를 그대로 재조회하는 것).
-                        S_res = mat.pk2_voigt(F, mat_params, gp_state, dt=0.0)
+                        # 수렴한 시점의 값이므로, dt=0으로 재평가하면
+                        # Prony 항이 갱신되지 않고 정확히 그 순간의 평형
+                        # 응력이 재현된다 (시간을 흘려보내는 근사가 아니라
+                        # 저장된 상태를 그대로 재조회하는 것).
+                        S_batch, _, _ = mat.pk2_tangent_voigt_batch(
+                            F_batch, mat_params, flat_batch, dt=0.0)
+                    elif hasattr(mat, "pk2_voigt_batch"):
+                        n_vars = getattr(mat, 'n_internal_vars', 5)
+                        if state_all is not None and state_all.shape[0] >= n_elem:
+                            state_batch = state_all[idx, 0, :n_vars]
+                        else:
+                            state_batch = np.tile(
+                                np.array([1.0, 0.0, 0.0, 1.0, 0.0])[:n_vars], (len(idx), 1))
+                        S_batch, _, _ = mat.pk2_voigt_batch(F_batch, {}, state_batch)
                     else:
-                        S_res = mat.pk2_voigt(F, {}, gp_state)
-                    # PK2 응력 (Voigt) 계산: S = pk2_voigt(F, params, state)
-                    # 반환값: (S_voigt, C_tangent, state_new) 또는 S_voigt만
-                    S_v = S_res[0] if isinstance(S_res, tuple) else S_res
-                    # S_v = [S11, S22, S12]
+                        # No batch method on this material -- fall back to
+                        # a per-element loop for just this pid's elements
+                        # (small, rare materials only; keeps correctness).
+                        S_batch = np.zeros((len(idx), 3))
+                        for k, e in enumerate(idx):
+                            state_e = (state_all[e, 0, :getattr(mat, 'n_internal_vars', 5)]
+                                      if state_all is not None else
+                                      np.array([1.0, 0.0, 0.0, 1.0, 0.0]))
+                            S_res = mat.pk2_voigt(F_all[e], {}, state_e)
+                            S_batch[k] = S_res[0] if isinstance(S_res, tuple) else S_res
 
-                    # PK2 Voigt → 2x2 텐서
-                    S_tensor = np.array([[S_v[0], S_v[2]],
-                                          [S_v[2], S_v[1]]])
+                    detF_batch = np.linalg.det(F_batch)
+                    S_tensor_batch = np.zeros((len(idx), 2, 2))
+                    S_tensor_batch[:, 0, 0] = S_batch[:, 0]
+                    S_tensor_batch[:, 1, 1] = S_batch[:, 1]
+                    S_tensor_batch[:, 0, 1] = S_batch[:, 2]
+                    S_tensor_batch[:, 1, 0] = S_batch[:, 2]
 
-                    detF = np.linalg.det(F)
-                    if abs(detF) > 1e-15:
-                        # Push-forward: σ = F·S·F^T / detF
-                        sigma = F @ S_tensor @ F.T / detF
-                        s11, s22 = sigma[0, 0], sigma[1, 1]
-                        s12 = sigma[0, 1]
-                    else:
-                        s11 = s22 = s12 = 0.0
+                    safe = np.abs(detF_batch) > 1e-15
+                    sigma_batch = np.einsum('nij,njk,nlk->nil', F_batch, S_tensor_batch, F_batch)
+                    sigma_batch[safe] /= detF_batch[safe][:, None, None]
+                    sigma_batch[~safe] = 0.0
+
+                    s11_all[idx] = sigma_batch[:, 0, 0]
+                    s22_all[idx] = sigma_batch[:, 1, 1]
+                    s12_all[idx] = sigma_batch[:, 0, 1]
                 except Exception:
-                    # 재료 계산 실패 시 응력 0 처리
+                    # 재료 계산 실패 시 이 pid 그룹은 응력 0 처리
                     # (비수렴 요소, 초기 상태 등에서 발생 가능)
-                    s11 = s22 = s12 = 0.0
-            else:
-                s11 = s22 = s12 = 0.0
+                    pass
 
-            # ------------------------------------------------------------
-            # 필드 선택 및 값 할당
-            # ------------------------------------------------------------
-            if name == 'strain_xx':
-                elem_vals[e] = e11
-            elif name == 'strain_yy':
-                elem_vals[e] = e22
-            elif name == 'strain_xy':
-                elem_vals[e] = e12_2  # 공학적 전단변형률 γ_xy = 2*E12
-            elif name == 'strain_vm':
-                # von Mises 등가 변형률 (소변형 근사)
-                ev = np.sqrt((e11-e22)**2 + e11**2 + e22**2 + 6*e12**2) / np.sqrt(2)
-                elem_vals[e] = ev
-            elif name == 'stress_xx':
-                elem_vals[e] = s11
-            elif name == 'stress_yy':
-                elem_vals[e] = s22
-            elif name == 'stress_xy':
-                elem_vals[e] = s12
-            elif name == 'stress_vm':
-                elem_vals[e] = self._von_mises(s11, s22, s12)
-            elif name == 'principal_strain_1':
-                p1, p2 = self._principal_2d(e11, e22, e12)
-                elem_vals[e] = p1
+        # ------------------------------------------------------------
+        # Pass 3: 필드 선택 -- 전부 벡터 연산 (요소별 루프 없음)
+        # ------------------------------------------------------------
+        if name == 'strain_xx':
+            elem_vals = e11_all
+        elif name == 'strain_yy':
+            elem_vals = e22_all
+        elif name == 'strain_xy':
+            elem_vals = e12_2_all  # 공학적 전단변형률 γ_xy = 2*E12
+        elif name == 'strain_vm':
+            elem_vals = np.sqrt((e11_all - e22_all) ** 2 + e11_all ** 2 + e22_all ** 2
+                                + 6 * e12_all ** 2) / np.sqrt(2)
+        elif name == 'stress_xx':
+            elem_vals = s11_all
+        elif name == 'stress_yy':
+            elem_vals = s22_all
+        elif name == 'stress_xy':
+            elem_vals = s12_all
+        elif name == 'stress_vm':
+            elem_vals = np.sqrt(s11_all ** 2 - s11_all * s22_all + s22_all ** 2
+                                + 3 * s12_all ** 2)
+        elif name in ('principal_strain_1', 'principal_strain_2', 'principal_strain_abs_max'):
+            center = (e11_all + e22_all) / 2.0
+            radius = np.sqrt(((e11_all - e22_all) / 2.0) ** 2 + e12_all ** 2)
+            p1, p2 = center + radius, center - radius
+            if name == 'principal_strain_1':
+                elem_vals = p1
             elif name == 'principal_strain_2':
-                p1, p2 = self._principal_2d(e11, e22, e12)
-                elem_vals[e] = p2
-            elif name == 'principal_stress_1':
-                p1, p2 = self._principal_2d(s11, s22, s12)
-                elem_vals[e] = p1
-            elif name == 'principal_stress_2':
-                p1, p2 = self._principal_2d(s11, s22, s12)
-                elem_vals[e] = p2
-            elif name == 'principal_strain_abs_max':
-                # 두 주변형률 중 절대값이 큰 쪽
-                p1, p2 = self._principal_2d(e11, e22, e12)
-                elem_vals[e] = p1 if abs(p1) >= abs(p2) else p2
-            elif name == 'principal_stress_abs_max':
-                # 두 주응력 중 절대값이 큰 쪽
-                p1, p2 = self._principal_2d(s11, s22, s12)
-                elem_vals[e] = p1 if abs(p1) >= abs(p2) else p2
+                elem_vals = p2
             else:
-                raise ValueError(f"Unknown field: {name}")
+                elem_vals = np.where(np.abs(p1) >= np.abs(p2), p1, p2)
+        elif name in ('principal_stress_1', 'principal_stress_2', 'principal_stress_abs_max'):
+            center = (s11_all + s22_all) / 2.0
+            radius = np.sqrt(((s11_all - s22_all) / 2.0) ** 2 + s12_all ** 2)
+            p1, p2 = center + radius, center - radius
+            if name == 'principal_stress_1':
+                elem_vals = p1
+            elif name == 'principal_stress_2':
+                elem_vals = p2
+            else:
+                elem_vals = np.where(np.abs(p1) >= np.abs(p2), p1, p2)
+        else:
+            raise ValueError(f"Unknown field: {name}")
+
+        elem_vals = np.where(valid, elem_vals, 0.0)
 
         # ------------------------------------------------------------
         # FieldData 구성 — 유효값 범위로 vmin/vmax 설정

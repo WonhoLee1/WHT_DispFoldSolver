@@ -209,6 +209,42 @@ class MaterialModel(ABC):
 
         return C_voigt
 
+    def pk2_tensor_batch(self, F_batch: jnp.ndarray, params: Params) -> jnp.ndarray:
+        """Vectorized `pk2_tensor` over N deformation gradients (N, 2, 2).
+
+        Generic jax.vmap wrapper -- works for every MaterialModel subclass
+        without each one needing its own batch method. Exists because
+        ViscoelasticMaterial._base_batch
+        (dispsolver/material/viscoelastic.py) prefers this (via hasattr)
+        over a per-element Python loop calling jax.hessian in EAGER mode
+        once per element -- that eager loop was the actual bottleneck
+        behind "selecting a stress/strain field in the Qt viewer takes a
+        long time" for any model with a base material (e.g. ArrudaBoyce,
+        used by PSA) that didn't already define this.
+
+        NOT wrapped in jax.jit: `params` here can carry non-array leaves
+        (e.g. ArrudaBoyce called from ViscoelasticMaterial._base_batch
+        gets the wrapper's own params dict, which includes a 'base' name
+        string, a 'prony' list of tuples, a 'wlf' dict -- jit requires
+        every argument to be a valid array/pytree unless marked static,
+        and a plain dict isn't hashable so it can't be marked static
+        either. Plain jax.vmap has no such restriction since `in_axes=None`
+        just threads params through unchanged as auxiliary (non-batched,
+        non-differentiated) data -- vmap alone still fuses the whole batch
+        into one XLA computation instead of N separate eager per-element
+        jax.hessian calls, which is where nearly all of the original slowness
+        came from.
+        """
+        return jax.vmap(self.pk2_tensor, in_axes=(0, None))(F_batch, params)
+
+    def tangent_voigt_batch(self, F_batch: jnp.ndarray, params: Params) -> jnp.ndarray:
+        """Vectorized `tangent_voigt` over N deformation gradients (N, 2, 2).
+
+        See `pk2_tensor_batch` docstring -- same rationale (no jax.jit,
+        params may contain non-array leaves).
+        """
+        return jax.vmap(self.tangent_voigt, in_axes=(0, None))(F_batch, params)
+
     def linear_elastic_moduli(self, params: Params) -> Tuple[float, float]:
         """Return (E_young, nu_poisson) at small-strain limit."""
         raise NotImplementedError
