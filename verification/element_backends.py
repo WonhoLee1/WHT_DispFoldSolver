@@ -593,6 +593,7 @@ def get_backend(name: str) -> dict:
 
 def make_solver(mesh, E: float, nu: float, backend: str = 'jax',
                 element_type: str = 'Q4', rho: float = 1e-6,
+                sigma_y0: float = 1e12, H: float = 0.0,
                 **kwargs) -> object:
     """Create a DynamicSolver configured for the specified backend.
 
@@ -606,6 +607,12 @@ def make_solver(mesh, E: float, nu: float, backend: str = 'jax',
         - 'numpy_sequential' → force sequential fallback (monkey-patch)
     element_type : 'Q4' | 'Q4_EAS' | 'Q4_UP'
     rho : float — density (small to approximate static)
+    sigma_y0, H : float — J2Plasticity yield stress / hardening modulus,
+        only used for the corotational/Q4_EAS branches below (NeoHookean
+        elements ignore these). Defaults (1e12, 0.0) keep the material
+        effectively elastic, matching every existing caller's behavior
+        unless a benchmark explicitly wants real yielding (e.g. an
+        elastic-plastic pure-moment check).
     """
     from dispsolver.material import NeoHookean, J2Plasticity
     from dispsolver.solver import DynamicSolver
@@ -630,12 +637,12 @@ def make_solver(mesh, E: float, nu: float, backend: str = 'jax',
                 f"{element_type} has no working numpy_sequential path. "
                 "Use backend='jax' or 'numba'."
             )
-        mat = {0: J2Plasticity(E=E, nu=nu, sigma_y0=1e12, H=0.0)}
+        mat = {0: J2Plasticity(E=E, nu=nu, sigma_y0=sigma_y0, H=H)}
         element_type_arg = {0: element_type}
         material_params = {}
     elif element_type == 'Q4_EAS':
-        # J2Plasticity with very high yield stays in the elastic regime
-        mat = J2Plasticity(E=E, nu=nu, sigma_y0=1e12, H=0.0)
+        # J2Plasticity with very high yield (default) stays in the elastic regime
+        mat = J2Plasticity(E=E, nu=nu, sigma_y0=sigma_y0, H=H)
         material_params = {}
     else:
         mat = NeoHookean()

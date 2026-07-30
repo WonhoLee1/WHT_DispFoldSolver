@@ -282,6 +282,137 @@ def elastica_pure_moment_tip_state(M: float, L: float, E_star: float,
     }
 
 
+# ------------------------------------------------------------------
+# Elastic-plastic pure bending (linear isotropic hardening, J2)
+# ------------------------------------------------------------------
+
+def _section_moment(kappa: float, height: float, width: float,
+                    E_star: float, sigma_y0: float, H: float,
+                    n_pts: int = 400) -> float:
+    """Bending moment for a given curvature, rectangular cross-section,
+    bilinear elastic/linear-hardening uniaxial stress-strain law.
+
+    Bernoulli-Euler kinematics eps(y) = kappa*y (plane sections remain
+    plane -- valid for pure moment on a prismatic beam even once part of
+    the section yields, since M is constant and uniform along the beam
+    length regardless of the moment-curvature law, so long as the
+    cross-section and material are uniform).
+
+    Uniaxial stress-strain (additive elastic/plastic strain split,
+    isotropic hardening sigma_y = sigma_y0 + H*eqps -- same hardening
+    law as dispsolver.material.plastic.J2Plasticity):
+        eps_y = sigma_y0 / E_star                      (yield strain)
+        sigma(eps) = E_star*eps                          , |eps| <= eps_y
+        sigma(eps) = sign(eps)*(sigma_y0 + Et*(|eps|-eps_y)) , |eps| > eps_y
+    with Et = E_star*H/(E_star+H) the standard series elastic/hardening
+    tangent modulus (dsigma/deps = 1/(1/E_star + 1/H)).
+
+    M(kappa) = width * integral_{-c}^{c} sigma(kappa*y) * y dy,
+    evaluated by Simpson quadrature (exact to within quadrature error,
+    not an approximation of the constitutive law itself).
+    """
+    c = height / 2.0
+    Et = E_star * H / (E_star + H) if H > 0 else 0.0
+    eps_y = sigma_y0 / E_star
+
+    y = np.linspace(-c, c, n_pts if n_pts % 2 == 1 else n_pts + 1)
+    eps = kappa * y
+    sigma = np.where(
+        np.abs(eps) <= eps_y,
+        E_star * eps,
+        np.sign(eps) * (sigma_y0 + Et * (np.abs(eps) - eps_y)),
+    )
+    integrand = sigma * y
+    return float(width * np.trapz(integrand, y))
+
+
+def elastic_plastic_pure_moment_tip_state(M: float, L: float, height: float,
+                                          width: float, E_star: float,
+                                          sigma_y0: float, H: float) -> dict:
+    """Exact (to quadrature/root-finding tolerance) large-rotation tip
+    state of a cantilever under pure end moment, once part of the
+    cross-section has yielded -- generalizes
+    `elastica_pure_moment_tip_state` from a linear M=E*I*kappa relation
+    to the full elastic-plastic moment-curvature relation.
+
+    Curvature is still constant along the beam (M uniform, prismatic
+    section) so the same circular-arc tip-position formula applies; only
+    the M(kappa) relation used to invert for kappa changes.
+
+    Parameters
+    ----------
+    M : applied end moment (force*length per unit depth)
+    L : beam length
+    height, width : cross-section dimensions (width=1 for the "per unit
+        depth" plane-strain convention used elsewhere in this module)
+    E_star : plane-strain modulus E/(1-nu**2)
+    sigma_y0, H : J2Plasticity yield stress / hardening modulus (same
+        parameters passed to dispsolver.material.plastic.J2Plasticity)
+
+    Returns
+    -------
+    dict with 'kappa', 'theta', 'x_tip', 'y_tip', 'M', 'L', 'M_yield',
+    'M_p' (fully-plastic limit moment, H=0 asymptote), 'kappa_yield'.
+
+    Reference
+    ---------
+    Elastic-plastic bending of a beam under pure moment, bilinear
+    (elastic + linear isotropic hardening) uniaxial law -- standard
+    result, e.g. Hill, R. (1950) "The Mathematical Theory of
+    Plasticity", Oxford, Ch. 2; or Chakrabarty, J. (2006) "Theory of
+    Plasticity", 3rd ed., Ch. 2, for the elastic-perfectly-plastic (H=0)
+    closed form M = M_p*(1 - (1/3)*(kappa_y/kappa)**2), which this
+    function's numerical M(kappa) reduces to as H -> 0.
+    """
+    c = height / 2.0
+    I = width * height ** 3 / 12.0
+    kappa_yield = sigma_y0 / (E_star * c)
+    M_yield = E_star * I * kappa_yield
+    M_p = sigma_y0 * width * height ** 2 / 4.0  # fully-plastic limit, H=0
+
+    if abs(M) < 1e-30:
+        return {
+            'kappa': 0.0, 'theta': 0.0, 'x_tip': float(L), 'y_tip': 0.0,
+            'M': float(M), 'L': float(L),
+            'M_yield': float(M_yield), 'M_p': float(M_p),
+            'kappa_yield': float(kappa_yield),
+        }
+
+    if abs(M) <= M_yield:
+        kappa = M / (E_star * I)
+    else:
+        # Monotonic M(kappa) for H >= 0 -> bisection is safe and simple.
+        lo, hi = kappa_yield, kappa_yield * 50.0
+        M_hi = _section_moment(hi, height, width, E_star, sigma_y0, H)
+        while M_hi < abs(M) and hi < kappa_yield * 1e6:
+            hi *= 2.0
+            M_hi = _section_moment(hi, height, width, E_star, sigma_y0, H)
+        for _ in range(80):
+            mid = 0.5 * (lo + hi)
+            M_mid = _section_moment(mid, height, width, E_star, sigma_y0, H)
+            if M_mid < abs(M):
+                lo = mid
+            else:
+                hi = mid
+        kappa = np.sign(M) * 0.5 * (lo + hi)
+
+    theta = kappa * L
+    x_tip = np.sin(theta) / kappa if abs(kappa) > 1e-30 else float(L)
+    y_tip = (1.0 - np.cos(theta)) / kappa if abs(kappa) > 1e-30 else 0.0
+
+    return {
+        'kappa': float(kappa),
+        'theta': float(theta),
+        'x_tip': float(x_tip),
+        'y_tip': float(y_tip),
+        'M': float(M),
+        'L': float(L),
+        'M_yield': float(M_yield),
+        'M_p': float(M_p),
+        'kappa_yield': float(kappa_yield),
+    }
+
+
 def volumetric_strain_from_pressure(p: float, E: float, nu: float) -> float:
     """Inverse of volumetric_pressure_volume_change."""
     c = E / ((1.0 + nu) * (1.0 - 2.0 * nu))
