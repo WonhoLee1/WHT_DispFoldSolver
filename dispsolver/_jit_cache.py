@@ -17,13 +17,29 @@ without being traced arguments (e.g. q4_reduced_jax.py's `_ALPHA_HG`,
 q4_eas_jax.py's `_ALPHA_MAX`) -- changing one of those doesn't always
 change the function's bytecode/jaxpr hash in a way the cache notices.
 
-Two independent controls, both read once at import time:
+Controls, all read once at import time:
 
-- `DISPFOLD_JIT_CACHE` (default "1"): set to "0" to disable on-disk
-  caching entirely -- every process start recompiles from scratch. Use
-  this in CI/deployment pipelines where reproducible, cache-free builds
-  matter more than startup speed, or when debugging a suspected stale-
-  cache issue.
+- `DISPFOLD_JIT_CACHE` (default "1"): set to "0" to disable Numba's
+  on-disk caching entirely -- every process start recompiles from
+  scratch. Use this in CI/deployment pipelines where reproducible,
+  cache-free builds matter more than startup speed, or when debugging a
+  suspected stale-cache issue.
+- `DISPFOLD_JAX_CACHE` (default "0", i.e. OFF -- opt-in only): JAX's
+  persistent compilation cache stores CPU-feature-targeted AOT-compiled
+  code (XLA:CPU AOT). Observed in practice: loading a cache entry
+  compiled for a different CPU feature set than the executing host logs
+  "Target machine feature ... not supported on the host machine ...
+  could lead to execution errors such as SIGILL" -- this is an XLA-level
+  warning, not a code-version problem, and neither the version tag nor
+  the platform tag below catches it (both machines can report the same
+  `platform.machine()` and Python version while still having different
+  CPU instruction-set extensions, e.g. AVX-512 variants). Numba's cache
+  has no equivalent failure mode (it caches LLVM-compiled-for-host code,
+  recompiled per-host at first use, not cross-host AOT snapshots), which
+  is why it defaults on while this defaults off. Set to "1" only after
+  confirming every machine that will load the cache has an identical CPU
+  feature set to the one that built it (e.g. a homogeneous deployment
+  fleet), or accept the SIGILL risk knowingly.
 - `DISPFOLD_CACHE_VERSION` (default "v1"): a manual cache-busting tag.
   The cache directory path includes this string, so bumping it (e.g. to
   "v2") after changing a module-level constant inside a jitted function
@@ -49,6 +65,7 @@ import platform
 import functools
 
 _CACHE_ENABLED = os.environ.get("DISPFOLD_JIT_CACHE", "1") not in ("0", "false", "False")
+_JAX_CACHE_ENABLED = os.environ.get("DISPFOLD_JAX_CACHE", "0") not in ("0", "false", "False")
 _CACHE_VERSION = os.environ.get("DISPFOLD_CACHE_VERSION", "v1")
 
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -126,7 +143,7 @@ def configure_jax_cache():
     No-op if DISPFOLD_JIT_CACHE=0.
     """
     global _jax_cache_configured
-    if _jax_cache_configured or not _CACHE_ENABLED:
+    if _jax_cache_configured or not _JAX_CACHE_ENABLED:
         return
     import jax
 
