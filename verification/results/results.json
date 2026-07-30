@@ -1,6 +1,6 @@
 {
-  "timestamp": "2026-07-29T02:48:21.846507",
-  "runtime_seconds": 250.16966843605042,
+  "timestamp": "2026-07-30T15:41:15.412948",
+  "runtime_seconds": 145.5735673904419,
   "n_benchmarks": 12,
   "n_passed": 12,
   "results": [
@@ -24,6 +24,14 @@
           "error_pct": 0.0,
           "symmetry_error": 5.684341886080802e-14,
           "min_eigenvalue": -2.16807283548376e-13,
+          "label": "strain energy U (N\u00b7mm)",
+          "passed": true
+        },
+        "numpy_q4_corotational_eas": {
+          "value": 0.0010988973626025475,
+          "error_pct": 0.000340003168193938,
+          "symmetry_error": 5.684341886080802e-14,
+          "min_eigenvalue": -1.0452345307424485e-12,
           "label": "strain energy U (N\u00b7mm)",
           "passed": true
         },
@@ -51,6 +59,14 @@
           "label": "strain energy U (N\u00b7mm)",
           "passed": true
         },
+        "numba_q4_corotational_eas": {
+          "value": 0.0010989010963183582,
+          "error_pct": 2.3502941997113886e-07,
+          "symmetry_error": 1.5950059648162096e-05,
+          "min_eigenvalue": -2.1270357620401603e-05,
+          "label": "strain energy U (N\u00b7mm)",
+          "passed": true
+        },
         "numba_q4_up": {
           "value": 0.0010989010989010987,
           "error_pct": 3.946495907847235e-14,
@@ -60,10 +76,10 @@
           "passed": true
         },
         "numba_q4_corotational": {
-          "value": 0.001098901098901098,
-          "error_pct": 9.866239769618088e-14,
-          "symmetry_error": 1.1368683772161603e-13,
-          "min_eigenvalue": -8.74676627382846e-14,
+          "value": 0.0010989010963183587,
+          "error_pct": 2.3502938050617978e-07,
+          "symmetry_error": 1.5226426057779463e-05,
+          "min_eigenvalue": -2.077891080050974e-05,
           "label": "strain energy U (N\u00b7mm)",
           "passed": true
         },
@@ -94,8 +110,16 @@
         "jax_q4_eas": {
           "value": 0.0010989010990203974,
           "error_pct": 1.085613933818341e-08,
-          "symmetry_error": 1.1368683772161603e-13,
+          "symmetry_error": 2.842170943040401e-14,
           "min_eigenvalue": -4.1845398922539756e-13,
+          "label": "strain energy U (N\u00b7mm)",
+          "passed": true
+        },
+        "jax_q4_corotational_eas": {
+          "value": 0.0010989010990203984,
+          "error_pct": 1.0856238000581105e-08,
+          "symmetry_error": 1.4210854715202004e-13,
+          "min_eigenvalue": -5.725321852550827e-13,
           "label": "strain energy U (N\u00b7mm)",
           "passed": true
         },
@@ -141,20 +165,20 @@
       "unit": "%",
       "backends": {
         "jax": {
-          "value": 1.0482666646743531e-07,
-          "error_pct": 1.0482666646743531e-07,
+          "value": 1.0482667117801839e-07,
+          "error_pct": 1.0482667117801839e-07,
           "n_iter": 1,
           "ux_error": 1.003330339817421e-12,
-          "uy_error": 3.036300865680991e-13,
+          "uy_error": 3.0363024919842496e-13,
           "label": "internal node displacement error (%)",
           "passed": true
         },
         "numpy_sequential": {
-          "value": 9.5438532750119e-08,
-          "error_pct": 9.5438532750119e-08,
+          "value": 9.543851992299759e-08,
+          "error_pct": 9.543851992299759e-08,
           "n_iter": 1,
-          "ux_error": 9.074741826042843e-13,
-          "uy_error": 2.955367341909293e-13,
+          "ux_error": 9.07474074184067e-13,
+          "uy_error": 2.9553665287576636e-13,
           "label": "internal node displacement error (%)",
           "passed": true
         }
@@ -170,15 +194,15 @@
       "unit": "mm",
       "backends": {
         "jax": {
-          "value": 0.00023697937112172237,
-          "error_pct": 0.7137148838599202,
+          "value": 0.00023697937112175736,
+          "error_pct": 0.7137148838747918,
           "n_iter": 2,
           "label": "center deflection |uy| (mm)",
           "passed": true
         },
         "numpy_sequential": {
-          "value": 0.00024667333851226926,
-          "error_pct": 4.833548029013721,
+          "value": 0.0002466733385123513,
+          "error_pct": 4.833548029048578,
           "n_iter": 1,
           "label": "center deflection |uy| (mm)",
           "passed": true
@@ -195,15 +219,15 @@
       "unit": "mm",
       "backends": {
         "jax": {
-          "value": 0.00032214273978323026,
-          "error_pct": 1.7145644024881495,
+          "value": 0.0003221427397833165,
+          "error_pct": 1.714564402515382,
           "n_iter": 2,
           "label": "center deflection |uy| (mm)",
           "passed": true
         },
         "numpy_sequential": {
-          "value": 0.0003285293359290452,
-          "error_pct": 3.7310923721183156,
+          "value": 0.0003285293359289748,
+          "error_pct": 3.7310923720960814,
           "n_iter": 2,
           "label": "center deflection |uy| (mm)",
           "passed": true
@@ -220,15 +244,15 @@
       "unit": "mm",
       "backends": {
         "jax": {
-          "value": 0.0037327329214211225,
-          "error_pct": 1.6760983172020862,
+          "value": 0.0037327329214206545,
+          "error_pct": 1.6760983171893402,
           "n_iter": 2,
           "label": "tip deflection |uy| (mm)",
           "passed": true
         },
         "numpy_sequential": {
-          "value": 0.00384198478419,
-          "error_pct": 4.652015259043378,
+          "value": 0.003841984784189933,
+          "error_pct": 4.652015259041558,
           "n_iter": 2,
           "label": "tip deflection |uy| (mm)",
           "passed": true
@@ -245,20 +269,20 @@
       "unit": "MPa",
       "backends": {
         "jax": {
-          "value": 1.0989011095099066,
-          "error_pct": 9.654014925253307e-07,
+          "value": 1.0989011095099068,
+          "error_pct": 9.654015127313897e-07,
           "n_iter": 1,
-          "eps_xx_measured": 0.001,
-          "eps_xx_error_pct": 0.0,
+          "eps_xx_measured": 0.0009999999999999998,
+          "eps_xx_error_pct": 2.168404344971009e-14,
           "label": "\u03c3_xx (MPa)",
           "passed": true
         },
         "numpy_sequential": {
-          "value": 1.098901107026342,
-          "error_pct": 7.393971059865834e-07,
+          "value": 1.0989011070263417,
+          "error_pct": 7.393970857805243e-07,
           "n_iter": 1,
-          "eps_xx_measured": 0.0009999999999999998,
-          "eps_xx_error_pct": 2.168404344971009e-14,
+          "eps_xx_measured": 0.001,
+          "eps_xx_error_pct": 0.0,
           "label": "\u03c3_xx (MPa)",
           "passed": true
         }
@@ -274,20 +298,20 @@
       "unit": "MPa",
       "backends": {
         "jax": {
-          "value": -1.0989011095099066,
-          "error_pct": 9.654014925253307e-07,
+          "value": -1.0989011095099068,
+          "error_pct": 9.654015127313897e-07,
           "n_iter": 1,
-          "eps_xx_measured": -0.001,
-          "eps_xx_error_pct": 0.0,
+          "eps_xx_measured": -0.0009999999999999998,
+          "eps_xx_error_pct": 2.168404344971009e-14,
           "label": "\u03c3_xx (MPa)",
           "passed": true
         },
         "numpy_sequential": {
-          "value": -1.098901107026342,
-          "error_pct": 7.393971059865834e-07,
+          "value": -1.0989011070263417,
+          "error_pct": 7.393970857805243e-07,
           "n_iter": 1,
-          "eps_xx_measured": -0.0009999999999999998,
-          "eps_xx_error_pct": 2.168404344971009e-14,
+          "eps_xx_measured": -0.001,
+          "eps_xx_error_pct": 0.0,
           "label": "\u03c3_xx (MPa)",
           "passed": true
         }
@@ -315,8 +339,8 @@
           "value": -0.9615384615384613,
           "error_pct": 2.3092638912203256e-14,
           "n_iter": 1,
-          "sigma_yy": -0.9615384615384613,
-          "hydrostatic_deviation_pct": 0.0,
+          "sigma_yy": -0.9615384615384616,
+          "hydrostatic_deviation_pct": 2.3092638912203256e-14,
           "label": "\u03c3_xx (MPa)",
           "passed": true
         }
@@ -344,8 +368,8 @@
           "value": 0.9615384615384613,
           "error_pct": 2.3092638912203256e-14,
           "n_iter": 1,
-          "sigma_yy": 0.9615384615384613,
-          "hydrostatic_deviation_pct": 0.0,
+          "sigma_yy": 0.9615384615384616,
+          "hydrostatic_deviation_pct": 2.3092638912203256e-14,
           "label": "\u03c3_xx (MPa)",
           "passed": true
         }
@@ -361,11 +385,11 @@
       "unit": "",
       "backends": {
         "order_fit": {
-          "value": 4.471560358518618,
-          "error_pct": 11.789008962965442,
+          "value": 4.471560358609643,
+          "error_pct": 11.789008965241067,
           "passed": true,
-          "fitted_order": 4.471560358518618,
-          "r_squared": 0.9983367650004095,
+          "fitted_order": 4.471560358609643,
+          "r_squared": 0.9983367650042129,
           "expected_order": 4.0,
           "order_tol": 1.0,
           "r2_min": 0.95,
@@ -379,30 +403,30 @@
       "refinement_levels": [
         [
           0.25,
-          0.024139885330301206
+          0.024139885330136626
         ],
         [
           0.16666666666666666,
-          0.004367358846080505
+          0.004367358845381773
         ],
         [
           0.125,
-          0.001074660337938976
+          0.001074660337878849
         ]
       ],
       "fit": {
-        "order": 4.471560358518618,
-        "log_C": 2.5053235364874626,
-        "r_squared": 0.9983367650004095,
+        "order": 4.471560358609643,
+        "log_C": 2.5053235365727313,
+        "r_squared": 0.9983367650042129,
         "h_values": [
           0.25,
           0.16666666666666666,
           0.125
         ],
         "error_values": [
-          0.024139885330301206,
-          0.004367358846080505,
-          0.001074660337938976
+          0.024139885330136626,
+          0.004367358845381773,
+          0.001074660337878849
         ]
       }
     },
@@ -414,11 +438,11 @@
       "unit": "",
       "backends": {
         "order_fit": {
-          "value": 2.743225322217146,
-          "error_pct": 1.6009378598942934,
+          "value": 2.7432253221737146,
+          "error_pct": 1.6009378582857199,
           "passed": true,
-          "fitted_order": 2.743225322217146,
-          "r_squared": 0.9918803640012254,
+          "fitted_order": 2.7432253221737146,
+          "r_squared": 0.9918803640045938,
           "expected_order": 2.7,
           "order_tol": 0.5,
           "r2_min": 0.95,
@@ -432,25 +456,25 @@
       "refinement_levels": [
         [
           0.25,
-          0.01967192251018356
+          0.019671922510177624
         ],
         [
           0.125,
-          0.003791860606175701
+          0.0037918606061710693
         ],
         [
           0.08333333333333333,
-          0.0011714195447844235
+          0.0011714195447659044
         ],
         [
           0.0625,
-          0.00041516403953636115
+          0.0004151640395725142
         ]
       ],
       "fit": {
-        "order": 2.743225322217146,
-        "log_C": -0.027512065764106218,
-        "r_squared": 0.9918803640012254,
+        "order": 2.7432253221737146,
+        "log_C": -0.027512065841384294,
+        "r_squared": 0.9918803640045938,
         "h_values": [
           0.25,
           0.125,
@@ -458,10 +482,10 @@
           0.0625
         ],
         "error_values": [
-          0.01967192251018356,
-          0.003791860606175701,
-          0.0011714195447844235,
-          0.00041516403953636115
+          0.019671922510177624,
+          0.0037918606061710693,
+          0.0011714195447659044,
+          0.0004151640395725142
         ]
       }
     },
@@ -473,11 +497,11 @@
       "unit": "",
       "backends": {
         "order_fit": {
-          "value": 2.4202987550947936,
-          "error_pct": 0.8457814622830722,
+          "value": 2.420298755049064,
+          "error_pct": 0.8457814603776703,
           "passed": true,
-          "fitted_order": 2.4202987550947936,
-          "r_squared": 0.9969245494712596,
+          "fitted_order": 2.420298755049064,
+          "r_squared": 0.9969245494761043,
           "expected_order": 2.4,
           "order_tol": 0.5,
           "r2_min": 0.85,
@@ -491,30 +515,30 @@
       "refinement_levels": [
         [
           0.5,
-          0.006647141390978936
+          0.00664714139105022
         ],
         [
           0.25,
-          0.0014592961919856003
+          0.001459296191856983
         ],
         [
           0.125,
-          0.0002319903228167114
+          0.00023199032283390632
         ]
       ],
       "fit": {
-        "order": 2.4202987550947936,
-        "log_C": -3.2821482508167543,
-        "r_squared": 0.9969245494712596,
+        "order": 2.420298755049064,
+        "log_C": -3.2821482508812467,
+        "r_squared": 0.9969245494761043,
         "h_values": [
           0.5,
           0.25,
           0.125
         ],
         "error_values": [
-          0.006647141390978936,
-          0.0014592961919856003,
-          0.0002319903228167114
+          0.00664714139105022,
+          0.001459296191856983,
+          0.00023199032283390632
         ]
       }
     }

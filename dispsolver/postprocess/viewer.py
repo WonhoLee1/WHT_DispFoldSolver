@@ -1102,7 +1102,7 @@ class PostprocessViewer(QtWidgets.QMainWindow):
             ax.clear()
             self.canvas.cax.clear()
             import matplotlib as mpl
-            self._pc = PolyCollection([], cmap=mpl.cm.get_cmap('viridis'))
+            self._pc = PolyCollection([], cmap=plt.get_cmap('viridis'))
             ax.add_collection(self._pc)
             self._configure_static_axes(ax)
             self._hinge_line = ax.plot([], [], marker='^', color='red', markersize=9,
@@ -1203,7 +1203,7 @@ class PostprocessViewer(QtWidgets.QMainWindow):
             vmin, vmax = vmin - 0.5, vmax + 0.5
         import matplotlib as mpl
         norm = mpl.colors.Normalize(vmin=vmin, vmax=vmax)
-        cmap = mpl.cm.get_cmap('viridis')
+        cmap = plt.get_cmap('viridis')
 
         n_frames = len(frames)
         all_xy = []

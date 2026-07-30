@@ -141,7 +141,7 @@ def _compute_Kgeo_ua(grad_N, St, Fenh):
 # ── Newton convergence parameters for alpha condensation ────────────
 _ALPHA_MAX_ITER = 20
 _ALPHA_TOL = 1e-10
-_ALPHA_MAX = 5.0  # clamp |alpha| to prevent blow-up at near-inverted configs
+_ALPHA_MAX = 0.05  # clamp |alpha| tightly to prevent internal mode explosion at large bending
 
 
 # ── Main entry point ────────────────────────────────────────────────
@@ -236,8 +236,16 @@ def compute_eas_j2_contributions_jax(
         dalpha = -jnp.linalg.solve(K_reg, f_a)
         alpha_new = alpha_k + dalpha
 
-        # --- NaN robustness: clamp alpha & freeze if NaN detected ---
-        alpha_new = jnp.clip(alpha_new, -_ALPHA_MAX, _ALPHA_MAX)
+        # --- NaN robustness: smoothly saturate alpha & freeze if NaN detected ---
+        # A hard jnp.clip is non-differentiable at the boundary: once alpha
+        # sits at the clamp, the condensed tangent K_e built from K_aa/K_ua
+        # no longer reflects that further alpha movement is blocked, so the
+        # global Newton solve can be handed a tangent predicting a softer
+        # response than the (clamped) force actually delivers. tanh
+        # saturates to the same +-_ALPHA_MAX bound but stays smooth
+        # everywhere, so the autodiff tangent stays consistent with the
+        # force at every alpha magnitude, including near/at saturation.
+        alpha_new = _ALPHA_MAX * jnp.tanh(alpha_new / _ALPHA_MAX)
         nan_detected = jnp.any(jnp.isnan(alpha_new)) | jnp.any(jnp.isnan(f_a))
         alpha_new = jnp.where(nan_detected, alpha_k, alpha_new)
         # If NaN → set norm to 0 so while_loop exits (alpha frozen at last good value)

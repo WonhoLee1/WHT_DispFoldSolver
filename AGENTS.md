@@ -428,12 +428,25 @@ capture.
 
 ## 4. Numerical obstacles solved this session (2026-07-25) — don't re-break these
 
-### 4.1 The "38° wall"
+### 4.1 The "38° wall" & Q4_EAS vs Q4_COROTATIONAL Shear Locking
 Standard Q4 elements + direct load/displacement drive would stall or
-invert elements (`det(F) ≤ 0`) around ~38° of fold. Fixed by combining
+invert elements (`det(F) ≤ 0`) around ~38° of fold. Initially mitigated by
 co-rotational kinematics (isolates element rigid rotation from strain
-computation) with RBE2 kinematic condensation (removes the saddle-point
-conditioning problem) and (optionally) viscous stabilization.
+computation) with RBE2 kinematic condensation and viscous stabilization.
+
+**Critical Finding (2026-07-30)**: `Q4_COROTATIONAL` suffers from severe
+**shear locking** under high element aspect ratios (AR), exhibiting an
+artificial bending stiffness factor of $1 + 0.35 \cdot \text{AR}^2$:
+- Hinge-edge/tip (AR=7.5): **20.9×** artificial stiffness in COROT (1.0000 in EAS)
+- Free hinge span (AR=15): **80.0×** artificial stiffness in COROT (1.0000 in EAS)
+- Plate body (AR=30): **316×** artificial stiffness in COROT (1.0000 in EAS)
+
+In graded display meshes, this created a **2.14× artificial stiffness
+discontinuity** inside the hinge zone, concentrating curvature into fine
+bands and causing spurious yielding (`pet_elastic_after.png`). `Q4_EAS`
+(Enhanced Assumed Strain) completely resolves shear locking (bending stiffness
+independent of aspect ratio within 0.3%). Consequently, `pet_element_type = "Q4_EAS"`
+in `dispsolver/fold_model_config.py` is the canonical element formulation for PET layers.
 
 ### 4.2 Co-rotational Q4 element was silently dead code
 `mesh.add_element(..., "Q4_COROTATIONAL", ...)` **does nothing** —

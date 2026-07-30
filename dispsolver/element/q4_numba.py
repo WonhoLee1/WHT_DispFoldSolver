@@ -349,17 +349,9 @@ if HAS_NUMBA:
         return f_u + f_vol, K_uu + K_vol
 
     @numba.njit(fastmath=True)
-    def compute_q4_corotational_element(
-        coords_init: np.ndarray,
-        u_elem: np.ndarray,
-        E: float,
-        nu: float,
-        thickness: float = 1.0,
-    ) -> tuple[np.ndarray, np.ndarray]:
-        """Compute Ke (8x8) and fe_int (8,) for a Co-rotational Q4 element under large rotations."""
+    def _compute_coro_force(coords_init, u_elem, E, nu, thickness):
         coords_curr = coords_init + u_elem.reshape((4, 2))
 
-        # 1. Edge vectors in deformed state
         v12 = coords_curr[1] - coords_curr[0]
         v43 = coords_curr[2] - coords_curr[3]
         e1_def = v12 + v43
@@ -368,7 +360,6 @@ if HAS_NUMBA:
         e2 = np.array([-e1[1], e1[0]], dtype=np.float64)
         R_curr = np.column_stack((e1, e2))
 
-        # Edge vectors in reference state
         v12_0 = coords_init[1] - coords_init[0]
         v43_0 = coords_init[2] - coords_init[3]
         e1_0_def = v12_0 + v43_0
@@ -379,21 +370,89 @@ if HAS_NUMBA:
 
         R_elem = R_curr @ R_ref.T
 
-        # Build 8x8 T8 block rotation matrix
         T8 = np.zeros((8, 8), dtype=np.float64)
         for i in range(4):
             T8[2 * i:2 * i + 2, 2 * i:2 * i + 2] = R_elem
 
-        # Local displacement (rigid rotation removed)
         u_local = (coords_curr @ R_elem - coords_init).flatten()
 
-        # Local Q4 B-bar stiffness & force
-        fe_local, Ke_local = compute_q4_bbar_element(coords_init, u_local, E, nu, thickness)
+        f_local, _ = compute_q4_bbar_element(coords_init, u_local, E, nu, thickness)
+        return T8 @ f_local
 
-        # Transform to global frame
-        fe_global = T8 @ fe_local
-        Ke_global = T8 @ Ke_local @ T8.T
-        return fe_global, Ke_global
+    @numba.njit(fastmath=True)
+    def compute_q4_corotational_element(
+        coords_init: np.ndarray,
+        u_elem: np.ndarray,
+        E: float,
+        nu: float,
+        thickness: float = 1.0,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Compute Ke (8x8) and fe_int (8,) for a Co-rotational Q4 B-bar element using FD for the full tangent."""
+        f_global = _compute_coro_force(coords_init, u_elem, E, nu, thickness)
+
+        eps = 1e-7
+        K_global = np.zeros((8, 8), dtype=np.float64)
+        for i in range(8):
+            u_perturb = u_elem.copy()
+            u_perturb[i] += eps
+            f_perturb = _compute_coro_force(coords_init, u_perturb, E, nu, thickness)
+            for j in range(8):
+                K_global[j, i] = (f_perturb[j] - f_global[j]) / eps
+
+        return f_global, K_global
+
+    @numba.njit(fastmath=True)
+    def _compute_coro_eas_force(coords_init, u_elem, E, nu, thickness):
+        coords_curr = coords_init + u_elem.reshape((4, 2))
+
+        v12 = coords_curr[1] - coords_curr[0]
+        v43 = coords_curr[2] - coords_curr[3]
+        e1_def = v12 + v43
+        len1 = np.sqrt(e1_def[0]**2 + e1_def[1]**2) + 1e-15
+        e1 = e1_def / len1
+        e2 = np.array([-e1[1], e1[0]], dtype=np.float64)
+        R_curr = np.column_stack((e1, e2))
+
+        v12_0 = coords_init[1] - coords_init[0]
+        v43_0 = coords_init[2] - coords_init[3]
+        e1_0_def = v12_0 + v43_0
+        len1_0 = np.sqrt(e1_0_def[0]**2 + e1_0_def[1]**2) + 1e-15
+        e1_0 = e1_0_def / len1_0
+        e2_0 = np.array([-e1_0[1], e1_0[0]], dtype=np.float64)
+        R_ref = np.column_stack((e1_0, e2_0))
+
+        R_elem = R_curr @ R_ref.T
+
+        T8 = np.zeros((8, 8), dtype=np.float64)
+        for i in range(4):
+            T8[2 * i:2 * i + 2, 2 * i:2 * i + 2] = R_elem
+
+        u_local = (coords_curr @ R_elem - coords_init).flatten()
+
+        f_local, _ = compute_q4_eas_element(coords_init, u_local, E, nu, thickness)
+        return T8 @ f_local
+
+    @numba.njit(fastmath=True)
+    def compute_q4_corotational_eas_element(
+        coords_init: np.ndarray,
+        u_elem: np.ndarray,
+        E: float,
+        nu: float,
+        thickness: float = 1.0,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Compute Ke (8x8) and fe_int (8,) for a Co-rotational EAS Q4 element using FD for the full tangent."""
+        f_global = _compute_coro_eas_force(coords_init, u_elem, E, nu, thickness)
+
+        eps = 1e-7
+        K_global = np.zeros((8, 8), dtype=np.float64)
+        for i in range(8):
+            u_perturb = u_elem.copy()
+            u_perturb[i] += eps
+            f_perturb = _compute_coro_eas_force(coords_init, u_perturb, E, nu, thickness)
+            for j in range(8):
+                K_global[j, i] = (f_perturb[j] - f_global[j]) / eps
+
+        return f_global, K_global
 
     @numba.njit(fastmath=True)
     def compute_t3_element(
@@ -451,6 +510,9 @@ else:
         raise ImportError("Numba is not installed. Run `pip install numba` to use Numba backend.")
 
     def compute_q4_corotational_element(*args, **kwargs):
+        raise ImportError("Numba is not installed. Run `pip install numba` to use Numba backend.")
+
+    def compute_q4_corotational_eas_element(*args, **kwargs):
         raise ImportError("Numba is not installed. Run `pip install numba` to use Numba backend.")
 
     def compute_t3_element(*args, **kwargs):

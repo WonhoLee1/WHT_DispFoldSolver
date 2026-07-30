@@ -193,7 +193,7 @@ def run_folding_from_result(result, before_png_name: str = "ex12_before_folding_
 
     solver.theta_penalty_k = st.theta_penalty_k
 
-    print_model_review_from_builder_result(result)
+    print_model_review_from_builder_result(result, pid_element_type=getattr(solver, 'element_type_by_pid', None))
 
     # Set translation boundaries
     if translation_bc_dofs:
@@ -279,6 +279,25 @@ def run_folding_from_result(result, before_png_name: str = "ex12_before_folding_
         print(f"Step {step + 1} | Attempting time increment: dt = {dt:.5f}s (t: {solver.time:.4f}s -> {t_next:.4f}s)")
         print("-" * 100)
 
+        # Snapshot before the attempt so a failed step can be rolled back
+        # cleanly -- solve_step() only commits self.u/v/a/state/lam on
+        # success (see its docstring: "On failure ... return negative
+        # iteration count for caller cutback"), so the caller owns cutback
+        # rollback. Every other example script in this repo (ex03-ex08,
+        # mode_comparison.py, profile_solver.py, ...) already follows this
+        # save_state()/restore_state() pattern; this loop was missing it.
+        # Without it, self.eas_alpha (Q4_EAS/Q4_COROTATIONAL_EAS's per-
+        # element enhanced-strain warm start) stays poisoned by the failed
+        # attempt's last (possibly wildly divergent) Newton iterate --
+        # eas_alpha is mutated in-place inside _assemble() on every trial
+        # iteration, unlike self.state, which only commits via a local
+        # state_new on convergence. A poisoned alpha warm start can settle
+        # on a different EAS stationary-point branch than the rest of the
+        # (correctly rolled-back) structure expects, producing a residual
+        # mismatch at Newton iteration 1 that no amount of dt shrinking
+        # fixes, since the corruption isn't in the load increment size.
+        checkpoint = solver.save_state()
+
         # Solve step
         conv_code = solver.solve_step(dt)
 
@@ -301,7 +320,11 @@ def run_folding_from_result(result, before_png_name: str = "ex12_before_folding_
 
             dt = dt_ctrl.update(n_iter=conv_code, converged=True)
         else:
-            # Cutback
+            # Cutback -- restore the pre-attempt snapshot (see checkpoint
+            # comment above) before retrying at a smaller dt, so eas_alpha
+            # (and u/v/a/state/lam) start the next attempt from the last
+            # known-good state rather than the failed attempt's residue.
+            solver.restore_state(checkpoint)
             dt = dt_ctrl.update(n_iter=25, converged=False)
             if dt <= dt_ctrl.dt_min:
                 # AdaptiveDtController.update() clips dt to exactly dt_min
