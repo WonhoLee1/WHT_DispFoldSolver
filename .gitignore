@@ -39,6 +39,12 @@ _old_*.py
 Thumbs.db
 
 
+# Numba/JAX JIT compilation cache (machine+version-tagged, see
+# dispsolver/_jit_cache.py -- must never be committed, a cache built on
+# one machine/numba-version is not portable and could be silently stale
+# on another)
+.cache/
+
 # Solver output caches (derived; go stale when the model changes)
 examples/*_u.npy
 

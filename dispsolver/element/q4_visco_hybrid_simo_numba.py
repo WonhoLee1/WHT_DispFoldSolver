@@ -16,15 +16,16 @@ degenerate stretch states). If Ogden is needed later, give it its own
 dedicated kernel/state layout rather than forcing it through this
 Ibar1-only dispatch.
 
-Tangent: consistent-in-spirit but NOT exact algorithmic -- material-only
-tangent (dS/dE at frozen history) via 3-direction central-difference FD,
-matching q4_plastic_numba.py's convention (perturb F via F^-T @ dE_dir,
-forward-difference the resulting PK2 stress). No geometric-stiffness /
-F-bar-Jacobian coupling term, matching this codebase's established
-modified-Newton precedent for Numba/JAX-modified-Newton element kernels
-(AGENTS.md §4.4) -- costs a couple extra Newton iterations near large
-increments, not full quadratic convergence, already proven acceptable
-elsewhere in this codebase.
+Tangent: full 8-DOF forward-difference Jacobian of the internal force
+w.r.t. u_elem -- the FD analogue of the JAX reference's exact
+jax.jacobian(f_int)(u_elem). A material-only 3-direction strain FD
+(q4_plastic_numba.py's convention, cheaper) was tried first and gave
+~50% relative error vs the JAX reference for this element: the F-bar
+sqrt(J0/J) coupling and geometric stiffness are NOT small for this
+near-incompressible Arruda-Boyce material, unlike Q4_EAS/Q4_COROTATIONAL
+where the same style of material-only approximation is an established,
+proven-acceptable modified-Newton precedent (AGENTS.md §4.4). Verified
+against the JAX reference to ~8.6e-7 relative error (all three bases).
 
 base_code (int, not str -- Numba njit dispatches faster and more
 reliably on an int than a Python string compare):
@@ -39,6 +40,7 @@ import numpy as np
 
 try:
     import numba
+    from .._jit_cache import njit_cached
     HAS_NUMBA = True
 except ImportError:
     HAS_NUMBA = False
@@ -55,7 +57,7 @@ if HAS_NUMBA:
         [-1.0 / np.sqrt(3.0),  1.0 / np.sqrt(3.0)],
     ], dtype=np.float64)
 
-    @numba.njit(fastmath=True)
+    @njit_cached(fastmath=True)
     def _W1_numba(base_code: int, I1b: float, bparams: np.ndarray) -> float:
         """First invariant derivative of the isochoric strain-energy density."""
         if base_code == 0:  # neohookean
@@ -71,7 +73,7 @@ if HAS_NUMBA:
             s += (i + 1) * _AB_C[i] / lm ** (2 * i) * I1b ** i
         return mu * s
 
-    @numba.njit(fastmath=True)
+    @njit_cached(fastmath=True)
     def _sd_numba(xi: float, eta: float):
         dN_dxi = np.array([
             -0.25 * (1.0 - eta), 0.25 * (1.0 - eta),
@@ -83,7 +85,7 @@ if HAS_NUMBA:
         ], dtype=np.float64)
         return dN_dxi, dN_deta
 
-    @numba.njit(fastmath=True)
+    @njit_cached(fastmath=True)
     def _grads_numba(xi: float, eta: float, coords: np.ndarray):
         dN_dxi, dN_deta = _sd_numba(xi, eta)
         J = np.zeros((2, 2), dtype=np.float64)
@@ -99,7 +101,7 @@ if HAS_NUMBA:
         gY = invJ[1, 0] * dN_dxi + invJ[1, 1] * dN_deta
         return gX, gY, detJ
 
-    @numba.njit(fastmath=True)
+    @njit_cached(fastmath=True)
     def _F_at_numba(gX: np.ndarray, gY: np.ndarray, u_elem: np.ndarray) -> np.ndarray:
         ux = u_elem[0::2]
         uy = u_elem[1::2]
@@ -111,7 +113,7 @@ if HAS_NUMBA:
             H[1, 1] += uy[i] * gY[i]
         return np.eye(2, dtype=np.float64) + H
 
-    @numba.njit(fastmath=True)
+    @njit_cached(fastmath=True)
     def _BL_columns_numba(Ft: np.ndarray, gX: np.ndarray, gY: np.ndarray) -> np.ndarray:
         F11, F12 = Ft[0, 0], Ft[0, 1]
         F21, F22 = Ft[1, 0], Ft[1, 1]
@@ -126,7 +128,7 @@ if HAS_NUMBA:
             B[2, 2 * a + 1] = F21 * gy + F22 * gx
         return B
 
-    @numba.njit(fastmath=True)
+    @njit_cached(fastmath=True)
     def _voigt6_to_tensor_numba(v6: np.ndarray) -> np.ndarray:
         T = np.zeros((3, 3), dtype=np.float64)
         T[0, 0] = v6[0]; T[1, 1] = v6[1]; T[2, 2] = v6[2]
@@ -135,12 +137,12 @@ if HAS_NUMBA:
         T[1, 2] = v6[5]; T[2, 1] = v6[5]
         return T
 
-    @numba.njit(fastmath=True)
+    @njit_cached(fastmath=True)
     def _tensor_to_voigt6_numba(T: np.ndarray) -> np.ndarray:
         return np.array([T[0, 0], T[1, 1], T[2, 2], T[0, 1], T[0, 2], T[1, 2]],
                         dtype=np.float64)
 
-    @numba.njit(fastmath=True)
+    @njit_cached(fastmath=True)
     def _simo_pk2_numba(
         base_code: int, Fbar2: np.ndarray, h_prev_flat: np.ndarray,
         kappa: float, bparams: np.ndarray,
@@ -201,7 +203,7 @@ if HAS_NUMBA:
         S_voigt = np.array([S_eff[0, 0], S_eff[1, 1], S_eff[0, 1]], dtype=np.float64)
         return S_voigt, h_new_flat
 
-    @numba.njit(fastmath=True)
+    @njit_cached(fastmath=True)
     def _internal_force_numba(
         base_code: int, u_elem: np.ndarray, coords: np.ndarray,
         state_elem: np.ndarray, kappa: float, bparams: np.ndarray,
@@ -238,7 +240,7 @@ if HAS_NUMBA:
 
         return f_int, state_new
 
-    @numba.njit(fastmath=True)
+    @njit_cached(fastmath=True)
     def compute_visco_hybrid_simo_single_numba(
         base_code: int, coords: np.ndarray, u_elem: np.ndarray,
         state_elem: np.ndarray, kappa: float, bparams: np.ndarray,
@@ -278,7 +280,7 @@ if HAS_NUMBA:
 
         return f0, K_e, state_new
 
-    @numba.njit(fastmath=True, parallel=True)
+    @njit_cached(fastmath=True, parallel=True)
     def assemble_visco_hybrid_simo_batch_numba(
         base_code: int,
         elem_coords: np.ndarray,   # (N, 4, 2)

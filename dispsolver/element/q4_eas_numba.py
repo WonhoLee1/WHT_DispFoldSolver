@@ -22,6 +22,7 @@ import numpy as np
 
 try:
     import numba
+    from .._jit_cache import njit_cached
     HAS_NUMBA = True
 except ImportError:
     HAS_NUMBA = False
@@ -32,7 +33,7 @@ if HAS_NUMBA:
     _GP2_VALS = np.array([-1.0 / np.sqrt(3.0), 1.0 / np.sqrt(3.0)], dtype=np.float64)
     _W2_VALS = np.array([1.0, 1.0], dtype=np.float64)  # product of 1D weights = 1.0
 
-    @numba.njit(fastmath=True)
+    @njit_cached(fastmath=True)
     def _sd(xi: float, eta: float):
         """Shape function derivatives."""
         dN_dxi = np.array([
@@ -49,7 +50,7 @@ if HAS_NUMBA:
         ], dtype=np.float64)
         return dN_dxi, dN_deta
 
-    @numba.njit(fastmath=True)
+    @njit_cached(fastmath=True)
     def _jacobian(xi: float, eta: float, coords: np.ndarray):
         """Jacobian, det(J), inv(J)."""
         dN_dxi, dN_deta = _sd(xi, eta)
@@ -63,7 +64,7 @@ if HAS_NUMBA:
         invJ = np.array([[J[1, 1], -J[0, 1]], [-J[1, 0], J[0, 0]]], dtype=np.float64) / detJ
         return J, detJ, invJ
 
-    @numba.njit(fastmath=True)
+    @njit_cached(fastmath=True)
     def _enhanced_grad_modes(xi: float, eta: float, detJ: float,
                              J0: np.ndarray, detJ0: float):
         """4 enhanced deformation-gradient modes (4, 2, 2)."""
@@ -78,12 +79,12 @@ if HAS_NUMBA:
         modes = [s * (D @ J0inv) for D in Dk]
         return modes
 
-    @numba.njit(fastmath=True)
+    @njit_cached(fastmath=True)
     def _voigt_sym(P: np.ndarray) -> np.ndarray:
         """Voigt [xx, yy, xy] of sym(P) for 2x2 P."""
         return np.array([P[0, 0], P[1, 1], P[0, 1] + P[1, 0]], dtype=np.float64)
 
-    @numba.njit(fastmath=True)
+    @njit_cached(fastmath=True)
     def _BL_columns(Ft: np.ndarray, gX: np.ndarray, gY: np.ndarray) -> np.ndarray:
         """Total-Lagrangian strain-displacement operator B_L (3x8)."""
         F11, F12 = Ft[0, 0], Ft[0, 1]
@@ -99,7 +100,7 @@ if HAS_NUMBA:
             B[2, 2 * a + 1] = F21 * gy + F22 * gx
         return B
 
-    @numba.njit(fastmath=True)
+    @njit_cached(fastmath=True)
     def compute_eas_j2_contributions_numba(
         coords: np.ndarray,       # (4,2)
         u_elem: np.ndarray,       # (8,)
@@ -393,7 +394,7 @@ if HAS_NUMBA:
 
         return f_e, K_e, alpha_curr, state_new
 
-    @numba.njit(fastmath=True, parallel=True)
+    @njit_cached(fastmath=True, parallel=True)
     def assemble_q4_eas_j2_batch_numba(
         elem_coords: np.ndarray,   # (N, 4, 2)
         u_elems: np.ndarray,       # (N, 8)

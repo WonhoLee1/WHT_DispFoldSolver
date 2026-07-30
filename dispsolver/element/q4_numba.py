@@ -17,6 +17,7 @@ import numpy as np
 
 try:
     import numba
+    from .._jit_cache import njit_cached
     HAS_NUMBA = True
 except ImportError:
     HAS_NUMBA = False
@@ -26,7 +27,7 @@ if HAS_NUMBA:
     # 2-point Gauss quadrature rules
     _GP2_VALS = np.array([-1.0 / np.sqrt(3.0), 1.0 / np.sqrt(3.0)], dtype=np.float64)
 
-    @numba.njit(fastmath=True)
+    @njit_cached(fastmath=True)
     def _sd(xi: float, eta: float) -> tuple[np.ndarray, np.ndarray]:
         """Shape function derivatives with respect to xi and eta."""
         dN_dxi = np.array([
@@ -44,7 +45,7 @@ if HAS_NUMBA:
         ], dtype=np.float64)
         return dN_dxi, dN_deta
 
-    @numba.njit(fastmath=True)
+    @njit_cached(fastmath=True)
     def _plane_strain_D(E: float, nu: float) -> np.ndarray:
         """Plane strain constitutive D matrix (3x3)."""
         factor = E / ((1.0 + nu) * (1.0 - 2.0 * nu))
@@ -56,7 +57,7 @@ if HAS_NUMBA:
         D[2, 2] = factor * (0.5 - nu)
         return D
 
-    @numba.njit(fastmath=True)
+    @njit_cached(fastmath=True)
     def compute_q4_bbar_element(
         coords: np.ndarray,
         u_elem: np.ndarray,
@@ -150,7 +151,7 @@ if HAS_NUMBA:
 
         return f_e, K_e
 
-    @numba.njit(parallel=True, fastmath=True)
+    @njit_cached(parallel=True, fastmath=True)
     def assemble_q4_bbar_batch_numba(
         elem_coords: np.ndarray,
         u_elems: np.ndarray,
@@ -185,7 +186,7 @@ if HAS_NUMBA:
 
         return f_all, K_all
 
-    @numba.njit(fastmath=True)
+    @njit_cached(fastmath=True)
     def _strain_transform(J: np.ndarray) -> np.ndarray:
         j11, j12 = J[0, 0], J[0, 1]
         j21, j22 = J[1, 0], J[1, 1]
@@ -196,7 +197,7 @@ if HAS_NUMBA:
         ], dtype=np.float64)
         return T
 
-    @numba.njit(fastmath=True)
+    @njit_cached(fastmath=True)
     def _enhancement_M(xi: float, eta: float, J: np.ndarray,
                       detJ: float, J0: np.ndarray, detJ0: float) -> np.ndarray:
         M_xi = np.array([
@@ -209,7 +210,7 @@ if HAS_NUMBA:
         M = (detJ0 / detJ) * (invT0 @ M_xi)
         return M
 
-    @numba.njit(fastmath=True)
+    @njit_cached(fastmath=True)
     def compute_q4_eas_element(
         coords: np.ndarray,
         u_elem: np.ndarray,
@@ -279,7 +280,7 @@ if HAS_NUMBA:
 
         return f_cond, K_cond
 
-    @numba.njit(fastmath=True)
+    @njit_cached(fastmath=True)
     def compute_q4_up_element(
         coords: np.ndarray,
         u_elem: np.ndarray,
@@ -348,7 +349,7 @@ if HAS_NUMBA:
 
         return f_u + f_vol, K_uu + K_vol
 
-    @numba.njit(fastmath=True)
+    @njit_cached(fastmath=True)
     def _compute_coro_force(coords_init, u_elem, E, nu, thickness):
         coords_curr = coords_init + u_elem.reshape((4, 2))
 
@@ -379,7 +380,7 @@ if HAS_NUMBA:
         f_local, _ = compute_q4_bbar_element(coords_init, u_local, E, nu, thickness)
         return T8 @ f_local
 
-    @numba.njit(fastmath=True)
+    @njit_cached(fastmath=True)
     def compute_q4_corotational_element(
         coords_init: np.ndarray,
         u_elem: np.ndarray,
@@ -401,7 +402,7 @@ if HAS_NUMBA:
 
         return f_global, K_global
 
-    @numba.njit(fastmath=True)
+    @njit_cached(fastmath=True)
     def _compute_coro_eas_force(coords_init, u_elem, E, nu, thickness):
         coords_curr = coords_init + u_elem.reshape((4, 2))
 
@@ -432,7 +433,7 @@ if HAS_NUMBA:
         f_local, _ = compute_q4_eas_element(coords_init, u_local, E, nu, thickness)
         return T8 @ f_local
 
-    @numba.njit(fastmath=True)
+    @njit_cached(fastmath=True)
     def compute_q4_corotational_eas_element(
         coords_init: np.ndarray,
         u_elem: np.ndarray,
@@ -454,7 +455,7 @@ if HAS_NUMBA:
 
         return f_global, K_global
 
-    @numba.njit(fastmath=True)
+    @njit_cached(fastmath=True)
     def compute_t3_element(
         coords: np.ndarray,
         u_elem: np.ndarray,
