@@ -111,7 +111,7 @@ class GeometryConfig:
     # this gap (hinge_pivot_x < hinge_half_gap) -- see AGENTS.md 1.0 for
     # why the pivot is set inside the plate's own footprint.
     hinge_half_gap: float = 1.0
-    hinge_pivot_x: float = 3.0
+    hinge_pivot_x: float = 2.5
 
     # One repeating unit of the layer stack + how many times to repeat
     # it. Total physical layers = n_layer_pairs * len(layer_pattern);
@@ -140,7 +140,7 @@ class GeometryConfig:
     # Example -- cutouts either side of the centreline in the bottom layer:
     #     layer_void_regions={1: [(-7.0, 0.0), (0.0, 7.0)]}
     layer_void_regions: Dict[int, List[Tuple[float, float]]] = field(
-        default_factory=lambda: {1: [(-7.0, 0.0), (0.0, 7.0)]}
+        default_factory=lambda: {1: [(-10.0, 0.0), (0.0, 10.0)]}
     )
 
     plate_thickness: float = 0.5
@@ -232,7 +232,7 @@ class SolverTuningConfig:
     # Element formulation per material name -- keyed the same way as
     # LayerSpec.material_name. Anything not PET/PSA (i.e. the rigid
     # plate's STEEL) is left to DynamicSolver's "Q4" default.
-    pet_element_type: str = "Q4_EAS"
+    pet_element_type: str = "Q4_COROTATIONAL_SRI"
     psa_element_type: str = "Q4_UP"
 
 

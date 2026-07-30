@@ -16,9 +16,51 @@ import jax
 import jax.numpy as jnp
 from typing import Tuple
 
-from .q4_eas_jax import _jac, _sd, _BL_columns
+from .q4_eas_jax import _jac, _sd
 from .q4_corotational_jax import compute_element_rotation, build_block_rotation
 from ..material.plastic_jax import tangent_voigt_jax
+
+
+def _F_sri(ux, uy, gX, gY, gX0, gY0):
+    """SRI deformation gradient: normal terms at the Gauss point, the two
+    shear (off-diagonal) terms at the element centroid.
+
+    Same convention as ``q4_sri_hybrid_jax.compute_element_energy_sri_hybrid``
+    and the small-strain ``q4_sri_numba`` kernel.
+    """
+    return jnp.array([
+        [1.0 + ux @ gX, ux @ gY0],
+        [uy @ gX0,      1.0 + uy @ gY],
+    ], dtype=jnp.float64)
+
+
+def _BL_sri_columns(Ft, gX, gY, gX0, gY0):
+    """Exact ``dE/du`` for the SRI kinematics above (3x8).
+
+    E = 1/2 (Ft^T Ft - I) with Ft = _F_sri(...).  Each entry of Ft is
+    differentiated w.r.t. the shape-function gradient it was actually
+    built from, which is what makes the residual the gradient of a
+    potential.  Reduces to the classic Hughes (1980) selective B in the
+    small-strain limit Ft -> I: rows 0/1 use the Gauss-point gradients,
+    row 2 uses the centroid gradients.
+    """
+    F00, F01 = Ft[0, 0], Ft[0, 1]
+    F10, F11 = Ft[1, 0], Ft[1, 1]
+    B = jnp.zeros((3, 8), dtype=jnp.float64)
+    for a in range(4):
+        gx, gy = gX[a], gY[a]
+        gx0, gy0 = gX0[a], gY0[a]
+        # dE_11
+        B = B.at[0, 2 * a].set(F00 * gx)
+        B = B.at[0, 2 * a + 1].set(F10 * gx0)
+        # dE_22
+        B = B.at[1, 2 * a].set(F01 * gy0)
+        B = B.at[1, 2 * a + 1].set(F11 * gy)
+        # d(2 E_12)
+        B = B.at[2, 2 * a].set(F00 * gy0 + F01 * gx)
+        B = B.at[2, 2 * a + 1].set(F10 * gy + F11 * gx0)
+    return B
+
 
 _S3 = jnp.sqrt(3.0)
 _SRI_GP2 = jnp.array([
@@ -62,20 +104,18 @@ def compute_sri_j2_contributions_jax(
 
         ux = u_elem[0::2]
         uy = u_elem[1::2]
-        Hc = jnp.array([[ux @ gX, ux @ gY], [uy @ gX, uy @ gY]])
-        F_local = jnp.eye(2, dtype=jnp.float64) + Hc
+        # The SRI strain measure itself must be built from the mixed
+        # sampling -- sampling only the *projection* operator B at the
+        # centroid while feeding the material a full-Gauss-point F leaves
+        # the locking shear inside the stress and makes the residual
+        # non-integrable (dR/du non-symmetric => Newton converges to an
+        # equilibrium of no potential at all).
+        F_local = _F_sri(ux, uy, gX, gY, gX0, gY0)
 
         S_v, C_v, sn = tangent_voigt_jax(F_local, state_elem[k], lam, mu, sigma_y0, H)
         state_new = state_new.at[k].set(sn)
 
-        BL_full = _BL_columns(F_local, gX, gY)
-        BL_centroid = _BL_columns(F_local, gX0, gY0)
-
-        # SRI B-matrix: rows 0,1 from full GP, row 2 (shear) from centroid
-        BL_sri = jnp.zeros((3, 8), dtype=jnp.float64)
-        BL_sri = BL_sri.at[0, :].set(BL_full[0, :])
-        BL_sri = BL_sri.at[1, :].set(BL_full[1, :])
-        BL_sri = BL_sri.at[2, :].set(BL_centroid[2, :])
+        BL_sri = _BL_sri_columns(F_local, gX, gY, gX0, gY0)
 
         w = detJ * _SRI_W2[k] * thickness
         f_local = f_local + BL_sri.T @ S_v * w

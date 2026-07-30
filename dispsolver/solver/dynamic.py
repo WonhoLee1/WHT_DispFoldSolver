@@ -1008,9 +1008,20 @@ class DynamicSolver:
                                 _single_coro.__name__ = "sri_hybrid_wrapper"
                             elif elem_t in ("Q4_COROTATIONAL_SRI", "Q4_SRI"):
                                 from ..element.q4_sri_jax import compute_corotational_sri_j2_contributions_jax
-                                _single_coro = lambda coords, u_e, s, _lam=lam, _mu=mu, _sy0=sigma_y0, _H=H: compute_corotational_sri_j2_contributions_jax(
-                                    coords, u_e, s, _lam, _mu, _sy0, _H, 1.0,
-                                )
+                                # compute_corotational_sri_j2_contributions_jax returns a
+                                # 4-tuple (f, K, state_new, None) -- the trailing None was
+                                # never consumed anywhere; the dispatch site that calls this
+                                # vmap unpacks exactly 3 values (matching every other
+                                # element type here), so this was never actually exercised
+                                # end-to-end before (ValueError: too many values to unpack).
+                                # Drop the trailing None here, same pattern already used for
+                                # the HYBRID_SRI wrapper immediately above.
+                                def _single_coro(coords, u_e, s, _lam=lam, _mu=mu, _sy0=sigma_y0, _H=H):
+                                    f, K, state_new, _ = compute_corotational_sri_j2_contributions_jax(
+                                        coords, u_e, s, _lam, _mu, _sy0, _H, 1.0,
+                                    )
+                                    return f, K, state_new
+                                _single_coro.__name__ = "sri_wrapper"
                             elif elem_t in ("Q4_COROTATIONAL_HYBRID", "Q4_HYBRID"):
                                 from ..element.q4_hybrid_jax import compute_corotational_hybrid_j2_contributions_jax
                                 _single_coro = lambda coords, u_e, s, _lam=lam, _mu=mu, _sy0=sigma_y0, _H=H: compute_corotational_hybrid_j2_contributions_jax(

@@ -614,7 +614,17 @@ def make_solver(mesh, E: float, nu: float, backend: str = 'jax',
     # for Q4_EAS (requires J2 for the JAX vmap path).
     # Q4_COROTATIONAL requires BOTH material and element_type as dicts
     # (see Finding 1 in AGENTS.md — plain string routes to Q4 B-bar silently).
-    if element_type in ('Q4_COROTATIONAL', 'Q4_COROTATIONAL_EAS'):
+    # NOTE: every element routed through DynamicSolver's corotational/SRI/
+    # hybrid JAX vmap path is gated on `isinstance(material, J2Plasticity)`
+    # (dynamic.py::_assemble_multi_material_batch).  Omitting a name from
+    # this tuple does NOT raise -- the solver silently falls through to the
+    # plain Q4 B-bar NeoHookean path, so the benchmark measures a completely
+    # different element than the one requested.
+    if element_type in ('Q4_COROTATIONAL', 'Q4_COROTATIONAL_EAS',
+                        'Q4_COROTATIONAL_SRI', 'Q4_SRI',
+                        'Q4_COROTATIONAL_HYBRID', 'Q4_HYBRID',
+                        'Q4_COROTATIONAL_HYBRID_SRI', 'Q4_HYBRID_SRI',
+                        'Q4_COROTATIONAL_HYBRID_EAS', 'Q4_HYBRID_EAS'):
         if backend == 'numpy_sequential':
             raise ValueError(
                 f"{element_type} has no working numpy_sequential path. "
