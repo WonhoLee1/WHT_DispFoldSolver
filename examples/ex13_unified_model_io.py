@@ -26,7 +26,8 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from gen_ex12_inp import generate as generate_inp_text, _graded_display_x
+from gen_ex12_inp import generate as generate_inp_text
+from dispsolver.mesh.display_builder import build_display_grid
 from dispsolver.fold_model_config import FoldModelConfig, DEFAULT_CONFIG
 from dispsolver.material.factory import build_material_instance
 from dispsolver.material.type_tags import J2_PLASTIC
@@ -37,7 +38,7 @@ from dispsolver.constraint.surface_tie import SurfaceTieConstraint
 from ex12_abaqus_inp_plate_fold import run_abaqus_inp_folding, run_folding_from_result
 
 
-def run_read(config: FoldModelConfig = DEFAULT_CONFIG):
+def run_read(config: FoldModelConfig = DEFAULT_CONFIG, elem_jit: str = "jax"):
     """Read the standard on-disk .inp deck and solve.
 
     NOTE: `config` here only affects solver tuning/element type -- the
@@ -54,10 +55,11 @@ def run_read(config: FoldModelConfig = DEFAULT_CONFIG):
         after_png_name="ex13_read_final_folding_shape.png",
         result_name="ex13_read_result.pkl",
         config=config,
+        elem_jit=elem_jit,
     )
 
 
-def run_roundtrip(config: FoldModelConfig = DEFAULT_CONFIG):
+def run_roundtrip(config: FoldModelConfig = DEFAULT_CONFIG, elem_jit: str = "jax"):
     """Build the .inp text in-memory via gen_ex12_inp.generate(config),
     write it to a temp file, then read+solve it through the same path
     as `read`. Unlike `read`, this DOES pick up geometry/material
@@ -75,12 +77,13 @@ def run_roundtrip(config: FoldModelConfig = DEFAULT_CONFIG):
             after_png_name="ex13_roundtrip_final_folding_shape.png",
             result_name="ex13_roundtrip_result.pkl",
             config=config,
+            elem_jit=elem_jit,
         )
     finally:
         os.remove(tmp_path)
 
 
-def run_build(config: FoldModelConfig = DEFAULT_CONFIG):
+def run_build(config: FoldModelConfig = DEFAULT_CONFIG, elem_jit: str = "jax"):
     """Construct the same physical-layer PET-PSA/Q4_VISCO_SIMO model
     directly as Python objects (mirroring gen_ex12_inp.py's geometry/
     materials, but with no .inp text produced or parsed anywhere), then
@@ -99,47 +102,34 @@ def run_build(config: FoldModelConfig = DEFAULT_CONFIG):
     defined once in `config.materials.definitions` and referenced by
     name).
     """
-    xs_disp = _graded_display_x(config)
-    nx_disp = len(xs_disp) - 1
+    # Mesh topology comes from the shared builder (the .inp writer uses
+    # the exact same call), so node/element numbering and void handling
+    # cannot drift between the two model-construction paths.
+    grid = build_display_grid(config)
     geo = config.geometry
     mats = config.materials
     st = config.solver
 
-    row_heights, ROW_PID, PID_NAME = [], [], {}
-    next_pid = 1
-    for _pair in range(geo.n_layer_pairs):
-        for layer in geo.layer_pattern:
-            pid = next_pid
-            next_pid += 1
-            PID_NAME[pid] = layer.material_name
-            row_heights += [layer.thickness_mm / layer.n_rows] * layer.n_rows
-            ROW_PID += [pid] * layer.n_rows
+    # One pid per physical layer, 1-based -- matches the .inp path, where
+    # model_builder.py assigns one pid per *SOLID SECTION statement.
+    PID_NAME = {layer_idx + 1: mat_name
+                for layer_idx, (_r0, _r1, mat_name) in enumerate(grid.layer_row_spans)}
+    next_pid = len(grid.layer_row_spans) + 1
 
-    ny_disp = len(row_heights)
-    ys_disp = np.concatenate([[0.0], np.cumsum(row_heights)])
+    layer_etype = {}
+    for pid, mat_name in PID_NAME.items():
+        mdef = mats.definitions[mat_name]
+        layer_etype[pid] = (st.pet_element_type if mdef.type == J2_PLASTIC
+                            else st.psa_element_type)
 
     mesh = Mesh()
-    grid_nids = np.zeros((ny_disp + 1, nx_disp + 1), dtype=int)
-    nid = 1
-    bottom_surface_nids = []
-    for j, y_val in enumerate(ys_disp):
-        for i, x_val in enumerate(xs_disp):
-            grid_nids[j, i] = nid
-            mesh.add_node(nid, x_val, y_val)
-            if j == 0:
-                bottom_surface_nids.append(nid)
-            nid += 1
+    for nid, x_val, y_val in grid.nodes:
+        mesh.add_node(nid, x_val, y_val)
+    bottom_surface_nids = grid.bottom_surface_nids
 
-    eid = 1
-    for j in range(ny_disp):
-        pid = ROW_PID[j]
-        mdef = mats.definitions[PID_NAME[pid]]
-        etype = st.pet_element_type if mdef.type == J2_PLASTIC else st.psa_element_type
-        for i in range(nx_disp):
-            n1, n2 = grid_nids[j, i], grid_nids[j, i + 1]
-            n3, n4 = grid_nids[j + 1, i + 1], grid_nids[j + 1, i]
-            mesh.add_element(eid, [n1, n2, n3, n4], etype, pid=pid)
-            eid += 1
+    for cell in grid.cells:
+        pid = cell.layer_idx + 1
+        mesh.add_element(cell.eid, list(cell.conn), layer_etype[pid], pid=pid)
 
     plates = create_folding_plate_parts(
         left_x_range=(-geo.display_half_length, -geo.hinge_half_gap),
@@ -247,6 +237,7 @@ def run_build(config: FoldModelConfig = DEFAULT_CONFIG):
         case_name="build (pure Python objects)",
         result_name="ex13_build_result.pkl",
         config=config,
+        elem_jit=elem_jit,
     )
 
 
@@ -283,11 +274,11 @@ def main():
 
     config = DEFAULT_CONFIG
     if args.mode == "read":
-        info = run_read(config)
+        info = run_read(config, elem_jit=args.elem_jit)
     elif args.mode == "roundtrip":
-        info = run_roundtrip(config)
+        info = run_roundtrip(config, elem_jit=args.elem_jit)
     else:
-        info = run_build(config)
+        info = run_build(config, elem_jit=args.elem_jit)
 
     print("=" * 100)
     print(f" EX13 [{args.mode}] SUMMARY: nodes={info['n_nodes']}  elements={info['n_elements']}  "
