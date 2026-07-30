@@ -239,6 +239,7 @@ def _solve_linear_system(J, b, n_refine: int = 4, tol: float = 1e-14):
             x = x + spla.spsolve(J, r)
         return x
 
+from .._jit_cache import configure_jax_cache
 from ..element import q4
 from ..element.rbe2 import RBE2State
 from ..mesh import Mesh
@@ -612,6 +613,7 @@ class DynamicSolver:
         ul_mode: bool = False,
         elem_jit: str = "jax",
     ):
+        configure_jax_cache()  # no-op after first call; safe to call every construction
         self.elem_jit = elem_jit
         self.t_preprocess = 0.0
         self.t_assemble = 0.0

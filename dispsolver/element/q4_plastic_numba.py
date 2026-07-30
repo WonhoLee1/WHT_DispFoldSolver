@@ -17,13 +17,14 @@ import numpy as np
 
 try:
     import numba
+    from .._jit_cache import njit_cached
     HAS_NUMBA = True
 except ImportError:
     HAS_NUMBA = False
 
 if HAS_NUMBA:
 
-    @numba.njit(fastmath=True)
+    @njit_cached(fastmath=True)
     def _embed_3d(F_2d: np.ndarray) -> np.ndarray:
         """Embed 2x2 deformation gradient into 3x3."""
         F3 = np.eye(3, dtype=np.float64)
@@ -32,7 +33,7 @@ if HAS_NUMBA:
                 F3[i, j] = F_2d[i, j]
         return F3
 
-    @numba.njit(fastmath=True)
+    @njit_cached(fastmath=True)
     def _extract_22(M: np.ndarray) -> np.ndarray:
         """Extract upper-left 2x2 from 3x3."""
         out = np.zeros((2, 2), dtype=np.float64)
@@ -41,7 +42,7 @@ if HAS_NUMBA:
                 out[i, j] = M[i, j]
         return out
 
-    @numba.njit(fastmath=True)
+    @njit_cached(fastmath=True)
     def pk2_voigt_j2_numba(
         F_2d: np.ndarray,
         state: np.ndarray,
@@ -163,7 +164,7 @@ if HAS_NUMBA:
 
         return S_voigt, state_new
 
-    @numba.njit(fastmath=True)
+    @njit_cached(fastmath=True)
     def _all_finite(x: np.ndarray) -> bool:
         """Check all elements are finite."""
         for val in x.flat:
@@ -171,7 +172,7 @@ if HAS_NUMBA:
                 return False
         return True
 
-    @numba.njit(fastmath=True)
+    @njit_cached(fastmath=True)
     def stress_and_tangent_j2_numba(
         F_2d: np.ndarray,
         state: np.ndarray,
