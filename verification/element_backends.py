@@ -400,6 +400,42 @@ def jax_t3_K(coords: np.ndarray, E: float, nu: float) -> np.ndarray:
     return np.asarray(K)
 
 
+def numpy_q4_corotational_eas_K(coords: np.ndarray, E: float, nu: float) -> np.ndarray:
+    """CR-EAS condensed stiffness via pure NumPy."""
+    from dispsolver.element.q4_corotational_eas import compute_corotational_eas_j2_contributions
+    from dispsolver.material import J2Plasticity
+    mat = J2Plasticity(E=E, nu=nu, sigma_y0=1e9, H=0.0)
+    params = {'E': float(E), 'nu': float(nu), 'sigma_y0': 1e9, 'H': 0.0}
+    u_zero = np.zeros(8, dtype=np.float64)
+    alpha_zero = np.zeros(4, dtype=np.float64)
+    state_zero = np.tile(mat.initial_internal_vars(), (4, 1))
+    _, K, _, _ = compute_corotational_eas_j2_contributions(coords, u_zero, alpha_zero, state_zero, mat, params)
+    return K
+
+
+def jax_q4_corotational_eas_K(coords: np.ndarray, E: float, nu: float) -> np.ndarray:
+    """CR-EAS condensed stiffness via JAX."""
+    from dispsolver.element.q4_corotational_eas_jax import compute_corotational_eas_j2_contributions_jax
+    import jax.numpy as jnp
+    u_zero = jnp.zeros(8, dtype=jnp.float64)
+    alpha_zero = jnp.zeros(4, dtype=jnp.float64)
+    lam = (E * nu) / ((1.0 + nu) * (1.0 - 2.0 * nu))
+    mu = E / (2.0 * (1.0 + nu))
+    state_zero = jnp.tile(jnp.array([1.0, 0.0, 0.0, 1.0, 0.0]), (4, 1))
+    _, K, _, _, _ = compute_corotational_eas_j2_contributions_jax(
+        jnp.asarray(coords), u_zero, alpha_zero, state_zero, lam, mu, 1e9, 0.0
+    )
+    return np.asarray(K)
+
+
+def numba_q4_corotational_eas_K(coords: np.ndarray, E: float, nu: float) -> np.ndarray:
+    """CR-EAS condensed stiffness via Numba."""
+    from dispsolver.element.q4_numba import compute_q4_corotational_eas_element
+    u_zero = np.zeros(8, dtype=np.float64)
+    _, K = compute_q4_corotational_eas_element(coords, u_zero, E, nu)
+    return K
+
+
 # ------------------------------------------------------------------
 # Backend registry
 # ------------------------------------------------------------------
@@ -418,6 +454,13 @@ BACKENDS: Dict[str, Dict[str, Callable]] = {
         'compute_strain': None,
         'compute_stress': None,
         'element_type': 'Q4_EAS',
+    },
+    'numpy_q4_corotational_eas': {
+        'name': 'NumPy Co-rotational EAS (CR-EAS)',
+        'compute_K': numpy_q4_corotational_eas_K,
+        'compute_strain': None,
+        'compute_stress': None,
+        'element_type': 'Q4_COROTATIONAL_EAS',
     },
     'numpy_t3': {
         'name': 'NumPy T3 Triangle',
@@ -441,6 +484,14 @@ BACKENDS: Dict[str, Dict[str, Callable]] = {
         'compute_strain': None,
         'compute_stress': None,
         'element_type': 'Q4_EAS',
+    },
+    'numba_q4_corotational_eas': {
+        'name': 'Numba Co-rotational EAS (LLVM JIT)',
+        'compute_K': numba_q4_corotational_eas_K,
+        'compute_f_int': None,
+        'compute_strain': None,
+        'compute_stress': None,
+        'element_type': 'Q4_COROTATIONAL_EAS',
     },
     'numba_q4_up': {
         'name': 'Numba Q1P0 Hybrid (LLVM JIT)',
@@ -489,6 +540,14 @@ BACKENDS: Dict[str, Dict[str, Callable]] = {
         'compute_strain': None,
         'compute_stress': None,
         'element_type': 'Q4_EAS',
+    },
+    'jax_q4_corotational_eas': {
+        'name': 'JAX Co-rotational EAS (CR-EAS)',
+        'compute_K': jax_q4_corotational_eas_K,
+        'compute_f_int': None,
+        'compute_strain': None,
+        'compute_stress': None,
+        'element_type': 'Q4_COROTATIONAL_EAS',
     },
     'jax_q4_up': {
         'name': 'JAX Q1P0 Hybrid (NeoHookean)',
@@ -555,17 +614,14 @@ def make_solver(mesh, E: float, nu: float, backend: str = 'jax',
     # for Q4_EAS (requires J2 for the JAX vmap path).
     # Q4_COROTATIONAL requires BOTH material and element_type as dicts
     # (see Finding 1 in AGENTS.md — plain string routes to Q4 B-bar silently).
-    if element_type == 'Q4_COROTATIONAL':
+    if element_type in ('Q4_COROTATIONAL', 'Q4_COROTATIONAL_EAS'):
         if backend == 'numpy_sequential':
             raise ValueError(
-                "Q4_COROTATIONAL has no working numpy_sequential path. "
-                "Finding 2: dynamic.py:_assemble() sequential fallback "
-                "(line ~3458) calls compute_corotational_internal_force(coords, u_elem) "
-                "with wrong arity (missing material_stress_fn 3rd arg) -- "
-                "would TypeError if reachable. Use backend='jax'."
+                f"{element_type} has no working numpy_sequential path. "
+                "Use backend='jax' or 'numba'."
             )
         mat = {0: J2Plasticity(E=E, nu=nu, sigma_y0=1e12, H=0.0)}
-        element_type_arg = {0: 'Q4_COROTATIONAL'}
+        element_type_arg = {0: element_type}
         material_params = {}
     elif element_type == 'Q4_EAS':
         # J2Plasticity with very high yield stays in the elastic regime
@@ -578,7 +634,7 @@ def make_solver(mesh, E: float, nu: float, backend: str = 'jax',
     fast_assembly = (backend == 'jax')
 
     # For dict-form element_type, override element_type to the dict version
-    if element_type == 'Q4_COROTATIONAL':
+    if isinstance(element_type_arg, dict) if 'element_type_arg' in locals() else False:
         element_type = element_type_arg
 
     solver = DynamicSolver(

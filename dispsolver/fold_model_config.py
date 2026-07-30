@@ -61,7 +61,7 @@ change X" guide built on top of this.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 from dispsolver.material.type_tags import J2_PLASTIC, ARRUDA_BOYCE_VISCO, NEOHOOKEAN
 
@@ -110,7 +110,7 @@ class GeometryConfig:
     # from here out to display_half_length; the hinge pivot sits inside
     # this gap (hinge_pivot_x < hinge_half_gap) -- see AGENTS.md 1.0 for
     # why the pivot is set inside the plate's own footprint.
-    hinge_half_gap: float = 10.0
+    hinge_half_gap: float = 1.0
     hinge_pivot_x: float = 3.0
 
     # One repeating unit of the layer stack + how many times to repeat
@@ -121,7 +121,27 @@ class GeometryConfig:
         LayerSpec("PSA", 0.03, 1),
         LayerSpec("PET", 0.05, 3),
     ])
-    n_layer_pairs: int = 7
+    n_layer_pairs: int = 3
+
+    # Cutouts ("tape" voids): physical layer index (1-based, matching the
+    # DISP_LAYER01..NN elsets and the Qt viewer's Part/Layer list) -> list
+    # of (x_start, x_end) ABSOLUTE-x intervals where that layer has NO
+    # elements. Layers absent from this dict are fully filled.
+    #
+    # Keyed by physical layer rather than by LayerSpec because
+    # layer_pattern is a *repeating* unit -- a field on LayerSpec would
+    # apply the same cutout to all n_layer_pairs repeats of that material,
+    # which is never what a single tape layer means.
+    #
+    # Every void edge is forced into the global x-partition, so element
+    # columns never straddle a cutout boundary; only nodes referenced by a
+    # surviving element are emitted. See dispsolver/mesh/display_builder.py.
+    #
+    # Example -- cutouts either side of the centreline in the bottom layer:
+    #     layer_void_regions={1: [(-7.0, 0.0), (0.0, 7.0)]}
+    layer_void_regions: Dict[int, List[Tuple[float, float]]] = field(
+        default_factory=lambda: {1: [(-7.0, 0.0), (0.0, 7.0)]}
+    )
 
     plate_thickness: float = 0.5
     plate_mesh_nx: int = 60
@@ -142,12 +162,13 @@ class MeshGradingConfig:
     clusters, per the original tip-inversion fix, AGENTS.md 4.12).
     """
     tip_cluster_width: float = 2.0
-    tip_dx: float = 0.125
-    hinge_edge_cluster_width: float = 2.0
-    hinge_edge_dx: float = 0.125
-    hinge_span_half_width: float = 8.0
+    tip_dx: float = 0.25
+    hinge_edge_cluster_width: float = 0.5
+    hinge_edge_dx: float = 0.25
+    hinge_span_half_width: float = 0.25
     hinge_span_dx: float = 0.25
     plate_body_dx: float = 0.5
+    uniform: bool = True
 
 
 @dataclass
@@ -211,8 +232,8 @@ class SolverTuningConfig:
     # Element formulation per material name -- keyed the same way as
     # LayerSpec.material_name. Anything not PET/PSA (i.e. the rigid
     # plate's STEEL) is left to DynamicSolver's "Q4" default.
-    pet_element_type: str = "Q4_COROTATIONAL"
-    psa_element_type: str = "Q4_VISCO_SIMO"
+    pet_element_type: str = "Q4_EAS"
+    psa_element_type: str = "Q4_UP"
 
 
 @dataclass

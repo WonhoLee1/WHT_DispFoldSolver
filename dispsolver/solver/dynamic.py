@@ -1082,7 +1082,19 @@ class DynamicSolver:
                 from ..material.viscoelastic import ViscoelasticMaterial as _VEM
                 from ..element.q4_visco_simo_fs_jax import compute_single as _visco_simo_single
                 for pid, mat_adapter in self.materials.items():
-                    if (self._pid_element_type(pid) == "Q4_VISCO_SIMO"
+                    # Q4_UP + ViscoelasticMaterial (e.g. PSA's Arruda-Boyce
+                    # + Prony/WLF) shares this exact F-bar kernel with
+                    # Q4_VISCO_SIMO -- the "Q4_UP" label here means F-bar
+                    # mean-dilatation locking control (de Souza Neto et al.
+                    # 1996), NOT a true mixed u-p (Q1P0) pressure DOF (that
+                    # formulation, q4_up_jax.py, has no viscoelastic material
+                    # support). Without this, Q4_UP + ViscoelasticMaterial
+                    # fell through every batch branch to the sequential
+                    # fallback (_element_contributions -> plain B-bar Q4,
+                    # ignoring the Q4_UP label entirely) -- slow (Python
+                    # per-element loop every Newton iteration) and weaker
+                    # locking control than F-bar.
+                    if (self._pid_element_type(pid) in ("Q4_VISCO_SIMO", "Q4_UP")
                             and isinstance(mat_adapter.material, _VEM)):
                         vmat = mat_adapter.material
                         base_name, bparams, kappa = vmat.simo_fs_args(mat_adapter.params)
@@ -2888,6 +2900,7 @@ class DynamicSolver:
         All other groups     → sequential per-element loop.
         """
         from ..material.plastic import J2Plasticity
+        from ..material.viscoelastic import ViscoelasticMaterial as _ViscoelasticMaterial
 
         n_gp = len(_GP2)
         f_int = np.zeros(self.n_dofs, dtype=np.float64)
@@ -2969,7 +2982,8 @@ class DynamicSolver:
                     all_K_vals.append(K_es.reshape(-1))
                 continue
 
-            if self._pid_element_type(pid) == "Q4_VISCO_SIMO":
+            if (self._pid_element_type(pid) in ("Q4_VISCO_SIMO", "Q4_UP")
+                    and isinstance(mat_adapter.material, _ViscoelasticMaterial)):
                 # ---- Complete finite-strain Simo viscoelasticity (Flory split,
                 #      pluggable hyperelastic base) — q4_visco_simo_fs_jax.
                 # Uses the pre-built, jit-cached vmap from __init__
@@ -2977,15 +2991,57 @@ class DynamicSolver:
                 # un-jitted jax.vmap(...) here on every Newton iteration for
                 # every pid used to cost 20+ minutes on a first iteration
                 # once this element type had more than one pid group (see
-                # the cache pre-build's comment for the full story). ----
-                import jax.numpy as jnp
-                from ..material.viscoelastic import ViscoelasticMaterial as _VEM
+                # the cache pre-build's comment for the full story).
+                #
+                # Q4_UP routes here too (isinstance-gated so plain Q4_UP +
+                # NeoHookean, if it ever occurs in a multi-material model,
+                # falls through to the other branches below instead) --
+                # "Q4_UP" here means F-bar mean-dilatation locking control,
+                # the SAME kernel as Q4_VISCO_SIMO, not a true mixed u-p
+                # (Q1P0) pressure DOF. Before this, Q4_UP + ViscoelasticMaterial
+                # (PSA's production config: Arruda-Boyce + Prony/WLF) fell to
+                # the sequential fallback at the bottom of this function --
+                # plain B-bar Q4 physics (ignoring the Q4_UP label), computed
+                # in a per-element Python loop every Newton iteration. ----
                 vmat = mat_adapter.material
-                if not isinstance(vmat, _VEM):
-                    raise TypeError("Q4_VISCO_SIMO requires a ViscoelasticMaterial")
                 n_vars = mat_adapter.n_internal_vars   # = 6*(M+1)
                 dt_h = dt if dt is not None else 1.0
 
+                if self.elem_jit == "numba":
+                    try:
+                        from ..element.q4_visco_hybrid_simo_numba import assemble_visco_hybrid_simo_batch_numba
+                        base_name, bparams, kappa = vmat.simo_fs_args(mat_adapter.params)
+                        _base_code = {"neohookean": 0, "yeoh": 1, "arruda": 2}.get(base_name)
+                        if _base_code is not None:
+                            coords_b = self.elem_coords[elem_indices]
+                            u_b = u[self.dof_indices[elem_indices]]
+                            state_b = (self.state[elem_indices, :, :n_vars]
+                                       if self.state is not None
+                                       else np.zeros((len(elem_indices), 4, n_vars)))
+                            t_b = self._elem_thickness[elem_indices]
+
+                            f_es, K_es, se_all = assemble_visco_hybrid_simo_batch_numba(
+                                _base_code, coords_b, u_b, state_b,
+                                float(kappa), np.asarray(bparams, dtype=np.float64),
+                                np.asarray(vmat.g_i, dtype=np.float64),
+                                np.asarray(vmat.tau_i, dtype=np.float64),
+                                float(vmat.g_inf), dt_h, t_b,
+                            )
+                            np.add.at(f_int, self.dof_indices[elem_indices].flatten(), f_es.flatten())
+                            if state_new is not None:
+                                state_new[elem_indices, :, :n_vars] = se_all
+                            all_K_rows.append(self._pid_K_rows[pid])
+                            all_K_cols.append(self._pid_K_cols[pid])
+                            all_K_vals.append(K_es.reshape(-1))
+                            continue
+                        # base_name not in {neohookean, yeoh, arruda} (e.g.
+                        # Ogden) -- no Numba kernel for it (see module
+                        # docstring's eigenvalue-decomposition NaN-risk
+                        # note); fall through to the JAX vmap path below.
+                    except ImportError:
+                        pass  # Numba unavailable -- fall through to JAX vmap below
+
+                import jax.numpy as jnp
                 coords_b = jnp.asarray(self.elem_coords[elem_indices])
                 u_b = jnp.asarray(u[self.dof_indices[elem_indices]])
                 state_b = jnp.asarray(
@@ -3043,6 +3099,42 @@ class DynamicSolver:
             if (self._pid_element_type(pid) in ("Q4_EAS", "Q4_HYBRID_EAS")
                     and isinstance(mat_adapter.material, J2Plasticity)):
                 n_vars = mat_adapter.n_internal_vars
+
+                if self.elem_jit == "numba" and not self.ul_mode:
+                    # Multi-threaded Numba batch (TL mode only -- UL mode
+                    # falls through to the JAX vmap path below, which
+                    # already handles the UL/TL mixing per element).
+                    try:
+                        from ..element.q4_eas_numba import assemble_q4_eas_j2_batch_numba
+                        mat = mat_adapter.material
+                        lam = float(mat.lam)
+                        mu = float(mat.mu)
+                        sigma_y0 = float(mat.sigma_y0)
+                        H = float(mat.H)
+
+                        coords_b = self.elem_coords[elem_indices]
+                        u_b = u[self.dof_indices[elem_indices]]
+                        alpha_b = self.eas_alpha[elem_indices]
+                        state_b = (self.state[elem_indices, :, :n_vars]
+                                   if self.state is not None
+                                   else np.zeros((len(elem_indices), 4, n_vars)))
+                        t_b = self._elem_thickness[elem_indices]
+
+                        f_es, K_es, alpha_all, se_all = assemble_q4_eas_j2_batch_numba(
+                            coords_b, u_b, alpha_b, state_b, lam, mu, sigma_y0, H, t_b,
+                        )
+
+                        np.add.at(f_int, self.dof_indices[elem_indices].flatten(), f_es.flatten())
+                        self.eas_alpha[elem_indices] = alpha_all
+                        if state_new is not None:
+                            state_new[elem_indices, :, :n_vars] = se_all
+                        all_K_rows.append(self._pid_K_rows[pid])
+                        all_K_cols.append(self._pid_K_cols[pid])
+                        all_K_vals.append(K_es.reshape(-1))
+                        continue
+                    except ImportError:
+                        pass  # Numba unavailable -- fall through to JAX vmap below
+
                 if pid in self._eas_jax_vmap_by_pid:
                     import jax
                     import jax.numpy as jnp
@@ -3612,6 +3704,7 @@ class DynamicSolver:
                     se_new = None
                 elif elem_type == "Q4_UP":
                     from ..material.linear_viscoelastic import LinearViscoelastic
+                    from ..material.viscoelastic import ViscoelasticMaterial as _VEM_seq
                     if isinstance(mat_adapter.material, LinearViscoelastic):
                         from ..element.q4_visco_hybrid import compute_visco_hybrid_contributions
                         n_vars = mat_adapter.n_internal_vars
@@ -3622,6 +3715,26 @@ class DynamicSolver:
                             coords, u_elem, state_elem, mat_adapter.material,
                             dt if dt is not None else 1.0, temp, self._elem_thickness[e],
                         )
+                    elif isinstance(mat_adapter.material, _VEM_seq):
+                        # Same F-bar Arruda-Boyce/Prony kernel as Q4_VISCO_SIMO
+                        # (see _assemble_multi_material_batch's Q4_UP branch
+                        # for the full rationale) -- non-batched single-element
+                        # call here since this is the sequential fallback path.
+                        from ..element.q4_visco_simo_fs_jax import compute_single as _visco_simo_single_seq
+                        vmat = mat_adapter.material
+                        n_vars = mat_adapter.n_internal_vars
+                        state_elem = (self.state[e][:, :n_vars]
+                                      if self.state is not None else np.zeros((4, n_vars)))
+                        base_name, bparams, kappa = vmat.simo_fs_args(mat_adapter.params)
+                        f_e_jax, K_e_jax, se_new_jax = _visco_simo_single_seq(
+                            coords, u_elem, state_elem, float(kappa), bparams,
+                            vmat.g_i, vmat.tau_i, float(vmat.g_inf),
+                            dt if dt is not None else 1.0, self._elem_thickness[e],
+                            base=base_name,
+                        )
+                        f_e = np.asarray(f_e_jax)
+                        K_e = np.asarray(K_e_jax)
+                        se_new = np.asarray(se_new_jax)
                     else:
                         from ..element.q4_up_jax import compute_hybrid_element_contributions
                         f_e_jax, K_e_jax = compute_hybrid_element_contributions(coords, u_elem, mat_adapter.params)

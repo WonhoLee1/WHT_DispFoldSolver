@@ -43,6 +43,7 @@ def format_model_review(
     pid_params: Dict[int, dict],
     pid_types: Optional[Dict[int, str]] = None,
     pid_part_names: Optional[Dict[int, str]] = None,
+    pid_element_type: Optional[Dict[int, str]] = None,
 ) -> str:
     """Build the console review text. Dict keys may be int or str
     (Result.meta round-trips pid keys as strings through JSON) --
@@ -52,6 +53,7 @@ def format_model_review(
     params = {int(k): v for k, v in pid_params.items()}
     types = {int(k): v for k, v in (pid_types or {}).items()}
     part_names = {int(k): v for k, v in (pid_part_names or {}).items()}
+    elem_types = {int(k): v for k, v in (pid_element_type or {}).items()}
 
     lines = [_SEP, " MODEL REVIEW", _SEP]
 
@@ -71,14 +73,16 @@ def format_model_review(
         n_elem = counts[pid]
         name = names.get(pid, f"pid{pid}")
         label = part_names.get(pid, f"pid {pid}")
-        lines.append(f"  - {label}: {n_elem} elements, material={name}")
+        etype = elem_types.get(pid, "")
+        etype_str = f", element={etype}" if etype else ""
+        lines.append(f"  - {label}: {n_elem} elements, material={name}{etype_str}")
 
     lines.append(f"Total elements: {sum(counts.values())}, total layers/parts: {len(counts)}")
     lines.append(_SEP)
     return "\n".join(lines)
 
 
-def print_model_review_from_builder_result(result) -> None:
+def print_model_review_from_builder_result(result, pid_element_type=None) -> None:
     """Adapter for a live ModelBuilderResult / SimpleNamespace (has
     .mesh, .material_names, .material_params, and optionally
     .material_types)."""
@@ -90,6 +94,7 @@ def print_model_review_from_builder_result(result) -> None:
         counts, result.material_names, result.material_params,
         getattr(result, "material_types", None),
         getattr(result, "part_names", None),
+        pid_element_type=pid_element_type,
     ))
 
 
@@ -99,8 +104,10 @@ def print_model_review_from_result(result) -> None:
     import numpy as np
     pids, cnts = np.unique(result.element_pid, return_counts=True)
     counts = {int(p): int(c) for p, c in zip(pids, cnts)}
+    elem_types = result.meta.get("pid_element_types", {}) if hasattr(result, "meta") else {}
     print(format_model_review(
         counts, result.meta.get("pid_names", {}), result.materials,
         result.meta.get("pid_types", {}),
         result.meta.get("pid_part_names", {}),
+        pid_element_type=elem_types,
     ))

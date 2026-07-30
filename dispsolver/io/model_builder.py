@@ -147,9 +147,23 @@ class ModelBuilderResult:
 _ABAQUS_TO_DISPSOLVER_ELEM = {
     "CPE4": "QUAD4",
     "CPE4R": "QUAD4",
+    "CPE4H": "QUAD4",
+    "CPE4RH": "QUAD4",
+    "CPE4I": "QUAD4",
+    "CPE4IH": "QUAD4",
     "CPE3": "TRIA3",
     "CPS4": "QUAD4",   # plane stress (handled as QUAD4 for mesh)
     "CPS3": "TRIA3",
+}
+
+# Element type string → solver element_type mapping
+_ABAQUS_TO_SOLVER_ELEM_TYPE = {
+    "CPE4H": "Q4_HYBRID",
+    "CPE4RH": "Q4_HYBRID_RH",
+    "CPE4IH": "Q4_HYBRID_EAS",
+    "CPE4I": "Q4_EAS",
+    "CPE4S": "Q4_SRI",
+    "CPE4SH": "Q4_HYBRID_SRI",
 }
 
 _UNSUPPORTED_3D_ELEMENTS = {"C3D8", "C3D20", "C3D8R", "C3D20R", "C3D4", "C3D10"}
@@ -935,6 +949,13 @@ class ModelBuilder:
                 config["dt_max"] = tp.get("dt_max", config["t_total"])
                 # HHT-alpha
                 config["alpha"] = tp.get("alpha", 0.0)
+
+        # Element type → solver formulation
+        if self._abq.elements:
+            first_etype = self._abq.elements[0].etype.upper()
+            solver_elem = _ABAQUS_TO_SOLVER_ELEM_TYPE.get(first_etype)
+            if solver_elem is not None:
+                config["element_type"] = solver_elem
 
         # Amplitude mappings for BC and loads
         # (set by parser if AMPLITUDE= keyword param was used)

@@ -101,6 +101,25 @@ class AbaqusParser:
             "END INSTANCE": self._parse_end_instance,
         }
 
+        # Harmless administrative/output keywords that can be silently skipped without UserWarning
+        self._ignored_keywords = {
+            "HEADING",
+            "PREPRINT",
+            "RESTART",
+            "PHYSICAL CONSTANTS",
+            "OUTPUT",
+            "ELEMENT OUTPUT",
+            "NODE OUTPUT",
+            "FILE FORMAT",
+            "EL FILE",
+            "NODE FILE",
+            "EL PRINT",
+            "NODE PRINT",
+            "SECTION PRINT",
+            "CONTROLS",
+            "MONITOR",
+        }
+
     def parse(self, blocks: List[AbaqusKeywordBlock]) -> AbaqusModel:
         """Parse a list of keyword blocks into an AbaqusModel."""
         self.model = AbaqusModel()
@@ -108,7 +127,7 @@ class AbaqusParser:
             handler = self._handlers.get(block.keyword)
             if handler:
                 handler(block)
-            else:
+            elif block.keyword not in self._ignored_keywords:
                 warnings.warn(f"Unsupported keyword: *{block.keyword} — skipping")
             # Clear material context on non-material-property keywords
             if block.keyword != "MATERIAL" and block.keyword not in _MATERIAL_PROPS:
