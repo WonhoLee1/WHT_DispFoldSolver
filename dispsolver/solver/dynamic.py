@@ -109,24 +109,18 @@ import scipy.sparse as sps
 import scipy.sparse.linalg as spla
 
 try:
-    from pypardiso import spsolve as pardiso_spsolve
+    from pypardiso import spsolve as pardiso_spsolve, PyPardisoSolver
+    # Test instantiation to verify mkl_rt DLL/LIB exists and loads cleanly
+    _test_solver = PyPardisoSolver()
+    del _test_solver
     _PARDISO_AVAILABLE = True
-except ImportError:
+except Exception:
     _PARDISO_AVAILABLE = False
 
 # Tracks which (n,) matrix sizes have already had their first PARDISO
 # factorisation announced, keyed by matrix dimension.
 _PARDISO_FACTOR_NOTIFIED: dict = {}
 
-# Process-wide cached PyPardisoSolver instance. `PyPardisoSolver()`'s own
-# __init__ does an expensive filesystem glob search (looking for the MKL
-# runtime), independent of any actual factorization -- profiling showed
-# this costing ~8.5s out of a ~10s Newton iteration (85% of wall time) on
-# a mere 1186-DOF system, because a *new* PyPardisoSolver() was being
-# constructed on every single call to `_solve_linear_system` (i.e. every
-# Newton iteration). Reusing one instance across calls still re-factorizes
-# per call (Js legitimately changes each iteration) but pays the glob-scan
-# init cost exactly once per process instead of once per iteration.
 _PARDISO_SOLVER_SINGLETON = None
 
 
@@ -220,14 +214,14 @@ def _solve_linear_system(J, b, n_refine: int = 4, tol: float = 1e-14):
 
             p_solver.free_memory(Js)
         except Exception:
-            y = pardiso_spsolve(Js, bs)
+            y = spla.spsolve(Js, bs)
             b_norm = np.linalg.norm(bs) + 1e-30
             for _ in range(n_refine):
                 r = bs - Js @ y
                 r_norm = np.linalg.norm(r)
                 if r_norm <= tol * b_norm or r_norm < 1e-30:
                     break
-                dy = pardiso_spsolve(Js, r)
+                dy = spla.spsolve(Js, r)
                 y = y + dy
 
         # ---- 4. Unscale solution ----
@@ -830,23 +824,22 @@ class DynamicSolver:
         self.K_rows = np.repeat(self.dof_indices, 8, axis=1).flatten()
         self.K_cols = np.tile(self.dof_indices, (1, 8)).flatten()
 
-        # --- pid grouping (always built for dict materials)
+        # --- pid grouping (always built)
         self._pid_elem_indices: Dict[int, np.ndarray] = {}
         self._pid_K_rows: Dict[int, np.ndarray] = {}
         self._pid_K_cols: Dict[int, np.ndarray] = {}
-        if isinstance(material, dict):
-            pid_buckets: Dict[int, list] = {}
-            for e in range(self.n_elem):
-                eid = self.elem_ids[e]
-                elem = self.mesh.elements[eid]
-                pid = elem.pid if elem.pid is not None else 0
-                pid_buckets.setdefault(pid, []).append(e)
-            for pid, idxs in pid_buckets.items():
-                arr = np.array(idxs, dtype=np.int32)
-                dof_g = self.dof_indices[arr]
-                self._pid_elem_indices[pid] = arr
-                self._pid_K_rows[pid] = np.repeat(dof_g, 8, axis=1).flatten()
-                self._pid_K_cols[pid] = np.tile(dof_g, (1, 8)).flatten()
+        pid_buckets: Dict[int, list] = {}
+        for e in range(self.n_elem):
+            eid = self.elem_ids[e]
+            elem = self.mesh.elements[eid]
+            pid = elem.pid if (elem.pid is not None and isinstance(material, dict)) else 0
+            pid_buckets.setdefault(pid, []).append(e)
+        for pid, idxs in pid_buckets.items():
+            arr = np.array(idxs, dtype=np.int32)
+            dof_g = self.dof_indices[arr]
+            self._pid_elem_indices[pid] = arr
+            self._pid_K_rows[pid] = np.repeat(dof_g, 8, axis=1).flatten()
+            self._pid_K_cols[pid] = np.tile(dof_g, (1, 8)).flatten()
 
         # --- check if material is JAX-compatible for vectorization
         self.use_jax_vmap = False
@@ -931,8 +924,9 @@ class DynamicSolver:
             self.use_j2_batch = False
             self.use_multi_material_batch = False
             self.use_jax_grouped_vmap = False
-        elif self.element_type_by_pid is not None:
-            # Per-pid element types → use the multi-material grouped assembler
+        elif (self.element_type_by_pid is not None or
+              self.element_type in ("Q4_COROTATIONAL", "Q4_COROTATIONAL_EAS", "Q4_COROTATIONAL_SRI", "Q4_SRI", "Q4_COROTATIONAL_HYBRID_SRI", "Q4_HYBRID_SRI", "Q4_COROTATIONAL_HYBRID", "Q4_HYBRID", "Q4_COROTATIONAL_HYBRID_EAS", "Q4_HYBRID_EAS")):
+            # Per-pid or JAX J2 element types → use the multi-material grouped assembler
             self.use_jax_vmap = False
             self.use_jax_grouped_vmap = False
             self.use_j2_batch = False
@@ -946,16 +940,22 @@ class DynamicSolver:
                 from ..element.q4_eas_jax import compute_eas_j2_contributions_jax
                 from ..material.plastic_jax import pk2_voigt_jax as _pk2_jax
                 for pid, mat_adapter in self.materials.items():
-                    if (self._pid_element_type(pid) == "Q4_EAS"
+                    if (self._pid_element_type(pid) in ("Q4_EAS", "Q4_HYBRID_EAS")
                             and isinstance(mat_adapter.material, J2Plasticity)):
                         mat = mat_adapter.material
                         lam = float(mat.lam)
                         mu = float(mat.mu)
                         sigma_y0 = float(mat.sigma_y0)
                         H = float(mat.H)
-                        _single = lambda coords, u_e, a, s, fn: compute_eas_j2_contributions_jax(
-                            coords, u_e, a, s, lam, mu, sigma_y0, H, 1.0, fn,
-                        )
+                        if self._pid_element_type(pid) == "Q4_HYBRID_EAS":
+                            from ..element.q4_hybrid_jax import compute_hybrid_eas_j2_contributions_jax
+                            _single = lambda coords, u_e, a, s, fn: compute_hybrid_eas_j2_contributions_jax(
+                                coords, u_e, a, s, lam, mu, sigma_y0, H, 1.0, fn,
+                            )
+                        else:
+                            _single = lambda coords, u_e, a, s, fn: compute_eas_j2_contributions_jax(
+                                coords, u_e, a, s, lam, mu, sigma_y0, H, 1.0, fn,
+                            )
                         self._eas_jax_vmap_by_pid[pid] = jax.jit(jax.vmap(_single))
             except ImportError:
                 pass
@@ -972,15 +972,52 @@ class DynamicSolver:
                 import jax
                 from ..element.q4_corotational_jax import compute_corotational_j2_contributions_jax
                 for pid, mat_adapter in self.materials.items():
-                    if (self._pid_element_type(pid) == "Q4_COROTATIONAL"
+                    elem_t = self._pid_element_type(pid)
+                    if (elem_t in ("Q4_COROTATIONAL", "Q4_COROTATIONAL_EAS", "Q4_COROTATIONAL_SRI", "Q4_SRI", "Q4_COROTATIONAL_HYBRID_SRI", "Q4_HYBRID_SRI", "Q4_COROTATIONAL_HYBRID", "Q4_HYBRID")
                             and isinstance(mat_adapter.material, J2Plasticity)):
                         mat = mat_adapter.material
-                        mat_key = (float(mat.lam), float(mat.mu), float(mat.sigma_y0), float(mat.H))
+                        if elem_t in ("Q4_COROTATIONAL_HYBRID_SRI", "Q4_HYBRID_SRI"):
+                            # SRI Hybrid uses params dict (E, nu), not plasticity params
+                            mat_key = (elem_t, float(mat.lam), float(mat.mu))
+                        else:
+                            mat_key = (elem_t, float(mat.lam), float(mat.mu), float(mat.sigma_y0), float(mat.H))
                         if mat_key not in _coro_vmap_cache:
-                            lam, mu, sigma_y0, H = mat_key
-                            _single_coro = lambda coords, u_e, s, _lam=lam, _mu=mu, _sy0=sigma_y0, _H=H: compute_corotational_j2_contributions_jax(
-                                coords, u_e, s, _lam, _mu, _sy0, _H, 1.0,
-                            )
+                            _, lam, mu, *rest = mat_key
+                            sigma_y0 = rest[0] if len(rest) > 0 else 0.0
+                            H = rest[1] if len(rest) > 1 else 0.0
+                            if elem_t == "Q4_COROTATIONAL_EAS":
+                                from ..element.q4_corotational_eas_jax import compute_corotational_eas_j2_contributions_jax
+                                _single_coro = lambda coords, u_e, a, s, _lam=lam, _mu=mu, _sy0=sigma_y0, _H=H: compute_corotational_eas_j2_contributions_jax(
+                                    coords, u_e, a, s, _lam, _mu, _sy0, _H, 1.0,
+                                )
+                            elif elem_t in ("Q4_COROTATIONAL_HYBRID_EAS", "Q4_HYBRID_EAS"):
+                                from ..element.q4_hybrid_jax import compute_corotational_hybrid_eas_contributions_jax
+                                _single_coro = lambda coords, u_e, a, s, _lam=lam, _mu=mu, _sy0=sigma_y0, _H=H: compute_corotational_hybrid_eas_contributions_jax(
+                                    coords, u_e, a, s, _lam, _mu, _sy0, _H, 1.0,
+                                )
+                            elif elem_t in ("Q4_COROTATIONAL_HYBRID_SRI", "Q4_HYBRID_SRI"):
+                                from ..element.q4_sri_hybrid_jax import compute_corotational_sri_hybrid_contributions_jax
+                                _nu = lam / (2.0 * (lam + mu))
+                                _E = 2.0 * mu * (1.0 + _nu)
+                                _params = {"E": _E, "nu": _nu}
+                                def _single_coro(coords, u_e, s, _p=_params):
+                                    f, K = compute_corotational_sri_hybrid_contributions_jax(coords, u_e, _p)
+                                    return f, K, s  # state passthrough
+                                _single_coro.__name__ = "sri_hybrid_wrapper"
+                            elif elem_t in ("Q4_COROTATIONAL_SRI", "Q4_SRI"):
+                                from ..element.q4_sri_jax import compute_corotational_sri_j2_contributions_jax
+                                _single_coro = lambda coords, u_e, s, _lam=lam, _mu=mu, _sy0=sigma_y0, _H=H: compute_corotational_sri_j2_contributions_jax(
+                                    coords, u_e, s, _lam, _mu, _sy0, _H, 1.0,
+                                )
+                            elif elem_t in ("Q4_COROTATIONAL_HYBRID", "Q4_HYBRID"):
+                                from ..element.q4_hybrid_jax import compute_corotational_hybrid_j2_contributions_jax
+                                _single_coro = lambda coords, u_e, s, _lam=lam, _mu=mu, _sy0=sigma_y0, _H=H: compute_corotational_hybrid_j2_contributions_jax(
+                                    coords, u_e, s, _lam, _mu, _sy0, _H, 1.0,
+                                )
+                            else:
+                                _single_coro = lambda coords, u_e, s, _lam=lam, _mu=mu, _sy0=sigma_y0, _H=H: compute_corotational_j2_contributions_jax(
+                                    coords, u_e, s, _lam, _mu, _sy0, _H, 1.0,
+                                )
                             _coro_vmap_cache[mat_key] = jax.jit(jax.vmap(_single_coro))
                         self._coro_jax_vmap_by_pid[pid] = _coro_vmap_cache[mat_key]
             except ImportError:
@@ -2967,22 +3004,29 @@ class DynamicSolver:
                 all_K_vals.append(K_es.reshape(-1))
                 continue
 
-            if (self._pid_element_type(pid) == "Q4_COROTATIONAL"
+            if (self._pid_element_type(pid) in ("Q4_COROTATIONAL", "Q4_COROTATIONAL_EAS", "Q4_COROTATIONAL_SRI", "Q4_SRI", "Q4_COROTATIONAL_HYBRID_SRI", "Q4_HYBRID_SRI", "Q4_COROTATIONAL_HYBRID", "Q4_HYBRID")
                     and isinstance(mat_adapter.material, J2Plasticity)
                     and pid in self._coro_jax_vmap_by_pid):
                 import jax
                 import jax.numpy as jnp
                 n_vars = mat_adapter.n_internal_vars
                 _vmap_fn = self._coro_jax_vmap_by_pid[pid]
+                Ng = len(elem_indices)
 
                 coords_b = jnp.asarray(self.elem_coords[elem_indices])
                 u_b = jnp.asarray(u[self.dof_indices[elem_indices]])
                 state_b = jnp.asarray(
                     self.state[elem_indices, :, :n_vars]
-                ) if self.state is not None else jnp.zeros((len(elem_indices), 4, n_vars))
+                ) if self.state is not None else jnp.zeros((Ng, 4, n_vars))
                 t_b = self._elem_thickness[elem_indices]
 
-                f_es, K_es, se_all = _vmap_fn(coords_b, u_b, state_b)
+                if self._pid_element_type(pid) in ("Q4_COROTATIONAL_EAS", "Q4_COROTATIONAL_HYBRID_EAS"):
+                    alpha_b = jnp.asarray(self.eas_alpha[elem_indices])
+                    f_es, K_es, alpha_all, se_all, F_n_new = _vmap_fn(coords_b, u_b, alpha_b, state_b)
+                    self.eas_alpha[elem_indices] = np.asarray(alpha_all)
+                else:
+                    f_es, K_es, se_all = _vmap_fn(coords_b, u_b, state_b)
+
                 f_es = np.asarray(f_es) * t_b[:, None]
                 K_es = np.asarray(K_es) * t_b[:, None, None]
                 se_all = np.asarray(se_all)
@@ -2996,7 +3040,7 @@ class DynamicSolver:
                 all_K_vals.append(K_es.reshape(-1))
                 continue
 
-            if (self._pid_element_type(pid) == "Q4_EAS"
+            if (self._pid_element_type(pid) in ("Q4_EAS", "Q4_HYBRID_EAS")
                     and isinstance(mat_adapter.material, J2Plasticity)):
                 n_vars = mat_adapter.n_internal_vars
                 if pid in self._eas_jax_vmap_by_pid:
@@ -3201,7 +3245,7 @@ class DynamicSolver:
                 N_tot      = Ng * n_gp
                 F_flat     = F_all.reshape(N_tot, 2, 2)
                 n_vars     = mat_adapter.n_internal_vars
-                state_flat = self.state[elem_indices].reshape(N_tot, max_vars)[:, :n_vars]
+                state_flat = self.state[elem_indices].reshape(N_tot, max_vars)[:, :n_vars] if self.state is not None else None
 
                 S_flat, C_flat, sn_flat = mat_adapter.material.pk2_tangent_voigt_batch(
                     F_flat, mat_adapter.params, state_flat, dt if dt is not None else 1.0
@@ -3232,6 +3276,59 @@ class DynamicSolver:
                 all_K_rows.append(self._pid_K_rows[pid])
                 all_K_cols.append(self._pid_K_cols[pid])
                 all_K_vals.append(K_e_all.flatten())
+
+            elif self.elem_jit == "numba" and 'E' in mat_adapter.params and 'nu' in mat_adapter.params:
+                # ---- Numba parallel Q4 B-bar for NeoHookean (STEEL plate) ----
+                try:
+                    from ..element.q4_numba import assemble_q4_bbar_batch_numba
+                    n_e = len(elem_indices)
+                    coords_b = self.elem_coords[elem_indices]  # (n_e, 4, 2)
+                    u_elems = u[self.dof_indices[elem_indices]]  # (n_e, 8)
+                    E = float(mat_adapter.params['E'])
+                    nu = float(mat_adapter.params['nu'])
+                    t_b = self._elem_thickness[elem_indices]  # (n_e,)
+
+                    f_all, K_all = assemble_q4_bbar_batch_numba(coords_b, u_elems, E, nu, t_b)
+                    f_all_np = np.asarray(f_all)
+                    K_all_np = np.asarray(K_all)
+
+                    np.add.at(f_int, self.dof_indices[elem_indices].flatten(), f_all_np.flatten())
+                    all_K_rows.append(self._pid_K_rows[pid])
+                    all_K_cols.append(self._pid_K_cols[pid])
+                    all_K_vals.append(K_all_np.flatten())
+                except (ImportError, AttributeError):
+                    # Numba not available or material missing E/nu — fall back to sequential
+                    n_e = len(elem_indices)
+                    seq_rows = np.empty(n_e * 64, dtype=np.int64)
+                    seq_cols = np.empty(n_e * 64, dtype=np.int64)
+                    seq_vals = np.empty(n_e * 64, dtype=np.float64)
+                    edofs = np.empty(8, dtype=np.int64)
+
+                    for k, e in enumerate(elem_indices):
+                        coords = self.elem_coords[e]
+                        nids = self.conn[e]
+                        edofs[0::2] = np.asarray(nids, dtype=np.int64) * 2
+                        edofs[1::2] = edofs[0::2] + 1
+                        u_elem = u[edofs]
+
+                        n_vars = mat_adapter.n_internal_vars
+                        state_elem = self.state[e, :, :n_vars] if self.state is not None else None
+                        f_e, K_e, se_new = _element_contributions(
+                            coords, u_elem, state_elem, mat_adapter, dt, self._elem_thickness[e])
+
+                        f_int[edofs] += f_e
+
+                        sl = slice(k * 64, (k + 1) * 64)
+                        seq_rows[sl] = np.repeat(edofs, 8)
+                        seq_cols[sl] = np.tile(edofs, 8)
+                        seq_vals[sl] = K_e.ravel()
+
+                        if state_new is not None and se_new is not None:
+                            state_new[e, :, :n_vars] = se_new
+
+                    all_K_rows.append(seq_rows)
+                    all_K_cols.append(seq_cols)
+                    all_K_vals.append(seq_vals)
 
             else:
                 # ---- Sequential fallback for any remaining material types ----
