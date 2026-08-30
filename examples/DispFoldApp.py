@@ -59,7 +59,7 @@ def run_disp_fold_app(
     elem_jit: str = "numba",
     max_steps: Optional[int] = None,
     mesh_ratio: float = 0.5,
-    mesh_grading: str = "uniform",
+    mesh_grading: str = "graded",
     output_path: Optional[str] = None,
     verbose: bool = True,
 ) -> int:
@@ -150,8 +150,8 @@ def main():
                         help="Element formulation (default: Q4_COROTATIONAL_SRI)")
     parser.add_argument("--elem_jit", choices=["jax", "numba", "numpy"], default="numba",
                         help="Element JIT backend (default: numba)")
-    parser.add_argument("--mesh_grading", choices=["uniform", "graded"], default="uniform",
-                        help="Display element mesh sizing mode (default: uniform)")
+    parser.add_argument("--mesh_grading", choices=["uniform", "graded"], default="graded",
+                        help="Display element mesh sizing mode (default: graded)")
     parser.add_argument("--max-steps", type=int, default=None,
                         help="Maximum solver time increments to run")
     parser.add_argument("--mesh_ratio", type=float, default=0.5,
