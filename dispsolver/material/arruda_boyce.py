@@ -5,7 +5,7 @@ Arruda-Boyce (8-chain) hyperelastic model with deviatoric/volumetric split.
 
 Strain energy density (5-term expansion in Ī1):
     W = μ · Σₖ₌₁⁵ Cₖ / λₘ^{2(k−1)} · (Ī₁ᵏ − 3ᵏ)
-      + (K/2) · (J − 1)²
+      + (K/2) · (ln J)²
 
 where:
     C₁ = 1/2,  C₂ = 1/20,  C₃ = 11/1050,

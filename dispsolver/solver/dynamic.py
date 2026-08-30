@@ -2207,8 +2207,9 @@ class DynamicSolver:
             # floors at the linear-solver precision ~1e-6 absolute) and never
             # fired, so steps with a near-zero displacement ratio stalled to
             # max_iter even when already converged.
-            q_avg_raw = np.mean(np.abs(f_int)) if len(f_int) > 0 else 1.0
-            q_avg = max(q_avg_raw, max_R_val * 0.2 if max_R_val > 0 else 1.0, 1.0, float(np.mean(np.abs(R_u))) * 0.5 if 'R_u' in locals() and len(R_u) else 1.0)
+            q_avg_raw = float(np.mean(np.abs(f_int))) if len(f_int) > 0 else 1.0
+            q_floor = max(1.0, float(getattr(self, "characteristic_force", 1.0)))
+            q_avg = max(q_avg_raw, q_floor)
             abaqus_r_converged = max_R_val <= 0.005 * q_avg
             abaqus_c_converged = max_du_val <= 0.01 * max_disp_incr
             abaqus_converged = abaqus_r_converged and abaqus_c_converged
@@ -3828,16 +3829,10 @@ class DynamicSolver:
 
         stab = getattr(self, "stabilization", None)
         if stab is not None:
-            try:
-                f_stab = stab.compute_stabilization_force(self.v, self.M)
-                f_int = f_int + f_stab
-                K_T = K_T.tolil()
-                diag_add = stab.damping_factor * self.M
-                for di in range(self.n_dofs):
-                    K_T[di, di] += diag_add[di]
-                K_T = K_T.tocsr()
-            except Exception:
-                pass
+            f_stab = stab.compute_stabilization_force(self.v, self.M)
+            f_int = f_int + f_stab
+            diag_add = stab.damping_factor * self.M
+            K_T = K_T + sps.diags(diag_add, shape=(self.n_dofs, self.n_dofs), format='csr')
 
         # --- RBE2 Abaqus-style DOF elimination post-processing ---
         # Redirect slave DOF contributions → master DOFs, then make slave DOFs dummy.
