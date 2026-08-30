@@ -634,9 +634,13 @@ class DynamicSolver:
         mode: Optional[str] = None,
         ul_mode: bool = False,
         elem_jit: str = "jax",
+        stabilization=None,
+        skip_fully_prescribed: bool = False,
     ):
-        configure_jax_cache()  # no-op after first call; safe to call every construction
+        configure_jax_cache()
         self.elem_jit = elem_jit
+        self.stabilization = stabilization
+        self.skip_fully_prescribed = skip_fully_prescribed
         self.t_preprocess = 0.0
         self.t_assemble = 0.0
         self.t_linear_solve = 0.0
@@ -3713,11 +3717,20 @@ class DynamicSolver:
             state_new = None
 
         else:
-            # --- Sequential Fallback Assembly ---
             K_T = sps.lil_matrix((self.n_dofs, self.n_dofs), dtype=np.float64)
             state_new = np.zeros((self.n_elem, n_gp, max_vars), dtype=np.float64) if max_vars > 0 else None
+            bc_set = set(self.bc_dofs.tolist()) if self.bc_dofs.size else set()
+            skip_enabled = bool(getattr(self, "skip_fully_prescribed", False))
 
             for e in range(self.n_elem):
+                if skip_enabled and bc_set:
+                    nids_tmp = self.conn[e]
+                    fully = True
+                    for nid_tmp in nids_tmp:
+                        if (int(nid_tmp)*2 not in bc_set) or (int(nid_tmp)*2+1 not in bc_set):
+                            fully=False; break
+                    if fully:
+                        continue
                 coords = self.elem_coords[e]
                 nids = self.conn[e]
 
@@ -3796,12 +3809,24 @@ class DynamicSolver:
                     state_new[e, :, :mat_adapter.n_internal_vars] = se_new
             K_T = K_T.tocsr()
 
-        # --- Penalty constraints ---
         if self.penalty_constraints:
             K_T = K_T.tolil()
             for pc in self.penalty_constraints:
                 pc.apply_penalty(u, f_int, K_T)
             K_T = K_T.tocsr()
+
+        stab = getattr(self, "stabilization", None)
+        if stab is not None:
+            try:
+                f_stab = stab.compute_stabilization_force(self.v, self.M)
+                f_int = f_int + f_stab
+                K_T = K_T.tolil()
+                diag_add = stab.damping_factor * self.M
+                for di in range(self.n_dofs):
+                    K_T[di, di] += diag_add[di]
+                K_T = K_T.tocsr()
+            except Exception:
+                pass
 
         # --- RBE2 Abaqus-style DOF elimination post-processing ---
         # Redirect slave DOF contributions → master DOFs, then make slave DOFs dummy.

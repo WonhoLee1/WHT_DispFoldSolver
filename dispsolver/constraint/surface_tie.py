@@ -49,13 +49,17 @@ class SurfaceTieConstraint:
         self.master_node_ids = list(master_node_ids)
         self.nid_to_idx = nid_to_idx
         self.coords = coords
-        self.k_tie = penalty_stiffness
+        self.k_tie = float(penalty_stiffness)
         self.position_tolerance = position_tolerance
         self.name = name
+        self._lam = None
+        self._k_auto_scale = 1.0
 
         # Map pairs: list of tuples (slave_nid, master1_nid, master2_nid, xi)
         self.pairs: List[Tuple[int, int, int, float]] = []
         self._build_tie_pairs()
+        if self.pairs:
+            self._lam = np.zeros((len(self.pairs), 2), dtype=np.float64)
 
     def _build_tie_pairs(self) -> None:
         """Find nearest master segment for each slave node based on initial geometry."""
@@ -105,8 +109,34 @@ class SurfaceTieConstraint:
 
     @property
     def n_active(self) -> int:
-        """Number of active tied node pairs."""
         return len(self.pairs)
+
+    def auto_scale_k(self, E_ref: float = 4000.0, h_elem: float = 0.5, beta: float = 50.0) -> float:
+        k_auto = beta * E_ref * h_elem
+        self._k_auto_scale = float(k_auto)
+        return float(k_auto)
+
+    def update_augmented_lagrange(self, u: np.ndarray) -> float:
+        if self._lam is None or not self.pairs:
+            return 0.0
+        max_gap = 0.0
+        for pi, (s_nid, m1_nid, m2_nid, xi) in enumerate(self.pairs):
+            s_idx = self.nid_to_idx[s_nid]
+            m1_idx = self.nid_to_idx[m1_nid]
+            m2_idx = self.nid_to_idx[m2_nid]
+            xs = self.coords[s_idx] + u[2 * s_idx : 2 * s_idx + 2]
+            xm1 = self.coords[m1_idx] + u[2 * m1_idx : 2 * m1_idx + 2]
+            xm2 = self.coords[m2_idx] + u[2 * m2_idx : 2 * m2_idx + 2]
+            N1 = 0.5 * (1.0 - xi)
+            N2 = 0.5 * (1.0 + xi)
+            gap = xs - (N1 * xm1 + N2 * xm2)
+            self._lam[pi] += self.k_tie * gap
+            max_gap = max(max_gap, float(np.linalg.norm(gap)))
+        return max_gap
+
+    def reset_augmented_lagrange(self) -> None:
+        if self._lam is not None:
+            self._lam.fill(0.0)
 
     def apply_penalty(self, u: np.ndarray, f_int: np.ndarray, K_eff) -> float:
         """Assemble penalty internal forces and stiffness into global solver vectors.
@@ -128,33 +158,33 @@ class SurfaceTieConstraint:
         total_energy = 0.0
         I2 = np.eye(2, dtype=np.float64)
 
-        for s_nid, m1_nid, m2_nid, xi in self.pairs:
+        for pi, (s_nid, m1_nid, m2_nid, xi) in enumerate(self.pairs):
             s_idx = self.nid_to_idx[s_nid]
             m1_idx = self.nid_to_idx[m1_nid]
             m2_idx = self.nid_to_idx[m2_nid]
 
-            # Current coordinates: x = X0 + u
             xs = self.coords[s_idx] + u[2 * s_idx : 2 * s_idx + 2]
             xm1 = self.coords[m1_idx] + u[2 * m1_idx : 2 * m1_idx + 2]
             xm2 = self.coords[m2_idx] + u[2 * m2_idx : 2 * m2_idx + 2]
 
-            # Shape functions
             N1 = 0.5 * (1.0 - xi)
             N2 = 0.5 * (1.0 + xi)
 
-            # Gap vector g = xs - (N1*xm1 + N2*xm2)
             gap = xs - (N1 * xm1 + N2 * xm2)
             total_energy += 0.5 * self.k_tie * np.dot(gap, gap)
+            if self._lam is not None:
+                total_energy += float(np.dot(self._lam[pi], gap))
 
-            # Local 6-DOF index array
             dofs = np.array([
                 2 * s_idx, 2 * s_idx + 1,
                 2 * m1_idx, 2 * m1_idx + 1,
                 2 * m2_idx, 2 * m2_idx + 1,
             ], dtype=int)
 
-            # Penalty force vector (6,)
-            f_local = self.k_tie * np.concatenate([gap, -N1 * gap, -N2 * gap])
+            f_pen = self.k_tie * gap
+            if self._lam is not None:
+                f_pen = f_pen + self._lam[pi]
+            f_local = np.concatenate([f_pen, -N1 * f_pen, -N2 * f_pen])
             np.add.at(f_int, dofs, f_local)
 
             # Tangent stiffness block (6, 6)

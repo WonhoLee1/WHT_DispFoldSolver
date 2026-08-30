@@ -168,7 +168,16 @@ class MeshGradingConfig:
     hinge_span_half_width: float = 0.25
     hinge_span_dx: float = 0.25
     plate_body_dx: float = 0.5
-    uniform: bool = True
+    uniform: bool = False
+
+    def __post_init__(self):
+        # Enforce graded-mesh invariant from display_builder: span must lie inside hinge cluster
+        # hinge_lo = hinge_half_gap - hinge_edge_cluster_width (validated in display_builder)
+        # This catches config drift before mesh generation.
+        if self.hinge_span_half_width < -1e-12 or self.tip_cluster_width < -1e-12:
+            raise ValueError("MeshGradingConfig: widths must be non-negative")
+        if self.plate_body_dx <= 0 or self.tip_dx <= 0 or self.hinge_edge_dx <= 0 or self.hinge_span_dx <= 0:
+            raise ValueError("MeshGradingConfig: dx values must be positive")
 
 
 @dataclass
@@ -232,8 +241,8 @@ class SolverTuningConfig:
     # Element formulation per material name -- keyed the same way as
     # LayerSpec.material_name. Anything not PET/PSA (i.e. the rigid
     # plate's STEEL) is left to DynamicSolver's "Q4" default.
-    pet_element_type: str = "Q4_COROTATIONAL_SRI"
-    psa_element_type: str = "Q4_UP"
+    pet_element_type: str = "Q4_EAS"
+    psa_element_type: str = "Q4_VISCO_SIMO"
 
 
 @dataclass
