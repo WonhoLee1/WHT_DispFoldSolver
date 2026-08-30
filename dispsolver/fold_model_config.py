@@ -197,18 +197,11 @@ class MaterialsConfig:
             id=1, name="PET", type=J2_PLASTIC,
             params={"E": 4000.0, "nu": 0.3, "sigma_y0": 80.0, "H": 400.0},
         ),
-        # Arruda-Boyce base (mu/lambda_m/K) + Prony (single term) + WLF.
-        # lambda_m is an assumed locking-stretch shape parameter, not
-        # measured -- see AGENTS.md 1.4. mu/K derived from a target small-
-        # strain modulus E=0.05 MPa (nu=0.49, near-incompressible) via the
-        # standard isotropic relations mu=E/(2*(1+nu)), K=E/(3*(1-2*nu)) --
-        # same derivation/nu as the previous E=0.5 MPa values, just 10x
-        # softer (both mu and K are linear in E for fixed nu).
         "PSA": MaterialDef(
             id=2, name="PSA", type=ARRUDA_BOYCE_VISCO,
             params={
                 "mu": 0.016779, "lambda_m": 3.0, "K": 0.83333,
-                "prony_g": [0.20], "prony_tau": [3.33],
+                "prony_g": [0.12, 0.08], "prony_tau": [0.7, 7.0],
                 "wlf_T_ref": 25.0, "wlf_C1": 17.0, "wlf_C2": 51.6,
             },
         ),

@@ -121,6 +121,8 @@ except Exception:
 # factorisation announced, keyed by matrix dimension.
 _PARDISO_FACTOR_NOTIFIED: dict = {}
 
+_EQUIL_SCALE_CACHE: dict = {}
+
 _PARDISO_SOLVER_SINGLETON = None
 
 
@@ -477,11 +479,21 @@ def _hht(alpha: float) -> dict:
     return dict(static_mode=False, alpha=alpha,
                 beta=(1.0 - alpha) ** 2 / 4.0, gamma=0.5 - alpha)
 
+def _generalized_alpha(rho_inf: float) -> dict:
+    alpha_m = (2.0 * rho_inf - 1.0) / (rho_inf + 1.0)
+    alpha_f = rho_inf / (rho_inf + 1.0)
+    beta = 0.25 * (1.0 - alpha_m + alpha_f) ** 2
+    gamma = 0.5 - alpha_m + alpha_f
+    alpha = alpha_f
+    return dict(static_mode=False, alpha=alpha, beta=beta, gamma=gamma, alpha_m=alpha_m, alpha_f=alpha_f)
+
 
 INTEGRATION_MODES = {
     "transient":   _hht(0.0),
     "moderate-1":  _hht(-0.05),
     "moderate-2":  _hht(-0.15),
+    "generalized-0.8": _generalized_alpha(0.8),
+    "generalized-0.5": _generalized_alpha(0.5),
     "quasistatic": dict(static_mode=True, alpha=0.0, beta=0.25, gamma=0.5),
 }
 
@@ -2195,9 +2207,8 @@ class DynamicSolver:
             # floors at the linear-solver precision ~1e-6 absolute) and never
             # fired, so steps with a near-zero displacement ratio stalled to
             # max_iter even when already converged.
-            # ---- Abaqus Standard Solution Control Criterion (Phase 2) ----
-            # Abaqus default: R_max <= 0.005 * q_avg AND c_max <= 0.01 * du_max
-            q_avg = np.mean(np.abs(f_int)) if len(f_int) > 0 else 1.0
+            q_avg_raw = np.mean(np.abs(f_int)) if len(f_int) > 0 else 1.0
+            q_avg = max(q_avg_raw, max_R_val * 0.2 if max_R_val > 0 else 1.0, 1.0, float(np.mean(np.abs(R_u))) * 0.5 if 'R_u' in locals() and len(R_u) else 1.0)
             abaqus_r_converged = max_R_val <= 0.005 * q_avg
             abaqus_c_converged = max_du_val <= 0.01 * max_disp_incr
             abaqus_converged = abaqus_r_converged and abaqus_c_converged

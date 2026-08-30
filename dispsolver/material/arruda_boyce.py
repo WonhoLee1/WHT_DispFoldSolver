@@ -66,9 +66,7 @@ class ArrudaBoyce(MaterialModel):
             W_dev = W_dev + term
         W_dev = mu * W_dev
 
-        # Volumetric part
-        Jm1 = J - 1.0
-        W_vol = 0.5 * K * Jm1 ** 2
+        W_vol = 0.5 * K * (jnp.log(jnp.maximum(J, 1e-12)) ** 2)
 
         return W_dev + W_vol
 
