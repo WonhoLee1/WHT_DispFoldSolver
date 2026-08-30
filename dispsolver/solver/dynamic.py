@@ -121,8 +121,6 @@ except Exception:
 # factorisation announced, keyed by matrix dimension.
 _PARDISO_FACTOR_NOTIFIED: dict = {}
 
-_EQUIL_SCALE_CACHE: dict = {}
-
 _PARDISO_SOLVER_SINGLETON = None
 
 

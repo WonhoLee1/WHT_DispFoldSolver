@@ -234,8 +234,8 @@ class SolverTuningConfig:
     # Element formulation per material name -- keyed the same way as
     # LayerSpec.material_name. Anything not PET/PSA (i.e. the rigid
     # plate's STEEL) is left to DynamicSolver's "Q4" default.
-    pet_element_type: str = "Q4_EAS"
-    psa_element_type: str = "Q4_VISCO_SIMO"
+    pet_element_type: str = "Q4_COROTATIONAL_SRI"
+    psa_element_type: str = "Q4_UP"
 
 
 @dataclass

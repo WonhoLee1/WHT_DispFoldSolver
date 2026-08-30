@@ -208,7 +208,15 @@ def main():
                     help="reuse examples/ex12_final_u.npy instead of re-solving")
     args = ap.parse_args()
 
-    if args.cached and os.path.exists(U_CACHE):
+    PKL_RESULT = os.path.join(HERE, "ex12_result.pkl")
+    if args.cached and os.path.exists(PKL_RESULT):
+        print(f"Using cached result: {PKL_RESULT}")
+        from dispsolver.postprocess import load_result
+        r = load_result(PKL_RESULT)
+        u = r.displacement().flatten()
+        result = read_abaqus_input(INP)
+        mesh = result.mesh
+    elif args.cached and os.path.exists(U_CACHE):
         print(f"Using cached displacement field: {U_CACHE}")
         u = np.load(U_CACHE)
         result = read_abaqus_input(INP)

@@ -1,8 +1,8 @@
 {
-  "timestamp": "2026-07-31T01:22:55.964925",
-  "runtime_seconds": 130.41668510437012,
+  "timestamp": "2026-08-31T00:44:02.938573",
+  "runtime_seconds": 290.0290460586548,
   "n_benchmarks": 12,
-  "n_passed": 12,
+  "n_passed": 11,
   "results": [
     {
       "name": "Patch Test (Element Level)",
@@ -194,9 +194,9 @@
       "unit": "mm",
       "backends": {
         "jax": {
-          "value": 0.00023697937112175736,
-          "error_pct": 0.7137148838747918,
-          "n_iter": 2,
+          "value": 0.00023695025775628467,
+          "error_pct": 0.7013420128706755,
+          "n_iter": 1,
           "label": "center deflection |uy| (mm)",
           "passed": true
         },
@@ -219,16 +219,16 @@
       "unit": "mm",
       "backends": {
         "jax": {
-          "value": 0.0003221427397833165,
-          "error_pct": 1.714564402515382,
-          "n_iter": 2,
+          "value": 0.0003219844148212373,
+          "error_pct": 1.6645742814815696,
+          "n_iter": 1,
           "label": "center deflection |uy| (mm)",
           "passed": true
         },
         "numpy_sequential": {
-          "value": 0.0003285293359289748,
-          "error_pct": 3.7310923720960814,
-          "n_iter": 2,
+          "value": 0.0003284024305965353,
+          "error_pct": 3.6910228035001236,
+          "n_iter": 1,
           "label": "center deflection |uy| (mm)",
           "passed": true
         }
@@ -244,16 +244,16 @@
       "unit": "mm",
       "backends": {
         "jax": {
-          "value": 0.0037327329214206545,
-          "error_pct": 1.6760983171893402,
-          "n_iter": 2,
+          "value": 0.003729309698694645,
+          "error_pct": 1.5828529825301196,
+          "n_iter": 1,
           "label": "tip deflection |uy| (mm)",
           "passed": true
         },
         "numpy_sequential": {
-          "value": 0.003841984784189933,
-          "error_pct": 4.652015259041558,
-          "n_iter": 2,
+          "value": 0.0038393119566319193,
+          "error_pct": 4.57920997580954,
+          "n_iter": 1,
           "label": "tip deflection |uy| (mm)",
           "passed": true
         }
@@ -385,48 +385,48 @@
       "unit": "",
       "backends": {
         "order_fit": {
-          "value": 4.471560358609643,
-          "error_pct": 11.789008965241067,
-          "passed": true,
-          "fitted_order": 4.471560358609643,
-          "r_squared": 0.9983367650042129,
+          "value": 2.5654858786458794,
+          "error_pct": 35.862853033853014,
+          "passed": false,
+          "fitted_order": 2.5654858786458794,
+          "r_squared": 0.9967395580625381,
           "expected_order": 4.0,
           "order_tol": 1.0,
           "r2_min": 0.95,
-          "order_within_tol": true,
+          "order_within_tol": false,
           "r2_above_min": true,
           "label": "fitted order (mesh)"
         }
       },
-      "passed": true,
-      "details": "ny= 4 nx= 40: \u03b4=3.732733e-03 err(vs ny=12)=2.41e-02\nny= 6 nx= 60: \u03b4=3.660667e-03 err(vs ny=12)=4.37e-03\nny= 8 nx= 80: \u03b4=3.648666e-03 err(vs ny=12)=1.07e-03",
+      "passed": false,
+      "details": "ny= 4 nx= 40: \u03b4=3.729310e-03 err(vs ny=12)=3.11e-02\nny= 6 nx= 60: \u03b4=3.653469e-03 err(vs ny=12)=1.01e-02\nny= 8 nx= 80: \u03b4=3.636096e-03 err(vs ny=12)=5.30e-03",
       "refinement_levels": [
         [
           0.25,
-          0.024139885330136626
+          0.031073518351035598
         ],
         [
           0.16666666666666666,
-          0.004367358845381773
+          0.010105206118578283
         ],
         [
           0.125,
-          0.001074660337878849
+          0.005301949338221065
         ]
       ],
       "fit": {
-        "order": 4.471560358609643,
-        "log_C": 2.5053235365727313,
-        "r_squared": 0.9983367650042129,
+        "order": 2.5654858786458794,
+        "log_C": 0.06074851815127294,
+        "r_squared": 0.9967395580625381,
         "h_values": [
           0.25,
           0.16666666666666666,
           0.125
         ],
         "error_values": [
-          0.024139885330136626,
-          0.004367358845381773,
-          0.001074660337878849
+          0.031073518351035598,
+          0.010105206118578283,
+          0.005301949338221065
         ]
       }
     },
@@ -438,11 +438,11 @@
       "unit": "",
       "backends": {
         "order_fit": {
-          "value": 2.7432253221277505,
-          "error_pct": 1.6009378565833452,
+          "value": 2.6091587223387545,
+          "error_pct": 3.364491765231323,
           "passed": true,
-          "fitted_order": 2.7432253221277505,
-          "r_squared": 0.9918803640060948,
+          "fitted_order": 2.6091587223387545,
+          "r_squared": 0.996268672599147,
           "expected_order": 2.7,
           "order_tol": 0.5,
           "r2_min": 0.95,
@@ -452,7 +452,7 @@
         }
       },
       "passed": true,
-      "details": "ny= 4 nx= 40: tip_err=1.97e-02 iters=40\nny= 8 nx= 80: tip_err=3.79e-03 iters=46\nny=12 nx=120: tip_err=1.17e-03 iters=60\nny=16 nx=160: tip_err=4.15e-04 iters=60",
+      "details": "ny= 4 nx= 40: tip_err=1.97e-02 iters=40\nny= 8 nx= 80: tip_err=3.85e-03 iters=40\nny=12 nx=120: tip_err=1.25e-03 iters=40\nny=16 nx=160: tip_err=5.14e-04 iters=40",
       "refinement_levels": [
         [
           0.25,
@@ -460,21 +460,21 @@
         ],
         [
           0.125,
-          0.0037918606061813688
+          0.0038533560637518402
         ],
         [
           0.08333333333333333,
-          0.00117141954480231
+          0.0012514118936865254
         ],
         [
           0.0625,
-          0.00041516403960134096
+          0.0005144558697996429
         ]
       ],
       "fit": {
-        "order": 2.7432253221277505,
-        "log_C": -0.027512065915680492,
-        "r_squared": 0.9918803640060948,
+        "order": 2.6091587223387545,
+        "log_C": -0.24574059512324883,
+        "r_squared": 0.996268672599147,
         "h_values": [
           0.25,
           0.125,
@@ -483,9 +483,9 @@
         ],
         "error_values": [
           0.019671922510188324,
-          0.0037918606061813688,
-          0.00117141954480231,
-          0.00041516403960134096
+          0.0038533560637518402,
+          0.0012514118936865254,
+          0.0005144558697996429
         ]
       }
     },
@@ -497,11 +497,11 @@
       "unit": "",
       "backends": {
         "order_fit": {
-          "value": 2.4202987550816575,
-          "error_pct": 0.8457814617357322,
+          "value": 2.635566037457163,
+          "error_pct": 9.81525156071513,
           "passed": true,
-          "fitted_order": 2.4202987550816575,
-          "r_squared": 0.9969245494770207,
+          "fitted_order": 2.635566037457163,
+          "r_squared": 0.9924022481459676,
           "expected_order": 2.4,
           "order_tol": 0.5,
           "r2_min": 0.85,
@@ -511,34 +511,34 @@
         }
       },
       "passed": true,
-      "details": "n_steps= 2: tip_err(vs ref=16)=6.65e-03 iters=8\nn_steps= 4: tip_err(vs ref=16)=1.46e-03 iters=12\nn_steps= 8: tip_err(vs ref=16)=2.32e-04 iters=24",
+      "details": "n_steps= 2: tip_err(vs ref=16)=6.59e-03 iters=8\nn_steps= 4: tip_err(vs ref=16)=1.40e-03 iters=12\nn_steps= 8: tip_err(vs ref=16)=1.71e-04 iters=19",
       "refinement_levels": [
         [
           0.5,
-          0.006647141390991028
+          0.006585687580821166
         ],
         [
           0.25,
-          0.00145929619177899
+          0.0013978321827906694
         ],
         [
           0.125,
-          0.00023199032282135838
+          0.00017054235611990248
         ]
       ],
       "fit": {
-        "order": 2.4202987550816575,
-        "log_C": -3.2821482508748754,
-        "r_squared": 0.9969245494770207,
+        "order": 2.635566037457163,
+        "log_C": -3.1037350257194483,
+        "r_squared": 0.9924022481459676,
         "h_values": [
           0.5,
           0.25,
           0.125
         ],
         "error_values": [
-          0.006647141390991028,
-          0.00145929619177899,
-          0.00023199032282135838
+          0.006585687580821166,
+          0.0013978321827906694,
+          0.00017054235611990248
         ]
       }
     }

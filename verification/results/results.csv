@@ -19,12 +19,12 @@ Patch Test (Element Level),element,jax_q4_simo_fs,0.0010989010989010985,0.001098
 Patch Test (Element Level),element,numpy_q4_bbar_strain,0.0,0.0010989010989010991,0.0,0.1,,True,N·mm
 "Patch Test (Solver Level, Irregular Mesh)",solver,jax,1.0482667117801839e-07,0.0,1.0482667117801839e-07,0.001,1,True,%
 "Patch Test (Solver Level, Irregular Mesh)",solver,numpy_sequential,9.543851992299759e-08,0.0,9.543851992299759e-08,0.001,1,True,%
-3-Point Bending,solver,jax,0.00023697937112175736,0.00023529999999999997,0.7137148838747918,5.0,2,True,mm
+3-Point Bending,solver,jax,0.00023695025775628467,0.00023529999999999997,0.7013420128706755,5.0,1,True,mm
 3-Point Bending,solver,numpy_sequential,0.0002466733385123513,0.00023529999999999997,4.833548029048578,5.0,1,True,mm
-4-Point Bending,solver,jax,0.0003221427397833165,0.0003167125,1.714564402515382,5.0,2,True,mm
-4-Point Bending,solver,numpy_sequential,0.0003285293359289748,0.0003167125,3.7310923720960814,5.0,2,True,mm
-Cantilever Bending,solver,jax,0.0037327329214206545,0.0036711999999999995,1.6760983171893402,5.0,2,True,mm
-Cantilever Bending,solver,numpy_sequential,0.003841984784189933,0.0036711999999999995,4.652015259041558,5.0,2,True,mm
+4-Point Bending,solver,jax,0.0003219844148212373,0.0003167125,1.6645742814815696,5.0,1,True,mm
+4-Point Bending,solver,numpy_sequential,0.0003284024305965353,0.0003167125,3.6910228035001236,5.0,1,True,mm
+Cantilever Bending,solver,jax,0.003729309698694645,0.0036711999999999995,1.5828529825301196,5.0,1,True,mm
+Cantilever Bending,solver,numpy_sequential,0.0038393119566319193,0.0036711999999999995,4.57920997580954,5.0,1,True,mm
 Uniaxial Tension (Plane Strain),solver,jax,1.0989011095099068,1.098901098901099,9.654015127313897e-07,1.0,1,True,MPa
 Uniaxial Tension (Plane Strain),solver,numpy_sequential,1.0989011070263417,1.098901098901099,7.393970857805243e-07,1.0,1,True,MPa
 Uniaxial Compression (Plane Strain),solver,jax,-1.0989011095099068,-1.098901098901099,9.654015127313897e-07,1.0,1,True,MPa
@@ -33,6 +33,6 @@ Volumetric Compression (Plane Strain),solver,jax,-0.9615384615384616,-0.96153846
 Volumetric Compression (Plane Strain),solver,numpy_sequential,-0.9615384615384613,-0.9615384615384616,2.3092638912203256e-14,1.0,1,True,MPa
 Volumetric Tension (Plane Strain),solver,jax,0.9615384615384616,0.9615384615384616,0.0,1.0,1,True,MPa
 Volumetric Tension (Plane Strain),solver,numpy_sequential,0.9615384615384613,0.9615384615384616,2.3092638912203256e-14,1.0,1,True,MPa
-Convergence Cantilever Mesh (Q4 B-bar),solver,order_fit,4.471560358609643,4.0,11.789008965241067,1.0,,True,
-Convergence Elastica Mesh (Corotational),solver,order_fit,2.7432253221277505,2.7,1.6009378565833452,0.5,,True,
-Convergence Elastica Load-Step (Corotational),solver,order_fit,2.4202987550816575,2.4,0.8457814617357322,0.5,,True,
+Convergence Cantilever Mesh (Q4 B-bar),solver,order_fit,2.5654858786458794,4.0,35.862853033853014,1.0,,False,
+Convergence Elastica Mesh (Corotational),solver,order_fit,2.6091587223387545,2.7,3.364491765231323,0.5,,True,
+Convergence Elastica Load-Step (Corotational),solver,order_fit,2.635566037457163,2.4,9.81525156071513,0.5,,True,
