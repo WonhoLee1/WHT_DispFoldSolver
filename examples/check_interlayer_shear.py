@@ -76,10 +76,10 @@ LAYER_MATERIAL = None
 
 
 def _display_columns(mesh):
-    """{x: [node ids bottom->top]} for the display block only (nid < 10000)."""
+    """{x: [node ids bottom->top]} for the display block only (nid < 100000)."""
     cols = {}
     for nid, n in mesh.nodes.items():
-        if nid >= 10000:
+        if nid >= 100000:
             continue
         cols.setdefault(round(n.x, 6), []).append((n.y, nid))
     return {x: [nid for _, nid in sorted(v)] for x, v in sorted(cols.items())}

@@ -70,7 +70,7 @@ class LayerSlipTracker:
         mesh,
         probe_x: Sequence[float] = (-40.0, 40.0),
         layer_materials: Optional[Sequence[str]] = None,
-        max_node_id: Optional[int] = 10000,
+        max_node_id: Optional[int] = 100000,
     ):
         """
         Parameters
@@ -83,7 +83,7 @@ class LayerSlipTracker:
             column). Used only for the PSA/PET split diagnostic.
         max_node_id
             Nodes with id >= this are excluded (the rigid plate parts in
-            the ex12/ex13 models start at 10000). `None` keeps everything.
+            the ex12/ex13 models start at 100000). `None` keeps everything.
         """
         self._mesh = mesh
         self._nid_to_idx = mesh.node_id_to_index()

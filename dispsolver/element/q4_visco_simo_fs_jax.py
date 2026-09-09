@@ -154,23 +154,37 @@ def _tensor_to_voigt6(T):
 # ------------------------------------------------------------------
 # Constitutive: Flory split + base ground state + Simo overstress
 # ------------------------------------------------------------------
-def _simo_pk2(base, Fbar2, h_prev_flat, kappa, bparams, g_i, tau_i, g_inf, dt):
+def _simo_pk2(base, Fbar2, h_prev_flat, kappa, bparams, g_i, tau_i, g_inf, dt, distortion_j_crit: float = 0.0):
     M = g_i.shape[0]
     F3 = jnp.eye(3).at[:2, :2].set(Fbar2)
     C = F3.T @ F3
     J = jnp.linalg.det(F3)                       # = det Fbar2 (F33 = 1)
-    Cinv = jnp.linalg.inv(C)
+    Cinv = jnp.linalg.inv(C + 1e-15 * jnp.eye(3))
     I1 = jnp.trace(C)
-    lnJ = jnp.log(jnp.maximum(J, 1e-30))
+    
+    # Classical Simo & Armero (1992) / Holzapfel (2000) Volumetric PK2 Stress:
+    # S_vol = 0.5 * kappa * (J - 1/J) * C^{-1}
+    # Provides smooth, infinite physical hydrostatic barrier as J -> 0, preventing element inversion
+    # naturally from pure hyperelastic strain energy potential without artificial distortion flags.
+    J_safe = jnp.maximum(J, 1e-4)
+    vol_factor = 0.5 * kappa * (J_safe - 1.0 / J_safe)
+    S_vol = vol_factor * Cinv
 
-    # Volumetric (elastic) PK2:  S_vol = kappa ln(J) C^{-1}
-    S_vol = kappa * lnJ * Cinv
+    # Optional Distortion Control (Abaqus-grade *SECTION CONTROLS, DISTORTION CONTROL=YES)
+    distortion = jnp.where(
+        distortion_j_crit > 0.0,
+        jnp.maximum(0.0, (distortion_j_crit - J) / jnp.maximum(distortion_j_crit, 1e-12)),
+        0.0
+    )
+    S_distort = (5000.0 * kappa) * (distortion ** 3) * Cinv
+    S_vol = S_vol + S_distort
 
     # Isochoric PK2 (Flory split, Holzapfel Eq. 6.88-6.91):
     #   S_iso = 2 W1 J^{-2/3} ( I - (1/3) I1 C^{-1} )  -> 0 at F = I.
-    I1b = J ** (-2.0 / 3.0) * I1
-    W1 = _W1(base, I1b, bparams)
-    S_iso = 2.0 * W1 * J ** (-2.0 / 3.0) * (jnp.eye(3) - (I1 / 3.0) * Cinv)
+    I1b = (J_safe ** (-2.0 / 3.0)) * I1
+    I1b_safe = jnp.clip(I1b, 3.0, 50.0)
+    W1 = _W1(base, I1b_safe, bparams)
+    S_iso = 2.0 * W1 * (J_safe ** (-2.0 / 3.0)) * (jnp.eye(3) - (I1 / 3.0) * Cinv)
 
     # Overstress recurrence on the isochoric stress (Simo 1987)
     h_prev = jnp.stack([_voigt6_to_tensor(h_prev_flat[6 * i:6 * i + 6])
@@ -195,42 +209,91 @@ def _simo_pk2(base, Fbar2, h_prev_flat, kappa, bparams, g_i, tau_i, g_inf, dt):
 
 
 def _internal_force(base, u_elem, coords, state_elem, kappa, bparams,
-                    g_i, tau_i, g_inf, dt, thickness):
+                    g_i, tau_i, g_inf, dt, thickness, distortion_j_crit: float = 0.0,
+                    F_n=None):
+    """Internal force.
+
+    Updated-Lagrangian support (mirrors `q4_eas_jax`): when `F_n` (4,2,2) is
+    supplied, `coords` is the LAST CONVERGED configuration and `u_elem` is the
+    INCREMENTAL displacement, so the gradient computed here is F_inc and the
+    total deformation gradient is `F_inc @ F_n`. Before this the viscoelastic
+    kernels were TL-only while the corotational/J2 elements in the same model
+    ran UL -- the adhesive rows therefore never got UL's per-increment
+    protection and were evaluated from the flat reference all the way to full
+    fold. Passing F_n = None (or identity) keeps the original TL behaviour.
+    """
+    _eye = jnp.eye(2)
+    F_n = jnp.stack([_eye, _eye, _eye, _eye]) if F_n is None else F_n
+
     gX0, gY0, _ = _grads(0.0, 0.0, coords)
-    F0 = _F_at(gX0, gY0, u_elem)
+    F0i = _F_at(gX0, gY0, u_elem)
+    F0 = F0i @ (0.25 * (F_n[0] + F_n[1] + F_n[2] + F_n[3]))
     J0 = F0[0, 0] * F0[1, 1] - F0[0, 1] * F0[1, 0]
 
     f_int = jnp.zeros(8)
     state_new = jnp.empty_like(state_elem)
+    F_n_new = jnp.zeros((4, 2, 2))
     for gp in range(4):
         xi, eta = _GP2[gp]
         gX, gY, detJ = _grads(xi, eta, coords)
         w = detJ * _W2[gp] * thickness
-        F = _F_at(gX, gY, u_elem)
+        F_inc = _F_at(gX, gY, u_elem)
+        F = F_inc @ F_n[gp]                     # total deformation gradient
         J = F[0, 0] * F[1, 1] - F[0, 1] * F[1, 0]
-        Fbar = F * jnp.sqrt(jnp.maximum(J0 / J, 1e-12))   # F-bar locking control
+        J_ratio = jnp.maximum(J0, 0.05) / jnp.maximum(J, 0.05)
+        Fbar = F * jnp.sqrt(jnp.clip(J_ratio, 0.1, 10.0))   # F-bar locking control
         S_v, h_new = _simo_pk2(base, Fbar, state_elem[gp], kappa, bparams,
-                               g_i, tau_i, g_inf, dt)
-        BL = _BL_columns(Fbar, gX, gY)
-        f_int = f_int + BL.T @ S_v * w
+                               g_i, tau_i, g_inf, dt, distortion_j_crit=distortion_j_crit)
+        # Work-conjugacy fix (found by opus architecture review, 2026-09-08,
+        # dev_log/plan_abaqus_element_consolidation_20260908.md finding F4):
+        # `S_v` is PK2 referred to the ORIGINAL (t=0) reference config --
+        # `_simo_pk2` computes it from the TOTAL deformation gradient `F`.
+        # `BL` below is built from `F_inc` and is the variation of the
+        # INCREMENTAL Green-Lagrange strain relative to the LAST CONVERGED
+        # (step-n) config, integrated against `w = detJ` from the SAME
+        # step-n `coords`. These were being contracted directly
+        # (`BL.T @ S_v`), which is only valid when F_n ~= I -- S_v needs
+        # pushing forward to configuration n first. Derivation: F = F_inc
+        # @ F_n (F_n fixed under variation) gives delta_E = F_n.T @
+        # delta_E_inc @ F_n, and dV_0 = dV_n / det(F_n), so
+        #   S : delta_E dV_0 = (F_n @ S @ F_n.T / det(F_n)) : delta_E_inc dV_n
+        # i.e. the stress conjugate to delta_E_inc on the step-n volume is
+        # S_n = F_n @ S @ F_n.T / det(F_n), NOT S_v itself. Measured error
+        # from omitting this: up to 24.9% relative internal force on a
+        # homogeneous deformation (F-bar/quadrature effects are identically
+        # zero there, isolating this term) -- Newton still converges (K is
+        # autodiffed from this same function) but to a slightly wrong
+        # equilibrium, invisible to shape-level checks (AGENTS.md 4.9).
+        Fn_gp = F_n[gp]
+        S0_tensor = jnp.array([[S_v[0], S_v[2]], [S_v[2], S_v[1]]])
+        detFn = jnp.maximum(jnp.abs(Fn_gp[0, 0] * Fn_gp[1, 1] - Fn_gp[0, 1] * Fn_gp[1, 0]), 1e-30)
+        Sn_tensor = (Fn_gp @ S0_tensor @ Fn_gp.T) / detFn
+        S_n_voigt = jnp.array([Sn_tensor[0, 0], Sn_tensor[1, 1], Sn_tensor[0, 1]])
+        BL = _BL_columns(F_inc, gX, gY)
+        f_int = f_int + BL.T @ S_n_voigt * w
         state_new = state_new.at[gp].set(h_new)
-    return f_int, state_new
+        F_n_new = F_n_new.at[gp].set(F)
+    return f_int, state_new, F_n_new
 
 
 @partial(jax.jit, static_argnames=("base",))
 def compute_single(coords, u_elem, state_elem, kappa, bparams,
-                   g_i, tau_i, g_inf, dt, thickness, base="neohookean"):
+                   g_i, tau_i, g_inf, dt, thickness, distortion_j_crit: float = 0.0,
+                   F_n_gps=None, base="neohookean"):
     """Finite-strain pluggable-base Simo viscoelastic F-bar hybrid element.
 
     Returns (f_int(8,), K_e(8,8), state_new). Tangent = consistent algorithmic
     modulus via autodiff at frozen history (NaN-safe; no eigendecomposition).
     """
-    f_int, state_new = _internal_force(
+    f_int, state_new, F_n_new = _internal_force(
         base, u_elem, coords, state_elem, kappa, bparams,
-        g_i, tau_i, g_inf, dt, thickness)
+        g_i, tau_i, g_inf, dt, thickness, distortion_j_crit=distortion_j_crit,
+        F_n=F_n_gps)
     K_e = jax.jacobian(
         lambda u: _internal_force(
             base, u, coords, state_elem, kappa, bparams,
-            g_i, tau_i, g_inf, dt, thickness)[0]
+            g_i, tau_i, g_inf, dt, thickness, distortion_j_crit=distortion_j_crit,
+            F_n=F_n_gps)[0]
     )(u_elem)
-    return f_int, K_e, state_new
+    return f_int, K_e, state_new, F_n_new
+

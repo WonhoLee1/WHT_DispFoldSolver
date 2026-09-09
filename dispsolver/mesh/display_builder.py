@@ -105,9 +105,23 @@ def graded_display_x(config, extra_breakpoints: Sequence[float] = ()) -> np.ndar
     half_gap = geo.hinge_half_gap
     span = g.hinge_span_half_width
     hinge_lo = half_gap - g.hinge_edge_cluster_width  # inner edge of hinge cluster
+    # Outer edge of the hinge-edge cluster, ON THE PLATE-BODY SIDE of the
+    # tie boundary. Per this class's own docstring the cluster is meant to
+    # be SYMMETRIC about hinge_half_gap (+-hinge_edge_cluster_width), but
+    # zone_dx() previously jumped straight to the coarse plate_body_dx at
+    # ax >= half_gap with no fine mesh at all on the plate-body side --
+    # a one-sided cluster, contradicting the docstring and reintroducing
+    # exactly the abrupt-grading-jump-at-the-boundary failure mode AGENTS.md
+    # 4.12 fixed for the tip elements (here at the plate/hinge boundary
+    # instead, and biting much earlier -- ~23deg -- for this teardrop
+    # config's tight hinge_half_gap=7.5 geometry than the ~48deg case that
+    # motivated 4.12). Fixed: extend hinge_edge_dx symmetrically to
+    # hinge_hi on the plate-body side too.
+    hinge_hi = half_gap + g.hinge_edge_cluster_width
     assert span <= hinge_lo, "hinge_span_half_width must be <= hinge_half_gap - hinge_edge_cluster_width"
 
     tip_lo = half_len - g.tip_cluster_width
+    assert hinge_hi <= tip_lo, "hinge_half_gap + hinge_edge_cluster_width must be <= display_half_length - tip_cluster_width"
 
     def zone_dx(x_mid: float) -> float:
         """Grading dx for the zone containing x_mid, keyed on |x|."""
@@ -116,15 +130,15 @@ def graded_display_x(config, extra_breakpoints: Sequence[float] = ()) -> np.ndar
         ax = abs(x_mid)
         if ax >= tip_lo:
             return g.tip_dx          # tip cluster
-        if ax >= half_gap:
+        if ax >= hinge_hi:
             return g.plate_body_dx   # under the rigid plate body, coarse
         if ax >= span:
-            return g.hinge_edge_dx   # hinge-edge cluster
+            return g.hinge_edge_dx   # hinge-edge cluster (symmetric about half_gap)
         return g.hinge_span_dx       # free hinge span
 
     # Zone boundaries, mirrored about x=0, plus any caller-forced points.
-    bps = [-half_len, -tip_lo, -half_gap, -hinge_lo, -span,
-           span, hinge_lo, half_gap, tip_lo, half_len]
+    bps = [-half_len, -tip_lo, -hinge_hi, -half_gap, -hinge_lo, -span,
+           span, hinge_lo, half_gap, hinge_hi, tip_lo, half_len]
     bps += [float(b) for b in extra_breakpoints]
 
     # Clip to the panel, sort, then snap near-coincident points together.
@@ -219,7 +233,11 @@ def _normalize_voids(config) -> Dict[int, List[Tuple[float, float]]]:
         return {}
 
     geo = config.geometry
-    n_layers = geo.n_layer_pairs * len(geo.layer_pattern)
+    custom_layers = getattr(geo, "custom_layers", None)
+    if custom_layers:
+        n_layers = len(custom_layers)
+    else:
+        n_layers = geo.n_layer_pairs * len(geo.layer_pattern)
     half_len = geo.display_half_length
 
     out: Dict[int, List[Tuple[float, float]]] = {}
@@ -279,15 +297,20 @@ def build_display_grid(config) -> DisplayGrid:
     geo = config.geometry
     voids = _normalize_voids(config)
 
-    # --- layer row spans (unchanged from both former copies) ---
+    # --- layer row spans ---
     row_heights: List[float] = []
     layer_row_spans: List[Tuple[int, int, str]] = []
     row_cursor = 0
-    for _pair in range(geo.n_layer_pairs):
-        for layer in geo.layer_pattern:
-            row_heights += [layer.thickness_mm / layer.n_rows] * layer.n_rows
-            layer_row_spans.append((row_cursor, row_cursor + layer.n_rows, layer.material_name))
-            row_cursor += layer.n_rows
+    custom_layers = getattr(geo, "custom_layers", None)
+    if custom_layers:
+        layers = custom_layers
+    else:
+        layers = geo.layer_pattern * geo.n_layer_pairs
+
+    for layer in layers:
+        row_heights += [layer.thickness_mm / layer.n_rows] * layer.n_rows
+        layer_row_spans.append((row_cursor, row_cursor + layer.n_rows, layer.material_name))
+        row_cursor += layer.n_rows
 
     ys = np.concatenate([[0.0], np.cumsum(row_heights)])
 

@@ -26,7 +26,11 @@ def test_plate_builder_geometry():
     assert "right" in plates
 
     left = plates["left"]
-    assert left["master_rp_id"] == 10000
+    # base_node_id/base_elem_id default raised 10000 -> 100000 this
+    # session (node-id overflow fix, see AGENTS.md / dev_log) to give the
+    # display mesh 10x the headroom before colliding with the reserved
+    # plate-node range.
+    assert left["master_rp_id"] == 100000
     assert len(left["top_surface_nids"]) == 11  # nx + 1
     assert len(left["slave_nids"]) == 11 * 3   # (nx + 1) * (ny + 1)
 

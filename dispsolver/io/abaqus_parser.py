@@ -140,7 +140,8 @@ class AbaqusParser:
         nset = block.params.get("nset", "")
         rows = _parse_data_lines(block.data_lines, 3)
         for r in rows:
-            node = AbaqusNode(id=int(r[0]), x=float(r[1]), y=float(r[2]))
+            z_val = float(r[3]) if len(r) > 3 else 0.0
+            node = AbaqusNode(id=int(r[0]), x=float(r[1]), y=float(r[2]), z=z_val)
             if self._current_part:
                 self.model.parts[self._current_part].nodes.append(node)
             else:
@@ -148,8 +149,6 @@ class AbaqusParser:
 
     def _parse_element(self, block: AbaqusKeywordBlock):
         etype = block.params.get("type", "CPE4").upper()
-        if etype in ("C3D8", "C3D20", "C3D8R", "C3D20R"):
-            raise NotImplementedError(f"3D elements ({etype}) are not supported — 2D only")
         elset = block.params.get("elset", "")
         rows = _parse_data_lines(block.data_lines, 5, dtype=int)
         elem_ids = []

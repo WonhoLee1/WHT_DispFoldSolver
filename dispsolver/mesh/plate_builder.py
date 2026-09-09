@@ -20,9 +20,9 @@ def create_folding_plate_parts(
     left_pivot: Tuple[float, float] = (-3.0, 0.0),
     right_pivot: Tuple[float, float] = (3.0, 0.0),
     nx: int = 30,
-    ny: int = 2,
-    base_node_id: int = 10000,
-    base_elem_id: int = 10000,
+    ny: int = 4,
+    base_node_id: int = 100000,
+    base_elem_id: int = 100000,
 ) -> Dict[str, Dict]:
     """Generate structured Q4 meshes and node sets for left and right folding plates.
 

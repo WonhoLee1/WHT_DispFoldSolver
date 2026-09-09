@@ -281,8 +281,8 @@ def jax_q4_simo_fs_K(coords: np.ndarray, E: float, nu: float) -> np.ndarray:
     M = 1
     n_state = 6 * (M + 1)
     state_batch = jnp.zeros((4, n_state))
-    _, K, _ = fn(jnp.asarray(coords), u_zero, state_batch,
-                 kappa, bparams, g_i, tau_i, g_inf, 1.0, 1.0)
+    _, K, _, _ = fn(jnp.asarray(coords), u_zero, state_batch,
+                    kappa, bparams, g_i, tau_i, g_inf, 1.0, 1.0)
     return np.asarray(K)
 
 
@@ -293,8 +293,8 @@ def jax_q4_simo_fs_f_int(coords: np.ndarray, u_elem: np.ndarray,
     M = 1
     n_state = 6 * (M + 1)
     state_batch = jnp.zeros((4, n_state))
-    f_int, _, _ = fn(jnp.asarray(coords), jnp.asarray(u_elem), state_batch,
-                     kappa, bparams, g_i, tau_i, g_inf, 1.0, 1.0)
+    f_int, _, _, _ = fn(jnp.asarray(coords), jnp.asarray(u_elem), state_batch,
+                        kappa, bparams, g_i, tau_i, g_inf, 1.0, 1.0)
     return np.asarray(f_int)
 
 
@@ -637,8 +637,9 @@ def make_solver(mesh, E: float, nu: float, backend: str = 'jax',
                 f"{element_type} has no working numpy_sequential path. "
                 "Use backend='jax' or 'numba'."
             )
-        mat = {0: J2Plasticity(E=E, nu=nu, sigma_y0=sigma_y0, H=H)}
-        element_type_arg = {0: element_type}
+        pids = set(elem.pid for elem in mesh.elements.values()) if hasattr(mesh, "elements") else {0, 1}
+        mat = {pid: J2Plasticity(E=E, nu=nu, sigma_y0=sigma_y0, H=H) for pid in pids}
+        element_type_arg = {pid: element_type for pid in pids}
         material_params = {}
     elif element_type == 'Q4_EAS':
         # J2Plasticity with very high yield (default) stays in the elastic regime

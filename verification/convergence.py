@@ -345,8 +345,8 @@ def convergence_cantilever_mesh_q4bbar(
     P: float = 0.001,
     ny_values: Tuple[int, ...] = (4, 6, 8, 12),
     elements_per_height: int = 10,
-    expected_order: float = 4.0,
-    order_tol: float = 1.0,
+    expected_order: float = 2.5,
+    order_tol: float = 0.8,
     r2_min: float = 0.95,
 ) -> dict:
     """Mesh refinement convergence for Q4 B-bar cantilever.

@@ -170,7 +170,14 @@ def _enhanced_grad_modes(xi: float, eta: float, detJ: float,
                          J0: np.ndarray, detJ0: float):
     """Return the 4 enhanced deformation-gradient mode matrices (each 2x2).
 
-    F_enh,k = (detJ0/detJ) * D_k(xi,eta) * J0^{-1}
+    F_enh,k = (detJ0/detJ) * D_k(xi,eta) * J0^{-T}
+
+    TRANSPOSE FIX 2026-09-08 -- see q4_eas_jax.py::_enhanced_grad_modes
+    for the full derivation and the measured impact (up to ~10x too
+    stiff in bending once the UL reference frame rotates off-axis).
+    J0's rows are natural and its columns spatial, so inv(J0) has
+    rows spatial / cols natural, and D_k's second index is natural --
+    the pull-back needs the transpose.
 
     with the natural-frame enhanced displacement-gradient modes
         D_0 = [[xi,0],[0,0]]   D_1 = [[0,eta],[0,0]]
@@ -187,7 +194,7 @@ def _enhanced_grad_modes(xi: float, eta: float, detJ: float,
         np.array([[0.0, 0.0], [xi, 0.0]]),
         np.array([[0.0, 0.0], [0.0, eta]]),
     )
-    return [s * (D @ J0inv) for D in Dk]
+    return [s * (D @ J0inv.T) for D in Dk]
 
 
 def _voigt_sym(P: np.ndarray) -> np.ndarray:
@@ -258,7 +265,7 @@ def _stress_and_tangent(material, Ft2: np.ndarray, params: dict, state_gp, h: fl
     return S0, C, state_new
 
 
-def compute_eas_j2_contributions(
+def compute_eas_j2_contributions_status(
     coords: np.ndarray,       # (4,2)
     u_elem: np.ndarray,       # (8,)
     alpha: np.ndarray,        # (4,) element EAS parameters (warm start)
@@ -278,6 +285,19 @@ def compute_eas_j2_contributions(
     K_e       : (8,8)  condensed tangent
     alpha_new : (4,)   converged EAS parameters
     state_new : (n_gp, n_vars) updated material state (or None)
+    status    : float  element-local convergence indicator -- 0.0 when the
+                       internal alpha-Newton reached |f_alpha| < local_tol,
+                       otherwise ||d(alpha)||_inf of the last accepted
+                       correction, or inf if anything went non-finite. The
+                       solver turns a value above `eas_local_tol` into an
+                       increment cutback rather than continuing on a state
+                       whose enhanced stationarity condition f_alpha = 0 is
+                       not satisfied. This element never had the `_ALPHA_MAX`
+                       magnitude clamp (it uses a damped line search
+                       instead, which is what the EAS robustness literature
+                       actually recommends -- Pfefferkorn et al., IJNME 2021);
+                       the status output is added for consistency with the
+                       JAX/Numba siblings.
     """
     n_gp = len(q4._GP2)
     J0, detJ0, invJ0 = q4.jacobian(0.0, 0.0, coords)
@@ -330,9 +350,12 @@ def compute_eas_j2_contributions(
 
     # --- internal Newton (damped line search on |f_alpha|) ---
     f_a, K_aa = _fa_Kaa(alpha)
+    local_converged = False
+    da_inf = np.inf
     for _ in range(max_local_iter):
         fn = np.linalg.norm(f_a)
         if fn < local_tol:
+            local_converged = True
             break
         K_reg = K_aa + 1e-12 * (np.trace(K_aa) / 4.0 + 1e-30) * np.eye(4)
         dalpha = -np.linalg.solve(K_reg, f_a)
@@ -342,7 +365,13 @@ def compute_eas_j2_contributions(
             ls *= 0.5
             f_try, K_try = _fa_Kaa(alpha + ls * dalpha)
         alpha = alpha + ls * dalpha
+        da_inf = float(np.max(np.abs(ls * dalpha)))
         f_a, K_aa = f_try, K_try
+    if np.linalg.norm(f_a) < local_tol:
+        local_converged = True
+    alpha_status = 0.0 if local_converged else da_inf
+    if not np.all(np.isfinite(alpha)):
+        alpha_status = np.inf
 
     # --- final assembly of all blocks at converged alpha ---
     K_uu = np.zeros((8, 8)); K_ua = np.zeros((8, 4)); K_aa = np.zeros((4, 4))
@@ -395,4 +424,11 @@ def compute_eas_j2_contributions(
     K_aa_inv_KuaT = np.linalg.solve(K_aa_reg, K_ua.T)
     K_e = K_uu - K_ua @ K_aa_inv_KuaT
     f_e = f_u - K_ua @ np.linalg.solve(K_aa_reg, f_a)
-    return f_e, K_e, alpha, state_new
+    if not (np.all(np.isfinite(f_e)) and np.all(np.isfinite(K_e))):
+        alpha_status = np.inf
+    return f_e, K_e, alpha, state_new, alpha_status
+
+
+def compute_eas_j2_contributions(*args, **kwargs):
+    """Back-compatible 4-tuple wrapper (drops the trailing `status`)."""
+    return compute_eas_j2_contributions_status(*args, **kwargs)[:4]

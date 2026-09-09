@@ -118,9 +118,12 @@ def run_build(config: FoldModelConfig = DEFAULT_CONFIG, elem_jit: str = "jax"):
 
     layer_etype = {}
     for pid, mat_name in PID_NAME.items():
-        mdef = mats.definitions[mat_name]
-        layer_etype[pid] = (st.pet_element_type if mdef.type == J2_PLASTIC
-                            else st.psa_element_type)
+        if mat_name == "GLASS":
+            layer_etype[pid] = getattr(st, "glass_element_type", "Q4_EAS")
+        elif mat_name == "PET":
+            layer_etype[pid] = st.pet_element_type
+        else:
+            layer_etype[pid] = st.psa_element_type
 
     mesh = Mesh()
     for nid, x_val, y_val in grid.nodes:
@@ -136,7 +139,7 @@ def run_build(config: FoldModelConfig = DEFAULT_CONFIG, elem_jit: str = "jax"):
         right_x_range=(geo.hinge_half_gap, geo.display_half_length),
         y_range=(-geo.plate_thickness, 0.0),
         left_pivot=(-geo.hinge_pivot_x, 0.0), right_pivot=(geo.hinge_pivot_x, 0.0),
-        nx=geo.plate_mesh_nx, ny=geo.plate_mesh_ny, base_node_id=10000, base_elem_id=10000,
+        nx=geo.plate_mesh_nx, ny=geo.plate_mesh_ny, base_node_id=100000, base_elem_id=100000,
     )
     left_plate, right_plate = plates["left"], plates["right"]
     # Each side gets its OWN pid (previously both shared one STEEL_PID) --
@@ -195,11 +198,11 @@ def run_build(config: FoldModelConfig = DEFAULT_CONFIG, elem_jit: str = "jax"):
     right_disp_bot = [n for n in bottom_surface_nids if mesh.nodes[n].x >= geo.hinge_half_gap]
     tie_left = SurfaceTieConstraint(
         slave_node_ids=left_disp_bot, master_node_ids=left_plate["top_surface_nids"],
-        nid_to_idx=nid_to_idx, coords=coords, penalty_stiffness=1e4, name="TIE_LEFT",
+        nid_to_idx=nid_to_idx, coords=coords, penalty_stiffness=1e6, name="TIE_LEFT",
     )
     tie_right = SurfaceTieConstraint(
         slave_node_ids=right_disp_bot, master_node_ids=right_plate["top_surface_nids"],
-        nid_to_idx=nid_to_idx, coords=coords, penalty_stiffness=1e4, name="TIE_RIGHT",
+        nid_to_idx=nid_to_idx, coords=coords, penalty_stiffness=1e6, name="TIE_RIGHT",
     )
 
     # Boundary conditions, matching the .inp *BOUNDARY blocks exactly:
@@ -254,10 +257,42 @@ def main():
         help="Element JIT backend (default: jax)",
     )
     parser.add_argument(
+        "--stack", choices=["multilayer", "glass"], default="multilayer",
+        help="Display substrate stack: 'multilayer' (14-layer PET-PSA laminate) "
+             "or 'glass' (monolithic thin glass substrate, Corning E=72.3 GPa, t=0.1 mm).",
+    )
+    parser.add_argument(
+        "--mtype", choices=["auto", "spd", "indefinite", "nonsymmetric"], default="auto",
+        help="PARDISO matrix solver type: 'auto' (default: SPD if no LM, Indefinite if LM), "
+             "'spd' (mtype=2, Cholesky LL^T, fastest), "
+             "'indefinite' (mtype=-2, LDL^T, for saddle-point/Lagrange multipliers), "
+             "or 'nonsymmetric' (mtype=11, LU general fallback).",
+    )
+    parser.add_argument(
+        "--no_phase_reuse", action="store_true",
+        help="Disable PARDISO Phase 11 symbolic factorization reuse across Newton iterations.",
+    )
+    parser.add_argument(
+        "--distortion-control", dest="distortion_control", action="store_true", default=True,
+        help="Enable Abaqus-style distortion control barrier for viscoelastic elements (default: True).",
+    )
+    parser.add_argument(
+        "--no-distortion-control", dest="distortion_control", action="store_false",
+        help="Disable distortion control barrier (pure continuum constitutive law).",
+    )
+    parser.add_argument(
+        "--distortion-j-crit", type=float, default=0.20,
+        help="Critical Jacobian ratio J_crit below which distortion control activates (default: 0.20).",
+    )
+    parser.add_argument(
         "--viewer", action="store_true",
         help="Open the Qt postprocess viewer automatically once the "
              "solve finishes (loads the just-saved .pkl -- same as "
              "running with --open <result_path> afterward).",
+    )
+    parser.add_argument(
+        "--threads", type=int, default=None,
+        help="Number of CPU threads for PARDISO linear solver, Numba JIT, and OpenMP (e.g. --threads 8).",
     )
     parser.add_argument(
         "--open", metavar="PKL_PATH", default=None,
@@ -265,14 +300,47 @@ def main():
              ".pkl result in the Qt viewer (e.g. --open "
              "examples/ex13_build_result.pkl). Ignores --mode/--viewer.",
     )
+    from dispsolver.fold_model_config import add_config_cli_args, apply_cli_overrides
+    add_config_cli_args(parser)
     args = parser.parse_args()
+
+    if args.threads is not None and args.threads > 0:
+        n_str = str(args.threads)
+        os.environ["OMP_NUM_THREADS"] = n_str
+        os.environ["MKL_NUM_THREADS"] = n_str
+        os.environ["NUMBA_NUM_THREADS"] = n_str
+        os.environ["OPENBLAS_NUM_THREADS"] = n_str
+        try:
+            import pypardiso
+            pypardiso.set_num_threads(args.threads)
+        except Exception:
+            pass
+        try:
+            import numba
+            numba.set_num_threads(args.threads)
+        except Exception:
+            pass
 
     if args.open:
         from dispsolver.postprocess.viewer import launch_from_result
         launch_from_result(args.open)
         return
 
-    config = DEFAULT_CONFIG
+    if args.stack == "glass":
+        from dispsolver.fold_model_config import make_glass_config
+        config = make_glass_config(thickness_mm=0.1, n_rows=2)
+    else:
+        config = DEFAULT_CONFIG
+
+    config = apply_cli_overrides(config, args)
+
+    # Apply PARDISO solver options
+    if args.mtype:
+        config.solver.pardiso_mtype = args.mtype
+    config.solver.pardiso_phase_reuse = not args.no_phase_reuse
+    config.solver.distortion_control = args.distortion_control
+    config.solver.distortion_j_crit = args.distortion_j_crit
+
     if args.mode == "read":
         info = run_read(config, elem_jit=args.elem_jit)
     elif args.mode == "roundtrip":

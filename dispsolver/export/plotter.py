@@ -109,9 +109,11 @@ def plot_and_save_deformed_shape_png(
     save_path: str = "output/ex11_final_folding_shape.png",
     title_prefix: str = "Abaqus 90° Display Folding Final State",
     rbe2_elements: list = None,
+    rbe2_constraints: list = None,
     tie_constraints: list = None,
     artifact_dir: str = None,
     dpi: int = 300,
+    monitor_text: str = None,
 ):
     """
     Plots and saves 2D publication-quality PNG of initial vs final deformed shape,
@@ -133,38 +135,61 @@ def plot_and_save_deformed_shape_png(
     y_def = y0 + uy
     u_mag = np.sqrt(ux**2 + uy**2)
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+    # Separate display panel elements (pid < 15 or nid < 5000) and rigid plate elements (pid >= 15 or 5000 <= nid < 100000)
+    disp_indices = []
+    disp_mag_vals = []
+    disp_uy_vals = []
+    plate_indices = []
 
-    # --- Subplot 1: Total Displacement Magnitude |u| & Tied Pair Overlay ---
-    patches_mag = []
-    patches_init = []
-    for conn in elem_indices:
-        poly_def = Polygon(np.column_stack([x_def[conn], y_def[conn]]), closed=True)
-        poly_init = Polygon(np.column_stack([x0[conn], y0[conn]]), closed=True)
-        patches_mag.append(poly_def)
-        patches_init.append(poly_init)
+    # Find plate pids (last 2 pids or pids with node_ids in 5000..9999)
+    all_pids = sorted({elem.pid for elem in mesh.elements.values()})
+    max_pid = max(all_pids) if all_pids else 0
+    plate_pids = {max_pid - 1, max_pid} if len(all_pids) >= 2 else set()
 
-    # Initial shape wireframe
-    pcol_init = PatchCollection(patches_init, facecolor='none', edgecolor='gray', linestyle='--', linewidth=0.5, alpha=0.5)
-    ax1.add_collection(pcol_init)
+    for elem in mesh.elements.values():
+        # Ignore master reference node dummy elements (nid >= 100000)
+        if any(nid >= 100000 for nid in elem.node_ids):
+            continue
 
-    # Deformed shape filled contour
-    pcol_mag = PatchCollection(patches_mag, cmap='turbo', array=u_mag, match_original=False)
-    pcol_mag.set_edgecolor('black')
-    pcol_mag.set_linewidth(0.2)
-    ax1.add_collection(pcol_mag)
-    cb1 = fig.colorbar(pcol_mag, ax=ax1, fraction=0.046, pad=0.04)
-    cb1.set_label("변위 크기 |u| (mm)")
+        conn = [nid_to_idx[nid] for nid in elem.node_ids]
+        is_plate = (elem.pid in plate_pids) or any(5000 <= nid < 100000 for nid in elem.node_ids)
+
+        if is_plate:
+            plate_indices.append(conn)
+        else:
+            disp_indices.append(conn)
+            disp_mag_vals.append(np.mean(u_mag[conn]))
+            disp_uy_vals.append(np.mean(uy[conn]))
+
+    disp_mag_vals = np.array(disp_mag_vals) if disp_mag_vals else np.array([0.0])
+    disp_uy_vals = np.array(disp_uy_vals) if disp_uy_vals else np.array([0.0])
+
+    fig, ax = plt.subplots(1, 1, figsize=(10, 6))
+
+    # Rigid plates (clean solid rendering)
+    if plate_indices:
+        plate_patches = [Polygon(np.column_stack([x_def[conn], y_def[conn]]), closed=True) for conn in plate_indices]
+        pcol_plate = PatchCollection(plate_patches, facecolor='#333333', edgecolor='#111111', linewidth=0.4, alpha=0.85)
+        ax.add_collection(pcol_plate)
+
+    # Display panel filled contour (|u| magnitude)
+    patches_mag = [Polygon(np.column_stack([x_def[conn], y_def[conn]]), closed=True) for conn in disp_indices]
+    if patches_mag:
+        pcol_mag = PatchCollection(patches_mag, cmap='turbo', array=disp_mag_vals, match_original=False)
+        pcol_mag.set_edgecolor('black')
+        pcol_mag.set_linewidth(0.2)
+        ax.add_collection(pcol_mag)
+        cb = fig.colorbar(pcol_mag, ax=ax, fraction=0.046, pad=0.04)
+        cb.set_label("디스플레이 변위 크기 |u| (mm)")
 
     # Plot Surface Tie connections if available
     if tie_constraints:
         for tie in tie_constraints:
             slave_ids = getattr(tie, 'slave_node_ids', [])
-            master_ids = getattr(tie, 'master_node_ids', [])
             for s_nid in slave_ids:
                 if s_nid in nid_to_idx:
                     s_idx = nid_to_idx[s_nid]
-                    ax1.plot(x_def[s_idx], y_def[s_idx], 'g.', markersize=3, alpha=0.6)
+                    ax.plot(x_def[s_idx], y_def[s_idx], 'g.', markersize=3, alpha=0.6)
 
     # Plot Hinge Reference Points if available
     if rbe2_elements:
@@ -172,41 +197,39 @@ def plot_and_save_deformed_shape_png(
             m_id = getattr(rbe2, 'master_id', getattr(rbe2, 'master_node_id', None))
             if m_id is not None and m_id in nid_to_idx:
                 rp_idx = nid_to_idx[m_id]
-                ax1.plot(x_def[rp_idx], y_def[rp_idx], 'r*', markersize=10, label=f'RP N{m_id}')
+                ax.plot(x_def[rp_idx], y_def[rp_idx], 'r*', markersize=10, label=f'RP N{m_id}')
 
-    all_x = np.concatenate([x0, x_def])
-    all_y = np.concatenate([y0, y_def])
+    # Plot Hinge Pivot Points (KinematicRBE2Constraint exact-condensation master
+    # nodes -- these are translation-fixed (UX=UY=0), rotation-only pivots, not
+    # the deprecated penalty RBE2HingeElement handled above). Drawn as an open
+    # (hollow) blue circle per user request, distinct from the red star above.
+    if rbe2_constraints:
+        for c in rbe2_constraints:
+            m_id = getattr(c, 'master_id', None)
+            if m_id is not None and m_id in nid_to_idx:
+                rp_idx = nid_to_idx[m_id]
+                ax.plot(x_def[rp_idx], y_def[rp_idx], 'o', markersize=10,
+                        markerfacecolor='none', markeredgecolor='blue',
+                        markeredgewidth=1.6, zorder=5, label=f'Hinge Pivot N{m_id}')
+
     margin = 3.0
-    ax1.set_xlim(np.min(all_x) - margin, np.max(all_x) + margin)
-    ax1.set_ylim(np.min(all_y) - margin, np.max(all_y) + margin)
-    ax1.set_aspect('equal', 'box')
-    ax1.set_title(f"{title_prefix}\n최종 변형 형상 및 변위 크기 (|u| max = {np.max(u_mag):.2f} mm)")
-    ax1.set_xlabel("X 좌표 (mm)")
-    ax1.set_ylabel("Y 좌표 (mm)")
-    ax1.grid(True, linestyle=':', alpha=0.5)
+    ax.set_xlim(np.min(x_def) - margin, np.max(x_def) + margin)
+    ax.set_ylim(np.min(y_def) - margin, np.max(y_def) + margin)
+    ax.set_aspect('equal', 'box')
+    ax.set_title(f"{title_prefix}\n변위 크기 (|u| max = {np.max(u_mag):.2f} mm)")
+    ax.set_xlabel("X 좌표 (mm)")
+    ax.set_ylabel("Y 좌표 (mm)")
+    ax.grid(True, linestyle=':', alpha=0.5)
 
-    # --- Subplot 2: Vertical Displacement (Uy) Contour ---
-    patches_uy = []
-    for conn in elem_indices:
-        poly_def = Polygon(np.column_stack([x_def[conn], y_def[conn]]), closed=True)
-        patches_uy.append(poly_def)
-
-    pcol_uy = PatchCollection(patches_uy, cmap='plasma', array=uy, match_original=False)
-    pcol_uy.set_edgecolor('black')
-    pcol_uy.set_linewidth(0.2)
-    ax2.add_collection(pcol_uy)
-    cb2 = fig.colorbar(pcol_uy, ax=ax2, fraction=0.046, pad=0.04)
-    cb2.set_label("수직 변위 Uy (mm)")
-
-    ax2.set_xlim(np.min(all_x) - margin, np.max(all_x) + margin)
-    ax2.set_ylim(np.min(all_y) - margin, np.max(all_y) + margin)
-    ax2.set_aspect('equal', 'box')
-    ax2.set_title(f"수직 변위 (Uy) 분포\n(Uy min = {np.min(uy):.2f} mm, max = {np.max(uy):.2f} mm)")
-    ax2.set_xlabel("X 좌표 (mm)")
-    ax2.set_ylabel("Y 좌표 (mm)")
-    ax2.grid(True, linestyle=':', alpha=0.5)
-
-    fig.tight_layout()
+    if monitor_text:
+        fig.tight_layout(rect=[0, 0.08, 1, 1])
+        fig.text(
+            0.5, 0.02, monitor_text,
+            ha='center', va='bottom', fontsize=9,
+            bbox=dict(boxstyle='round,pad=0.4', facecolor='#f8f9fa', edgecolor='#cccccc', alpha=0.9)
+        )
+    else:
+        fig.tight_layout()
     fig.savefig(save_path, dpi=dpi, bbox_inches='tight')
     print(f"[PNG] Deformed shape saved: {save_path}")
 

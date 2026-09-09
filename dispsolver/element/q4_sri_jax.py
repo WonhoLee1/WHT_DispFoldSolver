@@ -27,6 +27,41 @@ def _F_sri(ux, uy, gX, gY, gX0, gY0):
 
     Same convention as ``q4_sri_hybrid_jax.compute_element_energy_sri_hybrid``
     and the small-strain ``q4_sri_numba`` kernel.
+
+    ⚠ LOAD-BEARING ASSUMPTION: THIS RULE IS NOT FRAME-INVARIANT.
+    ---------------------------------------------------------------
+    "The off-diagonal entries of dU/dX" is not a frame-independent
+    object -- it is shear only relative to a chosen pair of axes. State
+    the same rule in a rotated global frame and it becomes a DIFFERENT
+    rule, so this element's stiffness depends on its orientation
+    relative to the global axes. Measured (opus review, 2026-09-08,
+    strain-then-rotate at AR 6.7): 3.6e-2 at 5.7 deg, 1.5e-1 at 28.6
+    deg, 1.6e-1 at 57.3 deg, ~0 at 0/90 deg (axis permutation).
+
+    This is an artifact of writing the rule in Cartesian components, NOT
+    an inherent property of selective reduced integration: Hughes (1980)
+    B-bar under-integrates the VOLUMETRIC part (the trace -- a scalar
+    invariant) and is exactly frame-invariant at every orientation. The
+    frame-invariant way to state shear-only under-integration is to
+    sample the covariant natural-frame shear (eps_xi_eta) at the
+    centroid, which rotates with the element by construction -- the
+    ANS/MITC device from the shell/plate literature.
+
+    The co-rotational wrapper does NOT fix this. `compute_element_rotation`
+    returns the RELATIVE rotation (reference -> current), so it removes
+    deformation-induced rotation but leaves the element's ABSOLUTE
+    orientation intact; measured isotropy error is bit-identical between
+    `Q4_SRI` and `Q4_COROTATIONAL_SRI`.
+
+    WHAT ACTUALLY PROTECTS THIS ELEMENT IN PRODUCTION IS THE MESH:
+    `dynamic.py`'s corot-SRI dispatch passes the ORIGINAL, axis-aligned
+    `self.elem_coords` with the TOTAL displacement (a TL path -- note
+    this kernel accepts `F_n_gps` but never uses it), so the reference
+    Jacobian stays diagonal and the anisotropy never activates. Build a
+    non-axis-aligned mesh, or route this element onto the UL dispatch,
+    and it degrades immediately -- silently, with no error and no
+    convergence failure. Do not do either without first restating the
+    sampling rule in the natural frame.
     """
     return jnp.array([
         [1.0 + ux @ gX, ux @ gY0],
