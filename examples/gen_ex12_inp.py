@@ -5,7 +5,7 @@ from dispsolver.mesh.plate_builder import create_folding_plate_parts
 from dispsolver.mesh.display_builder import build_display_grid, graded_display_x
 
 sys.path.insert(0, os.path.dirname(__file__))
-from dispsolver.fold_model_config import FoldModelConfig, DEFAULT_CONFIG
+from dispsolver.fold_model_config import FoldModelConfig, DEFAULT_CONFIG, make_teardrop_config
 from dispsolver.material.factory import emit_abaqus_material_block
 
 OUTPUT = os.path.join(os.path.dirname(__file__), "ex12_rigid_plate_display_fold.inp")
@@ -17,7 +17,9 @@ OUTPUT = os.path.join(os.path.dirname(__file__), "ex12_rigid_plate_display_fold.
 _graded_display_x = graded_display_x
 
 
-def generate(config: FoldModelConfig = DEFAULT_CONFIG):
+def generate(config: FoldModelConfig = None):
+    if config is None:
+        config = make_teardrop_config()
     lines = []
     _w = lines.append
 
@@ -53,16 +55,40 @@ def generate(config: FoldModelConfig = DEFAULT_CONFIG):
         _w(f"{nid}, {x_val:.6f}, {y_val:.6f}")
 
     # 2. Plate Meshes
+    # base_node_id/base_elem_id = 100000 is a load-bearing convention several
+    # OTHER files also hardcode (plotter.py's plate-detection fallback,
+    # dynamic.py's max_displacement_corr plate-DOF exclusion, interlayer.py,
+    # check_interlayer_shear.py, ex12's own diagnostics). Raised from 10000
+    # to 100000 on 2026-09-08 across every one of those files together (same
+    # commit) to give the display mesh 10x the node-id headroom -- a finer
+    # PSA row count or tighter free-span dx can grow the display's own node
+    # numbering past whatever this boundary is, at which point display
+    # elements silently reuse plate node ids and connectivity corrupts
+    # without any error (found 2026-09-08 at the old 10000 boundary: PSA at
+    # 2 rows + dx=0.05 across the whole untied span produced 721 elements in
+    # pid 7/8 spanning up to 44mm -- display nodes stitched to the real LEFT
+    # PLATE's nodes near x=-40). The assert below still fails loudly if the
+    # display mesh ever grows past the new boundary too -- if it fires,
+    # either coarsen the display mesh or raise base_node_id here AND in
+    # every file listed above together, in the same change (do not raise it
+    # in only one file).
+    _max_display_nid = max(nid for nid, _, _ in grid.nodes)
+    assert _max_display_nid < 100000, (
+        f"display mesh uses node id {_max_display_nid} >= 100000 (the "
+        "reserved plate-node base) -- element connectivity would silently "
+        "corrupt by stitching to plate nodes. Coarsen the display mesh "
+        "(fewer PSA rows / larger free-span dx) or see this assert's "
+        "comment before raising base_node_id.")
     plates = create_folding_plate_parts(
         left_x_range=(-geo.display_half_length, -geo.hinge_half_gap),
         right_x_range=(geo.hinge_half_gap, geo.display_half_length),
         y_range=(-geo.plate_thickness, 0.0),
-        left_pivot=(-geo.hinge_pivot_x, 0.0),
-        right_pivot=(geo.hinge_pivot_x, 0.0),
+        left_pivot=(-geo.hinge_pivot_x, geo.hinge_pivot_y),
+        right_pivot=(geo.hinge_pivot_x, geo.hinge_pivot_y),
         nx=geo.plate_mesh_nx,
         ny=geo.plate_mesh_ny,
-        base_node_id=10000,
-        base_elem_id=10000,
+        base_node_id=100000,
+        base_elem_id=100000,
     )
     left_plate = plates["left"]
     right_plate = plates["right"]
@@ -124,10 +150,11 @@ def generate(config: FoldModelConfig = DEFAULT_CONFIG):
     # x looked up per node id rather than by position -- the old
     # `xs[(nid - 1) % (nx + 1)]` arithmetic assumed a full dense node grid
     # and returns the wrong x for every node past the first void.
+    tie_start = geo.tie_attach_start if geo.tie_attach_start is not None else geo.hinge_half_gap
     left_disp_bot = [n for n in grid.bottom_surface_nids
-                     if grid.x_of_node(n) <= -geo.hinge_half_gap]
+                     if grid.x_of_node(n) <= -tie_start]
     right_disp_bot = [n for n in grid.bottom_surface_nids
-                      if grid.x_of_node(n) >= geo.hinge_half_gap]
+                      if grid.x_of_node(n) >= tie_start]
 
     _w("*NSET, NSET=DISP_BOT_L_NODES")
     _w(", ".join(str(nid) for nid in left_disp_bot))
@@ -167,12 +194,11 @@ def generate(config: FoldModelConfig = DEFAULT_CONFIG):
     _w("DISPLAY_BOT_R, PLATE_R_TOP")
     _w("**")
 
-    # 7. Step with boundary conditions
+    # 7. Step with boundary conditions and solver controls
     drv = config.drive
     theta_rad = np.radians(drv.theta_max_deg)
-    _w("*STEP")
-    _w("*STATIC")
-    _w(f"{drv.dt_init}, {drv.t_total}, {drv.dt_min}, {drv.dt_max}")
+    abq_cfg = config.to_abaqus_config()
+    _w(abq_cfg.to_inp_snippet())
     _w("**")
 
     # Fix hinge translations

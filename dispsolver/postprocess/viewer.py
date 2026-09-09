@@ -226,24 +226,23 @@ class _ResultCache:
         p2 = 0.5 * (trace - sqrt_disc)
         return p1, p2
 
-    def _von_mises(self, s11: float, s22: float, s12: float) -> float:
-        """von Mises 등가 응력 (평면변형률).
+    def _von_mises(self, s11: float, s22: float, s12: float, nu: float = 0.3) -> float:
+        """von Mises 등가 응력 (2D 평면변형률).
 
-        σ_vm = sqrt(σ_xx² + σ_yy² - σ_xx·σ_yy + 3·σ_xy²)
-
-        3D von Mises: sqrt( ( (σ₁-σ₂)² + (σ₂-σ₃)² + (σ₃-σ₁)² ) / 2 )
-        평면변형률(σ₃₃ = ν·(σ₁₁+σ₂₂) 또는 ε₃₃=0 조건):
-        위 공식 사용.
+        3D von Mises: sqrt( 0.5*((σ11-σ22)² + (σ22-σ33)² + (σ33-σ11)²) + 3·σ12² )
+        평면변형률(ε33=0 조건): σ33 = ν·(σ11+σ22)
 
         Args:
             s11: σ_xx (Cauchy).
             s22: σ_yy.
             s12: σ_xy.
+            nu: Poisson ratio (기본값 0.3).
 
         Returns:
             von Mises 등가 응력 (같은 단위).
         """
-        return np.sqrt(s11*s11 + s22*s22 - s11*s22 + 3.0*s12*s12)
+        s33 = nu * (s11 + s22)
+        return float(np.sqrt(0.5 * ((s11 - s22)**2 + (s22 - s33)**2 + (s33 - s11)**2) + 3.0 * s12 * s12))
 
     def compute_field(self, name: str) -> FieldData:
         """solver state로부터 이름이 지정된 물리량 필드를 계산.
@@ -459,7 +458,8 @@ class _ResultCache:
         elif name == 'stress_xy':
             elem_vals = s12_all
         elif name == 'stress_vm':
-            elem_vals = np.sqrt(s11_all ** 2 - s11_all * s22_all + s22_all ** 2
+            s33_all = 0.3 * (s11_all + s22_all)
+            elem_vals = np.sqrt(0.5 * ((s11_all - s22_all)**2 + (s22_all - s33_all)**2 + (s33_all - s11_all)**2)
                                 + 3 * s12_all ** 2)
         elif name in ('principal_strain_1', 'principal_strain_2', 'principal_strain_abs_max'):
             center = (e11_all + e22_all) / 2.0
@@ -732,10 +732,10 @@ class PostprocessViewer(QtWidgets.QMainWindow):
         scale_layout = QtWidgets.QHBoxLayout()
         self.scale_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
         self.scale_slider.setRange(0, 100)       # 0~100 → 0.0~10.0x
-        self.scale_slider.setValue(20)           # 기본 2.0x
+        self.scale_slider.setValue(10)           # 기본 1.0x (실제 100% 형상)
         self.scale_slider.valueChanged.connect(self._on_scale_changed)
         scale_layout.addWidget(self.scale_slider)
-        self.scale_label = QtWidgets.QLabel("2.0x")
+        self.scale_label = QtWidgets.QLabel("1.0x")
         self.scale_label.setFixedWidth(50)
         scale_layout.addWidget(self.scale_label)
         panel_layout.addLayout(scale_layout)
@@ -968,10 +968,11 @@ class PostprocessViewer(QtWidgets.QMainWindow):
 
         conn = solver.conn                 # (n_elem, 4) node-index array
         coords = solver.coords
-        u_all = solver.u
+        n_nodes = len(coords)
+        u_nodes = solver.u[: 2 * n_nodes]
         if self._deformed_scale > 1e-6:
-            ux = u_all[0::2]
-            uy = u_all[1::2]
+            ux = u_nodes[0::2]
+            uy = u_nodes[1::2]
             coords_deformed = coords + self._deformed_scale * np.column_stack([ux, uy])
         else:
             coords_deformed = coords

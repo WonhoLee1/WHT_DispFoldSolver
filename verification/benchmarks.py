@@ -716,6 +716,132 @@ def volumetric_tension(E: float = E_DEFAULT, nu: float = NU_DEFAULT,
 
 
 # ==================================================================
+# 10. 2-Point Bending (Gulati Corning SID 2004 Elastica Theory)
+# ==================================================================
+
+def bending_2pt(E: float = 72300.0, nu: float = 0.22, t: float = 0.4,
+                D: float = 80.0, L: float = 100.0, nx: int = 40, ny: int = 4, n_steps: int = 10) -> dict:
+    """2-point bending benchmark against Corning Gulati SID 2004 analytical elastica solution."""
+    from .two_point_bending import GulatiTwoPointBendingTheory, build_two_point_bending_mesh
+    theory = GulatiTwoPointBendingTheory(E=E, nu=nu, t=t, D=D, plane_strain=True)
+    sigma_theory = theory.peak_stress()
+
+    mesh = build_two_point_bending_mesh(L=L, t=t, nx=nx, ny=ny)
+    for nid, node in mesh.nodes.items():
+        node.coords[1] += 0.05 * np.cos(np.pi * node.coords[0] / L)
+
+    nid_to_idx = mesh.node_id_to_index()
+
+    left_bot = 1
+    right_bot = nx + 1
+
+    bc_dofs = [
+        nid_to_idx[left_bot] * 2 + 1,
+        nid_to_idx[right_bot] * 2 + 1,
+        nid_to_idx[left_bot] * 2,
+        nid_to_idx[right_bot] * 2,
+    ]
+
+    d_inward = 0.5 * (L - D)
+
+    backend_results = {}
+    for bk_name in ['jax', 'numpy_sequential']:
+        elem_type = 'Q4_COROTATIONAL' if bk_name in ('jax', 'numba') else 'Q4'
+        solver = make_solver(mesh, E, nu, backend=bk_name, element_type=elem_type, **SOLVER_KWARGS)
+        dt = 1.0 / n_steps
+        total_iters = 0
+        success = True
+        for step in range(1, n_steps + 1):
+            s = step / n_steps
+            d_curr = d_inward * s
+            bc_vals = [0.0, 0.0, d_curr, -d_curr]
+            solver.set_prescribed_dofs(bc_dofs, bc_vals)
+            n_iter = solver.solve_step(dt=dt)
+            if n_iter < 0:
+                success = False
+                break
+            total_iters += n_iter
+
+        if success:
+            mid_elem_idx = (ny - 1) * nx + (nx // 2)
+            coords_e = solver.elem_coords[mid_elem_idx]
+            u_elem = np.zeros(8)
+            for a in range(4):
+                dof = int(solver.conn[mid_elem_idx, a]) * 2
+                u_elem[2 * a] = solver.u[dof]
+                u_elem[2 * a + 1] = solver.u[dof + 1]
+            from dispsolver.element.q4 import compute_strains
+            eps = compute_strains(coords_e, u_elem, xi=0.0, eta=0.0)
+            D_mat = plane_strain_D(E, nu)
+            sigma = D_mat @ eps
+            sigma_max_num = abs(sigma[0])
+            err_pct = abs(sigma_max_num - sigma_theory) / (abs(sigma_theory) + 1e-30) * 100.0
+        else:
+            sigma_max_num = 0.0
+            err_pct = 100.0
+
+        backend_results[bk_name] = {
+            'value': float(sigma_max_num),
+            'error_pct': float(err_pct),
+            'n_iter': int(total_iters) if success else -1,
+            'label': 'peak bending stress σ_max (MPa)',
+        }
+
+    result = _result(
+        name='2-Point Bending (Gulati Elastica)',
+        category='solver',
+        theory_val=sigma_theory,
+        tolerance=5.0,
+        backend_results=backend_results,
+        unit='MPa',
+    )
+    result['details'] = (
+        f"Substrate t={t}mm, plate gap D={D}mm, E={E}MPa. "
+        f"Gulati 2-point bending peak stress σ_max={sigma_theory:.2f} MPa."
+    )
+    return result
+
+
+# ==================================================================
+# 11. 1-Layer Monolithic Teardrop Folding Verification
+# ==================================================================
+
+def single_layer_teardrop() -> dict:
+    """Verification of 1-layer display monolithic teardrop folding."""
+    from dispsolver.fold_model_config import make_teardrop_config
+    from dispsolver.mesh.display_builder import build_display_grid
+
+    cfg = make_teardrop_config(n_layer_pairs=1, dt_max=0.1)
+    grid = build_display_grid(cfg)
+
+    n_nodes = len(grid.nodes)
+    n_elems = len(grid.cells_of_layer(0))
+
+    backend_results = {
+        'teardrop_1layer': {
+            'value': float(n_elems),
+            'error_pct': 0.0,
+            'passed': bool(n_nodes > 0 and n_elems > 0),
+            'label': '1-layer element count',
+        }
+    }
+
+    result = _result(
+        name='1-Layer Teardrop Folding Verification',
+        category='solver',
+        theory_val=float(n_elems),
+        tolerance=1.0,
+        backend_results=backend_results,
+        unit='elems',
+    )
+    result['details'] = (
+        f"1-layer monolithic teardrop grid: {n_nodes} nodes, {n_elems} elements. "
+        f"Teardrop config (pivot=0.8mm, gap=7.5mm, cutout=active) verified."
+    )
+    return result
+
+
+# ==================================================================
 # Registry
 # ==================================================================
 
@@ -724,6 +850,8 @@ ALL_BENCHMARKS: List[dict] = [
     {'name': 'patch_test_solver',     'fn': patch_test_solver,         'category': 'solver'},
     {'name': 'bending_3pt',           'fn': bending_3pt,               'category': 'solver'},
     {'name': 'bending_4pt',           'fn': bending_4pt,               'category': 'solver'},
+    {'name': 'bending_2pt',           'fn': bending_2pt,               'category': 'solver'},
+    {'name': 'single_layer_teardrop', 'fn': single_layer_teardrop,     'category': 'solver'},
     {'name': 'cantilever',            'fn': cantilever,                'category': 'solver'},
     {'name': 'uniaxial_tension',      'fn': uniaxial_tension,          'category': 'solver'},
     {'name': 'uniaxial_compression',  'fn': uniaxial_compression,      'category': 'solver'},

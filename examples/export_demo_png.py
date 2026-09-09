@@ -57,8 +57,8 @@ def main():
         right_pivot=(3.0, 0.0),
         nx=30,
         ny=2,
-        base_node_id=10000,
-        base_elem_id=10000,
+        base_node_id=100000,
+        base_elem_id=100000,
     )
 
     left_plate = plates["left"]

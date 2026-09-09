@@ -67,7 +67,14 @@ if HAS_NUMBA:
     @njit_cached(fastmath=True)
     def _enhanced_grad_modes(xi: float, eta: float, detJ: float,
                              J0: np.ndarray, detJ0: float):
-        """4 enhanced deformation-gradient modes (4, 2, 2)."""
+        """4 enhanced deformation-gradient modes (4, 2, 2).
+
+        Fenh_k = (detJ0/detJ) * D_k @ J0^{-T} -- TRANSPOSE FIX
+        2026-09-08, see q4_eas_jax.py::_enhanced_grad_modes for the
+        derivation and measured impact (invisible for axis-aligned
+        elements since J0 is then diagonal; up to ~10x bending error
+        once the UL reference frame rotates off-axis).
+        """
         J0inv = np.linalg.inv(J0)
         s = detJ0 / detJ
         Dk = [
@@ -76,7 +83,7 @@ if HAS_NUMBA:
             np.array([[0.0, 0.0], [xi, 0.0]], dtype=np.float64),
             np.array([[0.0, 0.0], [0.0, eta]], dtype=np.float64),
         ]
-        modes = [s * (D @ J0inv) for D in Dk]
+        modes = [s * (D @ J0inv.T) for D in Dk]
         return modes
 
     @njit_cached(fastmath=True)
@@ -101,7 +108,7 @@ if HAS_NUMBA:
         return B
 
     @njit_cached(fastmath=True)
-    def compute_eas_j2_contributions_numba(
+    def compute_eas_j2_contributions_numba_status(
         coords: np.ndarray,       # (4,2)
         u_elem: np.ndarray,       # (8,)
         alpha: np.ndarray,        # (4,) EAS params (warm start)
@@ -192,6 +199,8 @@ if HAS_NUMBA:
         # --- Newton for alpha ---
         alpha_curr = alpha.copy()
         state_new = np.zeros((n_gp, 5), dtype=np.float64)
+        converged_local = False
+        da_inf = np.inf
 
         for _ in range(max_local_iter):
             f_a = np.zeros(4, dtype=np.float64)
@@ -244,6 +253,7 @@ if HAS_NUMBA:
 
             fn = np.linalg.norm(f_a)
             if fn < local_tol:
+                converged_local = True
                 break
 
             # Regularized solve
@@ -299,6 +309,11 @@ if HAS_NUMBA:
                 fn_try = np.linalg.norm(f_a_try)
 
             alpha_curr = alpha_try
+            da_inf = 0.0
+            for i in range(4):
+                d_i = abs(ls * dalpha[i])
+                if d_i > da_inf:
+                    da_inf = d_i
 
         # --- Final assembly at converged alpha ---
         K_uu = np.zeros((8, 8), dtype=np.float64)
@@ -392,7 +407,32 @@ if HAS_NUMBA:
         K_e = K_uu - K_ua @ K_aa_inv_KuaT
         f_e = f_u - K_ua @ np.linalg.solve(K_aa, f_a)
 
-        return f_e, K_e, alpha_curr, state_new
+        # Element-local convergence status (see the JAX sibling): 0.0 when the
+        # alpha-Newton met |f_alpha| < local_tol, otherwise the last accepted
+        # ||d(alpha)||_inf, or inf on a non-finite result. Never clamped --
+        # non-convergence is reported and the solver cuts the increment back.
+        alpha_status = 0.0 if converged_local else da_inf
+        for i in range(8):
+            if not np.isfinite(f_e[i]):
+                alpha_status = np.inf
+        for i in range(4):
+            if not np.isfinite(alpha_curr[i]):
+                alpha_status = np.inf
+
+        return f_e, K_e, alpha_curr, state_new, alpha_status
+
+    @njit_cached(fastmath=True)
+    def compute_eas_j2_contributions_numba(
+        coords: np.ndarray, u_elem: np.ndarray, alpha: np.ndarray,
+        state_elem: np.ndarray, lam: float, mu: float, sigma_y0: float,
+        H: float, thickness: float = 1.0, max_local_iter: int = 12,
+        local_tol: float = 1e-11, F_n: np.ndarray = None,
+    ):
+        """Back-compatible 4-tuple wrapper (drops the trailing `status`)."""
+        f_e, K_e, a, s_e, _st = compute_eas_j2_contributions_numba_status(
+            coords, u_elem, alpha, state_elem, lam, mu, sigma_y0, H,
+            thickness, max_local_iter, local_tol, F_n)
+        return f_e, K_e, a, s_e
 
     @njit_cached(fastmath=True, parallel=True)
     def assemble_q4_eas_j2_batch_numba(
@@ -413,9 +453,10 @@ if HAS_NUMBA:
         K_all = np.empty((n_elems, 8, 8), dtype=np.float64)
         alpha_all = np.empty((n_elems, 4), dtype=np.float64)
         state_all = np.empty((n_elems, 4, 5), dtype=np.float64)
+        status_all = np.empty(n_elems, dtype=np.float64)
 
         for e in numba.prange(n_elems):
-            f_e, K_e, a_e, s_e = compute_eas_j2_contributions_numba(
+            f_e, K_e, a_e, s_e, st_e = compute_eas_j2_contributions_numba_status(
                 elem_coords[e], u_elems[e], alpha_elems[e], state_elems[e],
                 lam, mu, sigma_y0, H, thicknesses[e],
             )
@@ -423,11 +464,15 @@ if HAS_NUMBA:
             K_all[e] = K_e
             alpha_all[e] = a_e
             state_all[e] = s_e
+            status_all[e] = st_e
 
-        return f_all, K_all, alpha_all, state_all
+        return f_all, K_all, alpha_all, state_all, status_all
 
 else:
     def compute_eas_j2_contributions_numba(*args, **kwargs):
+        raise ImportError("Numba is not installed. Run `pip install numba` to use Numba backend.")
+
+    def compute_eas_j2_contributions_numba_status(*args, **kwargs):
         raise ImportError("Numba is not installed. Run `pip install numba` to use Numba backend.")
 
     def assemble_q4_eas_j2_batch_numba(*args, **kwargs):

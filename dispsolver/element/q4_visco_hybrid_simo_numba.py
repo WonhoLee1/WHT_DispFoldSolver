@@ -95,6 +95,19 @@ if HAS_NUMBA:
             J[1, 0] += dN_deta[i] * coords[i, 0]
             J[1, 1] += dN_deta[i] * coords[i, 1]
         detJ = J[0, 0] * J[1, 1] - J[0, 1] * J[1, 0]
+        # Guard against exact zero: fastmath=True's relaxed reassociation
+        # can round a near-degenerate (but strictly nonzero) Jacobian to
+        # exactly 0.0 for a highly distorted line-search TRIAL element
+        # geometry (rejected afterwards, but evaluated first) -- an
+        # unguarded division then raises Numba's ZeroDivisionError and
+        # kills the whole prange loop instead of letting the caller's
+        # NaN/Inf output guard or the outer line search reject the state.
+        # Same convention as q4_corotational_sri_j2_numba.py's _grads_sri.
+        # Found 2026-09-08: this crashed CPE4I production at step 6 (4.25%
+        # fold) with an identical signature AFTER the _simo_pk2_numba Cinv
+        # fix -- that fix was real but this was the second, separate gap.
+        if abs(detJ) < 1e-30:
+            detJ = 1e-30
         invJ = np.array([[J[1, 1], -J[0, 1]], [-J[1, 0], J[0, 0]]],
                         dtype=np.float64) / detJ
         gX = invJ[0, 0] * dN_dxi + invJ[0, 1] * dN_deta
@@ -147,6 +160,7 @@ if HAS_NUMBA:
         base_code: int, Fbar2: np.ndarray, h_prev_flat: np.ndarray,
         kappa: float, bparams: np.ndarray,
         g_i: np.ndarray, tau_i: np.ndarray, g_inf: float, dt: float,
+        distortion_j_crit: float = 0.0,
     ):
         """Flory split + pluggable isochoric ground state + Simo overstress.
 
@@ -158,16 +172,53 @@ if HAS_NUMBA:
         F3[1, 0] = Fbar2[1, 0]; F3[1, 1] = Fbar2[1, 1]
         C = F3.T @ F3
         J = np.linalg.det(F3)
-        Cinv = np.linalg.inv(C)
+        # JAX reference (q4_visco_simo_fs_jax._simo_pk2) regularises this
+        # inverse with +1e-15*eye(3) precisely because a near-degenerate
+        # trial state during line search (Newton proposes a bad du before
+        # the inversion check rejects it) can make C singular. This Numba
+        # port had dropped that regularisation, so the same trial state
+        # that JAX handles gracefully raised a hard exception here instead
+        # (found 2026-09-08 via a real production cutback -- crashed the
+        # whole process rather than letting the line search reject the
+        # trial and backtrack, the way every other kernel's NaN-guard does).
+        Cinv = np.linalg.inv(C + 1e-15 * np.eye(3, dtype=np.float64))
         I1 = C[0, 0] + C[1, 1] + C[2, 2]
-        lnJ = np.log(max(J, 1e-30))
 
-        S_vol = kappa * lnJ * Cinv
+        # Classical Simo & Armero (1992) / Holzapfel (2000) volumetric PK2:
+        # S_vol = 0.5*kappa*(J - 1/J)*Cinv -- smooth hydrostatic barrier as
+        # J -> 0, plus optional distortion control. This Numba port had
+        # instead used an older logarithmic (Simo & Hughes) S_vol = kappa*
+        # lnJ*Cinv with NO J-clamp on the two `J ** (-2/3)` terms below --
+        # the two volumetric laws only agree to O((J-1)^2), so this was
+        # silently wrong away from J~1, and the unclamped fractional power
+        # of an exactly-zero J (reachable at a rejected line-search TRIAL
+        # state, not just a converged one) raises Python/Numba
+        # ZeroDivisionError for a non-integer exponent on a zero base --
+        # the actual root cause of the 2026-09-08 CPE4I production crash
+        # (the _grads_numba detJ guard added earlier the same day was a
+        # real, separate gap, but insufficient on its own). Fixed by
+        # porting q4_visco_simo_fs_jax._simo_pk2 exactly, term for term.
+        J_safe = max(J, 1e-4)
+        vol_factor = 0.5 * kappa * (J_safe - 1.0 / J_safe)
+        S_vol = vol_factor * Cinv
 
-        I1b = J ** (-2.0 / 3.0) * I1
-        W1 = _W1_numba(base_code, I1b, bparams)
+        if distortion_j_crit > 0.0:
+            denom = max(distortion_j_crit, 1e-12)
+            distortion = max(0.0, (distortion_j_crit - J) / denom)
+        else:
+            distortion = 0.0
+        S_distort_factor = (5000.0 * kappa) * (distortion ** 3)
+        S_vol = S_vol + S_distort_factor * Cinv
+
+        I1b = (J_safe ** (-2.0 / 3.0)) * I1
+        I1b_safe = I1b
+        if I1b_safe < 3.0:
+            I1b_safe = 3.0
+        elif I1b_safe > 50.0:
+            I1b_safe = 50.0
+        W1 = _W1_numba(base_code, I1b_safe, bparams)
         S_iso = np.zeros((3, 3), dtype=np.float64)
-        factor = 2.0 * W1 * J ** (-2.0 / 3.0)
+        factor = 2.0 * W1 * (J_safe ** (-2.0 / 3.0))
         eye3 = np.eye(3, dtype=np.float64)
         for i in range(3):
             for j in range(3):

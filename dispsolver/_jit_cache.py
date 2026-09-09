@@ -40,14 +40,25 @@ Controls, all read once at import time:
   confirming every machine that will load the cache has an identical CPU
   feature set to the one that built it (e.g. a homogeneous deployment
   fleet), or accept the SIGILL risk knowingly.
-- `DISPFOLD_CACHE_VERSION` (default "v1"): a manual cache-busting tag.
-  The cache directory path includes this string, so bumping it (e.g. to
-  "v2") after changing a module-level constant inside a jitted function
-  guarantees a fresh cache directory -- no reliance on hash-based
-  invalidation catching the change. Bump this whenever you change a
-  numeric constant, default parameter, or algorithm inside any
-  @njit(cache=True) or @jax.jit function without changing its traced
-  argument list.
+- `DISPFOLD_CACHE_VERSION` (default "v5", bumped from "v4" on 2026-09-09 for
+  the removal of the `_ALPHA_MAX` magnitude clamp and the new element-local
+  convergence `status` return in q4_visco_eas_numba.py / q4_eas_numba.py;
+  "v3"->"v4" on 2026-09-08 was the `_ALPHA_MAX` 0.05->0.5 raise, "v2"->"v3"
+  same day the F6 EAS transpose fix, and "v1"->"v2" before that):
+  a manual cache-busting tag. The cache directory path includes this
+  string, so bumping it (e.g. to "v3") after changing a module-level
+  constant inside a jitted function guarantees a fresh cache directory --
+  no reliance on hash-based invalidation catching the change. Bump this
+  whenever you change a numeric constant, default parameter, or algorithm
+  inside any @njit(cache=True) or @jax.jit function without changing its
+  traced argument list. **Confirmed necessary, not just theoretical**:
+  the 2026-09-08 `_simo_pk2_numba` volumetric-law fix (see
+  q4_visco_hybrid_simo_numba.py) reproduced its own already-fixed
+  ZeroDivisionError under the default "v1" cache even though the
+  function's parameter list changed (a new `distortion_j_crit` default
+  arg was added) -- Numba's own source-hash invalidation did not catch
+  it. Only `DISPFOLD_JIT_CACHE=0` (full cache bypass) or this version
+  bump actually picked up the fix.
 
 Usage
 -----
@@ -66,7 +77,7 @@ import functools
 
 _CACHE_ENABLED = os.environ.get("DISPFOLD_JIT_CACHE", "1") not in ("0", "false", "False")
 _JAX_CACHE_ENABLED = os.environ.get("DISPFOLD_JAX_CACHE", "0") not in ("0", "false", "False")
-_CACHE_VERSION = os.environ.get("DISPFOLD_CACHE_VERSION", "v1")
+_CACHE_VERSION = os.environ.get("DISPFOLD_CACHE_VERSION", "v5")
 
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 _CACHE_ROOT = os.path.join(_REPO_ROOT, ".cache")

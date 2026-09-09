@@ -1,8 +1,8 @@
 {
-  "timestamp": "2026-08-31T00:44:02.938573",
-  "runtime_seconds": 290.0290460586548,
-  "n_benchmarks": 12,
-  "n_passed": 11,
+  "timestamp": "2026-09-10T06:58:05.226200",
+  "runtime_seconds": 206.23348331451416,
+  "n_benchmarks": 14,
+  "n_passed": 12,
   "results": [
     {
       "name": "Patch Test (Element Level)",
@@ -140,10 +140,10 @@
           "passed": true
         },
         "jax_q4_simo_fs": {
-          "value": 0.0010989010989010985,
-          "error_pct": 5.919743861770853e-14,
-          "symmetry_error": 5.684341886080802e-14,
-          "min_eigenvalue": -1.2157723128653998e-13,
+          "value": 0.001098901098901097,
+          "error_pct": 1.9732479539236176e-13,
+          "symmetry_error": 2.842170943040401e-14,
+          "min_eigenvalue": -1.3938898435964874e-13,
           "label": "strain energy U (N\u00b7mm)",
           "passed": true
         },
@@ -165,20 +165,20 @@
       "unit": "%",
       "backends": {
         "jax": {
-          "value": 1.0482667117801839e-07,
-          "error_pct": 1.0482667117801839e-07,
+          "value": 3.738828639743532e-11,
+          "error_pct": 3.738828639743532e-11,
           "n_iter": 1,
-          "ux_error": 1.003330339817421e-12,
-          "uy_error": 3.0363024919842496e-13,
+          "ux_error": 3.423910460709223e-16,
+          "uy_error": 1.501891059435545e-16,
           "label": "internal node displacement error (%)",
           "passed": true
         },
         "numpy_sequential": {
-          "value": 9.543851992299759e-08,
-          "error_pct": 9.543851992299759e-08,
+          "value": 2.397842773780416e-11,
+          "error_pct": 2.397842773780416e-11,
           "n_iter": 1,
-          "ux_error": 9.07474074184067e-13,
-          "uy_error": 2.9553665287576636e-13,
+          "ux_error": 1.1503385050071202e-16,
+          "uy_error": 2.1038943157081214e-16,
           "label": "internal node displacement error (%)",
           "passed": true
         }
@@ -194,15 +194,15 @@
       "unit": "mm",
       "backends": {
         "jax": {
-          "value": 0.00023695025775628467,
-          "error_pct": 0.7013420128706755,
+          "value": 0.00023697937112158256,
+          "error_pct": 0.7137148838005034,
           "n_iter": 1,
           "label": "center deflection |uy| (mm)",
           "passed": true
         },
         "numpy_sequential": {
-          "value": 0.0002466733385123513,
-          "error_pct": 4.833548029048578,
+          "value": 0.0002466965454479875,
+          "error_pct": 4.843410730126435,
           "n_iter": 1,
           "label": "center deflection |uy| (mm)",
           "passed": true
@@ -219,15 +219,15 @@
       "unit": "mm",
       "backends": {
         "jax": {
-          "value": 0.0003219844148212373,
-          "error_pct": 1.6645742814815696,
+          "value": 0.00032214273978323915,
+          "error_pct": 1.7145644024909565,
           "n_iter": 1,
           "label": "center deflection |uy| (mm)",
           "passed": true
         },
         "numpy_sequential": {
-          "value": 0.0003284024305965353,
-          "error_pct": 3.6910228035001236,
+          "value": 0.0003285293359290052,
+          "error_pct": 3.7310923721056835,
           "n_iter": 1,
           "label": "center deflection |uy| (mm)",
           "passed": true
@@ -237,6 +237,48 @@
       "details": "Beam 10.0\u00d71.0, mesh 80\u00d78, P=0.001 at L/4 and 3L/4 (top surface). Timoshenko \u03b4=3.167125e-04 mm (EB: 3.128125e-04)."
     },
     {
+      "name": "2-Point Bending (Gulati Elastica)",
+      "category": "solver",
+      "theory_value": 457.4445312490537,
+      "tolerance_pct": 5.0,
+      "unit": "MPa",
+      "backends": {
+        "jax": {
+          "value": 250.08190432900489,
+          "error_pct": 45.33066038713907,
+          "n_iter": 26,
+          "label": "peak bending stress \u03c3_max (MPa)",
+          "passed": false
+        },
+        "numpy_sequential": {
+          "value": 0.0,
+          "error_pct": 100.0,
+          "n_iter": -1,
+          "label": "peak bending stress \u03c3_max (MPa)",
+          "passed": false
+        }
+      },
+      "passed": false,
+      "details": "Substrate t=0.4mm, plate gap D=80.0mm, E=72300.0MPa. Gulati 2-point bending peak stress \u03c3_max=457.44 MPa."
+    },
+    {
+      "name": "1-Layer Teardrop Folding Verification",
+      "category": "solver",
+      "theory_value": 142.0,
+      "tolerance_pct": 1.0,
+      "unit": "elems",
+      "backends": {
+        "teardrop_1layer": {
+          "value": 142.0,
+          "error_pct": 0.0,
+          "passed": true,
+          "label": "1-layer element count"
+        }
+      },
+      "passed": true,
+      "details": "1-layer monolithic teardrop grid: 5828 nodes, 142 elements. Teardrop config (pivot=0.8mm, gap=7.5mm, cutout=active) verified."
+    },
+    {
       "name": "Cantilever Bending",
       "category": "solver",
       "theory_value": 0.0036711999999999995,
@@ -244,15 +286,15 @@
       "unit": "mm",
       "backends": {
         "jax": {
-          "value": 0.003729309698694645,
-          "error_pct": 1.5828529825301196,
+          "value": 0.003732732921421311,
+          "error_pct": 1.6760983172072252,
           "n_iter": 1,
           "label": "tip deflection |uy| (mm)",
           "passed": true
         },
         "numpy_sequential": {
-          "value": 0.0038393119566319193,
-          "error_pct": 4.57920997580954,
+          "value": 0.0038419847841898534,
+          "error_pct": 4.652015259039385,
           "n_iter": 1,
           "label": "tip deflection |uy| (mm)",
           "passed": true
@@ -269,8 +311,8 @@
       "unit": "MPa",
       "backends": {
         "jax": {
-          "value": 1.0989011095099068,
-          "error_pct": 9.654015127313897e-07,
+          "value": 1.0990170378061026,
+          "error_pct": 0.010550440355328481,
           "n_iter": 1,
           "eps_xx_measured": 0.0009999999999999998,
           "eps_xx_error_pct": 2.168404344971009e-14,
@@ -278,11 +320,11 @@
           "passed": true
         },
         "numpy_sequential": {
-          "value": 1.0989011070263417,
-          "error_pct": 7.393970857805243e-07,
+          "value": 1.099017037806199,
+          "error_pct": 0.010550440364097913,
           "n_iter": 1,
-          "eps_xx_measured": 0.001,
-          "eps_xx_error_pct": 0.0,
+          "eps_xx_measured": 0.0009999999999999998,
+          "eps_xx_error_pct": 2.168404344971009e-14,
           "label": "\u03c3_xx (MPa)",
           "passed": true
         }
@@ -298,17 +340,17 @@
       "unit": "MPa",
       "backends": {
         "jax": {
-          "value": -1.0989011095099068,
-          "error_pct": 9.654015127313897e-07,
+          "value": -1.0987849228695512,
+          "error_pct": 0.010572018870848686,
           "n_iter": 1,
-          "eps_xx_measured": -0.0009999999999999998,
-          "eps_xx_error_pct": 2.168404344971009e-14,
+          "eps_xx_measured": -0.001,
+          "eps_xx_error_pct": 0.0,
           "label": "\u03c3_xx (MPa)",
           "passed": true
         },
         "numpy_sequential": {
-          "value": -1.0989011070263417,
-          "error_pct": 7.393970857805243e-07,
+          "value": -1.0987849228694453,
+          "error_pct": 0.010572018880486977,
           "n_iter": 1,
           "eps_xx_measured": -0.001,
           "eps_xx_error_pct": 0.0,
@@ -327,19 +369,19 @@
       "unit": "MPa",
       "backends": {
         "jax": {
-          "value": -0.9615384615384616,
-          "error_pct": 0.0,
+          "value": -0.9615384615384613,
+          "error_pct": 2.3092638912203256e-14,
           "n_iter": 1,
-          "sigma_yy": -0.9615384615384616,
+          "sigma_yy": -0.9615384615384613,
           "hydrostatic_deviation_pct": 0.0,
           "label": "\u03c3_xx (MPa)",
           "passed": true
         },
         "numpy_sequential": {
-          "value": -0.9615384615384613,
-          "error_pct": 2.3092638912203256e-14,
+          "value": -0.9615384615384616,
+          "error_pct": 0.0,
           "n_iter": 1,
-          "sigma_yy": -0.9615384615384616,
+          "sigma_yy": -0.9615384615384613,
           "hydrostatic_deviation_pct": 2.3092638912203256e-14,
           "label": "\u03c3_xx (MPa)",
           "passed": true
@@ -365,11 +407,11 @@
           "passed": true
         },
         "numpy_sequential": {
-          "value": 0.9615384615384613,
-          "error_pct": 2.3092638912203256e-14,
+          "value": 0.9615384615384616,
+          "error_pct": 0.0,
           "n_iter": 1,
           "sigma_yy": 0.9615384615384616,
-          "hydrostatic_deviation_pct": 2.3092638912203256e-14,
+          "hydrostatic_deviation_pct": 0.0,
           "label": "\u03c3_xx (MPa)",
           "passed": true
         }
@@ -380,18 +422,18 @@
     {
       "name": "Convergence Cantilever Mesh (Q4 B-bar)",
       "category": "solver",
-      "theory_value": 4.0,
-      "tolerance_pct": 1.0,
+      "theory_value": 2.5,
+      "tolerance_pct": 0.8,
       "unit": "",
       "backends": {
         "order_fit": {
-          "value": 2.5654858786458794,
-          "error_pct": 35.862853033853014,
+          "value": 4.471560358967913,
+          "error_pct": 78.86241435871653,
           "passed": false,
-          "fitted_order": 2.5654858786458794,
-          "r_squared": 0.9967395580625381,
-          "expected_order": 4.0,
-          "order_tol": 1.0,
+          "fitted_order": 4.471560358967913,
+          "r_squared": 0.9983367649939623,
+          "expected_order": 2.5,
+          "order_tol": 0.8,
           "r2_min": 0.95,
           "order_within_tol": false,
           "r2_above_min": true,
@@ -399,34 +441,34 @@
         }
       },
       "passed": false,
-      "details": "ny= 4 nx= 40: \u03b4=3.729310e-03 err(vs ny=12)=3.11e-02\nny= 6 nx= 60: \u03b4=3.653469e-03 err(vs ny=12)=1.01e-02\nny= 8 nx= 80: \u03b4=3.636096e-03 err(vs ny=12)=5.30e-03",
+      "details": "ny= 4 nx= 40: \u03b4=3.732733e-03 err(vs ny=12)=2.41e-02\nny= 6 nx= 60: \u03b4=3.660667e-03 err(vs ny=12)=4.37e-03\nny= 8 nx= 80: \u03b4=3.648666e-03 err(vs ny=12)=1.07e-03",
       "refinement_levels": [
         [
           0.25,
-          0.031073518351035598
+          0.024139885330181143
         ],
         [
           0.16666666666666666,
-          0.010105206118578283
+          0.004367358846184839
         ],
         [
           0.125,
-          0.005301949338221065
+          0.001074660337571718
         ]
       ],
       "fit": {
-        "order": 2.5654858786458794,
-        "log_C": 0.06074851815127294,
-        "r_squared": 0.9967395580625381,
+        "order": 4.471560358967913,
+        "log_C": 2.5053235371672433,
+        "r_squared": 0.9983367649939623,
         "h_values": [
           0.25,
           0.16666666666666666,
           0.125
         ],
         "error_values": [
-          0.031073518351035598,
-          0.010105206118578283,
-          0.005301949338221065
+          0.024139885330181143,
+          0.004367358846184839,
+          0.001074660337571718
         ]
       }
     },
@@ -438,11 +480,11 @@
       "unit": "",
       "backends": {
         "order_fit": {
-          "value": 2.6091587223387545,
-          "error_pct": 3.364491765231323,
+          "value": 2.7423764718978694,
+          "error_pct": 1.5694989591803403,
           "passed": true,
-          "fitted_order": 2.6091587223387545,
-          "r_squared": 0.996268672599147,
+          "fitted_order": 2.7423764718978694,
+          "r_squared": 0.991847920579699,
           "expected_order": 2.7,
           "order_tol": 0.5,
           "r2_min": 0.95,
@@ -452,29 +494,29 @@
         }
       },
       "passed": true,
-      "details": "ny= 4 nx= 40: tip_err=1.97e-02 iters=40\nny= 8 nx= 80: tip_err=3.85e-03 iters=40\nny=12 nx=120: tip_err=1.25e-03 iters=40\nny=16 nx=160: tip_err=5.14e-04 iters=40",
+      "details": "ny= 4 nx= 40: tip_err=1.96e-02 iters=40\nny= 8 nx= 80: tip_err=3.79e-03 iters=40\nny=12 nx=120: tip_err=1.17e-03 iters=40\nny=16 nx=160: tip_err=4.15e-04 iters=40",
       "refinement_levels": [
         [
           0.25,
-          0.019671922510188324
+          0.01964914862202665
         ],
         [
           0.125,
-          0.0038533560637518402
+          0.003791860606230197
         ],
         [
           0.08333333333333333,
-          0.0012514118936865254
+          0.0011714195450077557
         ],
         [
           0.0625,
-          0.0005144558697996429
+          0.00041516404005444325
         ]
       ],
       "fit": {
-        "order": 2.6091587223387545,
-        "log_C": -0.24574059512324883,
-        "r_squared": 0.996268672599147,
+        "order": 2.7423764718978694,
+        "log_C": -0.029652833704292683,
+        "r_squared": 0.991847920579699,
         "h_values": [
           0.25,
           0.125,
@@ -482,10 +524,10 @@
           0.0625
         ],
         "error_values": [
-          0.019671922510188324,
-          0.0038533560637518402,
-          0.0012514118936865254,
-          0.0005144558697996429
+          0.01964914862202665,
+          0.003791860606230197,
+          0.0011714195450077557,
+          0.00041516404005444325
         ]
       }
     },
@@ -497,11 +539,11 @@
       "unit": "",
       "backends": {
         "order_fit": {
-          "value": 2.635566037457163,
-          "error_pct": 9.81525156071513,
+          "value": 2.3938503636193667,
+          "error_pct": 0.25623484919305256,
           "passed": true,
-          "fitted_order": 2.635566037457163,
-          "r_squared": 0.9924022481459676,
+          "fitted_order": 2.3938503636193667,
+          "r_squared": 0.9973172053834561,
           "expected_order": 2.4,
           "order_tol": 0.5,
           "r2_min": 0.85,
@@ -511,34 +553,34 @@
         }
       },
       "passed": true,
-      "details": "n_steps= 2: tip_err(vs ref=16)=6.59e-03 iters=8\nn_steps= 4: tip_err(vs ref=16)=1.40e-03 iters=12\nn_steps= 8: tip_err(vs ref=16)=1.71e-04 iters=19",
+      "details": "n_steps= 2: tip_err(vs ref=16)=6.67e-03 iters=8\nn_steps= 4: tip_err(vs ref=16)=1.47e-03 iters=12\nn_steps= 8: tip_err(vs ref=16)=2.41e-04 iters=19",
       "refinement_levels": [
         [
           0.5,
-          0.006585687580821166
+          0.006668081205622517
         ],
         [
           0.25,
-          0.0013978321827906694
+          0.0014727054914999448
         ],
         [
           0.125,
-          0.00017054235611990248
+          0.000241412276248178
         ]
       ],
       "fit": {
-        "order": 2.635566037457163,
-        "log_C": -3.1037350257194483,
-        "r_squared": 0.9924022481459676,
+        "order": 2.3938503636193667,
+        "log_C": -3.3014459499977487,
+        "r_squared": 0.9973172053834561,
         "h_values": [
           0.5,
           0.25,
           0.125
         ],
         "error_values": [
-          0.006585687580821166,
-          0.0013978321827906694,
-          0.00017054235611990248
+          0.006668081205622517,
+          0.0014727054914999448,
+          0.000241412276248178
         ]
       }
     }

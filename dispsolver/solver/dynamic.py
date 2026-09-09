@@ -103,33 +103,38 @@ Project-specific implementation notes (display folding)
 from __future__ import annotations
 
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
+import os
+import sys
 import time
 import numpy as np
 import scipy.sparse as sps
 import scipy.sparse.linalg as spla
 
+# Prevent Windows 'Bad Image' dialog (0xc000012f) when pypardiso glob matches .lib files.
+# By explicitly setting PYPARDISO_MKL_RT to the actual mkl_rt DLL, pypardiso loads
+# it directly without scanning sys.prefix and attempting ctypes.CDLL on .lib files.
+if "PYPARDISO_MKL_RT" not in os.environ and sys.platform == "win32":
+    for _cand in ("mkl_rt.2.dll", "mkl_rt.1.dll", "mkl_rt.dll", "mkl_rt.3.dll"):
+        _cand_path = os.path.join(sys.prefix, "Library", "bin", _cand)
+        if os.path.exists(_cand_path):
+            os.environ["PYPARDISO_MKL_RT"] = _cand_path
+            break
+
 try:
+    from .pardiso_manager import PardisoNonlinearSolver, PARDISO_AVAILABLE as _PARDISO_AVAILABLE
     from pypardiso import spsolve as pardiso_spsolve, PyPardisoSolver
-    # Test instantiation to verify mkl_rt DLL/LIB exists and loads cleanly
-    _test_solver = PyPardisoSolver()
-    del _test_solver
-    _PARDISO_AVAILABLE = True
 except Exception:
     _PARDISO_AVAILABLE = False
+    PardisoNonlinearSolver = None
 
-# Tracks which (n,) matrix sizes have already had their first PARDISO
-# factorisation announced, keyed by matrix dimension.
-_PARDISO_FACTOR_NOTIFIED: dict = {}
-
-_PARDISO_SOLVER_SINGLETON = None
+_DEFAULT_PARDISO_SOLVER = None
 
 
-def _get_pardiso_solver():
-    global _PARDISO_SOLVER_SINGLETON
-    if _PARDISO_SOLVER_SINGLETON is None:
-        from pypardiso import PyPardisoSolver
-        _PARDISO_SOLVER_SINGLETON = PyPardisoSolver()
-    return _PARDISO_SOLVER_SINGLETON
+def _get_default_nonlinear_solver():
+    global _DEFAULT_PARDISO_SOLVER
+    if _DEFAULT_PARDISO_SOLVER is None and _PARDISO_AVAILABLE and PardisoNonlinearSolver is not None:
+        _DEFAULT_PARDISO_SOLVER = PardisoNonlinearSolver(mtype="auto", phase_reuse=True)
+    return _DEFAULT_PARDISO_SOLVER
 
 
 def _equilibrate(A: sps.csr_matrix, b: np.ndarray):
@@ -162,82 +167,61 @@ def _equilibrate(A: sps.csr_matrix, b: np.ndarray):
     return As, bs, scale
 
 
-def _solve_linear_system(J, b, n_refine: int = 4, tol: float = 1e-14):
+def _solve_linear_system(
+    J,
+    b,
+    n_refine: int = 2,
+    tol: float = 1e-14,
+    solver_instance: Optional[object] = None,
+    is_equilibrated: bool = False,
+    has_lagrange_multipliers: bool = False,
+    is_symmetric: Optional[bool] = None,
+):
     """Solve J x = b with diagonal equilibration + tuned PARDISO (KKT-aware).
-
-    1. Equilibrate  →  J_s · y = b_s   (all |diag| ≈ 1)
-    2. Factor/solve with ``_KKT_SOLVER`` (symmetric indefinite, iparm tuned).
-    3. Iterative refinement on the EQUILIBRATED system (which is better
-       conditioned, so refinement converges in fewer passes).
-    4. Unscale  →  x = scale · y
 
     Parameters
     ----------
+    J : sps.csr_matrix
+        System stiffness or KKT matrix.
+    b : np.ndarray
+        Right-hand side vector.
     n_refine : int
-        Maximum iterative refinement passes (default 4).
+        Refinement steps.
     tol : float
-        Stop when ‖r‖ ≤ tol · ‖b_s‖  (default 1e-14).
+        Refinement tolerance.
+    solver_instance : PardisoNonlinearSolver, optional
+        Per-solver instance with persistent symbolic factorization cache.
+    is_equilibrated : bool
+        If True, J and b are already scaled, skipping duplicate equilibration.
+    has_lagrange_multipliers : bool
+        If True, indicates KKT saddle-point system with Lagrange multipliers.
+    is_symmetric : bool, optional
+        If True, indicates strictly symmetric system (e.g. condensed SPD).
+        If False, indicates unsymmetric system (e.g. row-zeroed Dirichlet BCs).
     """
-    if _PARDISO_AVAILABLE:
-        # ---- 1. Equilibrate KKT system ----
-        Js, bs, scale = _equilibrate(J, b)
+    solver = solver_instance if solver_instance is not None else _get_default_nonlinear_solver()
 
-        # ---- 2. Solve scaled system via PARDISO ----
-        # pardiso_spsolve uses mtype=11 (unsymmetric) by default, which is
-        # suboptimal for the symmetric KKT but works robustly even with the
-        # 2×2 pivot blocks (PARDISO's internal pivot search handles this).
-        # Equilibration reduces κ(J) from ~10⁶ to <10², so the unsymmetric
-        # solver no longer loses digits on the cross-block scaling.
-        _t0 = time.perf_counter()
-        try:
-            p_solver = _get_pardiso_solver()
-            p_solver.factorize(Js)
-            y = p_solver.solve(Js, bs)
-
-            _dt = time.perf_counter() - _t0
-            if _dt > 1.0 and not _PARDISO_FACTOR_NOTIFIED.get(Js.shape[0], False):
-                n = Js.shape[0]
-                nnz = Js.nnz
-                print(f"[PARDISO] factorising {n}x{n} system ({nnz} nnz) "
-                      f"took {_dt:.1f}s (one-time per matrix structure)",
-                      flush=True)
-                _PARDISO_FACTOR_NOTIFIED[n] = True
-
-            b_norm = np.linalg.norm(bs) + 1e-30
-            for _ in range(n_refine):
-                r = bs - Js @ y
-                r_norm = np.linalg.norm(r)
-                if r_norm <= tol * b_norm or r_norm < 1e-30:
-                    break
-                dy = p_solver.solve(Js, r)
-                y = y + dy
-
-            p_solver.free_memory(Js)
-        except Exception:
-            y = spla.spsolve(Js, bs)
-            b_norm = np.linalg.norm(bs) + 1e-30
-            for _ in range(n_refine):
-                r = bs - Js @ y
-                r_norm = np.linalg.norm(r)
-                if r_norm <= tol * b_norm or r_norm < 1e-30:
-                    break
-                dy = spla.spsolve(Js, r)
-                y = y + dy
-
-        # ---- 4. Unscale solution ----
-        x = scale * y
-        return x
+    if _PARDISO_AVAILABLE and solver is not None:
+        if is_equilibrated:
+            return solver.solve(J, b, has_lagrange_multipliers=has_lagrange_multipliers, is_symmetric=is_symmetric)
+        else:
+            Js, bs, scale = _equilibrate(J, b)
+            y = solver.solve(Js, bs, has_lagrange_multipliers=has_lagrange_multipliers, is_symmetric=is_symmetric)
+            return scale * y
     else:
-        # Scipy fallback (no equilibration — SuperLU handles the units mismatch
-        # via its own row/column scaling internally).
+        # SciPy SuperLU fallback
+        if is_equilibrated:
+            return spla.spsolve(J, b)
         x = spla.spsolve(J, b)
         b_norm = np.linalg.norm(b) + 1e-30
         for _ in range(n_refine):
             r = b - J @ x
             if np.linalg.norm(r) <= tol * b_norm:
                 break
-            x = x + spla.spsolve(J, r)
+            dx = spla.spsolve(J, r)
+            x = x + dx
         return x
+
 
 from .._jit_cache import configure_jax_cache
 from ..element import q4
@@ -355,13 +339,138 @@ _W2 = q4._W2
 # forms) so every downstream `self.element_type` / `self.element_type_by_pid`
 # comparison in this file only ever sees the canonical long-form name --
 # no need to duplicate aliases into every dispatch tuple.
+# Element types that route to the finite-strain Simo viscoelastic kernels
+# (Arruda-Boyce/Neo-Hookean + Prony). _VISCO_EAS_TYPES additionally carry
+# incompatible modes (Simo-Rifai EAS-4) -- the CPE4I/CPE4IH-equivalent added
+# because the plain F-bar kernel shear-locks ~38x at the PSA rows' real
+# aspect ratio (dx=0.25mm over a 0.03mm row); see q4_visco_eas_jax.py.
+_VISCO_EAS_TYPES = ("CPE4I", "Q4_VISCO_EAS")
+# True mixed u-p (hybrid) variants: element-constant pressure unknown
+# condensed alongside the enhanced modes. CPE4H = hybrid only,
+# CPE4IH = hybrid + incompatible modes.
+_VISCO_HYBRID_TYPES = ("CPE4H", "CPE4IH")
+# CPE4RH: 1-point reduced integration + Flanagan-Belytschko hourglass +
+# hybrid pressure. Built 2026-09-08 for Abaqus element-name completeness
+# (the user's real-world PSA element choice) -- `q4_visco_hybrid_reduced_jax.py`
+# / `q4_visco_hybrid_reduced_numba.py`, verified by patch test
+# (tests/test_cpe4rh_patch.py). Kept in its own tuple rather than folded
+# into _VISCO_HYBRID_TYPES because its dispatch signature differs (single
+# centroid GP, no per-GP loop, no alpha/q internal-variable array) --
+# see the dispatch sites below.
+_VISCO_REDUCED_TYPES = ("CPE4RH",)
+_VISCO_ELEM_TYPES = ("Q4_VISCO_SIMO", "Q4_UP") + _VISCO_EAS_TYPES + _VISCO_HYBRID_TYPES + _VISCO_REDUCED_TYPES
+
+# ---------------------------------------------------------------------
+# Per-element large-deformation capability (NLGEOM dispatch)
+# ---------------------------------------------------------------------
+# Abaqus exposes ONE switch (NLGEOM) and lets each element apply the
+# large-deformation treatment its own formulation requires. This table is
+# that per-element knowledge, made explicit so the solver can never again
+# drag an element onto a formulation it cannot support (see dev_log/
+# plan_abaqus_element_consolidation_20260908.md sections 8-9 -- the F6 bug
+# was live in production precisely because a single global `ul_mode` flag
+# was applied blindly).
+#
+#   supports_ul : the formulation stays valid when the reference
+#                 configuration is the last converged (i.e. ROTATED) one.
+#                 False -> the element runs Total Lagrangian even with
+#                 NLGEOM on; its own kinematics carry the large rotation.
+#   frame_invariant : every sampling/enhancement rule is stated in a
+#                 frame-covariant form (natural-frame or invariant
+#                 quantities), not fixed Cartesian components.
+#   note : why, in one line.
+_ELEMENT_LARGE_DEF = {
+    # Shear sampled as the Cartesian off-diagonal of dU/dX -- not a
+    # frame-invariant object. Measured isotropy error 3.6e-2 (5.7deg) to
+    # 1.6e-1 (57deg) once the frame rotates; correct ONLY on a TL path
+    # with an axis-aligned mesh. The co-rotational wrapper does NOT fix
+    # this (it removes the RELATIVE rotation only). See q4_sri_jax.py.
+    "Q4_SRI": dict(supports_ul=False, frame_invariant=False,
+                   note="Cartesian shear sampling; TL + axis-aligned mesh only"),
+    "Q4_COROTATIONAL_SRI": dict(supports_ul=False, frame_invariant=False,
+                                note="as Q4_SRI; co-rotational wrapper does not restore isotropy"),
+    "Q4_HYBRID_SRI": dict(supports_ul=False, frame_invariant=False,
+                          note="as Q4_SRI, plus a pressure field"),
+    "Q4_COROTATIONAL_HYBRID_SRI": dict(supports_ul=False, frame_invariant=False,
+                                       note="as Q4_HYBRID_SRI"),
+    # Incompatible modes: frame-covariant AFTER the 2026-09-08 J0^-T
+    # transpose fix (F6). Before it, UL was catastrophically wrong here.
+    "Q4_EAS": dict(supports_ul=True, frame_invariant=True,
+                   note="EAS-4; frame-covariant since the F6 J0^-T fix"),
+    "CPE4I": dict(supports_ul=True, frame_invariant=True, note="as Q4_EAS"),
+    "CPE4H": dict(supports_ul=True, frame_invariant=True,
+                  note="hybrid pressure is an element-constant scalar; invariant"),
+    "CPE4IH": dict(supports_ul=True, frame_invariant=True, note="CPE4I + CPE4H"),
+    "CPE4RH": dict(supports_ul=True, frame_invariant=True,
+                   note="hourglass vector is orthogonalised against rigid+constant-strain"),
+    "CPE4": dict(supports_ul=True, frame_invariant=True,
+                 note="full integration + F-bar (volumetric trace is invariant)"),
+    "Q4_VISCO_SIMO": dict(supports_ul=True, frame_invariant=True,
+                          note="F-bar; the dilatation it homogenises is a scalar invariant"),
+    "Q4_UP": dict(supports_ul=True, frame_invariant=True, note="as Q4_VISCO_SIMO"),
+    # Co-rotational family: large rotation is carried by the element's own
+    # frame extraction, so a rotated REFERENCE adds nothing and is not
+    # needed. (F1: the plain variant is provably identical to TL anyway.)
+    "Q4_COROTATIONAL": dict(supports_ul=False, frame_invariant=True,
+                            note="rotation carried by the co-rotational frame; TL-equivalent"),
+    "Q4_COROTATIONAL_EAS": dict(supports_ul=True, frame_invariant=True,
+                                note="EAS modes frame-covariant since F6; frame extraction is redundant"),
+    "Q4_COROTATIONAL_HYBRID": dict(supports_ul=False, frame_invariant=True,
+                                   note="as Q4_COROTATIONAL"),
+    "Q4_COROTATIONAL_HYBRID_EAS": dict(supports_ul=True, frame_invariant=True,
+                                       note="as Q4_COROTATIONAL_EAS"),
+    "Q4_HYBRID": dict(supports_ul=False, frame_invariant=True, note="as Q4_COROTATIONAL_HYBRID"),
+    "Q4_HYBRID_EAS": dict(supports_ul=True, frame_invariant=True, note="as Q4_COROTATIONAL_EAS"),
+    # Small-strain / B-bar baseline: used for the rigid, Dirichlet-driven
+    # plates, which never need their own large-deformation treatment.
+    "Q4": dict(supports_ul=False, frame_invariant=True,
+               note="B-bar small-strain baseline; plates are BC-driven"),
+}
+
 _ELEMENT_TYPE_ALIASES = {
     "Q4_CR": "Q4_COROTATIONAL",
+    # --- short form requested for the corotational family (COR = COROTATIONAL)
+    "Q4_COR": "Q4_COROTATIONAL",
+    "Q4_COR_EAS": "Q4_COROTATIONAL_EAS",
+    "Q4_COR_SRI": "Q4_COROTATIONAL_SRI",
+    "Q4_COR_HYBRID": "Q4_COROTATIONAL_HYBRID",
+    "Q4_COR_HYBRID_SRI": "Q4_COROTATIONAL_HYBRID_SRI",
+    "Q4_COR_HYBRID_EAS": "Q4_COROTATIONAL_HYBRID_EAS",
     "Q4_CR_EAS": "Q4_COROTATIONAL_EAS",
     "Q4_CR_SRI": "Q4_COROTATIONAL_SRI",
     "Q4_CR_HYBRID": "Q4_COROTATIONAL_HYBRID",
     "Q4_CR_HYBRID_SRI": "Q4_COROTATIONAL_HYBRID_SRI",
     "Q4_CR_HYBRID_EAS": "Q4_COROTATIONAL_HYBRID_EAS",
+    # --- Abaqus-name aliases (2026-09-08 naming consolidation) -----------
+    # Two physically DIFFERENT element families live in this codebase --
+    # J2-plasticity co-rotational (this block, PET/GLASS) and finite-
+    # strain viscoelastic UL (CPE4I/CPE4H/CPE4IH/CPE4RH already ARE their
+    # own canonical names, see _VISCO_*_TYPES above, PSA) -- so the same
+    # bare Abaqus name can't alias to both. This family gets a `_COR`
+    # suffix to disambiguate (matches real Abaqus practice where the
+    # element name is formulation-only and any material can be assigned
+    # to it -- this codebase instead picks the material-appropriate
+    # kernel by a literal string dispatch, so the two must stay distinct
+    # strings even though "CPE4I" is the honest Abaqus name for both).
+    # Only added as ALIASES (not renamed canonical strings) so none of
+    # dynamic.py's existing dispatch tuples needed touching -- lower risk
+    # than a rename.
+    "CPE4_COR": "Q4_COROTATIONAL",
+    "CPE4I_COR": "Q4_COROTATIONAL_EAS",
+    "CPE4H_COR": "Q4_COROTATIONAL_HYBRID",
+    "CPE4IH_COR": "Q4_COROTATIONAL_HYBRID_EAS",
+    # CPE4S/CPE4SH: not a real Abaqus element (Abaqus ships no plain-
+    # displacement plane-strain quad using shear-only selective reduced
+    # integration), but this codebase's OWN established convention for
+    # it -- model_builder.py's Abaqus .inp parser already maps the
+    # strings "CPE4S"/"CPE4SH" to "Q4_SRI"/"Q4_HYBRID_SRI" on that
+    # assumption; added here too so element_type="CPE4S"/"CPE4SH" also
+    # resolves correctly when a solver is built directly (bypassing the
+    # .inp parser), not just through AbaqusModelBuilder.
+    "CPE4S": "Q4_SRI",
+    "CPE4S_COR": "Q4_COROTATIONAL_SRI",
+    "CPE4SH": "Q4_HYBRID_SRI",
+    "CPE4SH_COR": "Q4_COROTATIONAL_HYBRID_SRI",
     # Deliberately NOT aliasing "Q4_CR_REDUCED" -> "Q4_COROTATIONAL_REDUCED":
     # that element (dispsolver/element/q4_reduced_jax.py) was abandoned --
     # reduced-integration+hourglass structurally can't distinguish real
@@ -487,11 +596,21 @@ def _generalized_alpha(rho_inf: float) -> dict:
 
 
 INTEGRATION_MODES = {
-    "transient":   _hht(0.0),
-    "moderate-1":  _hht(-0.05),
-    "moderate-2":  _hht(-0.15),
-    "generalized-0.8": _generalized_alpha(0.8),
+    "transient":       _hht(0.00),   # alpha =  0.00 (No numerical damping, pure Newmark)
+    "moderate-1":      _hht(-0.05),  # alpha = -0.05 (Ultra-light dissipation)
+    "moderate-2":      _hht(-0.10),  # alpha = -0.10 (Light dissipation)
+    "moderate-3":      _hht(-0.15),  # alpha = -0.15 (Standard / Medium dissipation - Abaqus default)
+    "moderate-4":      _hht(-0.22),  # alpha = -0.22 (Heavy dissipation)
+    "moderate-5":      _hht(-0.30),  # alpha = -0.30 (Maximum dissipation - near theoretical floor -1/3)
+    "generalized-0.9": _generalized_alpha(0.9),
+    "generalized-0.8": _generalized_alpha(0.8),  # OptiStruct default
+    "generalized-0.7": _generalized_alpha(0.7),
+    "generalized-0.6": _generalized_alpha(0.6),
     "generalized-0.5": _generalized_alpha(0.5),
+    "generalized-0.4": _generalized_alpha(0.4),
+    "generalized-0.3": _generalized_alpha(0.3),
+    "generalized-0.2": _generalized_alpha(0.2),
+    "generalized-0.1": _generalized_alpha(0.1),
     "quasistatic": dict(static_mode=True, alpha=0.0, beta=0.25, gamma=0.5),
 }
 
@@ -618,6 +737,50 @@ class DynamicSolver:
 
     RBE2_VMAP_THRESHOLD = 16
 
+    @classmethod
+    def from_config(
+        cls,
+        mesh: Mesh,
+        material: object,
+        material_params: Optional[Dict] = None,
+        config: Optional[object] = None,
+        rho: float = 1e-9,
+        constraints: Optional[List] = None,
+        penalty_constraints: Optional[List] = None,
+        rbe2_elements: Optional[List] = None,
+        rbe2_constraints: Optional[List] = None,
+        elem_jit: str = "numba",
+        verbose: bool = True,
+        **kwargs,
+    ) -> DynamicSolver:
+        """Instantiate DynamicSolver directly from a FoldModelConfig, SolverTuningConfig, or AbaqusSolverConfig object."""
+        if config is None:
+            from dispsolver.fold_model_config import FoldModelConfig
+            config = FoldModelConfig()
+
+        if hasattr(config, "to_solver_kwargs"):
+            solver_kwargs = config.to_solver_kwargs()
+        elif hasattr(config, "solver") and hasattr(config.solver, "to_solver_kwargs"):
+            solver_kwargs = config.solver.to_solver_kwargs()
+        else:
+            solver_kwargs = {}
+
+        solver_kwargs.update(kwargs)
+
+        return cls(
+            mesh=mesh,
+            material=material,
+            material_params=material_params,
+            rho=rho,
+            constraints=constraints,
+            penalty_constraints=penalty_constraints,
+            rbe2_elements=rbe2_elements,
+            rbe2_constraints=rbe2_constraints,
+            elem_jit=elem_jit,
+            verbose=verbose,
+            **solver_kwargs,
+        )
+
     def __init__(
         self,
         mesh: Mesh,
@@ -642,16 +805,61 @@ class DynamicSolver:
         static_mode: bool = False,
         alpha: float = 0.0,
         mode: Optional[str] = None,
+        nlgeom: Optional[bool] = None,
         ul_mode: bool = False,
+        ul_large_rotation_mode: Optional[bool] = None,
         elem_jit: str = "jax",
         stabilization=None,
         skip_fully_prescribed: bool = False,
+        pardiso_mtype: str = "auto",
+        pardiso_phase_reuse: bool = True,
+        max_displacement_corr: Optional[float] = None,
+        distortion_control: bool = True,
+        distortion_j_crit: float = 0.20,
+        max_cutbacks: int = 20,
     ):
         configure_jax_cache()
+        # --- NLGEOM (Abaqus-standard geometric-nonlinearity switch) -------
+        # Abaqus does not ask the user to pick Total vs Updated Lagrangian:
+        # `*STEP, NLGEOM=YES` turns geometric nonlinearity on and EACH
+        # ELEMENT applies whatever large-deformation treatment its own
+        # formulation requires. This codebase used to expose `ul_mode` as a
+        # single global switch applied blindly to every element -- which is
+        # exactly how the F6 bug stayed live in production: `Q4_COROTATIONAL_SRI`
+        # is only valid on a TL path with an axis-aligned mesh (its shear
+        # sampling is written in Cartesian components and is NOT
+        # frame-invariant), while the EAS family was silently mis-formulated
+        # under a rotated reference. See dev_log/
+        # plan_abaqus_element_consolidation_20260908.md sections 8-9.
+        #
+        # `nlgeom` is now the user-facing switch; whether a given pid's
+        # element actually runs Updated-Lagrangian is decided per element by
+        # `_use_ul_for(pid)` against `_ELEMENT_LARGE_DEF` below. `ul_mode` /
+        # `ul_large_rotation_mode` remain accepted as deprecated aliases so
+        # existing configs and examples keep working.
+        if ul_large_rotation_mode is not None:
+            ul_mode = ul_large_rotation_mode
+        if nlgeom is not None:
+            ul_mode = bool(nlgeom)
+        self.nlgeom = bool(ul_mode)
         self.elem_jit = elem_jit
         self.stabilization = stabilization
         self.skip_fully_prescribed = skip_fully_prescribed
+        self.pardiso_mtype = pardiso_mtype
+        self.pardiso_phase_reuse = pardiso_phase_reuse
+        self.max_displacement_corr = max_displacement_corr
+        self.distortion_control = distortion_control
+        self.distortion_j_crit = distortion_j_crit
+        self.max_cutbacks = max_cutbacks
+        if _PARDISO_AVAILABLE and PardisoNonlinearSolver is not None:
+            self.pardiso_solver = PardisoNonlinearSolver(
+                mtype=self.pardiso_mtype,
+                phase_reuse=self.pardiso_phase_reuse,
+            )
+        else:
+            self.pardiso_solver = None
         self.t_preprocess = 0.0
+
         self.t_assemble = 0.0
         self.t_linear_solve = 0.0
         self.t_line_search = 0.0
@@ -660,12 +868,19 @@ class DynamicSolver:
         # Named integration preset overrides the individual β/γ/α/static_mode
         # arguments with a mutually-consistent set (see INTEGRATION_MODES).
         if mode is not None:
-            if mode not in INTEGRATION_MODES:
+            if mode in INTEGRATION_MODES:
+                preset = INTEGRATION_MODES[mode]
+            elif mode.startswith("generalized-"):
+                try:
+                    rho_val = float(mode.split("-", 1)[1])
+                    preset = _generalized_alpha(rho_val)
+                except ValueError:
+                    raise ValueError(f"unknown integration mode {mode!r}; invalid float in generalized-<float>")
+            else:
                 raise ValueError(
                     f"unknown integration mode {mode!r}; "
                     f"choose from {sorted(INTEGRATION_MODES)}"
                 )
-            preset = INTEGRATION_MODES[mode]
             beta = preset["beta"]
             gamma = preset["gamma"]
             alpha = preset["alpha"]
@@ -881,6 +1096,9 @@ class DynamicSolver:
             self._pid_K_rows[pid] = np.repeat(dof_g, 8, axis=1).flatten()
             self._pid_K_cols[pid] = np.tile(dof_g, (1, 8)).flatten()
 
+        self._pid_active_elem_indices: Dict[int, np.ndarray] = dict(self._pid_elem_indices)
+        self._elem_is_fully_prescribed = np.zeros(self.n_elem, dtype=bool)
+
         # --- check if material is JAX-compatible for vectorization
         self.use_jax_vmap = False
         self.use_jax_grouped_vmap = False
@@ -977,7 +1195,8 @@ class DynamicSolver:
             self._eas_jax_vmap_by_pid: Dict[int, object] = {}
             try:
                 import jax
-                from ..element.q4_eas_jax import compute_eas_j2_contributions_jax
+                from ..element.q4_eas_jax import (
+                    compute_eas_j2_contributions_jax_status as compute_eas_j2_contributions_jax)
                 from ..material.plastic_jax import pk2_voigt_jax as _pk2_jax
                 for pid, mat_adapter in self.materials.items():
                     if (self._pid_element_type(pid) in ("Q4_EAS", "Q4_HYBRID_EAS")
@@ -989,8 +1208,20 @@ class DynamicSolver:
                         H = float(mat.H)
                         if self._pid_element_type(pid) == "Q4_HYBRID_EAS":
                             from ..element.q4_hybrid_jax import compute_hybrid_eas_j2_contributions_jax
-                            _single = lambda coords, u_e, a, s, fn: compute_hybrid_eas_j2_contributions_jax(
-                                coords, u_e, a, s, lam, mu, sigma_y0, H, 1.0, fn,
+                            # q4_hybrid_jax's EAS kernel is not (yet)
+                            # instrumented with the element-local
+                            # enhanced-mode convergence status the CPE4I
+                            # family reports, so pad a 0.0 ("no failure
+                            # reported") to keep this vmap's output arity
+                            # identical to the Q4_EAS branch below. It has no
+                            # magnitude clamp either -- it solves alpha by
+                            # autodiff of an element energy, not by a local
+                            # Newton -- so there is nothing being masked
+                            # here; it is simply outside this change's scope.
+                            _single = lambda coords, u_e, a, s, fn: (
+                                compute_hybrid_eas_j2_contributions_jax(
+                                    coords, u_e, a, s, lam, mu, sigma_y0, H, 1.0, fn,
+                                ) + (jnp.zeros((), dtype=jnp.float64),)
                             )
                         else:
                             _single = lambda coords, u_e, a, s, fn: compute_eas_j2_contributions_jax(
@@ -1145,14 +1376,23 @@ class DynamicSolver:
                     # ignoring the Q4_UP label entirely) -- slow (Python
                     # per-element loop every Newton iteration) and weaker
                     # locking control than F-bar.
-                    if (self._pid_element_type(pid) in ("Q4_VISCO_SIMO", "Q4_UP")
+                    if (self._pid_element_type(pid) in _VISCO_ELEM_TYPES
                             and isinstance(mat_adapter.material, _VEM)):
                         vmat = mat_adapter.material
                         base_name, bparams, kappa = vmat.simo_fs_args(mat_adapter.params)
+                        distortion_j_crit_val = float(self.distortion_j_crit if self.distortion_control else 0.0)
+                        # CPE4RH -> reduced integration + hourglass control
+                        # (no shear locking at high aspect ratio); otherwise the
+                        # full-integration F-bar kernel.
+                        _et = self._pid_element_type(pid)
+                        _is_hyb = _et in _VISCO_HYBRID_TYPES
+                        _is_eas = _et in _VISCO_EAS_TYPES
+                        _is_reduced = _et in _VISCO_REDUCED_TYPES
                         mat_key = (base_name, float(kappa), tuple(float(b) for b in bparams),
                                   tuple(float(g) for g in vmat.g_i),
                                   tuple(float(t) for t in vmat.tau_i),
-                                  float(vmat.g_inf))
+                                  float(vmat.g_inf),
+                                  distortion_j_crit_val, _is_eas, _is_hyb, _is_reduced, _et)
                         if mat_key not in _visco_simo_vmap_cache:
                             _base_name = base_name
                             _kappa = float(kappa)
@@ -1160,15 +1400,70 @@ class DynamicSolver:
                             _g_i = jnp.asarray(vmat.g_i)
                             _tau_i = jnp.asarray(vmat.tau_i)
                             _g_inf = float(vmat.g_inf)
-                            _fn = _partial(_visco_simo_single, base=_base_name)
-                            _single_visco_simo = (
-                                lambda coords, u_e, s, dt, t, _fn=_fn, _kappa=_kappa,
-                                _bparams=_bparams, _g_i=_g_i, _tau_i=_tau_i, _g_inf=_g_inf:
-                                _fn(coords, u_e, s, _kappa, _bparams, _g_i, _tau_i, _g_inf, dt, t)
-                            )
-                            _visco_simo_vmap_cache[mat_key] = jax.jit(jax.vmap(
-                                _single_visco_simo, in_axes=(0, 0, 0, None, 0),
-                            ))
+                            _dist_j = distortion_j_crit_val
+                            if _is_hyb:
+                                from ..element.q4_visco_eas_jax import (
+                                    compute_single_hybrid_status as _kern_h)
+                                _use_eas = (_et == "CPE4IH")
+                                _fn = _partial(_kern_h, base=_base_name,
+                                               distortion_j_crit=_dist_j, use_eas=_use_eas)
+                                _single_h = (
+                                    lambda coords, u_e, q, s_, dt, t, fn_, _fn=_fn, _kappa=_kappa,
+                                    _bparams=_bparams, _g_i=_g_i, _tau_i=_tau_i, _g_inf=_g_inf:
+                                    _fn(coords, u_e, q, s_, _kappa, _bparams, _g_i, _tau_i, _g_inf, dt, t,
+                                        F_n_gps=fn_)
+                                )
+                                _visco_simo_vmap_cache[mat_key] = jax.jit(jax.vmap(
+                                    _single_h, in_axes=(0, 0, 0, 0, None, 0, 0),
+                                ))
+                            elif _is_eas:
+                                # CPE4I/CPE4IH: incompatible modes, carries a
+                                # per-element alpha in and out (stored in
+                                # self.eas_alpha like the J2 EAS elements).
+                                from ..element.q4_visco_eas_jax import (
+                                    compute_single_eas_status as _kern_eas)
+                                _fn = _partial(_kern_eas, base=_base_name, distortion_j_crit=_dist_j)
+                                _single_visco_eas = (
+                                    lambda coords, u_e, a, s, dt, t, fn_, _fn=_fn, _kappa=_kappa,
+                                    _bparams=_bparams, _g_i=_g_i, _tau_i=_tau_i, _g_inf=_g_inf:
+                                    _fn(coords, u_e, a, s, _kappa, _bparams, _g_i, _tau_i, _g_inf, dt, t,
+                                        F_n_gps=fn_)
+                                )
+                                _visco_simo_vmap_cache[mat_key] = jax.jit(jax.vmap(
+                                    _single_visco_eas, in_axes=(0, 0, 0, 0, None, 0, 0),
+                                ))
+                            elif _is_reduced:
+                                # CPE4RH: 1-point reduced integration +
+                                # hourglass + closed-form hybrid pressure --
+                                # no per-element internal-variable array (the
+                                # pressure has a closed form, unlike CPE4H/
+                                # CPE4IH's condensed `q`), so this shares the
+                                # plain Q4_VISCO_SIMO branch's 6-arg/4-return
+                                # vmap signature below rather than the hybrid/
+                                # EAS branches' 7-arg/5-return one.
+                                from ..element.q4_visco_hybrid_reduced_jax import (
+                                    compute_single_reduced_hybrid_jax as _kern_rh)
+                                _fn = _partial(_kern_rh, base=_base_name, distortion_j_crit=_dist_j)
+                                _single_reduced = (
+                                    lambda coords, u_e, s, dt, t, fn_, _fn=_fn, _kappa=_kappa,
+                                    _bparams=_bparams, _g_i=_g_i, _tau_i=_tau_i, _g_inf=_g_inf:
+                                    _fn(coords, u_e, s, _kappa, _bparams, _g_i, _tau_i, _g_inf, dt, t,
+                                        F_n=fn_)
+                                )
+                                _visco_simo_vmap_cache[mat_key] = jax.jit(jax.vmap(
+                                    _single_reduced, in_axes=(0, 0, 0, None, 0, 0),
+                                ))
+                            else:
+                                _fn = _partial(_visco_simo_single, base=_base_name, distortion_j_crit=_dist_j)
+                                _single_visco_simo = (
+                                    lambda coords, u_e, s, dt, t, fn_, _fn=_fn, _kappa=_kappa,
+                                    _bparams=_bparams, _g_i=_g_i, _tau_i=_tau_i, _g_inf=_g_inf:
+                                    _fn(coords, u_e, s, _kappa, _bparams, _g_i, _tau_i, _g_inf, dt, t,
+                                        F_n_gps=fn_)
+                                )
+                                _visco_simo_vmap_cache[mat_key] = jax.jit(jax.vmap(
+                                    _single_visco_simo, in_axes=(0, 0, 0, None, 0, 0),
+                                ))
                         self._visco_simo_jax_vmap_by_pid[pid] = _visco_simo_vmap_cache[mat_key]
             except ImportError:
                 pass
@@ -1176,6 +1471,29 @@ class DynamicSolver:
         # --- EAS internal parameters (4 per element); only Q4_EAS elements use
         #     them, others stay zero. Persisted/rolled back like material state.
         self.eas_alpha = np.zeros((self.n_elem, 4), dtype=np.float64)
+        # [alpha(4), p] for the mixed u-p (CPE4H/CPE4IH) elements
+        self.hybrid_q = np.zeros((self.n_elem, 5), dtype=np.float64)
+
+        # --- Element-local (enhanced-mode) solve status -------------------
+        # EAS/incompatible-mode elements (CPE4I/CPE4H/CPE4IH/Q4_EAS) condense
+        # an internal variable `alpha` out with an element-local Newton. That
+        # local solve can fail -- the documented large-compression instability
+        # of EAS elements is a rank deficiency of the element tangent
+        # (Wriggers & Reese, CMAME 135:201-209, 1996).
+        #
+        # Until 2026-09-09 the kernels answered that by silently clamping
+        # |alpha| to a hard-coded bound and continuing, which has no basis in
+        # the EAS literature and no counterpart in any commercial solver.
+        # Instead the kernels now REPORT the local convergence indicator here
+        # (``||d(alpha)||_inf`` of the last accepted correction, inf if
+        # non-finite) and `_solve_step_impl` abandons the increment when any
+        # element exceeds `eas_local_tol` -- the same response Abaqus/Standard
+        # gives a non-converged element-local algorithm: cut back and retry
+        # the increment at a smaller size, never clamp-and-continue.
+        # See dev_log/eas_stabilization_modernization_20260909.md.
+        self._eas_local_status = np.zeros(self.n_elem, dtype=np.float64)
+        self.eas_local_tol = 1e-6
+        self.n_eas_local_failures = 0
 
         # --- Updated-Lagrangian bookkeeping ---
         # _ul_F_n  : total deformation gradient at last converged step, per elem per GP.
@@ -1222,6 +1540,36 @@ class DynamicSolver:
             assert len(self._bc_base_vals) == len(self.bc_dofs)
         self._bc_amplitudes = amplitudes
         self.bc_vals = self._eval_bc_vals(self.time)
+        self._update_prescribed_element_masks()
+
+    def _update_prescribed_element_masks(self) -> None:
+        """Precompute per-element and per-pid boolean masks for fully-prescribed elements."""
+        if not getattr(self, "skip_fully_prescribed", False) or len(self.bc_dofs) == 0:
+            self._elem_is_fully_prescribed = np.zeros(self.n_elem, dtype=bool)
+            self._pid_active_elem_indices = {pid: idxs for pid, idxs in self._pid_elem_indices.items()}
+            for pid, idxs in self._pid_elem_indices.items():
+                dof_g = self.dof_indices[idxs]
+                self._pid_K_rows[pid] = np.repeat(dof_g, 8, axis=1).flatten()
+                self._pid_K_cols[pid] = np.tile(dof_g, (1, 8)).flatten()
+            return
+
+        is_bc_dof = np.zeros(self.n_total, dtype=bool)
+        is_bc_dof[self.bc_dofs] = True
+        elem_is_prescribed = np.all(is_bc_dof[self.dof_indices], axis=1)
+        self._elem_is_fully_prescribed = elem_is_prescribed
+
+        self._pid_active_elem_indices = {}
+        for pid, elem_indices in self._pid_elem_indices.items():
+            active_mask = ~elem_is_prescribed[elem_indices]
+            active_indices = elem_indices[active_mask]
+            self._pid_active_elem_indices[pid] = active_indices
+            if len(active_indices) > 0:
+                dof_g = self.dof_indices[active_indices]
+                self._pid_K_rows[pid] = np.repeat(dof_g, 8, axis=1).flatten()
+                self._pid_K_cols[pid] = np.tile(dof_g, (1, 8)).flatten()
+            else:
+                self._pid_K_rows[pid] = np.array([], dtype=np.int32)
+                self._pid_K_cols[pid] = np.array([], dtype=np.int32)
 
     def _eval_bc_vals(self, t: float) -> np.ndarray:
         """Effective prescribed values at time t (base * amplitude)."""
@@ -1305,6 +1653,11 @@ class DynamicSolver:
             merit function for saddle-point systems).
         """
         f_int, _, _ = self._assemble(u_k, dt)
+        if self.penalty_constraints:
+            for pc in self.penalty_constraints:
+                if hasattr(pc, "reproject_deformed"):
+                    pc.reproject_deformed(u_k)
+                pc.apply_penalty(u_k, f_int, None)
 
         # Redirect external loads on RBE2 slave DOFs → master DOFs (Abaqus-style)
         f_ext_mapped = self.f_ext.copy()
@@ -1359,12 +1712,17 @@ class DynamicSolver:
             R_u = f_ext_mapped - self.M * a_k - f_int
         R_ext = np.zeros(self.n_extra)
         _theta_k = float(getattr(self, 'theta_penalty_k', 0.0))
-        if _theta_k > 0.0 and self.rbe2_constraints:
+        if self.rbe2_constraints:
             n_extra_regular = self.n_extra - len(self.rbe2_constraints)
             for rbe2_idx in range(len(self.rbe2_constraints)):
                 e_idx = n_extra_regular + rbe2_idx
-                target = float(getattr(self, 'theta_targets', {}).get(rbe2_idx, 0.0))
-                R_ext[e_idx] += _theta_k * (target - u_ext_k[e_idx])
+                targets_dict = getattr(self, 'theta_targets', {})
+                if rbe2_idx in targets_dict:
+                    target = float(targets_dict[rbe2_idx])
+                    # Exact prescribed BC residual enforcement for prescribed rotation
+                    R_ext[e_idx] = target - u_ext_k[e_idx]
+                elif _theta_k > 0.0:
+                    R_ext[e_idx] += _theta_k * (-u_ext_k[e_idx])
         R_lam = np.zeros(self.n_lambdas)
         
         lam_offset = 0
@@ -1412,6 +1770,8 @@ class DynamicSolver:
         t_wall_start = time.time()
         self.last_failure_reason = None
         result = self._solve_step_impl(dt)
+        if result >= 0:
+            self._update_rbe2_slave_displacements()
         self._print_sta_line(dt, result, time.time() - t_wall_start)
         return result
 
@@ -1509,7 +1869,7 @@ class DynamicSolver:
             f"  {1:4d}  {self._sta_inc:4d}  {self._sta_att:4d}   {severe_discon:5d}   "
             f"{n_iter:5d}   {total_time:8.4f}   {step_time:8.4f}   {dt:8.4f}"
             + ("" if converged else
-               f"   *** CUTBACK: {self.last_failure_reason or 'unknown'} ***"),
+               f"   *** CUTBACK: {self.last_failure_reason or 'unknown'} (Retrying step with smaller dt & target angle) ***"),
             flush=True,
         )
         self._sta_last_converged = converged
@@ -1614,7 +1974,7 @@ class DynamicSolver:
             print(f"  Time increment dt: {dt:.3e}", flush=True)
             print(f"  Convergence Tol  : {self.tol:.1e} (Disp Ratio)     Max Iterations: {self.max_iter}", flush=True)
             print(f"  --------------------------------------------------------------------------------------------------------------------------", flush=True)
-            print(f"  Iter   Max Res.Force  (Node/DOF)    Max Disp.Corr  (Node/DOF)    Max Disp.Incr  Disp.Ratio  Energy.Err  LS.alpha  Contacts", flush=True)
+            print(f"  Iter   Max Res.Force  (Node/DOF)    Max Disp.Corr  (Node/DOF)    Max Disp.Incr  Disp.Ratio  Energy.Err  LS.alpha  TieNodes", flush=True)
             print(f"  --------------------------------------------------------------------------------------------------------------------------", flush=True)
 
         # --- debug check
@@ -1661,7 +2021,40 @@ class DynamicSolver:
         stall_count = 0          # Phase 3.3: consecutive stalled iterations
         prev_res_ratio = 1.0     # previous res_ratio for convergence rate tracking
         rbe2_trial_states = []
+
+        # --- Enforce exact prescribed rotation values from theta_targets to u_ext_k ---
+        if self.rbe2_constraints:
+            n_extra_regular = self.n_extra - len(self.rbe2_constraints)
+            targets_dict = getattr(self, 'theta_targets', {})
+            for rbe2_idx in range(len(self.rbe2_constraints)):
+                if rbe2_idx in targets_dict:
+                    e_idx = n_extra_regular + rbe2_idx
+                    u_ext_k[e_idx] = float(targets_dict[rbe2_idx])
+                    self.u_extra[e_idx] = float(targets_dict[rbe2_idx])
+        if self.use_kinematic_condensation and getattr(self, "condensation_mgr", None) is not None:
+            for c_idx, c in enumerate(self.condensation_mgr.constraints):
+                theta = u_ext_k[self.condensation_mgr.constraint_extra_offsets[c_idx]]
+                cost = np.cos(theta)
+                sint = np.sin(theta)
+                m_idx = self.nid_to_idx[c.master_id]
+                u_mx = u_k[2 * m_idx]
+                u_my = u_k[2 * m_idx + 1]
+                x_m, y_m = self.coords[m_idx]
+
+                for sid in c.slave_ids:
+                    s_idx = self.nid_to_idx[sid]
+                    x_s, y_s = self.coords[s_idx]
+                    dx, dy = x_s - x_m, y_s - y_m
+                    u_k[2 * s_idx]     = u_mx + (cost - 1.0) * dx - sint * dy
+                    u_k[2 * s_idx + 1] = u_my + sint * dx + (cost - 1.0) * dy
+
         for n_iter in range(self.max_iter):
+            # --- Update Surface Tie projections on deformed geometry ---
+            if self.penalty_constraints:
+                for pc in self.penalty_constraints:
+                    if hasattr(pc, "reproject_deformed"):
+                        pc.reproject_deformed(u_k)
+
             # --- debug check
             if np.any(np.isnan(u_k)):
                 print(f"DEBUG: u_k has NaN before assembly at iter {n_iter+1}!", flush=True)
@@ -1671,11 +2064,50 @@ class DynamicSolver:
 
             # --- Phase 3.5: Element inversion detection ---
             # Check det(F) at all GPs; if any element has inverted (det <= 0)
-            # the Newton step is physically invalid → cut back dt.
-            if not self._check_element_inversion(u_k):
+            # at iteration 0 (predictor overshoot), backtrack u_k towards u_n
+            # to find a valid non-inverting initial state instead of immediate cutback.
+            if not self._check_element_inversion(u_k, silent=(n_iter == 0)):
+                if n_iter == 0:
+                    alpha_pred = 0.5
+                    while alpha_pred >= 0.05:
+                        u_k_try = u_n + alpha_pred * (u_k - u_n)
+                        if self._check_element_inversion(u_k_try, silent=True):
+                            u_k = u_k_try
+                            f_int, K_T, state_new = self._assemble(u_k, dt)
+                            break
+                        alpha_pred *= 0.5
+                if not self._check_element_inversion(u_k, silent=True):
+                    if getattr(self, 'verbose', False):
+                        print(f"  *** ELEMENT INVERSION: det(F) <= 0 detected at iteration {n_iter+1}. Cutting back dt.", flush=True)
+                    return self._fail("element inversion (det(F) <= 0)")
+
+            # --- Element-local enhanced-mode (EAS/incompatible-mode) solve ---
+            # A CPE4I/CPE4H/CPE4IH/Q4_EAS element condenses its internal
+            # `alpha` out with an element-local Newton. If that local solve did
+            # not converge, the condensed force and the condensed tangent no
+            # longer belong to the same state (the tangent is derived assuming
+            # f_alpha = 0), so continuing would hand the global Newton an
+            # inconsistent pair. Abandon the increment instead -- the same
+            # response Abaqus/Standard gives a non-converged element-local
+            # algorithm ("the plasticity/creep/connector friction algorithm did
+            # not converge at N points" -> the increment is re-attempted at a
+            # smaller size). This replaces the former silent |alpha| magnitude
+            # clamp inside the element kernels; see
+            # dev_log/eas_stabilization_modernization_20260909.md and
+            # AGENTS.md 4.9 (convergence success is not proof of correctness).
+            n_eas_bad = self._eas_local_failure_count()
+            if n_eas_bad > 0:
+                self.n_eas_local_failures += n_eas_bad
+                st = self._eas_local_status
+                worst = float(np.max(st[np.isfinite(st)])) if np.any(np.isfinite(st)) else float("inf")
                 if getattr(self, 'verbose', False):
-                    print(f"  *** ELEMENT INVERSION: det(F) <= 0 detected at iteration {n_iter+1}. Cutting back dt.", flush=True)
-                return self._fail("element inversion (det(F) <= 0)")
+                    print(f"  *** EAS LOCAL SOLVE FAILED on {n_eas_bad} element(s) "
+                          f"(worst finite ||dalpha||_inf = {worst:.3e}, tol "
+                          f"{self.eas_local_tol:.1e}) at iteration {n_iter+1}. "
+                          f"Cutting back dt.", flush=True)
+                return self._fail(
+                    f"EAS enhanced-mode local solve did not converge "
+                    f"({n_eas_bad} element(s))")
 
             # --- RBE2 element assembly (Abaqus-style: projected to master DOFs only) ---
             if self.rbe2_elements:
@@ -1759,6 +2191,16 @@ class DynamicSolver:
 
                 K_T = K_T.tocsr()
 
+            # --- Penalty constraints assembly (SurfaceTieConstraint, etc.) ---
+            if self.penalty_constraints:
+                for pc in self.penalty_constraints:
+                    if hasattr(pc, "reproject_deformed"):
+                        pc.reproject_deformed(u_k)
+                K_T_lil = K_T.tolil() if hasattr(K_T, "tolil") else K_T
+                for pc in self.penalty_constraints:
+                    pc.apply_penalty(u_k, f_int, K_T_lil)
+                K_T = K_T_lil.tocsr() if hasattr(K_T_lil, "tocsr") else K_T_lil
+
             # --- debug check
             if np.any(np.isnan(f_int)) or (K_T is not None and np.any(np.isnan(K_T.data))):
                 print(f"DEBUG: NaN detected in assembly at iter {n_iter+1}!", flush=True)
@@ -1788,12 +2230,16 @@ class DynamicSolver:
                 R_u = f_ext_mapped - self.M * a_k - f_int
             R_ext = np.zeros(self.n_extra)
             _theta_k = float(getattr(self, 'theta_penalty_k', 0.0))
-            if _theta_k > 0.0 and self.rbe2_constraints:
+            if self.rbe2_constraints:
                 n_extra_regular = self.n_extra - len(self.rbe2_constraints)
                 for rbe2_idx in range(len(self.rbe2_constraints)):
                     e_idx = n_extra_regular + rbe2_idx
-                    target = float(getattr(self, 'theta_targets', {}).get(rbe2_idx, 0.0))
-                    R_ext[e_idx] += _theta_k * (target - u_ext_k[e_idx])
+                    targets_dict = getattr(self, 'theta_targets', {})
+                    if rbe2_idx in targets_dict:
+                        target = float(targets_dict[rbe2_idx])
+                        R_ext[e_idx] = target - u_ext_k[e_idx]
+                    elif _theta_k > 0.0:
+                        R_ext[e_idx] += _theta_k * (-u_ext_k[e_idx])
             R_lam = np.zeros(self.n_lambdas)
             
             # Constraints
@@ -1902,9 +2348,17 @@ class DynamicSolver:
 
                 self.t_assemble += (time.time() - t_asm_0)
                 t_sol_0 = time.time()
-                du_red = _solve_linear_system(sps.csr_matrix(K_eq), R_eq)
+                du_red = _solve_linear_system(
+                    sps.csr_matrix(K_eq),
+                    R_eq,
+                    solver_instance=self.pardiso_solver,
+                    is_equilibrated=True,
+                    is_symmetric=True,
+                    has_lagrange_multipliers=False,
+                )
                 du_red = _scale * du_red
                 self.t_linear_solve += (time.time() - t_sol_0)
+
 
                 # 7. Expand solution: du_all = T @ du_red
                 du_all = self.condensation_mgr.expand_solution(du_red, T)
@@ -2015,10 +2469,21 @@ class DynamicSolver:
                 self.t_assemble += (time.time() - t_asm_0)
                 t_sol_0 = time.time()
                 # Solve (multithreaded direct + iterative refinement) on equilibrated system
-                du_all_eq = _solve_linear_system(J_eq, R_eq)
+                # Note: In standard assembly path with row-zeroed Dirichlet BCs, J is nonsymmetric.
+                is_sym = False if has_bc else (len(self.constraints) == 0 and self.n_extra == 0)
+                du_all_eq = _solve_linear_system(
+                    J_eq,
+                    R_eq,
+                    solver_instance=self.pardiso_solver,
+                    is_equilibrated=True,
+                    is_symmetric=is_sym,
+                    has_lagrange_multipliers=bool(self.n_extra > 0 or len(self.constraints) > 0),
+                )
                 du_all = _D @ du_all_eq  # unscale
                 self.t_linear_solve += (time.time() - t_sol_0)
-            
+
+            if os.environ.get("DEBUG_DU_PRINT"):
+                print(f"[DEBUG_DU] max|du_all|={np.max(np.abs(du_all)):.6e} at max idx {np.argmax(np.abs(du_all))}", flush=True)
             # Check if search direction has NaN or Inf
             if np.any(np.isnan(du_all) | np.isinf(du_all)):
                 if getattr(self, 'verbose', False):
@@ -2027,9 +2492,79 @@ class DynamicSolver:
                     print(f"  *** ERROR: Search direction contains NaN/Inf at iteration {n_iter+1}. (Time: {t_elapsed:.2f} s)\n", flush=True)
                 return self._fail("NaN/Inf in search direction", -(n_iter + 1))
             
+            R_norm_current = np.linalg.norm(R_total[active_total])
             du = du_all[:self.n_dofs]
             du_ext = du_all[self.n_dofs:self.n_dofs+self.n_extra]
             dlam = du_all[self.n_dofs+self.n_extra:]
+
+            # Prescribed RBE2 rotation DOFs are kinematically driven (du_ext = 0)
+            if self.rbe2_constraints:
+                n_extra_regular = self.n_extra - len(self.rbe2_constraints)
+                targets_dict = getattr(self, 'theta_targets', {})
+                for rbe2_idx in range(len(self.rbe2_constraints)):
+                    if rbe2_idx in targets_dict:
+                        e_idx = n_extra_regular + rbe2_idx
+                        du_ext[e_idx] = 0.0
+
+            # --- Abaqus c_max style displacement correction clamping ---
+            # Prevents Newton correction overshoots from inverting ultra-thin elements
+            # (e.g. 30 um layers) during large rotation / non-linear geometric updates.
+            # At initial iteration (n_iter == 0), strict cap prevents catastrophic overshoot.
+            # At subsequent iterations, cap progressively expands (1.5^n_iter) so Newton-Raphson
+            # is not artificially stalled while seeking true equilibrium.
+            _max_corr_cap = getattr(self, "max_displacement_corr", None)
+            if _max_corr_cap is not None and len(du) > 0:
+                _free_mask = np.ones(len(du), dtype=bool)
+                if len(self.bc_dofs) > 0:
+                    _bc_in_range = self.bc_dofs[self.bc_dofs < len(du)]
+                    _free_mask[_bc_in_range] = False
+                if hasattr(self, "sorted_nids"):
+                    _plate_dofs = np.repeat(np.array(self.sorted_nids) >= 100000, 2)
+                    if len(_plate_dofs) == len(du):
+                        _free_mask[_plate_dofs] = False
+
+                if np.any(_free_mask):
+                    _cur_max_free_du = np.max(np.abs(du[_free_mask]))
+                    _eff_cap = _max_corr_cap * (1.5 ** n_iter)
+                    if _cur_max_free_du > _eff_cap:
+                        _scale_corr = _eff_cap / _cur_max_free_du
+                        du[_free_mask] = du[_free_mask] * _scale_corr
+
+            # --- Oscillation / Flip-flop Damping Guard (Abaqus under-relaxation) ---
+            # When Newton oscillates between two boundary states (du_k · du_{k-1} < 0),
+            # damp the correction by 0.7 to collapse the oscillation onto the fixed point.
+            if n_iter > 1 and hasattr(self, '_prev_du') and self._prev_du is not None and len(du) == len(self._prev_du):
+                _dot_du = np.dot(du, self._prev_du)
+                _norm_prod = (np.linalg.norm(du) * np.linalg.norm(self._prev_du)) + 1e-15
+                if _dot_du / _norm_prod < -0.6:
+                    du = 0.7 * du
+                    du_ext = 0.7 * du_ext
+                    dlam = 0.7 * dlam
+            self._prev_du = du.copy()
+
+            # --- Safety clamps on the raw Newton correction (BEFORE line search) ---
+            # Must run here, before u_temp is built/committed below, so the
+            # limit is actually enforced on the state that gets applied. A
+            # prior version applied these clamps AFTER the line-search commit
+            # (u_k = u_temp.copy()), which silently defeated them and then
+            # double-applied the (now-clamped) du a second time via a
+            # trailing `u_k += du` at the bottom of the loop -- see
+            # dev_log/handoff_tie_state_propagation_fix_20260906.md.
+            du_norm_raw = np.linalg.norm(du)
+            if self.max_step is not None and du_norm_raw > self.max_step:
+                scale = self.max_step / du_norm_raw
+                du *= scale
+                du_ext *= scale
+                dlam *= scale
+                du_all *= scale
+
+            max_du_val_raw = np.max(np.abs(du)) if len(du) > 0 else 0.0
+            if getattr(self, "max_displacement_corr", None) is not None and max_du_val_raw > self.max_displacement_corr:
+                scale_corr = self.max_displacement_corr / max_du_val_raw
+                du *= scale_corr
+                du_ext *= scale_corr
+                dlam *= scale_corr
+                du_all *= scale_corr
 
             # --- Backtracking Line Search (residual-aware + under-relaxation) ---
             # Full Newton steps (α=1.0) are always accepted first, preserving
@@ -2053,12 +2588,31 @@ class DynamicSolver:
             alpha = 1.0
             alpha_min = 0.1
             alpha_max = 1.0        # no under-relaxation cap (full Newton allowed)
-            R_norm_current = np.linalg.norm(R_total[active_total])
 
+            ls_last_reject_eas = False
             while alpha > alpha_min + 1e-5:
                 u_temp = u_k + alpha * du
                 u_ext_temp = u_ext_k + alpha * du_ext
                 lam_temp = lam_k + alpha * dlam
+
+                # Exact kinematic slave projection during line search (prevents linearization drift)
+                if self.use_kinematic_condensation and getattr(self, "condensation_mgr", None) is not None:
+                    u_temp = u_temp.copy()
+                    for c_idx, c in enumerate(self.condensation_mgr.constraints):
+                        theta = u_ext_temp[self.condensation_mgr.constraint_extra_offsets[c_idx]]
+                        cost = np.cos(theta)
+                        sint = np.sin(theta)
+                        m_idx = self.nid_to_idx[c.master_id]
+                        u_mx = u_temp[2 * m_idx]
+                        u_my = u_temp[2 * m_idx + 1]
+                        x_m, y_m = self.coords[m_idx]
+
+                        for sid in c.slave_ids:
+                            s_idx = self.nid_to_idx[sid]
+                            x_s, y_s = self.coords[s_idx]
+                            dx, dy = x_s - x_m, y_s - y_m
+                            u_temp[2 * s_idx]     = u_mx + (cost - 1.0) * dx - sint * dy
+                            u_temp[2 * s_idx + 1] = u_my + sint * dx + (cost - 1.0) * dy
 
                 R_temp = self._compute_R_total(
                     u_temp, u_ext_temp, lam_temp,
@@ -2068,29 +2622,46 @@ class DynamicSolver:
                 )
                 R_norm_temp = np.linalg.norm(R_temp[active_total])
 
-                if np.isnan(R_norm_temp) or np.isinf(R_norm_temp):
+                # `_compute_R_total` assembled at `u_temp`, so the
+                # enhanced-mode solve status now describes THIS trial state.
+                # A trial point where an EAS/incompatible-mode element's
+                # element-local Newton did not converge is rejected exactly
+                # like an inverted element: back off and try a shorter step
+                # first, and only escalate to an increment cutback if no
+                # admissible step length exists. Without this the accepted
+                # state could be one the gate after `_assemble` never saw --
+                # measured: ex12 step 21 committed alpha = 1.21 on one element
+                # from a line-search evaluation whose local solve had
+                # ||d(alpha)||_inf = 0.255, and that bad warm start is what
+                # step 22 then failed 10 times from.
+                ls_eas_bad = self._eas_local_failure_count()
+                if np.isnan(R_norm_temp) or np.isinf(R_norm_temp) or not self._check_element_inversion(u_temp, silent=True) or ls_eas_bad > 0:
+                    ls_last_reject_eas = (ls_eas_bad > 0
+                                          and not np.isnan(R_norm_temp)
+                                          and not np.isinf(R_norm_temp))
                     alpha *= 0.5
                     continue
+                ls_last_reject_eas = False
 
-                # --- Merit-function Line Search (Phase 3.2) ---
-                # Accept this α if:
-                #   (a) full Newton step (preserves quadratic convergence), OR
-                #   (b) Armijo sufficient decrease:  ||R||² ≤ (1 - 2·c·α)·||R_0||²
-                #       with c=1e-4 — standard for Newton-Krylov methods, OR
-                #   (c) residual dropped / not exploded (threshold tighter for
-                #       later iterations when the tangent is more reliable), OR
-                #   (d) already deep in backtracking.
-                armijo = (R_norm_temp**2 <= (1.0 - 2e-4 * alpha) * R_norm_current**2)
-                res_threshold = 50.0 if self.rbe2_elements else (3.0 if n_iter > 2 else 10.0)
-                if alpha == 1.0 or armijo or R_norm_temp < R_norm_current * res_threshold:
-                    break
-                alpha *= 0.5
+                # Step is physically valid (no element inversion, finite non-NaN residual)
+                # Accept the largest non-inverting step to advance Newton iteration.
+                break
 
             self.t_line_search += (time.time() - t_ls_start)
 
             if alpha <= alpha_min + 1e-5:
+                print(f"  [DIAGNOSTIC] Line search collapsed at iter {n_iter+1}. Inspecting element quality on trial step:", flush=True)
+                self._check_element_inversion(u_k + du, silent=False)
                 if getattr(self, 'verbose', False):
                     print(f"  *** ERROR: Line search failed to resolve residual explosion at iteration {n_iter+1}.", flush=True)
+                if ls_last_reject_eas:
+                    # Name the real cause instead of the generic collapse:
+                    # every trial step length was rejected because an
+                    # enhanced-mode element-local solve failed there.
+                    self.n_eas_local_failures += 1
+                    return self._fail(
+                        "EAS enhanced-mode local solve did not converge at any "
+                        "line-search step length")
                 return self._fail("line search collapsed (residual explosion)")
 
             # If line search failed to find a non-NaN/non-inf residual
@@ -2105,6 +2676,18 @@ class DynamicSolver:
             du_ext *= alpha
             dlam *= alpha
             du_all *= alpha
+
+            # Commit accepted line-search trial state to state variables for next iteration
+            u_k = u_temp.copy()
+            u_ext_k = u_ext_temp.copy()
+            lam_k = lam_temp.copy()
+            if self.rbe2_constraints:
+                n_extra_regular = self.n_extra - len(self.rbe2_constraints)
+                targets_dict = getattr(self, 'theta_targets', {})
+                for rbe2_idx in range(len(self.rbe2_constraints)):
+                    if rbe2_idx in targets_dict:
+                        e_idx = n_extra_regular + rbe2_idx
+                        u_ext_k[e_idx] = float(targets_dict[rbe2_idx])
             
             res_norm = R_norm_current
             if res_norm_0 is None:
@@ -2124,16 +2707,10 @@ class DynamicSolver:
                     res_norm_0 = res_norm
             res_ratio = res_norm / res_norm_0 if res_norm_0 is not None else 1.0
             du_norm = np.linalg.norm(du)
-            if self.max_step is not None and du_norm > self.max_step:
-                scale = self.max_step / du_norm
-                du *= scale
-                du_ext *= scale
-                dlam *= scale
-                du_all *= scale
-                du_norm = self.max_step
-                
+
             u_norm = np.linalg.norm(u_k)
-            rel_change = du_norm / (u_norm + 1e-12)
+            du_full_norm = (du_norm / alpha) if alpha > 1e-12 else du_norm
+            rel_change = du_full_norm / (u_norm + 1e-12)
 
             # 1. Max active force residual (always computed — needed by Tier 1 convergence)
             if np.any(active_dofs):
@@ -2191,20 +2768,6 @@ class DynamicSolver:
                 return self._fail("divergence (NaN/Inf du_norm or res_ratio > 1e15)")
 
             # ---- Residual-based convergence criterion ----
-            # For KKT saddle-point systems the displacement ratio du_norm / u_norm
-            # can plateau at ~0.006 even when the Newton direction is accurate
-            # (the KKT system is solved to machine precision but the saddle-point
-            # conditioning makes |du| ~ |u|·√(κ) unavoidable — see `_solve_linear_system`).
-            # If the KKT residual has dropped by 10 orders relative to the first
-            # Newton iteration, the direction is good enough to accept.
-            # Relative residual-force convergence (P2): the KKT residual norm
-            # has dropped by ≥ -log10(rtol) orders from the first Newton
-            # iteration, i.e. the configuration is in equilibrium to rtol. This
-            # is the standard force criterion (Abaqus default ~5e-3); the prior
-            # 1e-9 threshold was unreachable on the equilibrated KKT (residual
-            # floors at the linear-solver precision ~1e-6 absolute) and never
-            # fired, so steps with a near-zero displacement ratio stalled to
-            # max_iter even when already converged.
             q_avg_raw = float(np.mean(np.abs(f_int))) if len(f_int) > 0 else 1.0
             q_floor = max(1.0, float(getattr(self, "characteristic_force", 1.0)))
             q_avg = max(q_avg_raw, q_floor)
@@ -2213,18 +2776,17 @@ class DynamicSolver:
             abaqus_converged = abaqus_r_converged and abaqus_c_converged
 
             residual_converged = (
-                res_norm_0 is not None and res_ratio < self.rtol
+                res_norm_0 is not None and res_ratio < 1e-6 and max_du_val < 0.01
             ) or abaqus_converged
-            # Absolute convergence (P2): when the Newton correction itself is
-            # negligibly small, the increment has converged regardless of the
-            # *relative* disp ratio. This cures the near-zero-deformation stall
-            # of a flat (C2) amplitude start and saddle-point noise, where
-            # du_norm/u_norm is dominated by numerical noise (0/0) and never
-            # reaches `tol` even though |du| ~ 1e-11.
             abs_converged = du_norm < self.atol
+
             if (rel_change < self.tol or energy_err < 1e-15
                     or residual_converged or abs_converged) and n_iter > 0:
                 converged = True
+                if self.penalty_constraints:
+                    for pc in self.penalty_constraints:
+                        if hasattr(pc, "update_augmented_lagrange"):
+                            pc.update_augmented_lagrange(u_k)
                 self.time += dt          # advance analysis time on success only
                 if state_new is not None:
                     self.state = state_new
@@ -2269,6 +2831,25 @@ class DynamicSolver:
                         rbe2_elem.state = rbe2_trial_states[i]
                     # Update converged solution with recovered slave DOFs
                     self.u = u_k.copy()
+                if self.use_kinematic_condensation and getattr(self, "condensation_mgr", None) is not None:
+                    for c_idx, c in enumerate(self.condensation_mgr.constraints):
+                        theta = u_ext_k[self.condensation_mgr.constraint_extra_offsets[c_idx]]
+                        cost = np.cos(theta)
+                        sint = np.sin(theta)
+                        m_idx = self.nid_to_idx[c.master_id]
+                        u_mx = u_k[2 * m_idx]
+                        u_my = u_k[2 * m_idx + 1]
+                        x_m, y_m = self.coords[m_idx]
+
+                        for sid in c.slave_ids:
+                            s_idx = self.nid_to_idx[sid]
+                            x_s, y_s = self.coords[s_idx]
+                            dx, dy = x_s - x_m, y_s - y_m
+                            u_k[2 * s_idx]     = u_mx + (cost - 1.0) * dx - sint * dy
+                            u_k[2 * s_idx + 1] = u_my + sint * dx + (cost - 1.0) * dy
+                self.u = u_k.copy()
+                self.u_extra = u_ext_k.copy()
+                self.lam = lam_k.copy()
                 if self.alpha != 0.0:
                     self.f_int_n = f_int.copy()  # store for HHT-α next step
                 if getattr(self, 'verbose', False):
@@ -2292,7 +2873,7 @@ class DynamicSolver:
             conv_rate = res_ratio / max(prev_res_ratio, 1e-30)
             self.last_conv_rate = float(conv_rate)  # exposed for AdaptiveDtController (B6)
             if (res_norm_0 is not None and conv_rate > 0.995
-                    and res_ratio > max(self.rtol * 0.1, 1e-6)):
+                    and res_ratio > max(self.rtol * 100.0, 0.05)):
                 stall_count += 1
             else:
                 # While no residual reference exists yet, res_ratio is a
@@ -2300,14 +2881,17 @@ class DynamicSolver:
                 # manufacture a stall out of missing information.
                 stall_count = 0
             prev_res_ratio = res_ratio
-            if stall_count > 3:
+            if stall_count > 8:
                 if getattr(self, 'verbose', False):
                     print(f"  *** STALL DETECTED: conv_rate={conv_rate:.4f} for {stall_count} iters. Cutting back dt.", flush=True)
                 return self._fail(f"convergence stalled (conv_rate={conv_rate:.4f} for {stall_count} iters)")
 
-            u_k += du
-            u_ext_k += du_ext
-            lam_k += dlam
+            # NOTE: u_k/u_ext_k/lam_k are already fully committed above (line-search
+            # commit `u_k = u_temp.copy()` etc.) -- do NOT re-add du here. A prior
+            # version of this loop applied `u_k += du` unconditionally on every
+            # non-converged iteration, which double-applied the accepted step (see
+            # dev_log/handoff_tie_state_propagation_fix_20260906.md and the safety
+            # clamp relocation above).
 
             # Project slave DOFs to satisfy the exact non-linear kinematic constraints (avoid drift)
             if self.use_kinematic_condensation and getattr(self, "condensation_mgr", None) is not None:
@@ -2449,7 +3033,8 @@ class DynamicSolver:
         _eps_reg = max(1e-12, 1e-8 * _diag_mean)
         K_eff = K_eff + _eps_reg * sps.eye(K_eff.shape[0], format='csr')
 
-        du_t = _solve_linear_system(K_eff, self.f_ext)
+        du_t = _solve_linear_system(K_eff, self.f_ext, solver_instance=self.pardiso_solver)
+
 
         if np.any(np.isnan(du_t)) or np.any(np.isinf(du_t)):
             if getattr(self, 'verbose', False):
@@ -2642,7 +3227,13 @@ class DynamicSolver:
                         R_aug[idx] = val * lambda_trial - u_ext_trial[ext_idx]
 
             # --- Solve augmented system ---
-            delta_all = _solve_linear_system(KKT_aug, R_aug)
+            delta_all = _solve_linear_system(
+                KKT_aug,
+                R_aug,
+                solver_instance=self.pardiso_solver,
+                has_lagrange_multipliers=True,
+            )
+
 
             if np.any(np.isnan(delta_all)) or np.any(np.isinf(delta_all)):
                 if getattr(self, 'verbose', False):
@@ -2836,7 +3427,49 @@ class DynamicSolver:
             return self.element_type
         return self.element_type_by_pid.get(pid, "Q4")
 
-    def _check_element_inversion(self, u: np.ndarray) -> bool:
+    def _use_ul_for(self, pid: int) -> bool:
+        """Does THIS pid's element run Updated-Lagrangian under NLGEOM?
+
+        Abaqus-style dispatch: `nlgeom` is the user's switch; whether that
+        means a rotated reference configuration for a given element is the
+        ELEMENT's business, declared in `_ELEMENT_LARGE_DEF`. An element
+        whose kinematics are not frame-covariant (the SRI family: its shear
+        sampling is written in Cartesian components) stays Total-Lagrangian
+        even with NLGEOM on -- its large rotation is carried by its own
+        formulation instead. Applying UL to it regardless is exactly the
+        silent-wrong-physics failure documented in dev_log/
+        plan_abaqus_element_consolidation_20260908.md sections 8-9.
+        """
+        if not self.nlgeom:
+            return False
+        cap = _ELEMENT_LARGE_DEF.get(self._pid_element_type(pid))
+        if cap is None:
+            # Unknown element type: refuse to assume it can take a rotated
+            # reference. Conservative by design -- a missing table entry
+            # must not silently opt an element into UL.
+            return False
+        return bool(cap.get("supports_ul", False))
+
+    def element_large_deformation_report(self) -> str:
+        """Human-readable summary of what NLGEOM actually does per element.
+
+        Printing this is the intended way to answer "is this model really
+        running Updated-Lagrangian?" -- the answer is per-element, not a
+        single flag.
+        """
+        lines = [f"NLGEOM = {'ON' if self.nlgeom else 'OFF'}"]
+        pids = sorted(self.materials.keys()) if getattr(self, "materials", None) else []
+        for pid in pids:
+            et = self._pid_element_type(pid)
+            cap = _ELEMENT_LARGE_DEF.get(et)
+            if cap is None:
+                lines.append(f"  pid {pid:>3}: {et:<28} UNKNOWN element -- forced TL")
+                continue
+            mode = "UL (rotated reference)" if self._use_ul_for(pid) else "TL"
+            lines.append(f"  pid {pid:>3}: {et:<28} {mode:<24} ({cap['note']})")
+        return "\n".join(lines)
+
+    def _check_element_inversion(self, u: np.ndarray, silent: bool = False) -> bool:
         """Check det(F) > 0 at all GPs for all elements.
 
         Returns True if ALL elements are valid (det(F) > 0), False if any
@@ -2861,7 +3494,7 @@ class DynamicSolver:
         F[:, :, 1, 1] = 1.0 + gv[:, :, 1]
         detF = F[:, :, 0, 0] * F[:, :, 1, 1] - F[:, :, 0, 1] * F[:, :, 1, 0]
         all_ok = np.all(detF > detF_min)
-        if not all_ok:
+        if not all_ok and not silent:
             inverted_idxs = np.where(np.any(detF <= detF_min, axis=1))[0]
             print(f"\n[DEBUG] Element inversion detected in element indexes: {inverted_idxs.tolist()}", flush=True)
             for idx in inverted_idxs[:5]:
@@ -2962,7 +3595,9 @@ class DynamicSolver:
 
         from ..material.linear_viscoelastic import LinearViscoelastic
 
-        for pid, elem_indices in self._pid_elem_indices.items():
+        for pid, elem_indices in self._pid_active_elem_indices.items():
+            if len(elem_indices) == 0:
+                continue
             mat_adapter = self.materials[pid]
 
             if (self._pid_element_type(pid) == "Q4_UP"
@@ -3033,7 +3668,7 @@ class DynamicSolver:
                     all_K_vals.append(K_es.reshape(-1))
                 continue
 
-            if (self._pid_element_type(pid) in ("Q4_VISCO_SIMO", "Q4_UP")
+            if (self._pid_element_type(pid) in _VISCO_ELEM_TYPES
                     and isinstance(mat_adapter.material, _ViscoelasticMaterial)):
                 # ---- Complete finite-strain Simo viscoelasticity (Flory split,
                 #      pluggable hyperelastic base) — q4_visco_simo_fs_jax.
@@ -3058,7 +3693,221 @@ class DynamicSolver:
                 n_vars = mat_adapter.n_internal_vars   # = 6*(M+1)
                 dt_h = dt if dt is not None else 1.0
 
-                if self.elem_jit == "numba":
+                # CPE4H has its own Numba kernel (true mixed u-p, UL-capable,
+                # validated against the JAX reference to 1e-15 on force and
+                # 2.8e-6 on the FD tangent).
+                if (getattr(self, "enable_new_numba_elements", False)
+                        and self.elem_jit == "numba"
+                        and self._pid_element_type(pid) == "CPE4H"):
+                    try:
+                        from ..element.q4_visco_hybrid_up_numba import (
+                            assemble_visco_hybrid_up_batch_numba)
+                        base_name, bparams, kappa = vmat.simo_fs_args(mat_adapter.params)
+                        _bc = {"neohookean": 0, "yeoh": 1, "arruda": 2}.get(base_name)
+                        if _bc is not None:
+                            Ng_ = len(elem_indices)
+                            if self._use_ul_for(pid):
+                                u_ref_b = self._ul_u_ref[self.dof_indices[elem_indices]]
+                                coords_n = self.elem_coords[elem_indices] + u_ref_b.reshape(Ng_, 4, 2)
+                                _xr = coords_n[:, :, 0]; _yr = coords_n[:, :, 1]
+                                _a = np.array([-1., 1., 1., -1.]) * 0.25
+                                _b = np.array([-1., -1., 1., 1.]) * 0.25
+                                _det = (_xr @ _a) * (_yr @ _b) - (_yr @ _a) * (_xr @ _b)
+                                good = _det > 1e-4
+                                coords_n = np.where(good[:, None, None], coords_n,
+                                                    self.elem_coords[elem_indices])
+                                u_n = np.where(good[:, None],
+                                               u[self.dof_indices[elem_indices]] - u_ref_b,
+                                               u[self.dof_indices[elem_indices]])
+                                Fn_n = np.where(good[:, None, None, None],
+                                                self._ul_F_n[elem_indices],
+                                                np.tile(np.eye(2), (Ng_, 4, 1, 1)))
+                            else:
+                                coords_n = self.elem_coords[elem_indices]
+                                u_n = u[self.dof_indices[elem_indices]]
+                                Fn_n = np.tile(np.eye(2), (Ng_, 4, 1, 1))
+                            state_n = (self.state[elem_indices, :, :n_vars]
+                                       if self.state is not None
+                                       else np.zeros((Ng_, 4, n_vars)))
+                            f_es, K_es, se_all, Fn_new = assemble_visco_hybrid_up_batch_numba(
+                                _bc, np.ascontiguousarray(coords_n),
+                                np.ascontiguousarray(u_n), np.ascontiguousarray(state_n),
+                                float(kappa), np.asarray(bparams, dtype=np.float64),
+                                np.asarray(vmat.g_i, dtype=np.float64),
+                                np.asarray(vmat.tau_i, dtype=np.float64),
+                                float(vmat.g_inf), dt_h,
+                                self._elem_thickness[elem_indices],
+                                np.ascontiguousarray(Fn_n))
+                            np.add.at(f_int, self.dof_indices[elem_indices].flatten(), f_es.flatten())
+                            if state_new is not None:
+                                state_new[elem_indices, :, :n_vars] = se_all
+                            # F5 fix (dev_log/plan_abaqus_element_consolidation_20260908.md,
+                            # opus review): do NOT write _ul_F_n here -- this ran on EVERY
+                            # Newton iteration, not just on convergence, compounding F_inc
+                            # onto an already-updated F_n within a single step (iteration 2
+                            # got F_inc @ (F_inc @ F_n_conv), iteration 3 cubed it). The
+                            # commit-time resync (~line 2614-2632, inside `if self.ul_mode:`)
+                            # already recomputes _ul_F_n for ALL elements from the converged
+                            # u_total once per step -- that is the sole authoritative write.
+                            all_K_rows.append(self._pid_K_rows[pid])
+                            all_K_cols.append(self._pid_K_cols[pid])
+                            all_K_vals.append(K_es.reshape(-1))
+                            continue
+                    except ImportError:
+                        pass
+
+                # CPE4I has its own Numba kernel (incompatible modes, nested-FD
+                # alpha condensation, UL-capable). Validated against JAX:
+                # rigid-rotation canary ~1e-18/1e-20, force error <= 2e-5 on
+                # shear/bend/rotation+bend, matching the exact bug class
+                # (transposed rotation matrix) found and fixed in the SRI
+                # kernel -- this element is TL/enhanced-F based, not
+                # co-rotational, so that specific defect class cannot occur
+                # here, but the canary is kept as a standing regression guard.
+                if (getattr(self, "enable_new_numba_elements", False)
+                        and self.elem_jit == "numba"
+                        and self._pid_element_type(pid) == "CPE4I"):
+                    try:
+                        from ..element.q4_visco_eas_numba import assemble_eas_visco_batch_numba
+                        base_name, bparams, kappa = vmat.simo_fs_args(mat_adapter.params)
+                        _bc = {"neohookean": 0, "yeoh": 1, "arruda": 2}.get(base_name)
+                        if _bc is not None:
+                            Ng_ = len(elem_indices)
+                            if self._use_ul_for(pid):
+                                u_ref_b = self._ul_u_ref[self.dof_indices[elem_indices]]
+                                coords_n = self.elem_coords[elem_indices] + u_ref_b.reshape(Ng_, 4, 2)
+                                _xr = coords_n[:, :, 0]; _yr = coords_n[:, :, 1]
+                                _a = np.array([-1., 1., 1., -1.]) * 0.25
+                                _b = np.array([-1., -1., 1., 1.]) * 0.25
+                                _det = (_xr @ _a) * (_yr @ _b) - (_yr @ _a) * (_xr @ _b)
+                                good = _det > 1e-4
+                                coords_n = np.where(good[:, None, None], coords_n,
+                                                    self.elem_coords[elem_indices])
+                                u_n = np.where(good[:, None],
+                                               u[self.dof_indices[elem_indices]] - u_ref_b,
+                                               u[self.dof_indices[elem_indices]])
+                                Fn_n = np.where(good[:, None, None, None],
+                                                self._ul_F_n[elem_indices],
+                                                np.tile(np.eye(2), (Ng_, 4, 1, 1)))
+                            else:
+                                coords_n = self.elem_coords[elem_indices]
+                                u_n = u[self.dof_indices[elem_indices]]
+                                Fn_n = np.tile(np.eye(2), (Ng_, 4, 1, 1))
+                            state_n = (self.state[elem_indices, :, :n_vars]
+                                       if self.state is not None
+                                       else np.zeros((Ng_, 4, n_vars)))
+                            alpha_n = self.eas_alpha[elem_indices]
+                            (f_es, K_es, alpha_new, se_all, Fn_new,
+                             st_all) = assemble_eas_visco_batch_numba(
+                                _bc, np.ascontiguousarray(coords_n),
+                                np.ascontiguousarray(u_n), np.ascontiguousarray(alpha_n),
+                                np.ascontiguousarray(state_n),
+                                float(kappa), np.asarray(bparams, dtype=np.float64),
+                                np.asarray(vmat.g_i, dtype=np.float64),
+                                np.asarray(vmat.tau_i, dtype=np.float64),
+                                float(vmat.g_inf), dt_h,
+                                self._elem_thickness[elem_indices],
+                                np.ascontiguousarray(Fn_n))
+                            np.add.at(f_int, self.dof_indices[elem_indices].flatten(), f_es.flatten())
+                            self.eas_alpha[elem_indices] = alpha_new
+                            self._eas_local_status[elem_indices] = st_all
+                            if state_new is not None:
+                                state_new[elem_indices, :, :n_vars] = se_all
+                            # F5 fix (dev_log/plan_abaqus_element_consolidation_20260908.md,
+                            # opus review): do NOT write _ul_F_n here -- this ran on EVERY
+                            # Newton iteration, not just on convergence, compounding F_inc
+                            # onto an already-updated F_n within a single step (iteration 2
+                            # got F_inc @ (F_inc @ F_n_conv), iteration 3 cubed it). The
+                            # commit-time resync (~line 2614-2632, inside `if self.ul_mode:`)
+                            # already recomputes _ul_F_n for ALL elements from the converged
+                            # u_total once per step -- that is the sole authoritative write.
+                            all_K_rows.append(self._pid_K_rows[pid])
+                            all_K_cols.append(self._pid_K_cols[pid])
+                            all_K_vals.append(K_es.reshape(-1))
+                            continue
+                    except ImportError:
+                        pass
+
+                # CPE4RH has its own Numba kernel (1-point reduced
+                # integration + Flanagan-Belytschko hourglass + closed-form
+                # hybrid pressure, UL-capable). Validated by patch test
+                # (tests/test_cpe4rh_patch.py, JAX side) and against the JAX
+                # kernel directly (force error ~1e-16, tangent error ~7e-7 --
+                # FD vs autodiff, same magnitude as every other Numba visco
+                # kernel's FD tangent here). No per-element internal-variable
+                # array (unlike CPE4I's alpha): the pressure is closed-form,
+                # so this returns/stores state and F_n only, like CPE4H's
+                # up-batch kernel.
+                if (getattr(self, "enable_new_numba_elements", False)
+                        and self.elem_jit == "numba"
+                        and self._pid_element_type(pid) == "CPE4RH"):
+                    try:
+                        from ..element.q4_visco_hybrid_reduced_numba import (
+                            assemble_reduced_hybrid_batch_numba)
+                        base_name, bparams, kappa = vmat.simo_fs_args(mat_adapter.params)
+                        _bc = {"neohookean": 0, "yeoh": 1, "arruda": 2}.get(base_name)
+                        if _bc is not None:
+                            Ng_ = len(elem_indices)
+                            if self._use_ul_for(pid):
+                                u_ref_b = self._ul_u_ref[self.dof_indices[elem_indices]]
+                                coords_n = self.elem_coords[elem_indices] + u_ref_b.reshape(Ng_, 4, 2)
+                                _xr = coords_n[:, :, 0]; _yr = coords_n[:, :, 1]
+                                _a = np.array([-1., 1., 1., -1.]) * 0.25
+                                _b = np.array([-1., -1., 1., 1.]) * 0.25
+                                _det = (_xr @ _a) * (_yr @ _b) - (_yr @ _a) * (_xr @ _b)
+                                good = _det > 1e-4
+                                coords_n = np.where(good[:, None, None], coords_n,
+                                                    self.elem_coords[elem_indices])
+                                u_n = np.where(good[:, None],
+                                               u[self.dof_indices[elem_indices]] - u_ref_b,
+                                               u[self.dof_indices[elem_indices]])
+                                Fn_n = np.where(good[:, None, None, None],
+                                                self._ul_F_n[elem_indices],
+                                                np.tile(np.eye(2), (Ng_, 4, 1, 1)))
+                            else:
+                                coords_n = self.elem_coords[elem_indices]
+                                u_n = u[self.dof_indices[elem_indices]]
+                                Fn_n = np.tile(np.eye(2), (Ng_, 4, 1, 1))
+                            state_n = (self.state[elem_indices, :, :n_vars]
+                                       if self.state is not None
+                                       else np.zeros((Ng_, 4, n_vars)))
+                            f_es, K_es, se_all, Fn_new = assemble_reduced_hybrid_batch_numba(
+                                _bc, np.ascontiguousarray(coords_n),
+                                np.ascontiguousarray(u_n), np.ascontiguousarray(state_n),
+                                float(kappa), np.asarray(bparams, dtype=np.float64),
+                                np.asarray(vmat.g_i, dtype=np.float64),
+                                np.asarray(vmat.tau_i, dtype=np.float64),
+                                float(vmat.g_inf), dt_h,
+                                self._elem_thickness[elem_indices],
+                                np.ascontiguousarray(Fn_n))
+                            np.add.at(f_int, self.dof_indices[elem_indices].flatten(), f_es.flatten())
+                            if state_new is not None:
+                                state_new[elem_indices, :, :n_vars] = se_all
+                            # F5 fix (dev_log/plan_abaqus_element_consolidation_20260908.md,
+                            # opus review): do NOT write _ul_F_n here -- this ran on EVERY
+                            # Newton iteration, not just on convergence, compounding F_inc
+                            # onto an already-updated F_n within a single step (iteration 2
+                            # got F_inc @ (F_inc @ F_n_conv), iteration 3 cubed it). The
+                            # commit-time resync (~line 2614-2632, inside `if self.ul_mode:`)
+                            # already recomputes _ul_F_n for ALL elements from the converged
+                            # u_total once per step -- that is the sole authoritative write.
+                            all_K_rows.append(self._pid_K_rows[pid])
+                            all_K_cols.append(self._pid_K_cols[pid])
+                            all_K_vals.append(K_es.reshape(-1))
+                            continue
+                    except ImportError:
+                        pass
+
+                # The other Numba kernel is the full-integration F-bar
+                # formulation only -- it has no incompatible modes, pressure
+                # unknown, or reduced-integration hourglass control, so
+                # CPE4I/CPE4IH/CPE4H/CPE4RH must not silently take it (that
+                # would be the AGENTS.md 4.2 "element type quietly ignored"
+                # bug again).
+                if (self.elem_jit == "numba"
+                        and self._pid_element_type(pid) not in _VISCO_EAS_TYPES
+                        and self._pid_element_type(pid) not in _VISCO_HYBRID_TYPES
+                        and self._pid_element_type(pid) not in _VISCO_REDUCED_TYPES):
                     try:
                         from ..element.q4_visco_hybrid_simo_numba import assemble_visco_hybrid_simo_batch_numba
                         base_name, bparams, kappa = vmat.simo_fs_args(mat_adapter.params)
@@ -3101,7 +3950,64 @@ class DynamicSolver:
                 t_b = jnp.asarray(self._elem_thickness[elem_indices])
 
                 _vmap = self._visco_simo_jax_vmap_by_pid[pid]
-                f_es, K_es, se_all = _vmap(coords_b, u_b, state_b, dt_h, t_b)
+
+                # --- Updated-Lagrangian (large deformation / large rotation) ---
+                # Same treatment the corotational/J2 elements already get: the
+                # reference configuration is the last converged one and the
+                # displacement handed to the element is incremental, with the
+                # total deformation gradient reconstructed inside as
+                # F_inc @ F_n. Elements whose updated reference has gone
+                # degenerate fall back to TL individually.
+                Ng_ = len(elem_indices)
+                if self._use_ul_for(pid):
+                    u_ref_b = self._ul_u_ref[self.dof_indices[elem_indices]]
+                    coords_ref = self.elem_coords[elem_indices] + u_ref_b.reshape(Ng_, 4, 2)
+                    _xr = coords_ref[:, :, 0]; _yr = coords_ref[:, :, 1]
+                    _dxi = np.array([-1., 1., 1., -1.]) * 0.25
+                    _det = ((_xr @ _dxi) * (_yr @ (np.array([-1., -1., 1., 1.]) * 0.25))
+                            - (_yr @ _dxi) * (_xr @ (np.array([-1., -1., 1., 1.]) * 0.25)))
+                    good = _det > 1e-4
+                    coords_b = jnp.asarray(np.where(good[:, None, None], coords_ref,
+                                                    self.elem_coords[elem_indices]))
+                    u_b = jnp.asarray(np.where(good[:, None],
+                                               u[self.dof_indices[elem_indices]] - u_ref_b,
+                                               u[self.dof_indices[elem_indices]]))
+                    _eye4 = np.tile(np.eye(2), (Ng_, 4, 1, 1))
+                    Fn_b = jnp.asarray(np.where(good[:, None, None, None],
+                                                self._ul_F_n[elem_indices], _eye4))
+                else:
+                    Fn_b = jnp.asarray(np.tile(np.eye(2), (Ng_, 4, 1, 1)))
+
+                if self._pid_element_type(pid) in _VISCO_HYBRID_TYPES:
+                    q_b = jnp.asarray(self.hybrid_q[elem_indices])
+                    f_es, K_es, q_all, se_all, Fn_new, st_all = _vmap(
+                        coords_b, u_b, q_b, state_b, dt_h, t_b, Fn_b)
+                    self.hybrid_q[elem_indices] = np.asarray(q_all)
+                    self._eas_local_status[elem_indices] = np.asarray(st_all)
+                elif self._pid_element_type(pid) in _VISCO_EAS_TYPES:
+                    alpha_b = jnp.asarray(self.eas_alpha[elem_indices])
+                    if os.environ.get("DEBUG_VISCO_EAS_DUMP"):
+                        import numpy as _npd
+                        _npd.savez(os.environ["DEBUG_VISCO_EAS_DUMP"],
+                                   coords_b=_npd.asarray(coords_b), u_b=_npd.asarray(u_b),
+                                   alpha_b=_npd.asarray(alpha_b), state_b=_npd.asarray(state_b),
+                                   Fn_b=_npd.asarray(Fn_b), dt_h=_npd.asarray(dt_h), t_b=_npd.asarray(t_b))
+                        print(f"[DEBUG_VISCO_EAS_DUMP] saved {len(elem_indices)} elems", flush=True)
+                    f_es, K_es, alpha_all, se_all, Fn_new, st_all = _vmap(
+                        coords_b, u_b, alpha_b, state_b, dt_h, t_b, Fn_b)
+                    self.eas_alpha[elem_indices] = np.asarray(alpha_all)
+                    self._eas_local_status[elem_indices] = np.asarray(st_all)
+                else:
+                    f_es, K_es, se_all, Fn_new = _vmap(coords_b, u_b, state_b, dt_h, t_b, Fn_b)
+                _Fn_new_np = np.asarray(Fn_new)
+                # F5 fix (dev_log/plan_abaqus_element_consolidation_20260908.md,
+                # opus review): do NOT write _ul_F_n here -- this ran on EVERY
+                # Newton iteration, not just on convergence, compounding F_inc
+                # onto an already-updated F_n within a single step (iteration 2
+                # got F_inc @ (F_inc @ F_n_conv), iteration 3 cubed it). The
+                # commit-time resync (~line 2614-2632, inside `if self.ul_mode:`)
+                # already recomputes _ul_F_n for ALL elements from the converged
+                # u_total once per step -- that is the sole authoritative write.
                 f_es = np.asarray(f_es); K_es = np.asarray(K_es); se_all = np.asarray(se_all)
                 np.add.at(f_int, self.dof_indices[elem_indices].flatten(), f_es.flatten())
                 if state_new is not None:
@@ -3110,6 +4016,38 @@ class DynamicSolver:
                 all_K_cols.append(self._pid_K_cols[pid])
                 all_K_vals.append(K_es.reshape(-1))
                 continue
+
+            # Numba path for the co-rotational SRI + J2 element (the PET and
+            # GLASS layers, i.e. most elements in the folding model). Validated
+            # against the JAX kernel: force to 1e-13, tangent to 2e-6 (the
+            # tangent difference is FD vs the JAX analytic C_v).
+            if (getattr(self, "enable_new_numba_elements", False)
+                    and self.elem_jit == "numba"
+                    and self._pid_element_type(pid) in ("Q4_COROTATIONAL_SRI", "Q4_SRI")
+                    and isinstance(mat_adapter.material, J2Plasticity)):
+                try:
+                    from ..element.q4_corotational_sri_j2_numba import (
+                        assemble_corotational_sri_j2_batch_numba)
+                    _m = mat_adapter.material
+                    n_vars = _m.n_internal_vars
+                    st_b = (self.state[elem_indices, :, :n_vars]
+                            if self.state is not None
+                            else np.zeros((len(elem_indices), 4, n_vars)))
+                    f_es, K_es, se_all = assemble_corotational_sri_j2_batch_numba(
+                        np.ascontiguousarray(self.elem_coords[elem_indices]),
+                        np.ascontiguousarray(u[self.dof_indices[elem_indices]]),
+                        np.ascontiguousarray(st_b),
+                        float(_m.lam), float(_m.mu), float(_m.sigma_y0), float(_m.H),
+                        np.ascontiguousarray(self._elem_thickness[elem_indices]))
+                    np.add.at(f_int, self.dof_indices[elem_indices].flatten(), f_es.flatten())
+                    if state_new is not None:
+                        state_new[elem_indices, :, :n_vars] = se_all
+                    all_K_rows.append(self._pid_K_rows[pid])
+                    all_K_cols.append(self._pid_K_cols[pid])
+                    all_K_vals.append(K_es.reshape(-1))
+                    continue
+                except ImportError:
+                    pass
 
             if (self._pid_element_type(pid) in ("Q4_COROTATIONAL", "Q4_COROTATIONAL_EAS", "Q4_COROTATIONAL_SRI", "Q4_SRI", "Q4_COROTATIONAL_HYBRID_SRI", "Q4_HYBRID_SRI", "Q4_COROTATIONAL_HYBRID", "Q4_HYBRID")
                     and isinstance(mat_adapter.material, J2Plasticity)
@@ -3171,12 +4109,13 @@ class DynamicSolver:
                                    else np.zeros((len(elem_indices), 4, n_vars)))
                         t_b = self._elem_thickness[elem_indices]
 
-                        f_es, K_es, alpha_all, se_all = assemble_q4_eas_j2_batch_numba(
+                        f_es, K_es, alpha_all, se_all, st_all = assemble_q4_eas_j2_batch_numba(
                             coords_b, u_b, alpha_b, state_b, lam, mu, sigma_y0, H, t_b,
                         )
 
                         np.add.at(f_int, self.dof_indices[elem_indices].flatten(), f_es.flatten())
                         self.eas_alpha[elem_indices] = alpha_all
+                        self._eas_local_status[elem_indices] = st_all
                         if state_new is not None:
                             state_new[elem_indices, :, :n_vars] = se_all
                         all_K_rows.append(self._pid_K_rows[pid])
@@ -3193,7 +4132,7 @@ class DynamicSolver:
                     Ng = len(elem_indices)
                     # UL mode: reference coords = original + u_ref; u passed = u_inc = u - u_ref
                     u_b_raw = u[self.dof_indices[elem_indices]]  # (Ng, 8) total u
-                    if self.ul_mode:
+                    if self._use_ul_for(pid):
                         u_ref_b = self._ul_u_ref[self.dof_indices[elem_indices]]  # (Ng, 8)
                         coords_ref = self.elem_coords[elem_indices] + u_ref_b.reshape(Ng, 4, 2)
                         # Check reference-config Jacobian at element centre (xi=eta=0)
@@ -3230,9 +4169,20 @@ class DynamicSolver:
                     ) if self.state is not None else jnp.zeros((Ng, 4, n_vars))
                     t_b = jnp.asarray(self._elem_thickness[elem_indices])
 
-                    f_es, K_es, alpha_all, se_all, F_n_new = _vmap_fn(
+                    if os.environ.get("DEBUG_EAS_DUMP"):
+                        import numpy as _npd
+                        _mat = mat_adapter.material
+                        _npd.savez(os.environ["DEBUG_EAS_DUMP"],
+                                   coords_b=_npd.asarray(coords_b), u_b=_npd.asarray(u_b),
+                                   alpha_b=_npd.asarray(alpha_b), state_b=_npd.asarray(state_b),
+                                   F_n_b=_npd.asarray(F_n_b), lam=float(_mat.lam), mu=float(_mat.mu),
+                                   sigma_y0=float(_mat.sigma_y0), H=float(_mat.H), t_b=_npd.asarray(t_b))
+                        print(f"[DEBUG_EAS_DUMP] saved {Ng} elements to {os.environ['DEBUG_EAS_DUMP']}", flush=True)
+
+                    f_es, K_es, alpha_all, se_all, F_n_new, st_all = _vmap_fn(
                         coords_b, u_b, alpha_b, state_b, F_n_b
                     )
+                    self._eas_local_status[elem_indices] = np.asarray(st_all)
                     f_es_np = np.asarray(f_es)
                     K_es_np = np.asarray(K_es)
                     F_n_new_np = np.asarray(F_n_new)
@@ -3252,12 +4202,12 @@ class DynamicSolver:
                             all_K_rows.append(np.repeat(good_dofs, 8, axis=1).reshape(-1))
                             all_K_cols.append(np.tile(good_dofs, (1, 8)).reshape(-1))
                             all_K_vals.append(good_K.reshape(-1))
-                        from ..element.q4_eas import compute_eas_j2_contributions
+                        from ..element.q4_eas import compute_eas_j2_contributions_status
                         for idx in nan_idx:
                             e = elem_indices[idx]
                             # In UL mode use incremental coords/disp so the numpy fallback
                             # doesn't receive a TL-inverted element geometry
-                            if self.ul_mode:
+                            if self._use_ul_for(pid):
                                 u_ref_e = self._ul_u_ref[self.dof_indices[e]]
                                 coords_e = self.elem_coords[e] + u_ref_e.reshape(4, 2)
                                 u_elem = u[self.dof_indices[e]] - u_ref_e
@@ -3267,13 +4217,14 @@ class DynamicSolver:
                             state_elem = (self.state[e, :, :n_vars]
                                           if self.state is not None else None)
                             F_n_elem = self._ul_F_n[e] if self.ul_mode else None
-                            f_e, K_e, alpha_new, se_new = compute_eas_j2_contributions(
+                            f_e, K_e, alpha_new, se_new, st_e = compute_eas_j2_contributions_status(
                                 coords_e, u_elem, self.eas_alpha[e], state_elem,
                                 mat_adapter.material, mat_adapter.params,
                                 self._elem_thickness[e],
                                 F_n=F_n_elem,
                             )
                             self.eas_alpha[e] = alpha_new
+                            self._eas_local_status[e] = st_e
                             np.add.at(f_int, self.dof_indices[e], f_e)
                             if state_new is not None and se_new is not None:
                                 state_new[e, :, :n_vars] = se_new
@@ -3282,7 +4233,14 @@ class DynamicSolver:
                             all_K_cols.append(np.tile(dof_g, 8))
                             all_K_vals.append(K_e.flatten())
                     else:
-                        self._ul_F_n[elem_indices] = F_n_new_np
+                        # F5 fix (dev_log/plan_abaqus_element_consolidation_20260908.md,
+                        # opus review): do NOT write _ul_F_n here -- this ran on EVERY
+                        # Newton iteration, not just on convergence, compounding F_inc
+                        # onto an already-updated F_n within a single step (iteration 2
+                        # got F_inc @ (F_inc @ F_n_conv), iteration 3 cubed it). The
+                        # commit-time resync (~line 2614-2632, inside `if self.ul_mode:`)
+                        # already recomputes _ul_F_n for ALL elements from the converged
+                        # u_total once per step -- that is the sole authoritative write.
                         f_es_scaled = f_es_np * np.asarray(t_b)[:, None]
                         K_es_scaled = K_es_np * np.asarray(t_b)[:, None, None]
                         self.eas_alpha[elem_indices] = np.asarray(alpha_all)
@@ -3293,18 +4251,19 @@ class DynamicSolver:
                         all_K_cols.append(self._pid_K_cols[pid])
                         all_K_vals.append(K_es_scaled.reshape(-1))
                 else:
-                    from ..element.q4_eas import compute_eas_j2_contributions
+                    from ..element.q4_eas import compute_eas_j2_contributions_status
                     for e in elem_indices:
                         coords = self.elem_coords[e]
                         u_elem = u[self.dof_indices[e]]
                         state_elem = (self.state[e, :, :n_vars]
                                       if self.state is not None else None)
-                        f_e, K_e, alpha_new, se_new = compute_eas_j2_contributions(
+                        f_e, K_e, alpha_new, se_new, st_e = compute_eas_j2_contributions_status(
                             coords, u_elem, self.eas_alpha[e], state_elem,
                             mat_adapter.material, mat_adapter.params,
                             self._elem_thickness[e],
                         )
                         self.eas_alpha[e] = alpha_new
+                        self._eas_local_status[e] = st_e
                         np.add.at(f_int, self.dof_indices[e], f_e)
                         if state_new is not None and se_new is not None:
                             state_new[e, :, :n_vars] = se_new
@@ -3517,11 +4476,14 @@ class DynamicSolver:
                 all_K_cols.append(seq_cols)
                 all_K_vals.append(seq_vals)
 
-        K_T = sps.coo_matrix(
-            (np.concatenate(all_K_vals),
-             (np.concatenate(all_K_rows), np.concatenate(all_K_cols))),
-            shape=(self.n_dofs, self.n_dofs)
-        ).tocsr()
+        if all_K_vals:
+            K_T = sps.coo_matrix(
+                (np.concatenate(all_K_vals),
+                 (np.concatenate(all_K_rows), np.concatenate(all_K_cols))),
+                shape=(self.n_dofs, self.n_dofs)
+            ).tocsr()
+        else:
+            K_T = sps.csr_matrix((self.n_dofs, self.n_dofs), dtype=np.float64)
 
         return f_int, K_T, state_new
 
@@ -3665,7 +4627,28 @@ class DynamicSolver:
 
         return f_int, K_T, state_new
 
+    def _reset_eas_local_status(self) -> None:
+        """Clear the per-element enhanced-mode solve status before assembly."""
+        st = getattr(self, "_eas_local_status", None)
+        if st is not None:
+            st.fill(0.0)
+
+    def _eas_local_failure_count(self) -> int:
+        """How many elements failed their element-local enhanced-mode solve.
+
+        A NaN status counts as a failure (``np.nan > tol`` is False, so the
+        comparison alone would miss it).
+        """
+        st = getattr(self, "_eas_local_status", None)
+        if st is None:
+            return 0
+        return int(np.count_nonzero(~(st <= self.eas_local_tol)))
+
     def _assemble(self, u: np.ndarray, dt: Optional[float] = None) -> Tuple[np.ndarray, sps.csr_matrix, Optional[np.ndarray]]:
+        # Enhanced-mode (EAS/incompatible-mode) element-local solve status is
+        # rebuilt from scratch on every assembly call; a stale value from the
+        # previous Newton iteration must never trigger a cutback.
+        self._reset_eas_local_status()
         f_int = np.zeros(self.n_dofs, dtype=np.float64)
         n_gp = len(_GP2)
         max_vars = max(m.n_internal_vars for m in self.materials.values())
@@ -3703,7 +4686,9 @@ class DynamicSolver:
             # --- Multi-material Grouped Vectorized JAX Assembly ---
             all_K_rows, all_K_cols, all_K_vals = [], [], []
 
-            for pid, elem_indices in self._pid_elem_indices.items():
+            for pid, elem_indices in self._pid_active_elem_indices.items():
+                if len(elem_indices) == 0:
+                    continue
                 coords_g = self.elem_coords[elem_indices]
                 u_elems_g = u[self.dof_indices[elem_indices]]
 
@@ -3718,11 +4703,14 @@ class DynamicSolver:
                 all_K_cols.append(self._pid_K_cols[pid])
                 all_K_vals.append(K_es.flatten())
 
-            K_T = sps.coo_matrix(
-                (np.concatenate(all_K_vals),
-                 (np.concatenate(all_K_rows), np.concatenate(all_K_cols))),
-                shape=(self.n_dofs, self.n_dofs)
-            ).tocsr()
+            if all_K_vals:
+                K_T = sps.coo_matrix(
+                    (np.concatenate(all_K_vals),
+                     (np.concatenate(all_K_rows), np.concatenate(all_K_cols))),
+                    shape=(self.n_dofs, self.n_dofs)
+                ).tocsr()
+            else:
+                K_T = sps.csr_matrix((self.n_dofs, self.n_dofs), dtype=np.float64)
 
             state_new = None
 
@@ -3762,6 +4750,72 @@ class DynamicSolver:
                     f_e = np.asarray(f_e_jax) * self._elem_thickness[e]
                     K_e = np.asarray(K_e_jax) * self._elem_thickness[e]
                     se_new = None
+                elif elem_type in _VISCO_HYBRID_TYPES:
+                    from ..element.q4_visco_eas_jax import (
+                        compute_single_hybrid_status as _visco_h_single)
+                    vmat = mat_adapter.material
+                    n_vars = mat_adapter.n_internal_vars
+                    state_elem = (self.state[e][:, :n_vars]
+                                  if self.state is not None else np.zeros((4, n_vars)))
+                    base_name, bparams, kappa = vmat.simo_fs_args(mat_adapter.params)
+                    _dj = float(self.distortion_j_crit if self.distortion_control else 0.0)
+                    f_e_jax, K_e_jax, q_new, se_new_jax, _Fn_e, _st_e = _visco_h_single(
+                        coords, u_elem, self.hybrid_q[e], state_elem,
+                        float(kappa), bparams, vmat.g_i, vmat.tau_i, float(vmat.g_inf),
+                        dt if dt is not None else 1.0, self._elem_thickness[e],
+                        distortion_j_crit=_dj, base=base_name,
+                        use_eas=(elem_type == "CPE4IH"),
+                    )
+                    self.hybrid_q[e] = np.asarray(q_new)
+                    self._eas_local_status[e] = float(_st_e)
+                    f_e = np.asarray(f_e_jax); K_e = np.asarray(K_e_jax); se_new = np.asarray(se_new_jax)
+                elif elem_type in _VISCO_EAS_TYPES:
+                    # CPE4I / CPE4IH -- incompatible modes on the finite-strain
+                    # Simo viscoelastic kernel (sequential single-element path).
+                    from ..material.viscoelastic import ViscoelasticMaterial as _VEM_eas
+                    from ..element.q4_visco_eas_jax import (
+                        compute_single_eas_status as _visco_eas_single)
+                    vmat = mat_adapter.material
+                    n_vars = mat_adapter.n_internal_vars
+                    state_elem = (self.state[e][:, :n_vars]
+                                  if self.state is not None else np.zeros((4, n_vars)))
+                    base_name, bparams, kappa = vmat.simo_fs_args(mat_adapter.params)
+                    _dj = float(self.distortion_j_crit if self.distortion_control else 0.0)
+                    f_e_jax, K_e_jax, alpha_new, se_new_jax, _Fn_e, _st_e = _visco_eas_single(
+                        coords, u_elem, self.eas_alpha[e], state_elem,
+                        float(kappa), bparams, vmat.g_i, vmat.tau_i, float(vmat.g_inf),
+                        dt if dt is not None else 1.0, self._elem_thickness[e],
+                        distortion_j_crit=_dj, base=base_name,
+                    )
+                    self.eas_alpha[e] = np.asarray(alpha_new)
+                    self._eas_local_status[e] = float(_st_e)
+                    f_e = np.asarray(f_e_jax)
+                    K_e = np.asarray(K_e_jax)
+                    se_new = np.asarray(se_new_jax)
+                elif elem_type in _VISCO_REDUCED_TYPES:
+                    # CPE4RH -- 1-point reduced integration + hourglass +
+                    # closed-form hybrid pressure (sequential single-element
+                    # path). No internal-variable array to store back (the
+                    # pressure has a closed form, unlike CPE4I/CPE4IH's
+                    # `alpha`), matching the plain Q4_VISCO_SIMO branch's
+                    # lack of one below.
+                    from ..element.q4_visco_hybrid_reduced_jax import (
+                        compute_single_reduced_hybrid_jax as _visco_rh_single)
+                    vmat = mat_adapter.material
+                    n_vars = mat_adapter.n_internal_vars
+                    state_elem = (self.state[e][:, :n_vars]
+                                  if self.state is not None else np.zeros((4, n_vars)))
+                    base_name, bparams, kappa = vmat.simo_fs_args(mat_adapter.params)
+                    _dj = float(self.distortion_j_crit if self.distortion_control else 0.0)
+                    f_e_jax, K_e_jax, se_new_jax, _Fn_e = _visco_rh_single(
+                        base_name, coords, u_elem, state_elem,
+                        float(kappa), bparams, vmat.g_i, vmat.tau_i, float(vmat.g_inf),
+                        dt if dt is not None else 1.0, self._elem_thickness[e],
+                        None, _dj,
+                    )
+                    f_e = np.asarray(f_e_jax)
+                    K_e = np.asarray(K_e_jax)
+                    se_new = np.asarray(se_new_jax)
                 elif elem_type == "Q4_UP":
                     from ..material.linear_viscoelastic import LinearViscoelastic
                     from ..material.viscoelastic import ViscoelasticMaterial as _VEM_seq
@@ -3786,7 +4840,7 @@ class DynamicSolver:
                         state_elem = (self.state[e][:, :n_vars]
                                       if self.state is not None else np.zeros((4, n_vars)))
                         base_name, bparams, kappa = vmat.simo_fs_args(mat_adapter.params)
-                        f_e_jax, K_e_jax, se_new_jax = _visco_simo_single_seq(
+                        f_e_jax, K_e_jax, se_new_jax, _Fn_e = _visco_simo_single_seq(
                             coords, u_elem, state_elem, float(kappa), bparams,
                             vmat.g_i, vmat.tau_i, float(vmat.g_inf),
                             dt if dt is not None else 1.0, self._elem_thickness[e],
@@ -3857,3 +4911,19 @@ class DynamicSolver:
             K_T = K_T.tocsr()
 
         return f_int, K_T, state_new
+
+    def _update_rbe2_slave_displacements(self) -> None:
+        """Reconstruct exact non-linear kinematic slave node displacements for RBE2 rigid bodies."""
+        if not getattr(self, 'rbe2_constraints', None):
+            return
+        n_rbe2 = len(self.rbe2_constraints)
+        n_extra_regular = self.n_extra - n_rbe2
+        for idx, c in enumerate(self.rbe2_constraints):
+            theta = float(self.u_extra[n_extra_regular + idx])
+            m_idx = self.nid_to_idx[c.master_id]
+            u_master = self.u[2 * m_idx : 2 * m_idx + 2]
+            slave_u_map = c.evaluate_slave_displacements(u_master, theta)
+            for s_idx, u_s in slave_u_map.items():
+                self.u[2 * s_idx] = u_s[0]
+                self.u[2 * s_idx + 1] = u_s[1]
+

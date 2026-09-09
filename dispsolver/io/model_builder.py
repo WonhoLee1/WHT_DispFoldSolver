@@ -156,12 +156,30 @@ _ABAQUS_TO_DISPSOLVER_ELEM = {
     "CPS3": "TRIA3",
 }
 
-# Element type string → solver element_type mapping
+# Element type string → solver element_type mapping.
+#
+# CPE4H/CPE4I/CPE4IH/CPE4RH used to map to "Q4_HYBRID"/"Q4_EAS"/
+# "Q4_HYBRID_EAS"/"Q4_HYBRID_RH" -- names from the OLD linear-elastic-only
+# J2/corotational-hybrid element family (`q4_hybrid_jax.py`), not the real
+# finite-strain viscoelastic kernels this codebase now has for those exact
+# Abaqus names (`q4_visco_eas_jax.py`'s CPE4I/CPE4H/CPE4IH,
+# `q4_visco_hybrid_reduced_jax.py`'s CPE4RH). `dynamic.py`'s dispatch
+# tuples (`_VISCO_EAS_TYPES`/`_VISCO_HYBRID_TYPES`/`_VISCO_REDUCED_TYPES`)
+# key on the literal Abaqus names themselves ("CPE4I", "CPE4H", ...), so
+# routing through the OLD names here silently sent any Abaqus-.inp-loaded
+# CPE4H/CPE4I model through the wrong (linear-elastic, no Prony, no
+# pressure field for I) kernel instead -- found 2026-09-08 while wiring
+# CPE4RH. Not production-blocking (the ex12/gen_ex12_inp.py pipeline builds
+# `element_type_by_pid` directly in Python, bypassing this table entirely),
+# but a real bug for anyone loading an arbitrary Abaqus .inp through
+# `AbaqusModelBuilder` with these element names. Fixed to map to the
+# element's own literal name, matching how `dynamic.py` actually dispatches
+# it, rather than translating to a differently-named legacy element.
 _ABAQUS_TO_SOLVER_ELEM_TYPE = {
-    "CPE4H": "Q4_HYBRID",
-    "CPE4RH": "Q4_HYBRID_RH",
-    "CPE4IH": "Q4_HYBRID_EAS",
-    "CPE4I": "Q4_EAS",
+    "CPE4H": "CPE4H",
+    "CPE4RH": "CPE4RH",
+    "CPE4IH": "CPE4IH",
+    "CPE4I": "CPE4I",
     "CPE4S": "Q4_SRI",
     "CPE4SH": "Q4_HYBRID_SRI",
 }

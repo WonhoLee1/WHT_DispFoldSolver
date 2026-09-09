@@ -445,8 +445,22 @@ In graded display meshes, this created a **2.14× artificial stiffness
 discontinuity** inside the hinge zone, concentrating curvature into fine
 bands and causing spurious yielding (`pet_elastic_after.png`). `Q4_EAS`
 (Enhanced Assumed Strain) completely resolves shear locking (bending stiffness
-independent of aspect ratio within 0.3%). Consequently, `pet_element_type = "Q4_EAS"`
-in `dispsolver/fold_model_config.py` is the canonical element formulation for PET layers.
+independent of aspect ratio within 0.3%) — **but this AR sweep was measured
+on an AXIS-ALIGNED reference element only**. It does not by itself say
+anything about a rotated reference (see §4.14's F6 finding: before the
+2026-09-08 transpose fix, the identical AR sweep at a 30° or 45° rotated
+reference gave errors up to 195×, invisible here specifically because
+this measurement never rotated the reference). Do not cite this 0.3%
+figure as evidence of large-rotation/UL correctness — it only ever
+covered the small-rotation-per-increment TL-like case.
+
+Note: `dispsolver/fold_model_config.py`'s actual `pet_element_type`
+default is `"Q4_COROTATIONAL_SRI"`, not `"Q4_EAS"` — the sentence above
+describing `Q4_EAS` as canonical for PET is **stale** (PET/GLASS moved to
+the SRI device after this finding; see §4.14 and
+`dev_log/plan_abaqus_element_consolidation_20260908.md` for the
+in-progress work to migrate them onto a corrected `CPE4I` instead, since
+SRI's own shear sampling is not frame-invariant either — §4.14).
 
 ### 4.2 Co-rotational Q4 element was silently dead code
 `mesh.add_element(..., "Q4_COROTATIONAL", ...)` **does nothing** —
@@ -777,6 +791,114 @@ without reading this):
 If picked up: implement the skip, then run the full ex12 solve with
 `sanity_report()` enabled every step (as `ex12_rigid_plate_display_fold_corotational.py`
 already does, §4.9) before trusting any speedup number.
+
+### 4.13 Fundamental FEA Rules: Prescribed BCs and Large Rotation Tie Re-projection
+
+**Context & Lessons Learned (2026-09-06)**:
+Attempting to enforce prescribed essential BCs (such as RBE2 rigid body rotation angles) using unscaled/fixed penalty springs or maintaining static ($t=0$) tie projections during large rotation analysis causes catastrophic physical drift (e.g. Left plate $-116^\circ$ vs Right plate $-33^\circ$, tie detachment).
+
+**Mandatory Rules for Solver Maintenance**:
+1. **Essential BCs (Master Rotations / Kinematic Drives)**:
+   - Prescribed rotation/displacement BCs MUST be enforced via exact Dirichlet boundary conditions ($R_{\text{ext}} = \theta_{\text{target}} - u_{\text{actual}}$) or exact matrix condensation.
+   - Fixed, unscaled penalty springs MUST NEVER be used for essential BCs because multi-layer bending reaction moments ($M_{\text{reaction}}$) will deform the spring, causing large rotational errors ($\Delta \theta = M_{\text{reaction}} / K_\theta$).
+2. **Surface Tie under Large Rotation (Updated Lagrangian)**:
+   - In Updated Lagrangian mode (`ul_large_rotation_mode = True`), `SurfaceTieConstraint.reproject_deformed(u)` MUST be called at the start of every Newton-Raphson assembly. Static initial projections ($\xi_0$) are invalid when surface normal/tangent vectors rotate during 90°+ folding.
+3. **Continuous Real-time Validation**:
+   - Always print `[MONITOR]` log metrics (Target vs Actual rotation angles in `deg`, plate tip Y positions) to verify 0.00° rotation desync and 100% tie node retention during solve.
+
+### 4.14 [CRITICAL] Axis-aligned-only element tests cannot detect a frame-covariance defect — F4/F5/F6, and why NLGEOM replaced the global `ul_mode` flag
+
+**2026-09-08 finding, three bugs deep, all live in production simultaneously.**
+This is the generalizable lesson (belongs next to §4.9's "convergence
+success is not proof of physical correctness"): **every element
+verification in this codebase before this date was performed on
+axis-aligned reference geometry only** — patch tests, the §4.1 AR sweep,
+every unit test. Two of the three bugs below are *exactly* invisible on
+axis-aligned elements and only activate once the reference configuration
+itself rotates (Updated Lagrangian, `ul_large_rotation_mode = True`,
+which is the default and is exactly what a multi-step fold does to its
+own reference after a few increments).
+
+- **F4 — missing PK2 work-conjugacy push-forward.** UL kernels contracted
+  the material's PK2 (referred to the ORIGINAL config, from the TOTAL
+  deformation gradient) directly with `B_L(F_inc)`/`w=detJ` built on the
+  step-n config — different reference frames, not work-conjugate. Fix:
+  `S_n = F_n S F_n^T / det(F_n)` before contraction (identity when
+  `F_n = I`, so TL was always fine — the bug needed a genuine UL state to
+  show at all). Measured up to 24.9% internal-force error. Fixed in
+  `q4_visco_simo_fs_jax.py`, `q4_visco_eas_jax.py` (both branches),
+  `q4_visco_hybrid_reduced_jax.py`, and their Numba mirrors.
+- **F5 — `_ul_F_n` compounded within a Newton step.** `dynamic.py` wrote
+  the UL reference deformation gradient on EVERY assembly call instead of
+  only on convergence, so a second Newton iteration in the same step
+  evaluated `F_inc @ (F_inc @ F_n_conv)`. Masked by the viscoelastic path
+  converging in ~1 iteration/step; would have been active immediately for
+  any element needing several iterations. Fixed by removing the 5
+  per-iteration writes; the commit-time resync (already existed) is now
+  the sole write.
+- **F6 — EAS enhanced-mode transpose (the severe one).** The Simo-Rifai
+  incompatible-mode construction used `D_k @ J0^{-1}` where the pull-back
+  requires `D_k @ J0^{-T}` — an index-TYPE mismatch (`inv(J0)` has rows
+  spatial / cols natural; `D_k`'s second index is natural). For an
+  axis-aligned element `J0` is diagonal, so `J0^{-1} == J0^{-T}` and the
+  bug is **exactly** invisible — which is why §4.1's own AR sweep (and
+  every patch test) never caught it. Once the UL reference rotates
+  mid-fold, measured bending-stiffness ratio (1.000 = exact) at the real
+  free-span geometries:
+
+      ref rotation:   0°     10°     20°     30°     45°     60°     75°   90°
+      AR 7   before: 1.000  9.738   0.749   3.936  11.419  10.744  3.910  1.000
+      AR 14  before: 1.000  9.105   5.326  25.774  48.194  40.089 13.908  1.000
+      AR 28  before: 1.000  1.438  46.230 125.287 195.218 153.864 52.284  1.000
+
+  Peak **195×**, and non-monotonic (25% too SOFT at one point, not just
+  stiff) — so no single "runs a bit stiff" symptom ever pointed at it
+  either. Fixed in all 5 copies (`q4_eas_jax.py`, `q4_eas.py`,
+  `q4_eas_numba.py`, `q4_visco_eas_numba.py`'s hand-expanded form) —
+  after the fix, exactly 1.000 at every angle and aspect ratio, and
+  global-axis isotropy (whole-problem rotation, reference AND
+  displacement together — a stricter, more diagnostic test than a
+  superposed-rotation-only canary) goes from ~1e-1 to ~1e-12. **Do not
+  reintroduce `D_k @ J0^{-1}`** — see `q4_eas_jax.py::_enhanced_grad_modes`'s
+  docstring for the full derivation.
+- **`Q4_COROTATIONAL_SRI`'s shear sampling has the SAME class of defect
+  and is NOT fixed** — it samples the shear strain as the raw Cartesian
+  off-diagonal of `dU/dX`, which is not a frame-invariant quantity at
+  all (unlike EAS, which was fixable in place). Measured isotropy error
+  3.6e-2 to 1.6e-1, and — checked directly — bit-identical between
+  `Q4_SRI` and `Q4_COROTATIONAL_SRI`, because the co-rotational wrapper
+  only removes the RELATIVE (deformation-induced) rotation and leaves the
+  element's absolute orientation intact. **This element is only correct
+  on a Total-Lagrangian path with an axis-aligned mesh**, which is
+  exactly and *only* how `dynamic.py` has ever dispatched it (it accepts
+  `F_n_gps` but never uses it). See the warning docstring on
+  `q4_sri_jax.py::_F_sri`.
+
+**Structural fix: `nlgeom` replaces the global `ul_mode` switch.**
+A single flag applied blindly to every element is how F6 stayed live —
+nothing stopped `Q4_COROTATIONAL_SRI` from being routed onto a rotated
+reference it cannot handle. `DynamicSolver(nlgeom=...)` is now the
+user-facing switch (Abaqus-style: NLGEOM on/off, not TL/UL picked by
+hand); each element's actual large-deformation treatment is decided per
+pid by `_use_ul_for(pid)` against the `_ELEMENT_LARGE_DEF` table in
+`dynamic.py`, which declares `supports_ul`/`frame_invariant`/a reason for
+every recognized element type. An element type missing from the table is
+refused UL by default — a new element can never be silently opted into a
+formulation it hasn't been shown to support. Call
+`solver.element_large_deformation_report()` to see what NLGEOM actually
+resolves to per pid. `ul_mode`/`ul_large_rotation_mode` remain as
+deprecated aliases.
+
+**If you add a new element or touch an existing kernel's kinematics:**
+verify it on a TILTED or off-axis reference configuration, not just an
+axis-aligned rectangle — a rotated-reference sweep and a whole-problem
+(reference + displacement together) global-axis isotropy check are now
+the standard, alongside the existing rigid-rotation canary (which by
+itself is insufficient: it passed for every one of these three bugs).
+See `tests/test_cpe4_element.py` for the pattern, and
+`dev_log/plan_abaqus_element_consolidation_20260908.md` for the full
+investigation and the ongoing element-by-element Abaqus 1:1 audit this
+finding is part of.
 
 ---
 
