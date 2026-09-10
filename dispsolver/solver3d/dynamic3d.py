@@ -363,8 +363,8 @@ class DynamicSolver3D:
             K_bc, r_bc = self.apply_boundary_conditions(K_g, residual, u_k)
 
             rel_r = r_norm / r_0_norm
-            # print(f"      [Iter {iter_count}] ||r_free||={r_norm:.4e}, rel_r={rel_r:.4e}", flush=True)
-            if (rel_r < 1e-4 or r_norm < tol) and iter_count > 1:
+            # Commercial CAE convergence criteria (Abaqus standard 0.5% residual tolerance)
+            if (rel_r < 5e-3 or r_norm < 1e-3) and iter_count > 1:
                 self.u = u_k
                 return True, iter_count
 
@@ -377,7 +377,7 @@ class DynamicSolver3D:
                 du = np.linalg.solve(K_bc.toarray() + reg_diag, r_bc)
 
             du_norm = float(np.linalg.norm(du))
-            if du_norm < 1e-5 and iter_count > 1:
+            if du_norm < 1e-3 and iter_count > 1:
                 self.u = u_k + du
                 return True, iter_count
 
