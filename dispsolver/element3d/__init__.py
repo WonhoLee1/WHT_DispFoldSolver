@@ -14,6 +14,12 @@ from .c3d8_fbar_numba import compute_c3d8_fbar_element_numba, assemble_mesh_c3d8
 from .c3d4_anp_numba import compute_c3d4_anp_element_numba, assemble_mesh_c3d4_anp_numba
 from .c3d10m_numba import compute_c3d10m_element_numba, assemble_mesh_c3d10m_numba
 
+from .c3d8_corotational_numba import (
+    compute_c3d8_corotational_element_umat_numba,
+    assemble_mesh_c3d8_corotational_numba,
+    compute_element_rotation_3d
+)
+
 __all__ = [
     "SolidElement3D",
     "QuadraturePointState3D",
@@ -31,4 +37,7 @@ __all__ = [
     "assemble_mesh_c3d4_anp_numba",
     "compute_c3d10m_element_numba",
     "assemble_mesh_c3d10m_numba",
+    "compute_c3d8_corotational_element_umat_numba",
+    "assemble_mesh_c3d8_corotational_numba",
+    "compute_element_rotation_3d",
 ]
