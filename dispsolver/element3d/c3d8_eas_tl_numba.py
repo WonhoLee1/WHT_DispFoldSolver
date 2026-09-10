@@ -380,7 +380,6 @@ def assemble_mesh_c3d8_eas_tl_numba(
     if len(args) == 1 and isinstance(args[0], np.ndarray) and args[0].ndim == 2:
         C_mat = args[0]
         n_elems = elem_conn.shape[0]
-    has_error = 0
         elem_mat_types = np.full(n_elems, MAT_CUSTOM_ELASTIC, dtype=np.int32)
         elem_props = np.zeros((n_elems, 36), dtype=np.float64)
         cmat_flat = C_mat.ravel()

@@ -234,8 +234,10 @@ class DynamicSolver3D:
                     shape=(self.num_dofs, self.num_dofs)
                 )
                 return K_global, f_int_global, has_error
-            except Exception:
-                pass  # Fall back to standard element-by-element assembly if fastpath fails
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                print("Fastpath failed! Falling back to python loop.")
 
         nid_map = self.mesh.node_id_to_index()
 
@@ -380,7 +382,7 @@ class DynamicSolver3D:
                 if r_t_norm < best_r_norm:
                     best_r_norm = r_t_norm
                     best_u = u_trial
-                if r_t_norm <= r_norm:
+                if r_t_norm <= max(r_norm, 1e-4 * r_0_norm, 1e-6):
                     best_u = u_trial
                     break
                 s *= 0.5
