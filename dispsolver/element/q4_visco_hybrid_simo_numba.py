@@ -50,6 +50,10 @@ if HAS_NUMBA:
     _AB_C = np.array([0.5, 1.0 / 20.0, 11.0 / 1050.0, 19.0 / 7000.0,
                        519.0 / 673750.0], dtype=np.float64)
 
+    # sqrt(2^-52) -- the forward-difference step scale that balances
+    # truncation against roundoff. See compute_visco_hybrid_simo_single_numba.
+    _SQRT_EPS = 1.4901161193847656e-08
+
     _GP2 = np.array([
         [-1.0 / np.sqrt(3.0), -1.0 / np.sqrt(3.0)],
         [ 1.0 / np.sqrt(3.0), -1.0 / np.sqrt(3.0)],
@@ -296,7 +300,7 @@ if HAS_NUMBA:
         base_code: int, coords: np.ndarray, u_elem: np.ndarray,
         state_elem: np.ndarray, kappa: float, bparams: np.ndarray,
         g_i: np.ndarray, tau_i: np.ndarray, g_inf: float, dt: float,
-        thickness: float, h: float = 1e-6,
+        thickness: float, h: float = 0.0,
     ):
         """F-bar Arruda-Boyce/Yeoh/Neo-Hookean + Prony/WLF Q4 hybrid element.
 
@@ -312,22 +316,65 @@ if HAS_NUMBA:
         Arruda-Boyce material, so they cannot be dropped the way the
         codebase's established modified-Newton precedent (AGENTS.md §4.4)
         drops them for the plasticity-based elements.
+
+        Step size (2026-09-10 fix). `h` used to default to a FIXED ABSOLUTE
+        1e-6, which is not mesh-invariant: a forward difference's truncation
+        error is O(h * f''), so relative to K it scales as h / L_elem and
+        therefore DOUBLES on every uniform mesh refinement. Measured against
+        the exact JAX tangent on Cook's membrane (near-incompressible,
+        K/mu = 10000), assembling both backends at the identical u = 0:
+
+            n (elem/side)     4         8        16        32
+            L_elem         ~12       ~6.0      ~3.0      ~1.5
+            ||dK||/||K||   9.3e-8    1.7e-7    3.3e-7    6.5e-7   <- exactly 2x
+            asym(K_numba)  1.4e-7    2.7e-7    5.2e-7    1.0e-6
+            asym(K_jax)    2.2e-16   3.4e-16   6.1e-16   1.2e-15
+
+        (`f_int` itself agreed to 2e-16 at every n -- the force kernel was
+        never in question, only the differencing.) At n=32 the worst single
+        entry was already 0.5% off and the tangent had lost symmetry, and
+        that mesh is where `elem_jit='numba'` blew up on the FIRST increment
+        (element inversion, detF < 0, "stalled at t=0.0000, cutbacks=16")
+        while `elem_jit='jax'` solved it in zero cutbacks.
+
+        `h = 0.0` now means "choose per column", the standard forward-
+        difference step of Dennis & Schnabel, *Numerical Methods for
+        Unconstrained Optimization and Nonlinear Equations* (1983) sec 5.4:
+        ``h_j = sqrt(eps_mach) * max(|u_j|, L_elem)``. That balances
+        truncation against roundoff at ~sqrt(eps) ~ 1.5e-8 RELATIVE,
+        independently of mesh size and units. Pass an explicit positive `h`
+        to force the old fixed-step behaviour.
         """
         f0, state_new = _internal_force_numba(
             base_code, u_elem, coords, state_elem, kappa, bparams,
             g_i, tau_i, g_inf, dt, thickness,
         )
 
+        # Element characteristic length: the longer diagonal, which is a
+        # rotation-invariant size measure (a bounding-box extent is not).
+        d1 = np.sqrt((coords[2, 0] - coords[0, 0]) ** 2
+                     + (coords[2, 1] - coords[0, 1]) ** 2)
+        d2 = np.sqrt((coords[3, 0] - coords[1, 0]) ** 2
+                     + (coords[3, 1] - coords[1, 1]) ** 2)
+        L_elem = max(d1, d2)
+        if L_elem < 1e-30:
+            L_elem = 1e-30
+
         K_e = np.zeros((8, 8), dtype=np.float64)
         for j in range(8):
+            if h > 0.0:
+                hj = h
+            else:
+                uj = abs(u_elem[j])
+                hj = _SQRT_EPS * (uj if uj > L_elem else L_elem)
             u_pert = u_elem.copy()
-            u_pert[j] += h
+            u_pert[j] += hj
             f_pert, _ = _internal_force_numba(
                 base_code, u_pert, coords, state_elem, kappa, bparams,
                 g_i, tau_i, g_inf, dt, thickness,
             )
             for i in range(8):
-                K_e[i, j] = (f_pert[i] - f0[i]) / h
+                K_e[i, j] = (f_pert[i] - f0[i]) / hj
 
         return f0, K_e, state_new
 

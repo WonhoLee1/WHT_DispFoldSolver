@@ -413,8 +413,11 @@ def _residuals_h(base, u_elem, q, coords, state_elem, kappa, bparams,
         gX, gY, detJ = _grads(xi, eta, coords)
         w = detJ * _W2[gp] * thickness
 
-        F_inc = _F_at(gX, gY, u_elem)
-        F = F_inc @ F_n[gp] + jnp.einsum('j,jab->ab', alpha, Fenh_all[gp])
+        # Enhancement in the INCREMENTAL frame -- same 2026-09-10 change as
+        # `_residuals`; see the long note there.
+        F_inc_c = _F_at(gX, gY, u_elem)
+        F_inc = F_inc_c + jnp.einsum('j,jab->ab', alpha, Fenh_all[gp])
+        F = F_inc @ F_n[gp]
         J = F[0, 0] * F[1, 1] - F[0, 1] * F[1, 0]
 
         # deviatoric/isochoric + viscoelastic overstress only (kappa = 0)
@@ -427,28 +430,39 @@ def _residuals_h(base, u_elem, q, coords, state_elem, kappa, bparams,
         S_vol = p * J * jnp.array([Cinv[0, 0], Cinv[1, 1], Cinv[0, 1]])
         S_tot = S_v + S_vol
 
-        # Work-conjugacy push-forward -- same bug/fix as `_residuals` above
-        # and q4_visco_simo_fs_jax.py's `_internal_force` (finding F4):
-        # S_tot is referred to the ORIGINAL config (computed from the
-        # TOTAL F); BL/w below are step-n quantities. Push forward before
-        # contracting with BL (f_a keeps the un-pushed S_tot -- its own G
-        # operator is already built from the total F, not F_inc, so it
-        # does not have this specific mismatch; out of scope here).
+        # Work-conjugacy push-forward onto config n (finding F4), applied to
+        # EVERY term of the two-field functional so that
+        #   Pi = int [ W_iso + p(J-1) - p^2/(2K) ] dV0
+        # is differentiated once, consistently: `S_n`/`w` for the two stress
+        # residuals and `w0 = w/det(F_n)` for the pressure row (dV0 = dV_n /
+        # det F_n). Previously `f_u` used the pushed S_n while `f_a` used the
+        # raw S_tot and `r_p` integrated on config n, so the three rows
+        # belonged to three different functionals and the `K_qu = K_uq^T`
+        # assumed by the condensation below was false: measured 5.2e-3 (TL)
+        # and 5.4e-1 (UL, 25 deg reference rotation) for CPE4IH, with the
+        # condensed tangent 4.7e-3 / 1.8e-1 away from a finite-difference
+        # d f_e/d u. CPE4H (use_eas=False) was exact in TL -- with alpha
+        # frozen at 0 the enhanced half of the mismatch disappears -- which
+        # is why this never showed up in the TL patch tests.
         Fn_gp = F_n[gp]
         S0_tensor = jnp.array([[S_tot[0], S_tot[2]], [S_tot[2], S_tot[1]]])
         detFn = jnp.maximum(jnp.abs(Fn_gp[0, 0] * Fn_gp[1, 1] - Fn_gp[0, 1] * Fn_gp[1, 0]), 1e-30)
         Sn_tensor = (Fn_gp @ S0_tensor @ Fn_gp.T) / detFn
         S_n_voigt = jnp.array([Sn_tensor[0, 0], Sn_tensor[1, 1], Sn_tensor[0, 1]])
+        w0 = w / detFn
 
+        # BL and G both from the ENHANCED incremental gradient (BL used to be
+        # built from the compatible F_inc_c, dropping the alpha-dependent half
+        # of dE_inc/du).
         BL = _BL_columns(F_inc, gX, gY)
-        f_u = f_u + BL.T @ S_n_voigt * w
-
-        FtFe = jnp.einsum('ba,jbc->jac', F, Fenh_all[gp])
+        FtFe = jnp.einsum('ba,jbc->jac', F_inc, Fenh_all[gp])
         G = jnp.stack([_voigt_sym(FtFe[j]) for j in range(4)], axis=1)
-        f_a = f_a + G.T @ S_tot * w
 
-        r_p = r_p + (J - 1.0) * w
-        vol = vol + w
+        f_u = f_u + BL.T @ S_n_voigt * w
+        f_a = f_a + G.T @ S_n_voigt * w
+
+        r_p = r_p + (J - 1.0) * w0
+        vol = vol + w0
         state_new = state_new.at[gp].set(h_new)
         F_n_new = F_n_new.at[gp].set(F)
 

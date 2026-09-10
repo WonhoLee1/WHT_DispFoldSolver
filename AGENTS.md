@@ -900,6 +900,64 @@ See `tests/test_cpe4_element.py` for the pattern, and
 investigation and the ongoing element-by-element Abaqus 1:1 audit this
 finding is part of.
 
+### 4.15 [CRITICAL] §4.14's F4 file list was incomplete, and a PARTIAL F4 fix is worse than none — check the tangent against a finite difference, and check every symmetry the condensation *assumes*
+
+**2026-09-10.** Two official Abaqus benchmark reproductions
+(`verification/abaqus_benchmarks/nlgeo_cantilever.py`, `verification/abaqus_benchmarks/cook_membrane.py`) were
+both failing outright, for four different reasons — all the same class as
+F4/F6, all invisible on axis-aligned/TL references. Full write-up with the
+measurements: `dev_log/eas_frame_consistency_benchmarks_20260910.md`.
+
+- **`q4_eas_jax.py` was never F4-fixed at all.** §4.14 lists the files that
+  got the push-forward; `q4_eas_jax.py` is not among them and was missed.
+  Under UL its `K_aa` was therefore **not** the Jacobian of its own
+  `f_alpha` — measured **97.6%** relative error against a finite-difference
+  Jacobian on the real failing element (39° accumulated reference
+  rotation), with the true Jacobian **151% asymmetric** (complex
+  eigenvalues — so `f_alpha` was not the gradient of any potential). Error
+  is **exactly zero** at `F_n = I`. Fixed by `_push_forward()`, which
+  pushes **both** the stress and the material tangent onto config *n*
+  (`S_n = T^T S/det F_n`, `C_n = T^T C T/det F_n`). After: `4.6e-10`, and
+  the element-local Newton converges quadratically in 2 iterations instead
+  of wandering forever.
+- **A PARTIAL push-forward silently invalidates the static condensation.**
+  `q4_visco_eas_jax.py` had F4 applied to `f_u` but deliberately *not* to
+  `f_a` ("out of scope here", per its own comment). That made `f_u` and
+  `f_a` gradients of two different functionals, so `K_au = K_ua^T` — which
+  `compute_single_eas_status` **assumes**, above a comment claiming
+  "verified to 1.8e-15" — was false by 4.0e-2 (TL) and 7.8e-2 (UL), leaving
+  the condensed tangent 3.0e-2 / **1.28** away from a finite-difference
+  `df_e/du`. That is what collapsed the *global* Newton line search while
+  the element-local Newton still reported convergence. The hybrid u-p path
+  (`_residuals_h`, CPE4H/CPE4IH — **the element the display fold uses for
+  its PSA layers**) had the same split plus `r_p` integrated on config *n*:
+  CPE4IH measured **54% asymmetric with an 18%-wrong condensed tangent**
+  under UL. Both fixed by moving the enhancement into the incremental frame
+  and taking one push-forward for the whole Gauss point.
+- **A fixed absolute finite-difference step is a latent mesh-refinement
+  bug.** `q4_visco_hybrid_simo_numba.py` built its element tangent by
+  forward difference with `h = 1e-6` **absolute**. Truncation error relative
+  to `K` scales as `h/L_elem`, so it **doubles on every uniform
+  refinement**: measured 9.3e-8 / 1.7e-7 / 3.3e-7 / 6.5e-7 at n=4/8/16/32
+  of Cook's membrane (matching the predicted `h/L` to within 3%), while
+  `f_int` agreed with JAX to 2e-16 throughout. At n=32 that killed the very
+  first Newton step. Replaced with the standard per-column
+  `h_j = sqrt(eps)·max(|u_j|, L_elem)` (Dennis & Schnabel 1983 §5.4), now
+  flat at 2.4-2.8e-8 across a factor-8 range of element sizes.
+  **Four sibling Numba kernels still carry the same `h = 1e-6`**
+  (`q4_plastic_numba.py`, `q4_visco_eas_numba.py`,
+  `q4_visco_hybrid_reduced_numba.py`, `q4_visco_hybrid_up_numba.py`) — not
+  changed, because no current benchmark exercises them.
+
+**The standing test to add on top of §4.14's rotated-reference sweep:**
+> Verify the element's tangent **is** the Jacobian of the element's own
+> residual, by finite difference, **on a rotated reference** — and for any
+> condensed or mixed element verify every symmetry the condensation relies
+> on (`K_au = K_ua^T`, `K_qu = K_uq^T`) rather than trusting a comment that
+> says it was checked. Both defects above were introduced *by* a previous
+> partial fix, and a stale "verified" comment survived the change that
+> falsified it.
+
 ---
 
 ## 5. Where things live
