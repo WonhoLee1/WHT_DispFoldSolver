@@ -40,9 +40,13 @@ Controls, all read once at import time:
   confirming every machine that will load the cache has an identical CPU
   feature set to the one that built it (e.g. a homogeneous deployment
   fleet), or accept the SIGILL risk knowingly.
-- `DISPFOLD_CACHE_VERSION` (default "v5", bumped from "v4" on 2026-09-09 for
-  the removal of the `_ALPHA_MAX` magnitude clamp and the new element-local
-  convergence `status` return in q4_visco_eas_numba.py / q4_eas_numba.py;
+- `DISPFOLD_CACHE_VERSION` (default "v6", bumped from "v5" on 2026-09-10 for
+  the mesh-invariant forward-difference step in
+  q4_visco_hybrid_simo_numba.py's `compute_visco_hybrid_simo_single_numba`
+  (fixed absolute h=1e-6 -> per-column sqrt(eps)*max(|u_j|, L_elem), plus the
+  new module-level `_SQRT_EPS`); "v4"->"v5" on 2026-09-09 was the removal of
+  the `_ALPHA_MAX` magnitude clamp and the new element-local convergence
+  `status` return in q4_visco_eas_numba.py / q4_eas_numba.py;
   "v3"->"v4" on 2026-09-08 was the `_ALPHA_MAX` 0.05->0.5 raise, "v2"->"v3"
   same day the F6 EAS transpose fix, and "v1"->"v2" before that):
   a manual cache-busting tag. The cache directory path includes this
@@ -77,7 +81,7 @@ import functools
 
 _CACHE_ENABLED = os.environ.get("DISPFOLD_JIT_CACHE", "1") not in ("0", "false", "False")
 _JAX_CACHE_ENABLED = os.environ.get("DISPFOLD_JAX_CACHE", "0") not in ("0", "false", "False")
-_CACHE_VERSION = os.environ.get("DISPFOLD_CACHE_VERSION", "v5")
+_CACHE_VERSION = os.environ.get("DISPFOLD_CACHE_VERSION", "v6")
 
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 _CACHE_ROOT = os.path.join(_REPO_ROOT, ".cache")

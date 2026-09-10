@@ -2482,8 +2482,6 @@ class DynamicSolver:
                 du_all = _D @ du_all_eq  # unscale
                 self.t_linear_solve += (time.time() - t_sol_0)
 
-            if os.environ.get("DEBUG_DU_PRINT"):
-                print(f"[DEBUG_DU] max|du_all|={np.max(np.abs(du_all)):.6e} at max idx {np.argmax(np.abs(du_all))}", flush=True)
             # Check if search direction has NaN or Inf
             if np.any(np.isnan(du_all) | np.isinf(du_all)):
                 if getattr(self, 'verbose', False):
@@ -3986,13 +3984,6 @@ class DynamicSolver:
                     self._eas_local_status[elem_indices] = np.asarray(st_all)
                 elif self._pid_element_type(pid) in _VISCO_EAS_TYPES:
                     alpha_b = jnp.asarray(self.eas_alpha[elem_indices])
-                    if os.environ.get("DEBUG_VISCO_EAS_DUMP"):
-                        import numpy as _npd
-                        _npd.savez(os.environ["DEBUG_VISCO_EAS_DUMP"],
-                                   coords_b=_npd.asarray(coords_b), u_b=_npd.asarray(u_b),
-                                   alpha_b=_npd.asarray(alpha_b), state_b=_npd.asarray(state_b),
-                                   Fn_b=_npd.asarray(Fn_b), dt_h=_npd.asarray(dt_h), t_b=_npd.asarray(t_b))
-                        print(f"[DEBUG_VISCO_EAS_DUMP] saved {len(elem_indices)} elems", flush=True)
                     f_es, K_es, alpha_all, se_all, Fn_new, st_all = _vmap(
                         coords_b, u_b, alpha_b, state_b, dt_h, t_b, Fn_b)
                     self.eas_alpha[elem_indices] = np.asarray(alpha_all)
@@ -4168,16 +4159,6 @@ class DynamicSolver:
                         self.state[elem_indices, :, :n_vars]
                     ) if self.state is not None else jnp.zeros((Ng, 4, n_vars))
                     t_b = jnp.asarray(self._elem_thickness[elem_indices])
-
-                    if os.environ.get("DEBUG_EAS_DUMP"):
-                        import numpy as _npd
-                        _mat = mat_adapter.material
-                        _npd.savez(os.environ["DEBUG_EAS_DUMP"],
-                                   coords_b=_npd.asarray(coords_b), u_b=_npd.asarray(u_b),
-                                   alpha_b=_npd.asarray(alpha_b), state_b=_npd.asarray(state_b),
-                                   F_n_b=_npd.asarray(F_n_b), lam=float(_mat.lam), mu=float(_mat.mu),
-                                   sigma_y0=float(_mat.sigma_y0), H=float(_mat.H), t_b=_npd.asarray(t_b))
-                        print(f"[DEBUG_EAS_DUMP] saved {Ng} elements to {os.environ['DEBUG_EAS_DUMP']}", flush=True)
 
                     f_es, K_es, alpha_all, se_all, F_n_new, st_all = _vmap_fn(
                         coords_b, u_b, alpha_b, state_b, F_n_b
