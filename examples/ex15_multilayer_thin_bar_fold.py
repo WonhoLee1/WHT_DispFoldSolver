@@ -18,8 +18,6 @@ class AdaptiveDtController:
             return False
         elif iters <= 4:
             self.dt = min(self.dt_max, self.dt * 1.5)
-        elif iters >= 20:
-            self.dt = max(self.dt_min, self.dt * 0.8)
         return True
 
 def create_4layer_thin_bar():
@@ -119,7 +117,7 @@ def main():
             solver.fix_dof(nid, 1, uy)
             solver.fix_dof(nid, 2, 0.0)
             
-    dt_ctrl = AdaptiveDtController(dt_init=0.01)
+    dt_ctrl = AdaptiveDtController(dt_init=0.02)
     t = 0.0
     t_end = 1.0
     target_theta_max = np.deg2rad(90.0) # 90 degrees each side -> U-shape 180 total
@@ -165,6 +163,27 @@ def main():
                 break
 
     print("Simulation completed.")
+    
+    # Save results
+    res_path = "examples/ex15_result.pkl"
+    print(f"Saving results to {res_path}...")
+    import pickle
+    result_data = {
+        'mesh': mesh,
+        'displacement': solver.u.copy(),
+        'history': solver.history_u if hasattr(solver, 'history_u') else [solver.u.copy()]
+    }
+    with open(res_path, 'wb') as f:
+        pickle.dump(result_data, f)
+    print("Result saved successfully.")
+    
+    # Trigger visualization
+    try:
+        from examples.ex15_visualize_multilayer import main as run_viz
+        print("Generating visualizations...")
+        run_viz()
+    except Exception as e:
+        print(f"Visualization error: {e}")
 
 if __name__ == "__main__":
     main()
