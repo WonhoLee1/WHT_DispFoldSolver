@@ -13,11 +13,13 @@ class AdaptiveDtController:
         self.dt_max = dt_max
     
     def adjust_dt(self, converged: bool, iters: int):
-        if not converged or iters > 12:
+        if not converged:
             self.dt = max(self.dt_min, self.dt * 0.25)
-            return False # Need cutback
-        elif iters < 4:
+            return False
+        elif iters <= 4:
             self.dt = min(self.dt_max, self.dt * 1.5)
+        elif iters >= 20:
+            self.dt = max(self.dt_min, self.dt * 0.8)
         return True
 
 def create_4layer_thin_bar():
@@ -61,7 +63,7 @@ def create_4layer_thin_bar():
                 # PID 0: PET (Elastic-Plastic), PID 1: PSA (Hyperelastic), etc.
                 pid = 0 if j % 2 == 0 else 1
                 
-                elem = mesh.add_element(eid, [n0, n1, n2, n3, n4, n5, n6, n7], "C3D8_FBAR")
+                elem = mesh.add_element(eid, [n0, n1, n2, n3, n4, n5, n6, n7], "C3D8_CR")
                 elem.pid = pid
                 eid += 1
                 

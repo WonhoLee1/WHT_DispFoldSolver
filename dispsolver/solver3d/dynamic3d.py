@@ -70,6 +70,7 @@ class DynamicSolver3D:
 
         # Prescribed Dirichlet BCs: dict of {global_dof_index: prescribed_value}
         self.fixed_dofs: Dict[int, float] = {}
+        self.last_assembly_error: int = 0
 
         # Default Material Matrix C (Isotropic 3D)
         E = material_params.get("E", 200000.0)
@@ -183,7 +184,7 @@ class DynamicSolver3D:
         global_dof = 3 * nid_map[node_id] + dof_axis
         self.set_dirichlet_bc(global_dof, value)
 
-    def assemble_system(self, u_vec: np.ndarray, dt: float = 1.0) -> Tuple[csc_matrix, np.ndarray, int]:
+    def assemble_system(self, u_vec: np.ndarray, dt: float = 1.0, return_error: bool = False):
         """Assemble global 3D stiffness matrix K_global and internal force vector f_int."""
         node_coords_all = self.mesh.nodes_array()
 
@@ -198,6 +199,12 @@ class DynamicSolver3D:
                         node_coords_all, self.elem_conn_0based, u_vec,
                         self.elem_mat_types, self.elem_props, self.elem_sdvs, dt
                     )
+                elif elem_type_upper in ["C3D8_CR", "C3D8_COROTATIONAL", "C3D8_FBAR_CR"]:
+                    from dispsolver.element3d.c3d8_corotational_numba import assemble_mesh_c3d8_corotational_numba
+                    f_elems, K_elems, has_error = assemble_mesh_c3d8_corotational_numba(
+                        node_coords_all, self.elem_conn_0based, u_vec,
+                        self.elem_mat_types, self.elem_props, self.elem_sdvs, dt
+                    )
                 else:
                     from dispsolver.element3d.c3d8_fbar_tl_numba import assemble_mesh_c3d8_fbar_tl_numba
                     f_elems, K_elems, has_error = assemble_mesh_c3d8_fbar_tl_numba(
@@ -205,6 +212,7 @@ class DynamicSolver3D:
                         self.elem_mat_types, self.elem_props, self.elem_sdvs, dt
                     )
 
+                self.last_assembly_error = has_error
                 f_int_global = np.zeros(self.num_dofs, dtype=np.float64)
                 scatter_f_int_3d(f_elems, self.elem_conn_0based, f_int_global)
 
@@ -213,7 +221,9 @@ class DynamicSolver3D:
                         (K_elems.ravel(), (self.rows_topo, self.cols_topo)),
                         shape=(self.num_dofs, self.num_dofs)
                     )
-                    return K_global, f_int_global, has_error
+                    if return_error:
+                        return K_global, f_int_global, has_error
+                    return K_global, f_int_global
 
                 # If surface tie or MPC constraints exist, append their contributions efficiently
                 rows_all = [self.rows_topo]
@@ -233,7 +243,9 @@ class DynamicSolver3D:
                     (np.concatenate(data_all), (np.concatenate(rows_all), np.concatenate(cols_all))),
                     shape=(self.num_dofs, self.num_dofs)
                 )
-                return K_global, f_int_global, has_error
+                if return_error:
+                    return K_global, f_int_global, has_error
+                return K_global, f_int_global
             except Exception as e:
                 import traceback
                 traceback.print_exc()
@@ -294,7 +306,10 @@ class DynamicSolver3D:
             data.extend(data_c)
 
         K_global = csc_matrix((data, (rows, cols)), shape=(self.num_dofs, self.num_dofs))
-        return K_global, f_int_global, 0
+        self.last_assembly_error = 0
+        if return_error:
+            return K_global, f_int_global, 0
+        return K_global, f_int_global
 
     def apply_boundary_conditions(self, K_global: csc_matrix, residual: np.ndarray, u_k: np.ndarray) -> Tuple[csc_matrix, np.ndarray]:
         """Apply Dirichlet boundary conditions via exact diagonal penalty method."""
@@ -330,8 +345,8 @@ class DynamicSolver3D:
 
         for iter_count in range(1, max_iters + 1):
             # print(f"    --> Starting assemble_system iter {iter_count}", flush=True)
-            K_g, f_int, has_error = self.assemble_system(u_k, dt=dt)
-            if has_error > 0:
+            K_g, f_int = self.assemble_system(u_k, dt=dt)
+            if self.last_assembly_error > 0:
                 # Smart Cutback: Element inverted
                 return False, iter_count
             residual = f_ext - f_int
@@ -373,8 +388,8 @@ class DynamicSolver3D:
 
             for _ in range(5):
                 u_trial = u_k + s * du
-                _, f_t, err_t = self.assemble_system(u_trial, dt=dt)
-                if err_t > 0:
+                _, f_t = self.assemble_system(u_trial, dt=dt)
+                if self.last_assembly_error > 0:
                     s *= 0.5
                     continue
                 r_t = f_ext - f_t
