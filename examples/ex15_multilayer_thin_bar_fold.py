@@ -110,10 +110,10 @@ def main():
             n = mesh.nodes[nid]
             dx = n.x - (20.0)
             dy = n.y - cy
-            # Rotate by -theta
-            ux = dx * np.cos(-theta_rad) - dy * np.sin(-theta_rad) - dx
+            # Rotate by -theta (vertical/transverse kinematic rotation)
+            # UX constraint is released so the right end acts as a roller pivot,
+            # freely drawing inward (draw-in) due to bending curvature tension
             uy = dx * np.sin(-theta_rad) + dy * np.cos(-theta_rad) - dy
-            solver.fix_dof(nid, 0, ux)
             solver.fix_dof(nid, 1, uy)
             solver.fix_dof(nid, 2, 0.0)
             
@@ -123,6 +123,9 @@ def main():
     target_theta_max = np.deg2rad(90.0) # 90 degrees each side -> U-shape 180 total
     
     step = 0
+    draw_in_history = []
+    theta_history = []
+    
     while t < t_end:
         step += 1
         
@@ -141,11 +144,15 @@ def main():
         
         apply_kinematic_fold(theta_current)
         
-        print(f"Step {step}: t={t:.3f}, dt={dt_ctrl.dt:.4f}, theta={np.rad2deg(theta_current):.1f} deg")
-        
         t_solve_start = time.perf_counter()
         conv, iters = solver.solve_step(dt=dt_ctrl.dt, max_iters=25)
         t_solve = time.perf_counter() - t_solve_start
+        
+        # Measure draw-in displacement on the right end
+        nid_map = mesh.node_id_to_index()
+        u_draw_in = np.mean([solver.u[3 * nid_map[nid] + 0] for nid in right_nids])
+        
+        print(f"Step {step}: t={t:.3f}, dt={dt_ctrl.dt:.4f}, theta={np.rad2deg(theta_current):.1f} deg | Draw-In UX={u_draw_in:.4f} mm")
         
         if conv:
             print(f"  -> Converged in {iters} iters ({t_solve:.2f}s)")
@@ -153,6 +160,8 @@ def main():
             if not hasattr(solver, 'history_u'):
                 solver.history_u = []
             solver.history_u.append(solver.u.copy())
+            draw_in_history.append(u_draw_in)
+            theta_history.append(np.rad2deg(theta_current))
         else:
             print(f"  -> DIVERGED! Cutback triggered. (Iters={iters}, Time={t_solve:.2f}s)")
             solver.u = u_prev
@@ -163,6 +172,7 @@ def main():
                 break
 
     print("Simulation completed.")
+    print(f"Final Right End Draw-In Displacement: {draw_in_history[-1]:.4f} mm")
     
     # Save results
     res_path = "examples/ex15_result.pkl"
@@ -171,7 +181,9 @@ def main():
     result_data = {
         'mesh': mesh,
         'displacement': solver.u.copy(),
-        'history': solver.history_u if hasattr(solver, 'history_u') else [solver.u.copy()]
+        'history': solver.history_u if hasattr(solver, 'history_u') else [solver.u.copy()],
+        'draw_in_history': draw_in_history,
+        'theta_history': theta_history
     }
     with open(res_path, 'wb') as f:
         pickle.dump(result_data, f)

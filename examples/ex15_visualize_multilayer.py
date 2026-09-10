@@ -44,12 +44,35 @@ def plot_2d_section_slip(mesh, u, out_png):
     plt.savefig(out_png, dpi=300)
     plt.close()
 
-def create_animation(mesh, history, out_gif):
+def plot_draw_in_curve(theta_hist, draw_in_hist, out_png):
+    plt.figure(figsize=(8, 5))
+    total_theta = np.array(theta_hist) * 2.0  # Total combined fold angle (both sides)
+    plt.plot(total_theta, np.abs(draw_in_hist), 'b-o', linewidth=2, markersize=4, label='Right End Draw-In (|Ux|)')
+    
+    plt.title("4-Layer Bar Folding: Right Pivot Draw-In vs Total Fold Angle", fontsize=12)
+    plt.xlabel("Total Fold Angle (deg)", fontsize=10)
+    plt.ylabel("Inward Draw-In Displacement |Ux| (mm)", fontsize=10)
+    plt.grid(True, linestyle='--', alpha=0.6)
+    
+    # Annotate max draw-in
+    max_d = abs(draw_in_hist[-1])
+    plt.annotate(f"Final Draw-In: {max_d:.2f} mm\n(@ 180° Fold)", 
+                 xy=(total_theta[-1], max_d), xytext=(total_theta[-1]-50, max_d-3),
+                 arrowprops=dict(facecolor='black', shrink=0.05, width=1, headwidth=6))
+    
+    plt.legend(loc='upper left')
+    plt.tight_layout()
+    plt.savefig(out_png, dpi=300)
+    plt.close()
+
+def create_animation(mesh, history, theta_hist, draw_in_hist, out_gif):
     fig, ax = plt.subplots(figsize=(10, 6))
     
     def update(frame):
         ax.clear()
         u = history[frame]
+        th = theta_hist[frame] if frame < len(theta_hist) else 90.0
+        d_in = abs(draw_in_hist[frame]) if frame < len(draw_in_hist) else 0.0
         
         for eid, elem in mesh.elements.items():
             nids = elem.node_ids
@@ -72,7 +95,7 @@ def create_animation(mesh, history, out_gif):
             ax.fill(face_x, face_y, color=color, alpha=0.5)
             ax.plot(face_x, face_y, color='black', linewidth=0.3)
             
-        ax.set_title(f"4-Layer Folding Animation (Step {frame+1}/{len(history)})")
+        ax.set_title(f"4-Layer Folding Animation (Step {frame+1}/{len(history)}) | Total Fold: {2*th:.1f}° | Draw-In: {d_in:.2f} mm")
         ax.set_xlabel("X (mm)")
         ax.set_ylabel("Y (mm)")
         ax.axis('equal')
@@ -97,17 +120,25 @@ def main():
     mesh = res['mesh']
     u = res['displacement']
     history = res.get('history', [u])
+    draw_in_hist = res.get('draw_in_history', [])
+    theta_hist = res.get('theta_history', [])
     
     print("Generating 2D Section Plot...")
     plot_2d_section_slip(mesh, u, 'examples/ex15_2d_section_slip.png')
     print("Saved to examples/ex15_2d_section_slip.png")
     
+    if len(draw_in_hist) > 0:
+        print("Generating Draw-In History Plot...")
+        plot_draw_in_curve(theta_hist, draw_in_hist, 'examples/ex15_draw_in_history.png')
+        print("Saved to examples/ex15_draw_in_history.png")
+    
     if len(history) > 1:
         print(f"Generating Animation with {len(history)} frames...")
-        create_animation(mesh, history, 'examples/ex15_folding_animation.gif')
+        create_animation(mesh, history, theta_hist, draw_in_hist, 'examples/ex15_folding_animation.gif')
         print("Saved to examples/ex15_folding_animation.gif")
     else:
         print("No history found in result. Cannot generate animation.")
 
 if __name__ == '__main__':
     main()
+
