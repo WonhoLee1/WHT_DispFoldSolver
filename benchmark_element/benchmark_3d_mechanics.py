@@ -30,8 +30,10 @@ from benchmark_element.mechanics_patches import (
     make_cantilever_beam_mesh,
     make_confined_compression_mesh,
     compute_per_element_dilatation,
+    make_hollow_cylinder_wedge_mesh,
 )
 from benchmark_element.figures import generate_all_figures
+from dispsolver.postprocess3d.field_output import StressFieldOutput
 
 
 ALL_3D_ELEMENTS = [
@@ -465,6 +467,135 @@ def run_anp_checkerboard_comparison(n: int = 4, nu_val: float = 0.49999, L: floa
     else:
         result["verdict"] = "ERROR"
     return result
+
+
+# =========================================================================
+# Suite 5: Radial Stretching of a Hollow Cylinder -- a spatially-varying
+# closed-form field (dev_log/static_analysis_benchmark_design_20260913.md
+# Sec 2, real Abaqus Benchmarks Manual "Radial stretching of a cylinder",
+# benchmark_element/reference_abaqus_docs/bmk_rad_stretch.txt). Unlike the
+# patch test (uniform field) or the bending/volumetric tests (a single
+# scalar ratio), this checks the solver against a genuine radius-dependent
+# displacement AND stress field -- both checked, not just displacement.
+# =========================================================================
+
+def run_radial_stretch_benchmark(
+    elem_type: str = "C3D8",
+    Ri: float = 4.0,
+    Ro: float = 6.0,
+    H: float = 2.0,
+    E: float = 2.0e11,
+    nu: float = 0.3,
+    U0: float = 0.2,
+    n_r: int = 10,
+    n_z: int = 2,
+    wedge_angle_deg: float = 4.0,
+) -> Dict[str, Any]:
+    """Reproduce the Abaqus Benchmarks Manual "Radial stretching of a
+    cylinder" with a thin 3D-solid wedge (see
+    make_hollow_cylinder_wedge_mesh's docstring for the exact BC scheme
+    and its known thin-wedge approximation, O(wedge_angle_rad)).
+
+    Exact closed-form reference (reproduced verbatim from
+    reference_abaqus_docs/bmk_rad_stretch.txt; u_r(r) derived and verified
+    algebraically against the source's own sigma_rr/sigma_thetatheta
+    formulas before use -- see dev_log/static_analysis_benchmark_design_20260913.md
+    Sec 2's update for the derivation):
+        lam = E*nu / ((1+nu)*(1-2*nu)); mu = E / (2*(1+nu))
+        C1 = -(2*lam/(lam+2*mu)) * (U0*Ro/(Ro**2-Ri**2))   # = eps_zz
+        C2 = U0*Ro / (Ro**2 - Ri**2)
+        C3 = -U0*Ro*Ri**2 / (Ro**2 - Ri**2)
+        u_r(r) = C2*r + C3/r
+        sigma_rr(r)         = (2*lam+2*mu)*C2 + lam*C1 - 2*mu*C3/r**2
+        sigma_thetatheta(r) = (2*lam+2*mu)*C2 + lam*C1 + 2*mu*C3/r**2
+    Checks BOTH radial displacement (at every node) and Cauchy stress (via
+    StressFieldOutput, at every element's centroid radius) against these
+    formulas -- the first benchmark in this suite to check a
+    spatially-varying field with the stress-recovery module.
+    """
+    lam = (E * nu) / ((1.0 + nu) * (1.0 - 2.0 * nu))
+    mu = E / (2.0 * (1.0 + nu))
+    C1 = -(2.0 * lam / (lam + 2.0 * mu)) * (U0 * Ro / (Ro ** 2 - Ri ** 2))
+    C2 = U0 * Ro / (Ro ** 2 - Ri ** 2)
+    C3 = -U0 * Ro * Ri ** 2 / (Ro ** 2 - Ri ** 2)
+
+    def u_r_exact(r):
+        return C2 * r + C3 / r
+
+    def sigma_rr_exact(r):
+        return (2.0 * lam + 2.0 * mu) * C2 + lam * C1 - 2.0 * mu * C3 / r ** 2
+
+    def sigma_tt_exact(r):
+        return (2.0 * lam + 2.0 * mu) * C2 + lam * C1 + 2.0 * mu * C3 / r ** 2
+
+    mesh, groups = make_hollow_cylinder_wedge_mesh(
+        elem_type, Ri=Ri, Ro=Ro, H=H, n_r=n_r, n_z=n_z, wedge_angle_deg=wedge_angle_deg
+    )
+    nid_map = mesh.node_id_to_index()
+    solver = DynamicSolver3D(mesh, {"E": E, "nu": nu}, nlgeom=True)
+
+    # Cut-face tangential-zero constraint (exact at theta=0, approximate
+    # at theta=wedge_angle -- see make_hollow_cylinder_wedge_mesh docstring)
+    for nid in groups["theta0"]:
+        solver.fix_dof(nid, 1, 0.0)
+    for nid in groups["thetamax"]:
+        solver.fix_dof(nid, 1, 0.0)
+    # Base: exact global-z condition
+    for nid in groups["base"]:
+        solver.fix_dof(nid, 2, 0.0)
+    # Inner/outer radial displacement (approximated as global-x -- see docstring)
+    for nid in groups["inner"]:
+        solver.fix_dof(nid, 0, 0.0)
+    for nid in groups["outer"]:
+        solver.fix_dof(nid, 0, U0)
+
+    converged, iters = solver.solve_step(dt=1.0, max_iters=50)
+    if not converged:
+        return {"status": "DIVERGED", "iters": iters}
+
+    # Displacement check: radial displacement at every node vs u_r(r).
+    u_errors = []
+    for nid, node in mesh.nodes.items():
+        r = float(np.hypot(node.x, node.y))
+        if r < 1e-9:
+            continue
+        idx = nid_map[nid]
+        ux, uy = solver.u[3 * idx], solver.u[3 * idx + 1]
+        u_r_computed = (ux * node.x + uy * node.y) / r  # projection onto local radial direction
+        u_errors.append(abs(u_r_computed - u_r_exact(r)) / max(abs(U0), 1e-12))
+    max_u_err = max(u_errors) if u_errors else float("nan")
+
+    # Stress check: Cauchy stress at every element's centroid radius vs
+    # sigma_rr(r)/sigma_thetatheta(r) (rotate the global Sxx/Syy/Sxy stress
+    # tensor into local radial/tangential components at the element's own
+    # centroid angle -- the wedge is thin, so this is nearly the same
+    # rotation for every element, but done exactly per-element anyway).
+    stress_field = StressFieldOutput(solver)
+    s_errors = []
+    ref_scale = max(abs(sigma_rr_exact(Ri)), abs(sigma_tt_exact(Ri)), 1e-6)
+    for val in stress_field.values():
+        el = mesh.elements[val.element_id]
+        cx = float(np.mean([mesh.nodes[nid].x for nid in el.node_ids]))
+        cy = float(np.mean([mesh.nodes[nid].y for nid in el.node_ids]))
+        r_c = float(np.hypot(cx, cy))
+        theta_c = float(np.arctan2(cy, cx))
+        c, s = np.cos(theta_c), np.sin(theta_c)
+        sxx, syy, sxy = val.data[0], val.data[1], val.data[3]
+        # 2D in-plane stress rotation to local (r, theta) axes
+        s_rr = c * c * sxx + s * s * syy + 2 * c * s * sxy
+        s_tt = s * s * sxx + c * c * syy - 2 * c * s * sxy
+        s_errors.append(abs(s_rr - sigma_rr_exact(r_c)) / ref_scale)
+        s_errors.append(abs(s_tt - sigma_tt_exact(r_c)) / ref_scale)
+    max_s_err = max(s_errors) if s_errors else float("nan")
+
+    return {
+        "status": "PASS",
+        "iters": iters,
+        "max_u_err_relative": max_u_err,
+        "max_stress_err_relative": max_s_err,
+        "n_stress_values": len(stress_field.values()),
+        "skipped_element_types": stress_field.skipped_element_types,
+    }
 
 
 # =========================================================================

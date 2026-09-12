@@ -534,3 +534,112 @@ def compute_per_element_dilatation(mesh: Mesh3D, u: np.ndarray, nid_to_idx: Dict
         detF[idx] = np.linalg.det(F)
 
     return detF
+
+
+def make_hollow_cylinder_wedge_mesh(
+    elem_type: str,
+    Ri: float = 4.0,
+    Ro: float = 6.0,
+    H: float = 2.0,
+    n_r: int = 10,
+    n_z: int = 2,
+    wedge_angle_deg: float = 4.0,
+) -> Tuple[Mesh3D, Dict[str, List[int]]]:
+    """Thin 3D-solid wedge (one C3D8 layer through theta) equivalent of the
+    axisymmetric hollow-cylinder model in
+    dev_log/static_analysis_benchmark_design_20260913.md Sec 2 / the real
+    Abaqus Benchmarks Manual "Radial stretching of a cylinder"
+    (benchmark_element/reference_abaqus_docs/bmk_rad_stretch.txt).
+
+    The true problem has NO theta-dependence (u_theta = 0 identically,
+    only u_r(r) and a uniform axial strain from Poisson coupling are
+    nonzero) -- a thin wedge with the two theta cut faces constrained to
+    zero TANGENTIAL displacement models it exactly, in the limit of a
+    zero wedge angle. This function approximates that exact tangential
+    ("radial only" / "u_theta=0") constraint with GLOBAL-AXIS Dirichlet
+    BCs, valid to O(wedge_angle_rad):
+      - theta=0 cut face (exactly the y=0 plane): uy=0 -- this one is
+        EXACT, not an approximation, since the local tangential
+        direction at theta=0 is exactly the global y-axis.
+      - theta=wedge_angle cut face: uy=0 -- an APPROXIMATION (the true
+        tangential direction there is (-sin(theta), cos(theta), 0), not
+        exactly y-hat) with error O(wedge_angle_rad). Keep
+        wedge_angle_deg small (a few degrees) to keep this error small;
+        do not reach for a fully general angle here -- this generator is
+        specifically a THIN-wedge approximation, not a general
+        cylindrical-sector mesh.
+      - Inner (r=Ri) and outer (r=Ro) surfaces: the closed-form
+        reference solution has u_r(Ri)=0 and u_r(Ro)=U0 exactly (both
+        are genuine DISPLACEMENT boundary conditions in the radial
+        direction, not stress-free/natural boundaries -- verified
+        algebraically against the source's sigma_rr(r)/sigma_thetatheta(r)
+        formulas before this function was written, see the design doc's
+        Sec 2 update). Approximated here as ux=<value> (radial direction
+        ~= x-axis for a thin wedge), same O(wedge_angle_rad) order of
+        approximation as the cut-face constraint above -- the caller
+        applies the actual displacement VALUES (0 at inner, U0 at outer)
+        via fix_dof, this function only returns the node-id groups.
+      - Base (z=0): uz=0 -- EXACT (a genuine global-z-axis condition,
+        independent of theta).
+
+    Returns:
+        (mesh, groups) where groups = {
+            'inner': [node ids at r=Ri], 'outer': [node ids at r=Ro],
+            'theta0': [node ids at theta=0], 'thetamax': [node ids at
+            theta=wedge_angle_deg], 'base': [node ids at z=0],
+        }. Node ids may appear in more than one group (corners/edges).
+    """
+    elem_type = elem_type.upper()
+    if elem_type not in ("C3D8", "C3D8I", "C3D8_FBAR", "C3D8_CR", "C3D8H", "C3D8R"):
+        raise NotImplementedError(
+            f"make_hollow_cylinder_wedge_mesh only supports the C3D8 hex family, got {elem_type}"
+        )
+
+    mesh = Mesh3D()
+    rs = np.linspace(Ri, Ro, n_r + 1)
+    zs = np.linspace(0.0, H, n_z + 1)
+    wedge_angle_rad = np.deg2rad(wedge_angle_deg)
+    thetas = [0.0, wedge_angle_rad]
+
+    node_grid: Dict[Tuple[int, int, int], int] = {}
+    nid = 1
+    for i in range(n_r + 1):
+        for j in range(2):
+            for k in range(n_z + 1):
+                r = rs[i]
+                theta = thetas[j]
+                x = r * np.cos(theta)
+                y = r * np.sin(theta)
+                z = zs[k]
+                mesh.add_node(nid, x, y, z)
+                node_grid[(i, j, k)] = nid
+                nid += 1
+
+    eid = 1
+    for i in range(n_r):
+        for k in range(n_z):
+            n1 = node_grid[(i, 0, k)]
+            n2 = node_grid[(i + 1, 0, k)]
+            n3 = node_grid[(i + 1, 1, k)]
+            n4 = node_grid[(i, 1, k)]
+            n5 = node_grid[(i, 0, k + 1)]
+            n6 = node_grid[(i + 1, 0, k + 1)]
+            n7 = node_grid[(i + 1, 1, k + 1)]
+            n8 = node_grid[(i, 1, k + 1)]
+            mesh.add_element(eid, [n1, n2, n3, n4, n5, n6, n7, n8], elem_type=elem_type)
+            eid += 1
+
+    groups: Dict[str, List[int]] = {"inner": [], "outer": [], "theta0": [], "thetamax": [], "base": []}
+    for (i, j, k), the_nid in node_grid.items():
+        if i == 0:
+            groups["inner"].append(the_nid)
+        if i == n_r:
+            groups["outer"].append(the_nid)
+        if j == 0:
+            groups["theta0"].append(the_nid)
+        if j == 1:
+            groups["thetamax"].append(the_nid)
+        if k == 0:
+            groups["base"].append(the_nid)
+
+    return mesh, groups
