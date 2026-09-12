@@ -285,8 +285,8 @@ def launch_interactive_viewer(mesh, history):
         )
 
     plotter.add_slider_widget(
-        on_step_change,
-        [0, len(history) - 1],
+        callback=on_step_change,
+        rng=[0, len(history) - 1],
         value=len(history) - 1,
         title="Simulation Step",
         color="white",
