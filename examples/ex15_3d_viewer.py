@@ -291,8 +291,7 @@ def launch_interactive_viewer(mesh, history):
         title="Simulation Step",
         color="white",
         pointa=(0.25, 0.08),
-        pointb=(0.75, 0.08),
-        event_type='always'
+        pointb=(0.75, 0.08)
     )
     
     help_text = (
