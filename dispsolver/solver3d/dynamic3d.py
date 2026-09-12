@@ -200,6 +200,43 @@ class DynamicSolver3D:
             max_sdvs = max(max_sdvs, get_default_sdv_count(mt))
         self.elem_sdvs = np.zeros((n_elems, 8, max_sdvs), dtype=np.float64)
 
+        # Allocate Abaqus-compatible SectionControls array (n_elems, 8)
+        # [0]: distortion_control (1.0=ON, 0.0=OFF)
+        # [1]: length_ratio / j_crit (default 0.1)
+        # [2]: viscous_damping (default 0.0)
+        # [3]: anti_inversion_barrier (1.0=ON, 0.0=OFF)
+        # [4]: min_det_f (default 0.02)
+        self.elem_controls = np.zeros((n_elems, 8), dtype=np.float64)
+        self.elem_controls[:, 0] = 1.0   # distortion_control default ON
+        self.elem_controls[:, 1] = 0.1   # length_ratio default 0.1
+        self.elem_controls[:, 2] = 0.0   # viscous_damping default 0.0
+        self.elem_controls[:, 3] = 1.0   # anti_inversion_barrier default ON
+        self.elem_controls[:, 4] = 0.02  # min_det_f default 0.02
+
+        # Check if mesh or sections provide custom controls
+        if hasattr(self.mesh, "elem_controls") and self.mesh.elem_controls is not None:
+            self.elem_controls[:] = self.mesh.elem_controls
+
+    def set_element_controls(
+        self,
+        elem_indices: Any,
+        controls: Any
+    ):
+        """Set Abaqus-compatible SectionControls for specific 3D solid elements.
+
+        Parameters:
+            elem_indices: int, slice, list of ints, or numpy array of element indices (0-based).
+            controls: SectionControls instance or (8,) numpy float array.
+        """
+        if hasattr(controls, "to_control_array"):
+            ctrl_arr = controls.to_control_array()
+        elif isinstance(controls, np.ndarray):
+            ctrl_arr = controls
+        else:
+            raise ValueError(f"Unsupported controls type: {type(controls)}")
+
+        self.elem_controls[elem_indices] = ctrl_arr
+
     def add_constraint(self, constraint: Any):
         """Add a surface tie or MPC constraint to the solver."""
         self.constraints.append(constraint)
@@ -231,6 +268,7 @@ class DynamicSolver3D:
                     sub_mat = self.elem_mat_types[elem_indices]
                     sub_props = self.elem_props[elem_indices]
                     sub_sdvs = self.elem_sdvs[elem_indices]
+                    sub_controls = self.elem_controls[elem_indices]
 
                     if k == 0:
                         from dispsolver.element3d.c3d8_eas_tl_numba import assemble_mesh_c3d8_eas_tl_numba
@@ -240,12 +278,12 @@ class DynamicSolver3D:
                     elif k == 1:
                         from dispsolver.element3d.c3d8_corotational_numba import assemble_mesh_c3d8_corotational_numba
                         f_sub, K_sub, err = assemble_mesh_c3d8_corotational_numba(
-                            node_coords_all, sub_conn, u_vec, sub_mat, sub_props, sub_sdvs, dt
+                            node_coords_all, sub_conn, u_vec, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls
                         )
                     elif k == 2:
                         from dispsolver.element3d.c3d8_hybrid_numba import assemble_mesh_c3d8_hybrid_numba
                         f_sub, K_sub, err = assemble_mesh_c3d8_hybrid_numba(
-                            node_coords_all, sub_conn, u_vec, sub_mat, sub_props, sub_sdvs, dt
+                            node_coords_all, sub_conn, u_vec, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls
                         )
                     else:
                         from dispsolver.element3d.c3d8_fbar_tl_numba import assemble_mesh_c3d8_fbar_tl_numba

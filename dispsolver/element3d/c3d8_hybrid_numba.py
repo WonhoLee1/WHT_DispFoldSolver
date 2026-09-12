@@ -180,6 +180,9 @@ def compute_element_rotation_3d(coords_ref: np.ndarray, coords_curr: np.ndarray)
     return R_curr @ R_ref.T
 
 
+_EMPTY_CONTROLS = np.empty(0, dtype=np.float64)
+
+
 @njit(fastmath=True)
 def compute_c3d8_hybrid_element_umat_numba(
     coords: np.ndarray,
@@ -187,9 +190,19 @@ def compute_c3d8_hybrid_element_umat_numba(
     mat_type: int,
     props: np.ndarray,
     sdvs: np.ndarray,
-    dt: float = 1.0
+    dt: float = 1.0,
+    controls: np.ndarray = _EMPTY_CONTROLS
 ):
-    """Compute 3D Co-Rotational Hybrid Hexahedral Element with mixed u-p volume-averaged pressure.
+    """Compute 3D Co-Rotational Hybrid Hexahedral Element with mixed u-p volume-averaged pressure
+    and Abaqus-compatible distortion control / anti-inversion safeguards.
+
+    Parameters:
+        controls: (8,) float array:
+            [0]: distortion_control (1.0=ON, 0.0=OFF)
+            [1]: length_ratio / j_crit (default 0.1)
+            [2]: viscous_damping (default 0.0)
+            [3]: anti_inversion_barrier (1.0=ON, 0.0=OFF)
+            [4]: min_det_f (default 0.02)
 
     Returns:
         f_global (24,): Internal force vector in global coordinates.
@@ -279,8 +292,35 @@ def compute_c3d8_hybrid_element_umat_numba(
         mu = p0
         K = max(p1, 1e-8)
 
-    # Hybrid constant hydrostatic pressure: p0 = K * eps_vol_mean
-    pressure_mean = K * eps_vol_mean
+    # Check controls
+    has_controls = (controls.shape[0] >= 5)
+    distortion_control_on = has_controls and (controls[0] > 0.5)
+    j_crit = controls[1] if (has_controls and controls[1] > 0.0) else 0.1
+    anti_inversion_on = has_controls and (controls[3] > 0.5)
+    min_det_f = controls[4] if (has_controls and controls[4] > 0.0) else 0.02
+
+    # Volume ratio J = 1 + eps_vol_mean
+    J_vol = 1.0 + eps_vol_mean
+
+    # Anti-inversion severe check
+    if anti_inversion_on and J_vol < min_det_f:
+        return np.zeros(24, dtype=np.float64), np.zeros((24, 24), dtype=np.float64), 1
+
+    # Distortion control barrier (Abaqus energy penalty formulation: J < j_crit)
+    p_dist = 0.0
+    c_dist = 0.0
+    if distortion_control_on and J_vol < j_crit:
+        j_eff = max(J_vol, 1e-4)
+        k_dist = K
+        # Psi_dist = 0.5 * k_dist * ((j_crit - j_eff) / j_eff)**2
+        # p_dist = k_dist * j_crit * (j_crit - j_eff) / j_eff^3
+        # C_dist = k_dist * j_crit * (2 * j_crit - j_eff) / j_eff^4
+        p_dist = k_dist * j_crit * (j_crit - j_eff) / (j_eff * j_eff * j_eff)
+        c_dist = k_dist * j_crit * (2.0 * j_crit - j_eff) / (j_eff * j_eff * j_eff * j_eff)
+
+    # Hybrid constant hydrostatic pressure: p0 = K * eps_vol_mean + p_dist
+    pressure_mean = K * eps_vol_mean + p_dist
+    K_eff = K + c_dist
 
     # 5. Integrate local stiffness and internal force
     K_local = np.zeros((24, 24), dtype=np.float64)
@@ -288,11 +328,11 @@ def compute_c3d8_hybrid_element_umat_numba(
 
     # Volumetric contribution from hybrid pressure:
     # f_vol = V0 * B_vol_bar^T * p0
-    # K_vol = V0 * K * (B_vol_bar (x) B_vol_bar)
+    # K_vol = V0 * K_eff * (B_vol_bar (x) B_vol_bar)
     for i in range(24):
         f_local[i] += V0_total * B_vol_bar[i] * pressure_mean
         for j in range(24):
-            K_local[i, j] += V0_total * K * B_vol_bar[i] * B_vol_bar[j]
+            K_local[i, j] += V0_total * K_eff * B_vol_bar[i] * B_vol_bar[j]
 
     # Gauss point loop for deviatoric shear contributions
     for gi in range(2):
@@ -364,6 +404,14 @@ def compute_c3d8_hybrid_element_umat_numba(
                 # Accumulate deviatoric stiffness: K_dev = B_std^T @ C_dev @ B_std * dV
                 K_local += (B_std.T @ C_dev @ B_std) * dV
 
+    # 5b. Viscous damping (Abaqus SectionControls VISCOUS DAMPING)
+    damping_coeff = controls[2] if has_controls else 0.0
+    if damping_coeff > 0.0:
+        for i in range(24):
+            k_ii = abs(K_local[i, i])
+            f_local[i] += damping_coeff * u_local[i] * k_ii
+            K_local[i, i] += damping_coeff * k_ii
+
     # 6. Transform to global coordinates: K_global = T @ K_local @ T.T, f_global = T @ f_local
     f_global = np.zeros(24, dtype=np.float64)
     K_global = np.zeros((24, 24), dtype=np.float64)
@@ -384,6 +432,9 @@ def compute_c3d8_hybrid_element_umat_numba(
     return f_global, K_global, 0
 
 
+_EMPTY_2D_CONTROLS = np.empty((0, 0), dtype=np.float64)
+
+
 @njit(parallel=True, fastmath=True)
 def assemble_mesh_c3d8_hybrid_numba(
     node_coords: np.ndarray,
@@ -392,13 +443,15 @@ def assemble_mesh_c3d8_hybrid_numba(
     elem_mat_types: np.ndarray,
     elem_props: np.ndarray,
     elem_sdvs: np.ndarray,
-    dt: float = 1.0
+    dt: float = 1.0,
+    elem_controls: np.ndarray = _EMPTY_2D_CONTROLS
 ):
     """Parallel Numba assembly of all C3D8H hybrid elements in the mesh."""
     n_elems = elem_conn.shape[0]
     f_elems = np.zeros((n_elems, 24), dtype=np.float64)
     K_elems = np.zeros((n_elems, 24, 24), dtype=np.float64)
     has_error = False
+    use_controls = (elem_controls.ndim == 2 and elem_controls.shape[0] > 0)
 
     for e in prange(n_elems):
         conn = elem_conn[e]
@@ -418,9 +471,10 @@ def assemble_mesh_c3d8_hybrid_numba(
         m_type = elem_mat_types[e]
         props = elem_props[e]
         sdvs = elem_sdvs[e]
+        ctrl = elem_controls[e] if use_controls else _EMPTY_CONTROLS
 
         fe, Ke, err = compute_c3d8_hybrid_element_umat_numba(
-            elem_coords, u_elem, m_type, props, sdvs, dt
+            elem_coords, u_elem, m_type, props, sdvs, dt, ctrl
         )
         if err != 0:
             has_error = True
