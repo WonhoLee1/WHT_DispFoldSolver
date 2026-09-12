@@ -48,7 +48,7 @@ Model
 
 ---
 
-## 3. 검증 결과 (Verification Results)
+## 3. 검증 결과 (Verification Results - Initial Phase)
 
 ### `pytest tests/test_cae_model_hierarchy.py tests/test_general_set.py -v`
 
@@ -69,3 +69,104 @@ tests/test_general_set.py::test_general_set_integration_with_model PASSED [100%]
 
 - 10개 전 테스트 케이스 무결성 검증 통과.
 - 3D 솔버 비선형 1스텝 평형 수렴 검증 완료.
+
+---
+
+## 4. 기하학적 형상 기반 스마트 영역 선택 (Geometric Set Factories)
+
+### 4.1 구 및 중공 구 (Sphere & Hollow Sphere)
+- `part.create_set_from_sphere(name, center, radius, inner_radius=0.0, entity_type="ALL")`
+  - 중심점과 반경 $r_{in} \le r \le r_{out}$ 조건으로 구형 영역 엔티티 필터링.
+  - 힌지 피벗 주변부의 국부 요소 셋 추출 및 집중 하중 영역 분리 시 활용.
+
+### 4.2 원통 및 축방향 필터 (Cylinder & Hinge Axis)
+- `part.create_set_from_cylinder(name, axis_point, axis_direction, radius, inner_radius=0.0, length_range=None, entity_type="ALL")`
+  - 축 방향 벡터와 반경 및 축 방향 길이 구간을 지정하여 원통 영역 필터링.
+  - 폴더블 디스플레이의 힌지 축 회전 중심부 핀/베어링/원통형 곡면부 완벽 대응.
+
+### 4.3 평면 및 반공간 (Plane & Half-Space)
+- `part.create_set_from_plane(name, point, normal, half_space=False, tolerance=1e-5, entity_type="ALL")`
+  - 평면 상의 노드/요소 또는 평면 한쪽 전체(반공간 $n \cdot (x - x_0) \ge 0$) 추출.
+  - 대칭 경계조건(Symmetry BC: XSYMM, YSYMM) 설정 시 필수적.
+
+### 4.4 법선 벡터 기반 외곽 표면 (Surface by Normal)
+- `part.create_surface_from_normal(name, direction, angle_tol_deg=15.0)`
+  - 외곽 경계면의 외측 법선 벡터(outward normal)를 자동 계산하여 기준 방향과의 사잇각이 허용 오차 이내인 페이스 추출.
+  - 디스플레이 상면(Top Face) 및 Rigid Plate 접촉면(Bottom Face) 자동 추출.
+
+### 4.5 커스텀 조건식 (Custom Condition Predicate)
+- `part.create_set_from_condition(name, condition_fn, entity_type="ALL", element_selection="CENTROID")`
+  - 임의의 파이썬 함수 `lambda c: (c[0]**2 + c[1]**2 <= 25.0)`를 전달하여 복합 형상 자유 필터링.
+
+---
+
+## 5. Abaqus findAt 스타일 근접 탐색 및 피처 각도 전파 (Proximity & Propagation)
+
+### 5.1 거리 허용 오차 가드 (Search Tolerance & raise_if_none)
+- 쿼리 좌표와 모델 사이의 거리가 `search_tolerance`를 초과할 경우 임의의 원거리 엔티티가 오선택되는 현상을 차단.
+- 엄격 모드(`raise_if_none=True`) 시 허용 오차 내 대상이 없으면 예외 발생.
+
+### 5.2 직교 면 투영 (Orthogonal Face Projection)
+- 점과 노드 간 단순 유클리드 거리의 한계를 극복하기 위해, 2D 선분 및 3D 쿼드 면에 대한 직교 정사영 및 Point-in-Polygon 판정을 수행.
+- 곡면 및 두께 방향 단면 경계에서 올바른 타겟 면(Face)을 오차 없이 타격.
+
+### 5.3 다중 시드점 (Multiple Seed Points)
+- 시드 좌표로 단일 점뿐만 아니라 점 목록 `[[x1, y1], [x2, y2], ...]` 수용.
+- 복수의 분리된 영역 또는 연속 영역을 한 번의 호출로 통합 전파.
+
+### 5.4 경계 장벽 및 박판 래핑 방지 (Barrier & Wrap-Around Guard)
+- `stop_at_nodes`: 특정 경계선 노드 ID 목록을 지정하여 해당 인터페이스를 넘어서는 전파를 차단.
+- `max_distance`: 시드점으로부터의 최대 탐색 반경 제한.
+- `target_normal`: 얇은 필름/박판 시트의 에지를 타고 반대편 면으로 돌아 넘어가는(wrap-around) 현상을 방지하기 위해 법선 방향 내적($\ge 0.2$) 필터링 적용.
+
+---
+
+## 6. 세트 간 복합 연산(끼리끼리 작용) 및 최근접 $n$개 추출 (Set Operations & findAt)
+
+### 6.1 노드·요소·페이스 독립 연산 ("끼리끼리 작용")
+`GeneralSet`은 `node_ids`, `element_ids`, `faces`를 동시에 복합으로 보유할 수 있으며, 두 셋 간의 연산 시 각 엔티티 타입별로 완벽히 독립적으로 동작합니다.
+- **합집합 (Union)**:
+  - `s1 | s2` 또는 `s1.union(s2, name=None)`
+  - 노드는 노드끼리, 요소는 요소끼리, 페이스는 페이스끼리 합집합.
+- **차집합 (Difference)**:
+  - `s1 - s2` 또는 `s1.difference(s2, name=None)`
+  - 노드에서 노드를 빼고, 요소에서 요소를 빼고, 페이스에서 페이스를 차감.
+- **교집합 (Intersection)**:
+  - `s1 & s2` 또는 `s1.intersection(s2, name=None)`
+  - 양쪽 모두에 존재하는 노드, 요소, 페이스만 보존.
+
+### 6.2 겹치는 노드 및 요소 추출 (Overlapping Entities Extraction)
+- `set_a.get_overlapping_nodes(set_b, include_elements=False) -> np.ndarray`:
+  - `include_elements=False` (기본): 명시적으로 등록된 `node_ids` 간의 교집합 반환.
+  - `include_elements=True`: 각 세트의 요소(`element_ids`)를 구성하는 모든 노드까지 연관 확장하여 두 셋 간에 공유되는 모든 절점을 추출 (예: 인접 요소 셋 간의 공통 경계면 노드 자동 추출).
+- `set_a.get_overlapping_elements(set_b) -> np.ndarray`:
+  - 두 세트 간에 공통으로 포함된 요소 ID 배열 반환.
+- `set_a.get_overlapping_faces(set_b) -> List[ElementFace]`:
+  - 두 세트 간에 공통으로 포함된 페이스 목록 반환.
+- Part 레벨 헬퍼:
+  - `part.get_overlapping_nodes(set_a, set_b, include_elements=False)`
+  - `part.get_overlapping_elements(set_a, set_b)`
+  - `part.boolean_union(name, set_a, set_b)`
+  - `part.boolean_difference(name, set_a, set_b)`
+  - `part.boolean_intersection(name, set_a, set_b)`
+
+### 6.3 거리순 정렬 기반 $n$개 최근접 추출 함수
+- `part.find_closest_nodes(coords, n=1, search_tolerance=None, return_distances=False)`:
+  - 쿼리 좌표로부터 가장 가까운 순서대로 정렬된 $n$개의 노드 ID (또는 거리 튜플) 반환.
+- `part.find_closest_elements(coords, n=1, search_tolerance=None, return_distances=False)`:
+  - 쿼리 좌표로부터 중심점 기준 가장 가까운 순서대로 정렬된 $n$개의 요소 ID 반환.
+- `part.find_at(coords, name=None, entity_type="ALL", n=1, search_tolerance=None) -> GeneralSet`:
+  - Abaqus 스타일로 단일 점 또는 다중 점 좌표를 받아 최근접 $n$개의 노드/요소를 추출하여 즉시 Part의 `GeneralSet`으로 생성 및 반환.
+
+---
+
+## 7. 종합 검증 결과 (Full Test Suite Summary)
+
+```text
+pytest tests/test_general_set.py tests/test_geometric_sets.py tests/test_angle_and_proximity_sets.py tests/test_advanced_selection.py tests/test_set_operations_and_findat.py -v
+
+============================= 27 passed in 3.67s ==============================
+```
+
+모든 테스트 케이스 27개 100% 통과 (SOLID 원칙, Karpathy 가이드라인 준수 및 회귀 오류 없음 확인 완료).
+

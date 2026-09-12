@@ -3,6 +3,32 @@ q4_sri_jax.py
 =============
 Selective Reduced Integration (SRI / Selective B-bar) Q4 Plane Strain Element in JAX.
 
+**This is an IN-HOUSE element. It is not an Abaqus element and must never
+be presented as one.**
+------------------------------------------------------------------------
+Abaqus applies selective reduced integration to the **volumetric** term
+only; no Abaqus element applies it to the **shear** term, which is what
+this file does. The complete Abaqus plane-strain library is
+CPE4 / CPE4R / CPE4H / CPE4RH / CPE4I / CPE4IH plus the CPE3 / CPE6 /
+CPE8 families (Abaqus 2016 User's Guide 28.1.3) -- **there is no CPE4S**.
+The `CPE4S` / `CPE4SH` aliases that used to point here, in both
+`dynamic.py`'s alias table and `model_builder.py`'s `.inp` parser, were
+removed on 2026-09-11: a deck naming `CPE4S` now errors rather than
+silently resolving to this device. Keeping the element is fine and
+deliberate -- keeping it under a fake Abaqus name was not.
+
+Why it is kept: it is the only element in this library that is
+essentially locking-free in bending **when its edges are aligned with the
+global axes** -- contract C6 measures a bending-stiffness ratio of 1.225
+at AR 7.5/15/30 where plain co-rotational Q4 measures 20.9/80.0/316.2 --
+and it is cheap. That is the whole of its advantage, and it is bought
+with the frame-dependence documented immediately below: at 45 degrees
+off-axis the same measurement gives 20.6 / 79.6 / 315.9, i.e. it
+degrades to exactly the locking it was chosen to avoid. Whether
+production PET/GLASS should stay on it is an open question owned by
+Stage 4 of dev_log/plan_abaqus_spirit_element_refactor_20260911.md, not
+by this file.
+
 Formulation:
 - Normal / Volumetric Strains (eps_xx, eps_yy): Evaluated at 2x2 Gauss points.
   No hourglass modes form because 2x2 normal integration fully constrains h=[1,-1,1,-1].
