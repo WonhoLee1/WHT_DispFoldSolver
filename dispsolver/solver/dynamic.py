@@ -398,13 +398,29 @@ _ELEMENT_LARGE_DEF = {
     "Q4_EAS": dict(supports_ul=True, frame_invariant=True,
                    note="EAS-4; frame-covariant since the F6 J0^-T fix"),
     "CPE4I": dict(supports_ul=True, frame_invariant=True, note="as Q4_EAS"),
+    # Found by _assert_dispatch_integrity() on the day it was written:
+    # `Q4_VISCO_EAS` sits in `_VISCO_EAS_TYPES` alongside "CPE4I" and runs
+    # the IDENTICAL kernel, but had no entry here -- so `_use_ul_for()`
+    # failed it closed to Total Lagrangian while "CPE4I" got UL. Same
+    # element, two different formulations, decided by which of its two
+    # names the caller typed.
+    "Q4_VISCO_EAS": dict(supports_ul=True, frame_invariant=True,
+                         note="same kernel as CPE4I (legacy name)"),
     "CPE4H": dict(supports_ul=True, frame_invariant=True,
                   note="hybrid pressure is an element-constant scalar; invariant"),
     "CPE4IH": dict(supports_ul=True, frame_invariant=True, note="CPE4I + CPE4H"),
     "CPE4RH": dict(supports_ul=True, frame_invariant=True,
                    note="hourglass vector is orthogonalised against rigid+constant-strain"),
-    "CPE4": dict(supports_ul=True, frame_invariant=True,
-                 note="full integration + F-bar (volumetric trace is invariant)"),
+    # NOTE "CPE4" is absent on purpose until its dispatch branch exists.
+    # It used to be declared here -- supports_ul=True, frame_invariant=True,
+    # "full integration + F-bar" -- while `grep '"CPE4"'` found exactly that
+    # one occurrence in this whole file: there was NO dispatch branch, so a
+    # model built with element_type="CPE4" fell through to the sequential
+    # `_element_contributions()` (plain small-strain B-bar Q4) while
+    # `element_large_deformation_report()` printed "UL (rotated reference)".
+    # AGENTS.md 4.2 / 4.8, verbatim. `cpe4_jax.py` exists but is unwired.
+    # The `_DISPATCHED_ELEMENT_TYPES` assert below now makes that state
+    # unreachable; re-add this entry in the same commit that adds the branch.
     "Q4_VISCO_SIMO": dict(supports_ul=True, frame_invariant=True,
                           note="F-bar; the dilatation it homogenises is a scalar invariant"),
     "Q4_UP": dict(supports_ul=True, frame_invariant=True, note="as Q4_VISCO_SIMO"),
@@ -426,6 +442,64 @@ _ELEMENT_LARGE_DEF = {
     "Q4": dict(supports_ul=False, frame_invariant=True,
                note="B-bar small-strain baseline; plates are BC-driven"),
 }
+
+# ---------------------------------------------------------------------
+# Dispatch integrity
+# ---------------------------------------------------------------------
+# Element-type strings that this file actually has an assembly branch for.
+# `_ELEMENT_LARGE_DEF` above says what NLGEOM MEANS for an element;
+# this says whether the element EXISTS. Keeping them apart is how the
+# "CPE4" defect survived: a table entry with no branch produced a
+# confident, wrong `element_large_deformation_report()` line over an
+# element that was silently assembling as plain B-bar Q4.
+#
+# `_assert_dispatch_integrity()` runs once at MODULE IMPORT (bottom of this
+# block) and requires the two to agree, so adding a capability declaration
+# without a branch -- or a branch without a declaration -- fails loudly the
+# moment anything imports the solver, not later at physics time.
+# `DynamicSolver.__init__` separately rejects a requested element_type that
+# is not in `_DISPATCHED_ELEMENT_TYPES`. Also see AGENTS.md 4.2
+# ("`mesh.add_element(..., "Q4_COROTATIONAL", ...)` does nothing") and 4.8
+# (the tie/RBE2 early-return): both are this same class.
+#
+# The J2-family strings below are the literal tuple at the
+# `use_multi_material_batch` selection site, plus the `Q4_EAS`/`Q4_HYBRID_EAS`
+# branch and the sequential fallback's `Q4`.
+_DISPATCHED_ELEMENT_TYPES = frozenset(
+    ("Q4", "Q4_EAS", "Q4_HYBRID_EAS",
+     "Q4_COROTATIONAL", "Q4_COROTATIONAL_EAS", "Q4_COROTATIONAL_SRI", "Q4_SRI",
+     "Q4_COROTATIONAL_HYBRID_SRI", "Q4_HYBRID_SRI",
+     "Q4_COROTATIONAL_HYBRID", "Q4_HYBRID", "Q4_COROTATIONAL_HYBRID_EAS")
+) | frozenset(_VISCO_ELEM_TYPES)
+
+
+def _dispatched_element_types() -> frozenset:
+    """The element-type strings this solver has an assembly branch for."""
+    return _DISPATCHED_ELEMENT_TYPES
+
+
+def _assert_dispatch_integrity() -> None:
+    """`_ELEMENT_LARGE_DEF` keys and dispatch branches must be the same set."""
+    declared = set(_ELEMENT_LARGE_DEF)
+    dispatched = set(_DISPATCHED_ELEMENT_TYPES)
+    missing_branch = sorted(declared - dispatched)
+    missing_decl = sorted(dispatched - declared)
+    if missing_branch:
+        raise AssertionError(
+            f"_ELEMENT_LARGE_DEF declares {missing_branch} but no assembly "
+            f"branch dispatches them -- element_large_deformation_report() "
+            f"would report a large-deformation treatment the element never "
+            f"receives (AGENTS.md 4.2/4.8)."
+        )
+    if missing_decl:
+        raise AssertionError(
+            f"{missing_decl} are dispatched but not declared in "
+            f"_ELEMENT_LARGE_DEF -- _use_ul_for() fails them closed to Total "
+            f"Lagrangian without saying so. Declare them."
+        )
+
+
+_assert_dispatch_integrity()
 
 _ELEMENT_TYPE_ALIASES = {
     "Q4_CR": "Q4_COROTATIONAL",
@@ -459,18 +533,18 @@ _ELEMENT_TYPE_ALIASES = {
     "CPE4I_COR": "Q4_COROTATIONAL_EAS",
     "CPE4H_COR": "Q4_COROTATIONAL_HYBRID",
     "CPE4IH_COR": "Q4_COROTATIONAL_HYBRID_EAS",
-    # CPE4S/CPE4SH: not a real Abaqus element (Abaqus ships no plain-
-    # displacement plane-strain quad using shear-only selective reduced
-    # integration), but this codebase's OWN established convention for
-    # it -- model_builder.py's Abaqus .inp parser already maps the
-    # strings "CPE4S"/"CPE4SH" to "Q4_SRI"/"Q4_HYBRID_SRI" on that
-    # assumption; added here too so element_type="CPE4S"/"CPE4SH" also
-    # resolves correctly when a solver is built directly (bypassing the
-    # .inp parser), not just through AbaqusModelBuilder.
-    "CPE4S": "Q4_SRI",
-    "CPE4S_COR": "Q4_COROTATIONAL_SRI",
-    "CPE4SH": "Q4_HYBRID_SRI",
-    "CPE4SH_COR": "Q4_COROTATIONAL_HYBRID_SRI",
+    # Deliberately NOT aliasing "CPE4S"/"CPE4SH"/"CPE4S_COR"/"CPE4SH_COR"
+    # (removed 2026-09-11): those names assert an Abaqus element that does
+    # not exist. No Abaqus element applies selective reduced integration to
+    # the SHEAR term -- SRI in Abaqus is volumetric-only, and the complete
+    # plane-strain library is CPE4/CPE4R/CPE4H/CPE4RH/CPE4I/CPE4IH plus the
+    # CPE3/CPE6/CPE8 families (AUG 28.1.3). They used to alias this repo's
+    # own invented device (`Q4_SRI`/`Q4_HYBRID_SRI`), which presented it
+    # under an Abaqus-shaped name both here and in model_builder.py's .inp
+    # parser. Use `Q4_SRI`/`Q4_COROTATIONAL_SRI` explicitly if you want the
+    # invented device -- the name should say so. See dev_log/
+    # plan_abaqus_spirit_element_refactor_20260911.md 1.7 / 3.7.
+    #
     # Deliberately NOT aliasing "Q4_CR_REDUCED" -> "Q4_COROTATIONAL_REDUCED":
     # that element (dispsolver/element/q4_reduced_jax.py) was abandoned --
     # reduced-integration+hourglass structurally can't distinguish real
@@ -926,6 +1000,23 @@ class DynamicSolver:
         else:
             self.element_type_by_pid = None
             self.element_type = _ELEMENT_TYPE_ALIASES.get(element_type, element_type)
+        # Fail on an element name nothing dispatches, rather than dropping
+        # silently through every branch into the sequential fallback's plain
+        # small-strain B-bar Q4 -- the AGENTS.md 4.2 class, and the shape the
+        # "CPE4" defect took (see _DISPATCHED_ELEMENT_TYPES). Checked on the
+        # already-alias-resolved names, so a retired alias reports the name
+        # the caller actually wrote.
+        _requested = (set(self.element_type_by_pid.values())
+                      if self.element_type_by_pid is not None
+                      else {self.element_type})
+        _unknown = sorted(_requested - _DISPATCHED_ELEMENT_TYPES)
+        if _unknown:
+            raise ValueError(
+                f"unknown element_type {_unknown}: no assembly branch "
+                f"dispatches it, so it would silently assemble as plain "
+                f"small-strain B-bar Q4. Known types: "
+                f"{sorted(_DISPATCHED_ELEMENT_TYPES)}"
+            )
         self.constraints = constraints if constraints is not None else []
         self.penalty_constraints = penalty_constraints if penalty_constraints is not None else []
         self.rbe2_elements = rbe2_elements if rbe2_elements is not None else []

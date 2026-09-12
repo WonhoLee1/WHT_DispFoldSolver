@@ -462,6 +462,47 @@ the SRI device after this finding; see §4.14 and
 in-progress work to migrate them onto a corrected `CPE4I` instead, since
 SRI's own shear sampling is not frame-invariant either — §4.14).
 
+**Superseded / completed, 2026-09-11 — the numbers above are about an
+element production does not use.** The sweep was redone as contract C6
+(`tests/element_contract/`) *with the reference rotated*, on all three
+real `gen_ex12_inp.py` column widths, for the element PET/GLASS actually
+run. Bending-stiffness ratio, 1.000 = exact:
+
+```
+                       0°      10°      30°      45°      60°      90°
+AR 7.5  Q4_COROTATIONAL      20.913  20.913  20.913  20.913  20.913  20.913
+        Q4_COROTATIONAL_SRI   1.225   3.487  15.728  20.563  15.728   1.225
+        CPE4I / Q4_EAS        1.000   1.000   1.000   1.000   1.000   1.000
+AR 15   Q4_COROTATIONAL      79.975  (flat)
+        Q4_COROTATIONAL_SRI   1.225  10.396  60.025  79.625  60.025   1.225
+AR 30   Q4_COROTATIONAL     316.225  (flat)
+        Q4_COROTATIONAL_SRI   1.225  38.032 237.213 315.875 237.213   1.225
+```
+
+Read it this way:
+
+1. The 20.9 / 80.0 / 316 figures above are **confirmed exactly** — and
+   they are `Q4_COROTATIONAL`, which nothing in production uses. They are
+   also *flat* in the reference rotation (F1: that element is bitwise
+   TL), so they are a pure locking number with no frame component.
+2. `Q4_COROTATIONAL_SRI` — the production PET/GLASS element — is nearly
+   locking-free **only while its edges are axis-aligned** (1.225), and at
+   45° degrades to *exactly* the plain-COROT locking level. That is a
+   **16.8× / 65× / 258× swing in bending stiffness as a function of
+   element orientation alone**, period 90°. In the `ex12` fold the
+   display elements rotate through 0→90°, so PET/GLASS bending stiffness
+   currently varies with fold angle, worst at mid-fold where the hinge
+   curvature actually develops.
+3. This also resolves the standing contradiction between this section and
+   the consolidation plan's F3 ("co-rotational SRI objective to 1e-14").
+   **Both were true and neither was the point**: F3 measured objectivity
+   in the element's *own* frame, and the co-rotational wrapper removes
+   only the RELATIVE rotation, leaving the element's absolute orientation
+   — and therefore its Cartesian shear sampling — untouched. `Q4_SRI` and
+   `Q4_COROTATIONAL_SRI` measure **bit-identical** on every contract.
+4. `CPE4I`/`Q4_EAS` is 1.000 at every angle and every aspect ratio
+   post-F6, so it is a sound migration target.
+
 ### 4.2 Co-rotational Q4 element was silently dead code
 `mesh.add_element(..., "Q4_COROTATIONAL", ...)` **does nothing** —
 `DynamicSolver` never reads the mesh's per-element type string. Element
@@ -958,6 +999,138 @@ measurements: `dev_log/eas_frame_consistency_benchmarks_20260910.md`.
 > partial fix, and a stale "verified" comment survived the change that
 > falsified it.
 
+### 4.16 The element contract suite — run this before believing an element works
+
+**2026-09-11.** §4.14 and §4.15 each end with "the standing test to add".
+Those tests now exist, as one parametrized harness applied to **every**
+element type `DynamicSolver` dispatches: `tests/element_contract/`.
+Eleven contracts, C1–C11; the seven that did not previously exist are
+C2 (strain-then-rotate), C6 (rotated-reference AR sweep), C7 (global-axis
+isotropy), C8 (K *is* the FD Jacobian of the element's own residual, on a
+rotated reference), C9 (condensation symmetry), C10 (JAX ≡ Numba), C11
+(the FD step is mesh-invariant). **Five of the six defects shipped since
+2026-09-08 would have been caught by C8 alone.**
+
+Three things to know before using it:
+
+1. **It drives elements through `DynamicSolver._assemble()`, not through
+   kernel functions,** and passes `element_type` in the **dict** form
+   `{pid: name}`. This is deliberate. A kernel-level probe tests code the
+   solver may not be running: `element_type="Q4_EAS"` passed as a bare
+   *string* with a single J2 material takes the `use_j2_batch` path, which
+   is plain B-bar Q4 with no element-type awareness at all. The dict form
+   is what `fold_model_config.py` and both `verification/abaqus_benchmarks/`
+   scripts use, i.e. what production runs.
+2. **`_XFAIL` in `test_contract.py` is a characterization baseline, not a
+   suppression list.** Every entry carries a measured number and a cause,
+   split `BY DESIGN` (the contract genuinely does not bind — e.g. the
+   modified-Newton elements of §4.4 sit at 1.1e-01 on C8 because they drop
+   the geometric term on purpose) vs `DEFECT` (real, characterized, owned
+   by a later stage). An entry that starts passing shows up as an `xpass`
+   — that is the signal to delete it, never to widen it.
+3. **`python -m tests.element_contract.test_contract`** prints the full
+   table including the C6 sweep. Probes are cached per (element, backend)
+   and moved with `set_coords` — building a fresh solver per geometry costs
+   a fresh JAX compile each time (~200 for the C6 sweep alone) and does not
+   finish in useful time.
+
+**Dispatch integrity is now asserted, not hoped for.** `dynamic.py` has
+`_DISPATCHED_ELEMENT_TYPES` next to `_ELEMENT_LARGE_DEF`, and
+`_assert_dispatch_integrity()` (at import) requires the two to be the same
+set, while `DynamicSolver.__init__` *rejects* an `element_type` nothing
+dispatches instead of letting it fall through to plain B-bar Q4. This
+closes the §4.2/§4.8 silent-fallthrough class at the source. It found
+three live instances the day it was written:
+
+- `"CPE4"` was declared `supports_ul=True` with **no dispatch branch**, so
+  `element_large_deformation_report()` printed "UL (rotated reference)"
+  over an element silently running small-strain B-bar.
+- `Q4_VISCO_EAS` is dispatched (the *same kernel* as `CPE4I`) but was
+  undeclared, so `_use_ul_for` failed it closed to TL while `CPE4I` got
+  UL — one element, two formulations, chosen by which of its two names
+  you typed.
+- `Q4_HYBRID` / `Q4_COROTATIONAL_HYBRID` **have never run end to end**:
+  `ValueError: too many values to unpack` (kernel returns 4, dispatch
+  unpacks 3) — the identical latent bug `dynamic.py`'s own comment
+  describes having fixed for the SRI wrapper. And `Q4_HYBRID_EAS`
+  assembles an **all-zero element** (the kernel NaNs and its guard zeroes
+  the output) against CR-EAS's `|f| = 8.28`, `|K| = 1.16e4` on the same
+  input — the §4.8 signature, worse than the 2026-07-30 "zero pressure
+  content" note recorded.
+
+**Open, not fixed** (Stage 0 changed no formulation; each is characterized
+by a test that will turn green when fixed):
+
+- **`J2Plasticity`'s NumPy elastic tangent is 86% wrong.**
+  `_elastic_tangent_voigt` slices the first 3×3 of the 6-Voigt tangent, but
+  `_VOIGT_PAIRS = [(0,0),(1,1),(2,2),(0,1),(0,2),(1,2)]` puts the
+  out-of-plane **33** component at index 2 and the in-plane **12** shear at
+  index 3 — so `C[2,2] = λ+2μ` where `μ` belongs, and `C[0,2] = 2λ` where
+  an isotropic material requires 0. `_plastic_tangent_voigt`, ten lines
+  below, extracts the same block correctly. The *stress* is fine, so every
+  converged answer and every patch test is right; only Newton's rate
+  suffers — and `tests/test_solver.py`'s five standing "NR should converge,
+  got -40" failures are consistent with it. See
+  `tests/element_contract/test_material_tangent.py`, which **proves** the
+  element is not at fault rather than merely asserting it: rebuilding `Q4`'s
+  tangent from the solver's own precomputed B-bar and weights, changing
+  nothing but which `C` is contracted, gives frame-covariance error
+  `4.19e-01 / 1.35e+00` (at 10°/45°) with the coded J2 tangent and
+  `7.0e-16 / 3.5e-16` with the exact isotropic one.
+- **`CPE4IH`** fails C7 (5.7e-02, siblings 2e-14), C8 (3.4e-03, siblings
+  1.3e-09) and C6 (0.467 → 20.0 over 0–90°). Not the modified-Newton
+  exemption; the B1/B2/B3 class surviving in one kernel.
+- **Three Numba lowerings disagree with their JAX twins at ~1–2e-3 on
+  internal force** — `Q4_COROTATIONAL_SRI` (production PET/GLASS), `CPE4I`
+  (production PSA), `Q4_VISCO_SIMO` — flat across axis-aligned/tilted ×
+  undistorted/distorted, so a formulation divergence, not geometry. This
+  contradicts `dynamic.py`'s own dispatch comments ("force to 1e-13").
+- **`q4_visco_hybrid_up_numba.py` still carries B4's fixed absolute FD
+  step**: C11 measures 2.61e-06 / 1.31e-06 / 6.54e-07 / 3.27e-07 as the
+  element grows ×1/×2/×4/×8 — the `h/L` signature exactly.
+
+**`verification/abaqus_benchmarks/nlgeo_cantilever.py`'s `numba` rows do
+not run Numba.** The table's four `backend=numba` rows are byte-identical
+to their `jax` rows, and that is not agreement — it is the same code. The
+`Q4_EAS` Numba branch in `dynamic.py` is guarded by `not self.ul_mode`,
+and the benchmark sets `nlgeom=True`, so the branch is skipped and JAX
+runs. Verified by counting calls into
+`q4_eas_numba.assemble_q4_eas_j2_batch_numba`: **0 calls with
+`nlgeom=True`, 1 with `nlgeom=False`**. Treat any "Numba matches JAX"
+claim sourced from that table as unproven; C10 in the contract suite
+`skip`s rather than passes in exactly this situation, for the same reason.
+The benchmark's physics numbers are unaffected and still reproduce
+(1.3697 / 7.7799 at nx=10, 4.0889 / 8.0702 at nx=20, 0 cutbacks).
+
+**A 2D bilinear-quad identity worth knowing before "fixing" an F̄.** The
+element-average `J̄ = ∫J dV₀/V₀` and the centroid `J₀ = det F(0,0)` are
+**identically equal for a 4-node quad in 2D, on any geometry** — `detJ` is
+linear in (ξ,η), so 2×2 Gauss is exact and `∫detJ = 4·detJ(0,0)`, giving
+`J̄ = A_def/A_ref = J₀`. Verified to 1e-16 on random quads. The
+centroid-vs-average distinction is a **3D** effect (trilinear `detJ` is not
+linear), which is why Abaqus's "less accurate when the elements are skewed"
+remark is about C3D8R. `cpe4_jax.py` was nonetheless wrong there, for a
+different reason: it built the centroid `F` as
+`F_inc(centroid) @ mean(F_n)`, and an arithmetic mean of per-GP `F_n`
+matrices is not `F_total` at the centroid once `F_n` varies across Gauss
+points — measured 0% (TL or uniform `F_n`) → 11% (non-uniform) → 21%
+(rotated + non-uniform). Same class as F4/F6, invisible in exactly the
+configurations the existing tests used.
+
+**Where the anti-defect device lives now.**
+`dispsolver/element/kinematics/frame.py` is the configuration ledger: a
+frozen per-GP `GPKinematics` record whose every field names its
+configuration (REF0 / REF_N / CURRENT), and `gp_internal_force()` — the
+only function permitted to contract a stress with a B-operator. The
+push-forward is applied there, unconditionally and once, which makes the
+F4/B1 defect unwritable and B2/B3's *partial* push-forward
+unrepresentable. It contains **no objective rate and no polar
+decomposition**: that machinery serves rate-form materials, every material
+here is total-form, and it belongs on the material side —
+`dispsolver/material/rate_form_adapter.py`, which is built and tested
+(Jaumann per TG §1.5.3, **not** Green–Naghdi as this project previously
+assumed) but dormant.
+
 ---
 
 ## 5. Where things live
@@ -967,10 +1140,14 @@ dispsolver/
   element/
     q4_eas.py, q4_eas_jax.py       # EAS Q4, Simo-Rifai, NumPy + JAX
     q4_corotational_jax.py         # Co-rotational Q4 (+ J2 plasticity variant)
+    q4_sri_jax.py                  # IN-HOUSE shear-SRI Q4 -- NOT an Abaqus element (there is no CPE4S); production PET/GLASS, frame-dependent, see §4.1/§4.16
+    cpe4_jax.py                    # CPE4 on the config ledger; material-agnostic
+    kinematics/frame.py            # THE CONFIG LEDGER -- GPKinematics + gp_internal_force, the only place a stress meets a B-operator (§4.16)
     rbe2_jax.py, rbe2.py           # RBE2 hinge element(s)
   material/
-    plastic.py, plastic_jax.py     # J2 plasticity (finite-strain, multiplicative)
+    plastic.py, plastic_jax.py     # J2 plasticity (finite-strain, multiplicative). NOTE plastic.py's NumPy elastic tangent is 86% wrong -- §4.16
     viscoelastic.py                # Prony + WLF
+    rate_form_adapter.py           # rate-form -> total-form wrapper (Jaumann, closed-form polar+log). Built, tested, DORMANT -- no rate-form material exists yet (§4.16)
   constraint/
     rbe2_condensed.py              # Kinematic condensation manager (SPD reduction)
     surface_tie.py                 # Penalty surface-to-surface tie
@@ -990,5 +1167,10 @@ examples/
   ex12_rigid_plate_display_fold_corotational.py  # Python-built model, RigidBodyPart exact Dirichlet BC + surface tie; includes sanity_report()/fold_success_verdict() wiring, but still stalls ~7.9deg/side (unfixed, see 1.2/4.11)
   ex12_abaqus_inp_plate_fold.py    # PRIMARY REFERENCE -- reads .inp deck, exact RBE2 condensation + theta_penalty drive; reaches full 90deg/side / 180deg combined, zero cutbacks (see 1.0/4.12)
   gen_ex12_inp.py                  # generates the .inp deck ex12_abaqus_inp_plate_fold.py reads; _graded_display_x() is the tip-inversion fix (4.12), edit here not in the solver for mesh-resolution issues
+tests/
+  element_contract/                 # C1-C11, every dispatched element type (§4.16). Run `python -m tests.element_contract.test_contract` for the table.
+    harness.py                      #   solver-level probes (NOT kernel-level -- see its docstring for why)
+    test_contract.py                #   the 11 contracts + the _XFAIL characterization baseline
+    test_material_tangent.py        #   C8 one layer down: the J2 tangent defect
 dev_log/                            # dated work logs — check for the most recent status before assuming something is/isn't done
 ```

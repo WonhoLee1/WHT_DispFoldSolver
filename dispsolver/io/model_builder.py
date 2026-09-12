@@ -175,16 +175,36 @@ _ABAQUS_TO_DISPSOLVER_ELEM = {
 # `AbaqusModelBuilder` with these element names. Fixed to map to the
 # element's own literal name, matching how `dynamic.py` actually dispatches
 # it, rather than translating to a differently-named legacy element.
+#
+# NOT in this table, deliberately: "CPE4S"/"CPE4SH". They are not Abaqus
+# elements -- no Abaqus element applies selective reduced integration to
+# the SHEAR term (SRI in Abaqus is volumetric-only, and the complete
+# plane-strain library is CPE4/CPE4R/CPE4H/CPE4RH/CPE4I/CPE4IH plus the
+# CPE3/CPE6/CPE8 families, AUG 28.1.3). They used to map to this repo's
+# own invented `Q4_SRI`/`Q4_HYBRID_SRI` device, which meant a deck
+# written against a *different* solver's CPE4S would load silently and
+# run something else entirely. A deck naming an element that does not
+# exist must ERROR. See dev_log/plan_abaqus_spirit_element_refactor_20260911.md
+# 1.7 / 3.7.
 _ABAQUS_TO_SOLVER_ELEM_TYPE = {
     "CPE4H": "CPE4H",
     "CPE4RH": "CPE4RH",
     "CPE4IH": "CPE4IH",
     "CPE4I": "CPE4I",
-    "CPE4S": "Q4_SRI",
-    "CPE4SH": "Q4_HYBRID_SRI",
 }
 
+# Public alias for the contract suite's name-integrity test.
+ABAQUS_ELEMENT_MAP = _ABAQUS_TO_SOLVER_ELEM_TYPE
+
 _UNSUPPORTED_3D_ELEMENTS = {"C3D8", "C3D20", "C3D8R", "C3D20R", "C3D4", "C3D10"}
+
+# Abaqus-SHAPED names that name no Abaqus element. These must be rejected
+# outright rather than falling through the "Unknown element type -- treating
+# as QUAD4" warning path: a deck author writing CPE4S means a specific
+# formulation, and quietly substituting a different one is the AGENTS.md 4.2
+# class of failure. See _ABAQUS_TO_SOLVER_ELEM_TYPE's comment for why these
+# four in particular.
+_INVENTED_ELEMENT_NAMES = {"CPE4S", "CPE4SH", "CPE4S_COR", "CPE4SH_COR"}
 
 # Face number → node index mapping for Q4 element (Abaqus convention)
 # Face 1: nodes 1-2 (edge 0), Face 2: nodes 2-3 (edge 1),
@@ -385,6 +405,15 @@ class ModelBuilder:
         # Elements — convert Abaqus type → dispsolver type
         for abq_elem in self._abq.elements:
             etype_upper = abq_elem.etype.upper()
+
+            if etype_upper in _INVENTED_ELEMENT_NAMES:
+                raise ValueError(
+                    f"'{abq_elem.etype}' is not an Abaqus element. Abaqus "
+                    f"applies selective reduced integration to the volumetric "
+                    f"term only, never to shear; the plane-strain library is "
+                    f"CPE4/CPE4R/CPE4H/CPE4RH/CPE4I/CPE4IH plus the CPE3/CPE6/"
+                    f"CPE8 families. Name the formulation you mean."
+                )
 
             # Reject 3D elements
             if etype_upper in _UNSUPPORTED_3D_ELEMENTS:
