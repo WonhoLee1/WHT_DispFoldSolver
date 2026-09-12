@@ -19,6 +19,10 @@ from .c3d8_corotational_numba import (
     assemble_mesh_c3d8_corotational_numba,
     compute_element_rotation_3d
 )
+from .c3d8_hybrid_numba import (
+    compute_c3d8_hybrid_element_umat_numba,
+    assemble_mesh_c3d8_hybrid_numba
+)
 
 __all__ = [
     "SolidElement3D",
@@ -40,4 +44,6 @@ __all__ = [
     "compute_c3d8_corotational_element_umat_numba",
     "assemble_mesh_c3d8_corotational_numba",
     "compute_element_rotation_3d",
+    "compute_c3d8_hybrid_element_umat_numba",
+    "assemble_mesh_c3d8_hybrid_numba",
 ]
