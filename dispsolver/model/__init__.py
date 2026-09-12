@@ -6,7 +6,7 @@ Abaqus-compatible Model -> Part -> Section/Material/Set -> Assembly -> Instance 
 from dispsolver.model.base import Transform3D
 from dispsolver.model.set import NodeSet, ElementSet, Surface, ElementFace, SetScope, GeneralSet
 from dispsolver.model.material import Material
-from dispsolver.model.section import Section, SolidSection, ShellSection
+from dispsolver.model.section import Section, SolidSection, ShellSection, SectionControls
 from dispsolver.model.part import Part, SectionAssignment
 from dispsolver.model.instance import Instance
 from dispsolver.model.assembly import Assembly, FlattenedSolverSystem
@@ -34,6 +34,7 @@ __all__ = [
     "Section",
     "SolidSection",
     "ShellSection",
+    "SectionControls",
     "Part",
     "SectionAssignment",
     "Instance",

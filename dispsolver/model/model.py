@@ -5,7 +5,7 @@ from typing import Dict, Optional, Any, Union
 
 from dispsolver.model.part import Part
 from dispsolver.model.material import Material
-from dispsolver.model.section import Section, SolidSection, ShellSection
+from dispsolver.model.section import Section, SolidSection, ShellSection, SectionControls
 from dispsolver.model.assembly import Assembly, FlattenedSolverSystem
 from dispsolver.model.step import Step, InitialStep, DisplacementBC, ConcentratedLoad, SurfaceTieInteraction, PredefinedField, Amplitude
 
@@ -19,6 +19,7 @@ class Model:
         self.parts: Dict[str, Part] = {}
         self.materials: Dict[str, Material] = {}
         self.sections: Dict[str, Section] = {}
+        self.section_controls: Dict[str, SectionControls] = {}
         self.amplitudes: Dict[str, Amplitude] = {}
         
         self.initial_step: InitialStep = InitialStep(name="Initial")
@@ -40,9 +41,57 @@ class Model:
         self.materials[str(name)] = m
         return m
 
-    def SolidSection(self, name: str, material: str, thickness: float = 1.0) -> SolidSection:
+    def SectionControls(
+        self,
+        name: str,
+        distortion_control: bool = True,
+        length_ratio: float = 0.1,
+        hourglass_control: str = "ENHANCED",
+        viscous_damping: float = 0.0,
+        anti_inversion_barrier: bool = True,
+        min_det_f: float = 0.02,
+        **kwargs
+    ) -> SectionControls:
+        """Create and register a SectionControls definition in this Model (*SECTION CONTROLS in Abaqus)."""
+        if "distortionControl" in kwargs:
+            distortion_control = (kwargs["distortionControl"] in [True, "ON", "YES", 1])
+        if "lengthRatio" in kwargs:
+            length_ratio = float(kwargs["lengthRatio"])
+        if "hourglassControl" in kwargs:
+            hourglass_control = str(kwargs["hourglassControl"])
+        if "viscousDamping" in kwargs:
+            viscous_damping = float(kwargs["viscousDamping"])
+        if "antiInversionBarrier" in kwargs:
+            anti_inversion_barrier = (kwargs["antiInversionBarrier"] in [True, "ON", "YES", 1])
+        if "minDetF" in kwargs:
+            min_det_f = float(kwargs["minDetF"])
+
+        ctrl = SectionControls(
+            name=str(name),
+            distortion_control=distortion_control,
+            length_ratio=length_ratio,
+            hourglass_control=hourglass_control,
+            viscous_damping=viscous_damping,
+            anti_inversion_barrier=anti_inversion_barrier,
+            min_det_f=min_det_f
+        )
+        self.section_controls[str(name)] = ctrl
+        return ctrl
+
+    def SolidSection(
+        self,
+        name: str,
+        material: str,
+        thickness: float = 1.0,
+        controls: Optional[Union[str, SectionControls]] = None
+    ) -> SolidSection:
         """Create and register a SolidSection in this Model."""
-        sec = SolidSection(name=str(name), material_name=str(material), thickness=float(thickness))
+        sec = SolidSection(
+            name=str(name),
+            material_name=str(material),
+            thickness=float(thickness),
+            controls=controls
+        )
         self.sections[str(name)] = sec
         return sec
 
