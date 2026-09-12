@@ -40,11 +40,19 @@ class Part:
         self.nodes[int(nid)] = arr
         return arr
 
+    def Node(self, nid: int, x: float, y: float, z: float = 0.0) -> np.ndarray:
+        """Abaqus-compatible Node factory on Part."""
+        return self.add_node(nid, (x, y, z))
+
     def add_element(self, eid: int, elem_type: str, node_ids: Sequence[int]) -> Tuple[str, List[int]]:
         """Add an element with local connectivity."""
         item = (str(elem_type).upper(), [int(n) for n in node_ids])
         self.elements[int(eid)] = item
         return item
+
+    def Element(self, eid: int, elem_type: str, node_ids: Sequence[int]) -> Tuple[str, List[int]]:
+        """Abaqus-compatible Element factory on Part."""
+        return self.add_element(eid, elem_type, node_ids)
 
     def create_set(
         self,
@@ -69,6 +77,18 @@ class Part:
         if nodes is not None and len(nodes) > 0:
             self.node_sets[str(name)] = NodeSet(name=str(name), node_ids=set(nodes), scope=SetScope.PART)
         return gset
+
+    def Set(self, name: str, nodes: Optional[Sequence[int]] = None, elements: Optional[Sequence[int]] = None) -> GeneralSet:
+        """Abaqus-compatible Set factory on Part."""
+        return self.create_set(name=name, nodes=nodes, elements=elements)
+
+    def NodeSet(self, name: str, nodes: Sequence[int]) -> GeneralSet:
+        """Abaqus-compatible NodeSet factory on Part."""
+        return self.create_set(name=name, nodes=nodes)
+
+    def ElementSet(self, name: str, elements: Sequence[int]) -> GeneralSet:
+        """Abaqus-compatible ElementSet factory on Part."""
+        return self.create_set(name=name, elements=elements)
 
     def create_set_from_box(
         self,
@@ -643,6 +663,12 @@ class Part:
         assignment = SectionAssignment(region=region_str, section_name=str(section_name), offset=offset)
         self.section_assignments.append(assignment)
         return assignment
+
+    def SectionAssignment(self, region: Union[str, GeneralSet, ElementSet], sectionName: str, offset: float = 0.0) -> SectionAssignment:
+        """Abaqus-compatible SectionAssignment method on Part."""
+        if region == "ALL" and "ALL" not in self.sets and "ALL" not in self.element_sets:
+            self.create_set("ALL", elements=list(self.elements.keys()), nodes=list(self.nodes.keys()))
+        return self.assign_section(region=region, section_name=sectionName, offset=offset)
 
     @property
     def num_nodes(self) -> int:

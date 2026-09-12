@@ -110,20 +110,28 @@ def _jacobian3d(xi: float, eta: float, zeta: float, coords: np.ndarray):
     return J, detJ, invJ
 
 
+_EMPTY_2D_CONTROLS = np.empty((0, 6), dtype=np.float64)
+
+
 @njit(fastmath=True)
-def _compute_c3d8_fbar_tl_element_umat_numba(
+def _c3d8_fbar_tl_residual_only(
     coords_init: np.ndarray,
     u_elem: np.ndarray,
     mat_type: int,
     props: np.ndarray,
     sdvs_elem: np.ndarray,
-    dt: float = 1.0
+    dt: float,
+    stress_init: np.ndarray,
+    commit_sdv: bool,
 ):
-    """Compute Multiplicative F-bar Total Lagrangian 3D C3D8 element tangent stiffness (24x24)
-    and internal force vector (24) under finite deformation using UMAT material dispatcher.
+    """Internal force only (no tangent) -- the ONE place F-bar's residual is
+    assembled, reused both by the real element call and by the FD tangent
+    below so the two can never drift apart. `commit_sdv` controls whether
+    state variables are written back to `sdvs_elem` (True only for the
+    single real call the Newton solver actually keeps; False for the
+    perturbed evaluations the FD tangent uses so a probe does not corrupt
+    the converged element's history).
     """
-    K_mat = np.zeros((24, 24), dtype=np.float64)
-    K_geo = np.zeros((24, 24), dtype=np.float64)
     f_int = np.zeros(24, dtype=np.float64)
     global_err = 0
 
@@ -228,62 +236,139 @@ def _compute_c3d8_fbar_tl_element_umat_numba(
                 S_voigt, C_tangent, sdv_gp_new, err = material_dispatch_3d(
                     mat_type, props, sdv_gp, E_voigt, F_bar, detF0, dt
                 )
-                if sdvs_elem.shape[1] > 0:
+                if commit_sdv and sdvs_elem.shape[1] > 0:
                     sdvs_elem[gp] = sdv_gp_new
+                if err != 0:
+                    global_err = err
 
-                S_tensor = np.array([
-                    [S_voigt[0], S_voigt[3], S_voigt[5]],
-                    [S_voigt[3], S_voigt[1], S_voigt[4]],
-                    [S_voigt[5], S_voigt[4], S_voigt[2]]
-                ], dtype=np.float64)
+                if stress_init.shape[0] == 8:
+                    for i in range(6):
+                        S_voigt[i] += stress_init[gp, i]
 
-                # Non-linear Strain-Displacement Matrix B_L (6 x 24)
+                # Non-linear Strain-Displacement Matrix B_L (6 x 24).
+                # Built from the REAL deformation gradient F, not F_bar --
+                # F-bar modifies the deformation gradient fed to the
+                # CONSTITUTIVE call only; the virtual strain used to build
+                # the residual must stay that of the real kinematics
+                # (de Souza Neto et al. 1996). This makes f_int the correct
+                # F-bar residual (root-verified: reduces exactly to a plain
+                # compatible C3D8 residual when F_bar=F, i.e. at any
+                # homogeneous/affine state -- so the exact patch-test
+                # solution is an exact root of this residual). The TANGENT
+                # consistent with THIS f_int is NOT B_L^T @ C_tangent @ B_L
+                # (that ignores both K_geo and the fact that F_bar depends
+                # on ALL 8 nodes through detF0/detF, not just the local GP)
+                # -- see _compute_c3d8_fbar_tl_element_umat_numba below,
+                # which builds the tangent as a finite difference of THIS
+                # SAME residual instead of an incomplete analytical form
+                # (measured 20% wrong against its own FD Jacobian before
+                # this fix, dev_log/solve_step_false_convergence_20260913.md).
                 B_L = np.zeros((6, 24), dtype=np.float64)
                 for a in range(8):
                     dX = dN_dX[a]
                     dY = dN_dY[a]
                     dZ = dN_dZ[a]
 
-                    B_L[0, 3*a + 0] = F_bar[0, 0] * dX
-                    B_L[0, 3*a + 1] = F_bar[1, 0] * dX
-                    B_L[0, 3*a + 2] = F_bar[2, 0] * dX
+                    B_L[0, 3*a + 0] = F[0, 0] * dX
+                    B_L[0, 3*a + 1] = F[1, 0] * dX
+                    B_L[0, 3*a + 2] = F[2, 0] * dX
 
-                    B_L[1, 3*a + 0] = F_bar[0, 1] * dY
-                    B_L[1, 3*a + 1] = F_bar[1, 1] * dY
-                    B_L[1, 3*a + 2] = F_bar[2, 1] * dY
+                    B_L[1, 3*a + 0] = F[0, 1] * dY
+                    B_L[1, 3*a + 1] = F[1, 1] * dY
+                    B_L[1, 3*a + 2] = F[2, 1] * dY
 
-                    B_L[2, 3*a + 0] = F_bar[0, 2] * dZ
-                    B_L[2, 3*a + 1] = F_bar[1, 2] * dZ
-                    B_L[2, 3*a + 2] = F_bar[2, 2] * dZ
+                    B_L[2, 3*a + 0] = F[0, 2] * dZ
+                    B_L[2, 3*a + 1] = F[1, 2] * dZ
+                    B_L[2, 3*a + 2] = F[2, 2] * dZ
 
-                    B_L[3, 3*a + 0] = F_bar[0, 0] * dY + F_bar[0, 1] * dX
-                    B_L[3, 3*a + 1] = F_bar[1, 0] * dY + F_bar[1, 1] * dX
-                    B_L[3, 3*a + 2] = F_bar[2, 0] * dY + F_bar[2, 1] * dX
+                    B_L[3, 3*a + 0] = F[0, 0] * dY + F[0, 1] * dX
+                    B_L[3, 3*a + 1] = F[1, 0] * dY + F[1, 1] * dX
+                    B_L[3, 3*a + 2] = F[2, 0] * dY + F[2, 1] * dX
 
-                    B_L[4, 3*a + 0] = F_bar[0, 1] * dZ + F_bar[0, 2] * dY
-                    B_L[4, 3*a + 1] = F_bar[1, 1] * dZ + F_bar[1, 2] * dY
-                    B_L[4, 3*a + 2] = F_bar[2, 1] * dZ + F_bar[2, 2] * dY
+                    B_L[4, 3*a + 0] = F[0, 1] * dZ + F[0, 2] * dY
+                    B_L[4, 3*a + 1] = F[1, 1] * dZ + F[1, 2] * dY
+                    B_L[4, 3*a + 2] = F[2, 1] * dZ + F[2, 2] * dY
 
-                    B_L[5, 3*a + 0] = F_bar[0, 2] * dX + F_bar[0, 0] * dZ
-                    B_L[5, 3*a + 1] = F_bar[1, 2] * dX + F_bar[1, 0] * dZ
-                    B_L[5, 3*a + 2] = F_bar[2, 2] * dX + F_bar[2, 0] * dZ
+                    B_L[5, 3*a + 0] = F[0, 2] * dX + F[0, 0] * dZ
+                    B_L[5, 3*a + 1] = F[1, 2] * dX + F[1, 0] * dZ
+                    B_L[5, 3*a + 2] = F[2, 2] * dX + F[2, 0] * dZ
 
                 dV = detJ
 
                 f_int += (B_L.T @ S_voigt) * dV
-                K_mat += (B_L.T @ C_tangent @ B_L) * dV
 
-                for a in range(8):
-                    grad_a = np.array([dN_dX[a], dN_dY[a], dN_dZ[a]], dtype=np.float64)
-                    for b in range(8):
-                        grad_b = np.array([dN_dX[b], dN_dY[b], dN_dZ[b]], dtype=np.float64)
-                        g_ab = float(grad_a @ S_tensor @ grad_b) * dV
+    return f_int, global_err
 
-                        K_geo[3*a + 0, 3*b + 0] += g_ab
-                        K_geo[3*a + 1, 3*b + 1] += g_ab
-                        K_geo[3*a + 2, 3*b + 2] += g_ab
 
-    K_elem = K_mat + K_geo
+@njit(fastmath=True)
+def _compute_c3d8_fbar_tl_element_umat_numba(
+    coords_init: np.ndarray,
+    u_elem: np.ndarray,
+    mat_type: int,
+    props: np.ndarray,
+    sdvs_elem: np.ndarray,
+    dt: float = 1.0,
+    stress_init: np.ndarray = _EMPTY_2D_CONTROLS
+):
+    """Compute Multiplicative F-bar Total Lagrangian 3D C3D8 element tangent
+    stiffness (24x24) and internal force vector (24) under finite
+    deformation using UMAT material dispatcher.
+
+    The tangent is a central finite difference of the element's own
+    residual (`_c3d8_fbar_tl_residual_only`), not a hand-derived analytical
+    form. This is a deliberate choice, not a stopgap: F_bar depends on
+    every node's displacement through the element-averaged detF0/detF
+    ratio (not just the local Gauss point's), so the exact analytical
+    tangent has a nonlocal cross-node term that a naive
+    B_L^T @ C_tangent @ B_L (plus the usual local geometric-stiffness term)
+    omits entirely -- measured 20% error against this same FD check before
+    this fix (dev_log/solve_step_false_convergence_20260913.md), matching
+    dev_log/3d_element_defect_audit_20260912.md 2.5's original "F-bar
+    omits its volumetric-consistency tangent term" finding. An FD tangent
+    is exact-by-construction against whatever residual is coded (it cannot
+    reintroduce this class of defect), at the cost of 48 extra element
+    residual evaluations per Newton iteration -- acceptable here since
+    C3D8_FBAR is used specifically for expensive near-incompressible
+    problems, not a hot path.
+
+    Per-column adaptive step h_j = sqrt(eps)*max(|u_j|, L_elem) (Dennis &
+    Schnabel 1983 Sec 5.4), same convention this project's B4 fix already
+    established for other Numba kernels (AGENTS.md 4.15) -- a fixed
+    absolute step is a latent mesh-refinement bug (truncation error scales
+    as h/L_elem, doubling on every uniform refinement).
+    """
+    f_int, global_err = _c3d8_fbar_tl_residual_only(
+        coords_init, u_elem, mat_type, props, sdvs_elem, dt, stress_init, True
+    )
+
+    # Characteristic element length, for the adaptive FD step -- mean
+    # distance from the element centroid to its 8 corners.
+    centroid = np.zeros(3, dtype=np.float64)
+    for i in range(8):
+        centroid += coords_init[i]
+    centroid /= 8.0
+    L_elem = 0.0
+    for i in range(8):
+        d = coords_init[i] - centroid
+        L_elem += np.sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2])
+    L_elem /= 8.0
+
+    sqrt_eps = 1.4901161193847656e-08  # sqrt(machine epsilon), float64
+    K_elem = np.zeros((24, 24), dtype=np.float64)
+    for j in range(24):
+        h = sqrt_eps * max(abs(u_elem[j]), L_elem)
+        u_p = u_elem.copy()
+        u_p[j] += h
+        u_m = u_elem.copy()
+        u_m[j] -= h
+        f_p, _ = _c3d8_fbar_tl_residual_only(
+            coords_init, u_p, mat_type, props, sdvs_elem, dt, stress_init, False
+        )
+        f_m, _ = _c3d8_fbar_tl_residual_only(
+            coords_init, u_m, mat_type, props, sdvs_elem, dt, stress_init, False
+        )
+        K_elem[:, j] = (f_p - f_m) / (2.0 * h)
+
     return K_elem, f_int, global_err
 
 
@@ -323,7 +408,9 @@ def compute_c3d8_fbar_tl_element_numba(
         return _compute_c3d8_fbar_tl_element_umat_numba(coords_init, u_elem, mat_type, props, sdvs_elem, dt)
 
 
-@njit(fastmath=True)
+_EMPTY_2D_CONTROLS = np.empty((0, 0), dtype=np.float64)
+
+@njit(parallel=True, fastmath=True, cache=True)
 def _assemble_mesh_c3d8_fbar_tl_umat_numba(
     node_coords: np.ndarray,
     elem_conn: np.ndarray,
@@ -331,41 +418,42 @@ def _assemble_mesh_c3d8_fbar_tl_umat_numba(
     elem_mat_types: np.ndarray,
     elem_props: np.ndarray,
     elem_sdvs: np.ndarray,
-    dt: float = 1.0
+    dt: float = 1.0,
+    elem_stress_init: np.ndarray = _EMPTY_2D_CONTROLS
 ):
     n_elems = elem_conn.shape[0]
-    has_error = 0
     f_elems = np.zeros((n_elems, 24), dtype=np.float64)
     K_elems = np.zeros((n_elems, 24, 24), dtype=np.float64)
+    err_flags = np.zeros(n_elems, dtype=np.int32)
+    has_stress_init = elem_stress_init.shape[0] == n_elems
 
-    for e in range(n_elems):
+    for e in prange(n_elems):
         nodes_e = elem_conn[e]
         coords_e = np.zeros((8, 3), dtype=np.float64)
         u_e = np.zeros(24, dtype=np.float64)
 
         for i in range(8):
             nid = nodes_e[i]
-            coords_e[i, 0] = node_coords[nid, 0]
-            coords_e[i, 1] = node_coords[nid, 1]
-            coords_e[i, 2] = node_coords[nid, 2]
-
-            u_e[3*i + 0] = u_global[3*nid + 0]
-            u_e[3*i + 1] = u_global[3*nid + 1]
-            u_e[3*i + 2] = u_global[3*nid + 2]
+            coords_e[i, :] = node_coords[nid, :]
+            u_e[3*i:3*i+3] = u_global[3*nid:3*nid+3]
 
         mat_type = elem_mat_types[e]
         props_e = elem_props[e]
         sdvs_e = elem_sdvs[e]
+        stress_init = elem_stress_init[e] if has_stress_init else np.zeros((8, 6), dtype=np.float64)
 
         Ke, fe, err = _compute_c3d8_fbar_tl_element_umat_numba(
-            coords_e, u_e, mat_type, props_e, sdvs_e, dt
+            coords_e, u_e, mat_type, props_e, sdvs_e, dt, stress_init
         )
-        K_elems[e] = Ke
-        f_elems[e] = fe
-        if err > 0:
-            has_error = err
+        K_elems[e, :, :] = Ke
+        f_elems[e, :] = fe
+        err_flags[e] = err
 
-    return f_elems, K_elems, has_error
+    err_sum = 0
+    for e in range(n_elems):
+        err_sum += err_flags[e]
+        
+    return f_elems, K_elems, err_sum
 
 
 def assemble_mesh_c3d8_fbar_tl_numba(
@@ -378,9 +466,13 @@ def assemble_mesh_c3d8_fbar_tl_numba(
     """Mesh assembly kernel for Multiplicative F-bar Total Lagrangian 3D elements.
     Supports both legacy C_mat (single material) and multi-material arrays.
     """
+    n_elems = elem_conn.shape[0]
+    elem_stress_init = kwargs.get("elem_stress_init", None)
+    if elem_stress_init is None:
+        elem_stress_init = np.zeros((n_elems, 8, 6), dtype=np.float64)
+
     if len(args) == 1 and isinstance(args[0], np.ndarray) and args[0].ndim == 2:
         C_mat = args[0]
-        n_elems = elem_conn.shape[0]
         elem_mat_types = np.full(n_elems, MAT_CUSTOM_ELASTIC, dtype=np.int32)
         elem_props = np.zeros((n_elems, 36), dtype=np.float64)
         cmat_flat = C_mat.ravel()
@@ -388,7 +480,7 @@ def assemble_mesh_c3d8_fbar_tl_numba(
             elem_props[e, :36] = cmat_flat
         elem_sdvs = np.zeros((n_elems, 8, 0), dtype=np.float64)
         return _assemble_mesh_c3d8_fbar_tl_umat_numba(
-            node_coords, elem_conn, u_global, elem_mat_types, elem_props, elem_sdvs, 1.0
+            node_coords, elem_conn, u_global, elem_mat_types, elem_props, elem_sdvs, 1.0, elem_stress_init
         )
     else:
         elem_mat_types = args[0]
@@ -396,6 +488,6 @@ def assemble_mesh_c3d8_fbar_tl_numba(
         elem_sdvs = args[2] if len(args) > 2 else np.zeros((elem_conn.shape[0], 8, 0), dtype=np.float64)
         dt = float(args[3]) if len(args) > 3 else float(kwargs.get("dt", 1.0))
         return _assemble_mesh_c3d8_fbar_tl_umat_numba(
-            node_coords, elem_conn, u_global, elem_mat_types, elem_props, elem_sdvs, dt
+            node_coords, elem_conn, u_global, elem_mat_types, elem_props, elem_sdvs, dt, elem_stress_init
         )
 

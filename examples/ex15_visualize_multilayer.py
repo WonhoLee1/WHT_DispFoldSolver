@@ -98,7 +98,7 @@ def create_animation(mesh, history, theta_hist, draw_in_hist, out_gif):
         ax.set_title(f"4-Layer Folding Animation (Step {frame+1}/{len(history)}) | Total Fold: {2*th:.1f}° | Draw-In: {d_in:.2f} mm")
         ax.set_xlabel("X (mm)")
         ax.set_ylabel("Y (mm)")
-        ax.axis('equal')
+        ax.set_aspect('equal', adjustable='box')
         # Fix axis limits
         ax.set_xlim(-25, 25)
         ax.set_ylim(-15, 15)

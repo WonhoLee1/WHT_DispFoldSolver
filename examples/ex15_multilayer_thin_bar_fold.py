@@ -1,51 +1,100 @@
+"""
+ex15_multilayer_thin_bar_fold.py
+================================
+3D Multilayer Thin Display Bar Folding Simulation.
+Demonstrates full commercial CAE model encapsulation:
+  - Model -> Part -> Section -> Assembly -> Step architecture
+  - Numba @njit C-Kernel UserFunctionBC for kinematic pivot rotation
+  - SmoothStepAmplitude C² ramp (90 deg per wing, 180 deg total fold)
+  - Real-time Sensor & IterationHook monitoring
+  - Fully encapsulated DynamicSolver3D.solve(step) execution engine
+"""
+
 import numpy as np
 import time
 import os
+import pickle
+from numba import njit
 
-from dispsolver.mesh3d import Mesh3D
-from dispsolver.solver3d import DynamicSolver3D
-from dispsolver.material3d.numba_materials import MAT_NEO_HOOKEAN, MAT_J2_PLASTICITY, MAT_LINEAR_ELASTIC
+from dispsolver.model.model import Model
+from dispsolver.model.sensor import Sensor, IterationHook, ControlAction
 
-class AdaptiveDtController:
-    def __init__(self, dt_init=0.01, dt_min=1e-5, dt_max=0.05):
-        self.dt = dt_init
-        self.dt_min = dt_min
-        self.dt_max = dt_max
-    
-    def adjust_dt(self, converged: bool, iters: int):
-        if not converged:
-            self.dt = max(self.dt_min, self.dt * 0.25)
-            return False
-        elif iters <= 4:
-            self.dt = min(self.dt_max, self.dt * 1.5)
-        return True
 
-def create_4layer_thin_bar():
-    mesh = Mesh3D()
+# Pivot locations for canonical 2-pivot folding
+# Pivot locations for canonical 2-pivot folding
+LEFT_PIVOT = np.array([-3.0, 0.2, 0.0], dtype=np.float64)
+RIGHT_PIVOT = np.array([ 3.0, 0.2, 0.0], dtype=np.float64)
+TARGET_THETA_MAX = np.deg2rad(90.0)
+
+
+@njit(fastmath=True)
+def fold_left_numba(coords: np.ndarray, t: float, step_time: float):
+    """Numba-compiled C-kernel evaluating left wing kinematic pivot rotation at time t."""
+    if coords[0] > -7.99:
+        return (None, None, 0.0)
     
-    # 4 layers (Y-direction), 3 elements in Z (width-resolved), 40 elements in X
-    nx = 40
-    ny = 4
-    nz = 3
+    # Ramp load smoothly using Smoothstep: s(t) = 3t^2 - 2t^3
+    t_clamped = max(0.0, min(1.0, t))
+    ramp = 3.0 * (t_clamped ** 2) - 2.0 * (t_clamped ** 3)
+    theta = TARGET_THETA_MAX * ramp
+
+    cos_L = np.cos(theta)
+    sin_L = np.sin(theta)
+
+    dx = coords[0] - LEFT_PIVOT[0]
+    dy = coords[1] - LEFT_PIVOT[1]
+
+    ux = dx * cos_L - dy * sin_L - dx
+    uy = dx * sin_L + dy * cos_L - dy
+    return (ux, uy, 0.0)
+
+
+@njit(fastmath=True)
+def fold_right_numba(coords: np.ndarray, t: float, step_time: float):
+    """Numba-compiled C-kernel evaluating right wing kinematic pivot rotation at time t."""
+    if coords[0] < 7.99:
+        return (None, None, 0.0)
     
-    L = 40.0
-    W = 1.0
-    H = 0.4
-    
+    t_clamped = max(0.0, min(1.0, t))
+    ramp = 3.0 * (t_clamped ** 2) - 2.0 * (t_clamped ** 3)
+    theta = -TARGET_THETA_MAX * ramp
+
+    cos_R = np.cos(theta)
+    sin_R = np.sin(theta)
+
+    dx = coords[0] - RIGHT_PIVOT[0]
+    dy = coords[1] - RIGHT_PIVOT[1]
+
+    ux = dx * cos_R - dy * sin_R - dx
+    uy = dx * sin_R + dy * cos_R - dy
+    return (ux, uy, 0.0)
+
+
+def build_ex15_model():
+    """Build complete CAE Model hierarchy for 4-layer thin bar 3D folding."""
+    model = Model(name="Ex15_Multilayer_Fold", dim=3)
+    part = model.Part(name="ThinBar")
+
+    nx, ny, nz = 40, 4, 3
+    L, H, W = 40.0, 0.4, 1.0
+
     xs = np.linspace(-L/2, L/2, nx + 1)
     ys = np.linspace(0.0, H, ny + 1)
     zs = np.linspace(0.0, W, nz + 1)
-    
+
     node_map = {}
     nid = 1
     for k in range(nz + 1):
         for j in range(ny + 1):
             for i in range(nx + 1):
-                mesh.add_node(nid, xs[i], ys[j], zs[k])
+                part.Node(nid, xs[i], ys[j], zs[k])
                 node_map[(i, j, k)] = nid
                 nid += 1
-                
+
     eid = 1
+    pet_elems = []
+    psa_elems = []
+
     for k in range(nz):
         for j in range(ny):
             for i in range(nx):
@@ -57,152 +106,130 @@ def create_4layer_thin_bar():
                 n5 = node_map[(i+1, j, k+1)]
                 n6 = node_map[(i+1, j+1, k+1)]
                 n7 = node_map[(i, j+1, k+1)]
-                
-                # PID 0: PET (J2 Plasticity) -> C3D8_CR
-                # PID 1: PSA (Hyperelastic)   -> C3D8H (Hybrid Element to prevent locking & inversion)
+
                 pid = 0 if j % 2 == 0 else 1
                 elem_type = "C3D8_CR" if pid == 0 else "C3D8H"
                 
-                elem = mesh.add_element(eid, [n0, n1, n2, n3, n4, n5, n6, n7], elem_type)
-                elem.pid = pid
+                part.Element(eid, elem_type, [n0, n1, n2, n3, n4, n5, n6, n7])
+                if pid == 0:
+                    pet_elems.append(eid)
+                else:
+                    psa_elems.append(eid)
                 eid += 1
-                
-    return mesh
+
+    part.ElementSet("ELSET_PET", pet_elems)
+    part.ElementSet("ELSET_PSA", psa_elems)
+    part.create_set("ALL", elements=list(part.elements.keys()), nodes=list(part.nodes.keys()))
+
+    right_wing_nids = [node_map[(i, j, k)] for i in range(nx + 1) for j in range(ny + 1) for k in range(nz + 1) if xs[i] >= 7.99]
+    part.create_set("RIGHT_WING", nodes=right_wing_nids)
+
+    # Define Materials
+    mat_pet = model.Material(name="PET", mat_type="J2_PLASTICITY")
+    mat_pet.E = 4000.0
+    mat_pet.nu = 0.3
+    mat_pet.sigma_y0 = 80.0
+    mat_pet.H = 400.0
+
+    mat_psa = model.Material(name="PSA", mat_type="NEO_HOOKEAN")
+    mat_psa.C10 = 0.1
+    mat_psa.D1 = 0.01
+
+    sec_pet = model.SolidSection(name="SecPET", material="PET")
+    sec_psa = model.SolidSection(name="SecPSA", material="PSA")
+
+    part.SectionAssignment(region="ELSET_PET", sectionName="SecPET")
+    part.SectionAssignment(region="ELSET_PSA", sectionName="SecPSA")
+
+    # Instance Part into Assembly
+    model.root_assembly.Instance(name="BAR_INST", part=part)
+
+    # Define Step and BCs
+    step = model.Step(name="FoldStep", time_period=1.0, dt_init=0.02, dt_min=1e-5, dt_max=0.05)
+
+    model.UserFunctionBC(
+        name="FoldLeftBC",
+        createStepName="FoldStep",
+        region="BAR_INST.ALL",
+        numba_func=fold_left_numba
+    )
+
+    model.UserFunctionBC(
+        name="FoldRightBC",
+        createStepName="FoldStep",
+        region="BAR_INST.ALL",
+        numba_func=fold_right_numba
+    )
+
+    # Attach Sensor for Right Wing Draw-In
+    draw_in_sensor = model.Sensor(
+        name="DrawIn_UX",
+        entity_type="set",
+        entity_id="BAR_INST.RIGHT_WING",
+        variable="U",
+        comp="1"
+    )
+    step.sensors["DrawIn"] = draw_in_sensor
+
+    return model, step
+
 
 def main():
-    print("Building 4-layer thin bar 3D mesh with nz=3 and C3D8H hybrid elements...")
-    mesh = create_4layer_thin_bar()
-    
-    # Materials setup
-    # PID 0: PET (J2 Plasticity) E=4000, nu=0.3, Sy=80, H=400
-    mat_pet = {"type": "j2_plasticity", "E": 4000.0, "nu": 0.3, "sigma_y0": 80.0, "H": 400.0}
-    # PID 1: PSA (Neo-Hookean) C10=0.1, D1=0.01 -> mu=0.2 MPa, K=200 MPa
-    mat_psa = {"type": "neo_hookean", "C10": 0.1, "D1": 0.01}
-    
-    materials = {0: mat_pet, 1: mat_psa}
-    
-    print("Initializing DOD Solver3D with heterogeneous multi-element support...")
-    solver = DynamicSolver3D(mesh, materials=materials)
-    
-    # Enforce plane-strain by fixing all nodes in Z
-    for nid in mesh.nodes:
-        solver.fix_dof(nid, 2, 0.0)
+    print("Building 4-layer thin bar 3D model using CAE Abaqus API...", flush=True)
+    model, step = build_ex15_model()
 
-    # Canonical two-pivot foldable display kinematics:
-    # Left pivot at (-3.0, 0.2), Right pivot at (+3.0, 0.2)
-    # Left wing (X <= -8.0) rotates by +theta around Left Pivot
-    # Right wing (X >= +8.0) rotates by -theta around Right Pivot
-    # Middle span (-8.0 < X < 8.0) bends into a smooth, natural U-shape loop
-    LEFT_PIVOT = np.array([-3.0, 0.2, 0.0])
-    RIGHT_PIVOT = np.array([ 3.0, 0.2, 0.0])
+    print("Creating solver and building sparse system...", flush=True)
+    solver, sys = model.create_solver3d(step_name="FoldStep")
 
-    left_nids = [n.id for n in mesh.nodes.values() if n.x <= -7.99]
-    right_nids = [n.id for n in mesh.nodes.values() if n.x >= 7.99]
+    print("Starting encapsulated solver execution (180 deg fold)...", flush=True)
+    t_start = time.perf_counter()
+    success = solver.solve(step=step, sys=sys, verbose=True)
+    t_wall = time.perf_counter() - t_start
 
-    def apply_kinematic_fold(theta_rad):
-        # Left wing rotation around LEFT_PIVOT by +theta
-        cos_L, sin_L = np.cos(theta_rad), np.sin(theta_rad)
-        for nid in left_nids:
-            n = mesh.nodes[nid]
-            dx = n.x - LEFT_PIVOT[0]
-            dy = n.y - LEFT_PIVOT[1]
-            ux = dx * cos_L - dy * sin_L - dx
-            uy = dx * sin_L + dy * cos_L - dy
-            solver.fix_dof(nid, 0, ux)
-            solver.fix_dof(nid, 1, uy)
-            solver.fix_dof(nid, 2, 0.0)
+    print(f"\nSimulation finished in {t_wall:.2f} s | Status: {'SUCCESS' if success else 'FAILED'}", flush=True)
 
-        # Right wing rotation around RIGHT_PIVOT by -theta
-        cos_R, sin_R = np.cos(-theta_rad), np.sin(-theta_rad)
-        for nid in right_nids:
-            n = mesh.nodes[nid]
-            dx = n.x - RIGHT_PIVOT[0]
-            dy = n.y - RIGHT_PIVOT[1]
-            ux = dx * cos_R - dy * sin_R - dx
-            uy = dx * sin_R + dy * cos_R - dy
-            solver.fix_dof(nid, 0, ux)
-            solver.fix_dof(nid, 1, uy)
-            solver.fix_dof(nid, 2, 0.0)
+    # Extract history
+    history_u = solver.history_u if hasattr(solver, "history_u") and solver.history_u else [solver.u.copy()]
+    history_t = solver.history_t if hasattr(solver, "history_t") and solver.history_t else [1.0]
 
-    dt_ctrl = AdaptiveDtController(dt_init=0.02)
-    t = 0.0
-    t_end = 1.0
-    target_theta_max = np.deg2rad(90.0) # 90 degrees each side -> U-shape 180 total
-    
-    step = 0
-    draw_in_history = []
     theta_history = []
-    
-    while t < t_end:
-        step += 1
-        
-        # Save previous state in case of cutback
-        u_prev = solver.u.copy()
-        t_prev = t
-        
-        t += dt_ctrl.dt
-        if t > t_end:
-            t = t_end
-            dt_ctrl.dt = t - t_prev
-            
-        # Ramp load smoothly
-        ramp = 3 * (t**2) - 2 * (t**3)
-        theta_current = target_theta_max * ramp
-        
-        apply_kinematic_fold(theta_current)
-        
-        t_solve_start = time.perf_counter()
-        conv, iters = solver.solve_step(dt=dt_ctrl.dt, max_iters=25)
-        t_solve = time.perf_counter() - t_solve_start
-        
-        # Measure draw-in displacement on the right end
-        nid_map = mesh.node_id_to_index()
-        u_draw_in = np.mean([solver.u[3 * nid_map[nid] + 0] for nid in right_nids])
-        
-        print(f"Step {step}: t={t:.3f}, dt={dt_ctrl.dt:.4f}, theta={np.rad2deg(theta_current):.1f} deg | Draw-In UX={u_draw_in:.4f} mm")
-        
-        if conv:
-            print(f"  -> Converged in {iters} iters ({t_solve:.2f}s)")
-            dt_ctrl.adjust_dt(True, iters)
-            if not hasattr(solver, 'history_u'):
-                solver.history_u = []
-            solver.history_u.append(solver.u.copy())
-            draw_in_history.append(u_draw_in)
-            theta_history.append(np.rad2deg(theta_current))
-        else:
-            print(f"  -> DIVERGED! Cutback triggered. (Iters={iters}, Time={t_solve:.2f}s)")
-            solver.u = u_prev
-            t = t_prev
-            dt_ctrl.adjust_dt(False, iters)
-            if dt_ctrl.dt <= dt_ctrl.dt_min:
-                print("Minimum dt reached. Aborting.")
-                break
+    draw_in_history = []
+    right_indices = sys.global_nsets.get("BAR_INST.RIGHT_WING", [])
 
-    print("Simulation completed.")
-    print(f"Final Right End Draw-In Displacement: {draw_in_history[-1]:.4f} mm")
-    
+    for idx, t_val in enumerate(history_t):
+        ramp = 3.0 * (t_val ** 2) - 2.0 * (t_val ** 3)
+        theta_history.append(np.rad2deg(TARGET_THETA_MAX * ramp))
+        u_step = history_u[idx]
+        u_nodes = u_step.reshape(-1, 3)
+        ux_val = float(np.mean(u_nodes[right_indices, 0])) if len(right_indices) > 0 else 0.0
+        draw_in_history.append(ux_val)
+
+    if draw_in_history:
+        print(f"Final Right End Draw-In Displacement: {draw_in_history[-1]:.4f} mm", flush=True)
+
     # Save results
     res_path = "examples/ex15_result.pkl"
-    print(f"Saving results to {res_path}...")
-    import pickle
+    print(f"Saving results to {res_path}...", flush=True)
+    mesh3d = sys.to_mesh3d()
     result_data = {
-        'mesh': mesh,
+        'mesh': mesh3d,
         'displacement': solver.u.copy(),
-        'history': solver.history_u if hasattr(solver, 'history_u') else [solver.u.copy()],
+        'history': history_u if history_u else [solver.u.copy()],
         'draw_in_history': draw_in_history,
         'theta_history': theta_history
     }
     with open(res_path, 'wb') as f:
         pickle.dump(result_data, f)
-    print("Result saved successfully.")
-    
+    print("Result saved successfully.", flush=True)
+
     # Trigger visualization
     try:
         from examples.ex15_visualize_multilayer import main as run_viz
-        print("Generating visualizations...")
+        print("Generating visualizations...", flush=True)
         run_viz()
     except Exception as e:
-        print(f"Visualization error: {e}")
+        print(f"Visualization error: {e}", flush=True)
+
 
 if __name__ == "__main__":
     main()

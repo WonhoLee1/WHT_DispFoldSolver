@@ -155,24 +155,42 @@ _XFAIL = {
                               "cure locking differently, are at 1e-16."),
 
     # ---- C10: JAX == Numba -------------------------------------------
-    # These three contradict claims written in dynamic.py's own dispatch
-    # comments ("force to 1e-13", "force error <= 2e-5", "force ~1e-16").
-    # Checked 2026-09-11 across axis-aligned/tilted x undistorted/distorted:
-    # the disagreement is FLAT at ~1e-3, so it is a formulation difference
-    # between the two lowerings, not a geometry-dependent one.
-    ("C10", "Q4_COROTATIONAL_SRI"): (1.54e-03, "DEFECT: backend drift (R4). "
-                                     "PRODUCTION element (PET + GLASS)."),
-    ("C10", "CPE4I"): (1.61e-03, "DEFECT: backend drift (R4). PRODUCTION "
-                       "element (PSA)."),
-    ("C10", "Q4_VISCO_SIMO"): (1.75e-03, "DEFECT: backend drift (R4)."),
+    # FIXED 2026-09-12. Three entries stood here at 1.54e-03 / 1.61e-03 /
+    # 1.75e-03. All three were root-caused to the SAME sentence -- "which
+    # deformation gradient does the B-operator differentiate?" -- i.e. the
+    # F4/F6/B1/B2/B3 class, once more:
+    #   Q4_COROTATIONAL_SRI  two different co-rotational frames. JAX takes the
+    #                        xi-edge pair alone; the Numba copy averaged both
+    #                        edge rotations. Invisible on any full-integration
+    #                        Green-Lagrange element (the frame cancels -- F1's
+    #                        "bitwise TL" result), but SRI samples shear in
+    #                        fixed Cartesian components, so the frame choice
+    #                        changes the answer.        -> 4.67e-14
+    #   CPE4I                the Numba mirror was never ported onto B2: it
+    #                        built B_L from the COMPATIBLE gradient, dropping
+    #                        the alpha-dependent half of dE_inc/du, and
+    #                        contracted f_a against the un-pushed S_v. Neither
+    #                        vanishes at F_n = I.        -> 1.70e-15
+    #   Q4_VISCO_SIMO        B_L built from `Fbar` instead of the real F. In
+    #                        F-bar the modified gradient enters the
+    #                        CONSTITUTIVE call only.     -> 2.00e-15
+    # Residual K errors (2.3e-06 / 8.0e-08 / 6.8e-08) are the FD-vs-autodiff
+    # floor the C10 tangent tolerance already allows, not drift.
 
     # ---- C11: the FD step must be mesh-invariant ----------------------
-    ("C11", "CPE4H"): (8.0, "DEFECT: B4's fixed ABSOLUTE FD step, still live in "
-                      "q4_visco_hybrid_up_numba.py. Measured 2.61e-06 / "
-                      "1.31e-06 / 6.54e-07 / 3.27e-07 as the element grows "
-                      "x1/x2/x4/x8 -- error EXACTLY inverse in element size, "
-                      "the h/L signature. AGENTS.md 4.15 names this file as one "
-                      "of the four siblings left unfixed."),
+    # FIXED 2026-09-12. `("C11", "CPE4H")` stood here at ratio 8.0 (2.61e-06 /
+    # 1.31e-06 / 6.54e-07 / 3.27e-07 across x1/x2/x4/x8 -- error exactly
+    # inverse in element size, B4's h/L signature). `q4_visco_hybrid_up_numba`
+    # now takes the per-column Dennis & Schnabel step; measured 4.11e-08 flat,
+    # ratio 1.00.
+    #
+    # Worth recording as a method note: CPE4I's C11 row was flat BEFORE the
+    # C10 fix and grew the ratio-8.0 signature (6.63e-06 ... 8.28e-07) the
+    # moment its force agreed with JAX. C11 measures |K_numba - K_jax|, so a
+    # large force-formulation disagreement was swamping the FD term and making
+    # a real B4 defect look absent. A contract can be masked by another
+    # contract's failure; a flat C11 row is only evidence once C10 passes.
+    # `q4_visco_eas_numba` was fixed in the same pass -> 1.01.
 }
 
 

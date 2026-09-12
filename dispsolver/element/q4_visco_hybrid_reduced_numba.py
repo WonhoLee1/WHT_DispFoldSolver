@@ -54,6 +54,7 @@ except ImportError:      # pragma: no cover
 if _HAS_NUMBA:
     from .q4_visco_hybrid_simo_numba import (
         _grads_numba, _F_at_numba, _BL_columns_numba, _simo_pk2_numba,
+        _SQRT_EPS,
     )
 
     # Natural-coordinate hourglass shape vector -- identical to
@@ -126,7 +127,7 @@ if _HAS_NUMBA:
         base_code: int, coords: np.ndarray, u_elem: np.ndarray,
         state_elem: np.ndarray, kappa: float, bparams: np.ndarray,
         g_i: np.ndarray, tau_i: np.ndarray, g_inf: float, dt: float,
-        thickness: float, F_n: np.ndarray, h: float = 1e-6,
+        thickness: float, F_n: np.ndarray, h: float = 0.0,
         alpha_hg: float = _ALPHA_HG,
     ):
         """CPE4RH. Returns (f_e(8,), K_e(8,8), state_new(4,n), F_n_new(4,2,2)).
@@ -135,20 +136,45 @@ if _HAS_NUMBA:
         (single centroid GP); the result is broadcast into all 4 slots for
         array-shape compatibility with the solver's uniform per-element
         storage, matching `q4_reduced_jax.py`'s established convention.
+
+        Step size (2026-09-12, finding B4). `h` used to default to a FIXED
+        ABSOLUTE 1e-6; a forward difference's truncation error relative to
+        `K` then scales as `h / L_elem` and doubles on every uniform mesh
+        refinement. `h = 0.0` selects the per-column Dennis & Schnabel (1983)
+        sec 5.4 step `h_j = sqrt(eps_mach) * max(|u_j|, L_elem)`. Applied
+        here alongside the three siblings AGENTS.md 4.15 lists; this one is
+        not yet covered by contract C11 (CPE4RH does not reach the batch
+        path -- see harness.KNOWN_BROKEN_BATCH), so it is fixed by
+        inspection against the measured siblings, not by its own number.
         """
         f0, h_new, F, w0, gX, gY = _reduced_hybrid_force_numba(
             base_code, coords, u_elem, state_elem[0], kappa, bparams,
             g_i, tau_i, g_inf, dt, thickness, F_n[0])
 
+        # Element characteristic length: the longer diagonal, a
+        # rotation-invariant size measure (a bounding-box extent is not).
+        d1 = np.sqrt((coords[2, 0] - coords[0, 0]) ** 2
+                     + (coords[2, 1] - coords[0, 1]) ** 2)
+        d2 = np.sqrt((coords[3, 0] - coords[1, 0]) ** 2
+                     + (coords[3, 1] - coords[1, 1]) ** 2)
+        L_elem = max(d1, d2)
+        if L_elem < 1e-30:
+            L_elem = 1e-30
+
         K_mat = np.zeros((8, 8), dtype=np.float64)
         for j in range(8):
+            if h > 0.0:
+                hj = h
+            else:
+                uj = abs(u_elem[j])
+                hj = _SQRT_EPS * (uj if uj > L_elem else L_elem)
             u_pert = u_elem.copy()
-            u_pert[j] += h
+            u_pert[j] += hj
             f_pert, _, _, _, _, _ = _reduced_hybrid_force_numba(
                 base_code, coords, u_pert, state_elem[0], kappa, bparams,
                 g_i, tau_i, g_inf, dt, thickness, F_n[0])
             for i in range(8):
-                K_mat[i, j] = (f_pert[i] - f0[i]) / h
+                K_mat[i, j] = (f_pert[i] - f0[i]) / hj
 
         n_state = state_elem.shape[1]
         state_new = np.zeros((4, n_state), dtype=np.float64)

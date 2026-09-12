@@ -41,6 +41,9 @@ class FlattenedSolverSystem:
     # 6. Constraints mapped to Global DOFs
     constraints: List[Any] = field(default_factory=list)
 
+    # 7. Predefined Fields (Initial Conditions)
+    predefined_fields: List[Any] = field(default_factory=list)
+
     def to_mesh3d(self):
         """Construct a Mesh3D instance for DynamicSolver3D."""
         from dispsolver.mesh3d import Mesh3D
@@ -278,6 +281,17 @@ class Assembly:
             rows_topo = np.zeros(0, dtype=np.int32)
             cols_topo = np.zeros(0, dtype=np.int32)
 
+        # 5. Compile Constraints from Model and Assembly
+        compiled_constraints: List[Any] = []
+        if hasattr(model, "constraints"):
+            for cname, constraint in model.constraints.items():
+                compiled_constraints.append(constraint)
+
+        # 6. Compile Predefined Fields from InitialStep
+        compiled_predefined_fields = []
+        if hasattr(model, "initial_step"):
+            compiled_predefined_fields = list(model.initial_step.predefined_fields.values())
+
         return FlattenedSolverSystem(
             coords=global_coords,
             elem_conn_0based=elem_conn_0based,
@@ -294,5 +308,6 @@ class Assembly:
             rows_topo=rows_topo,
             cols_topo=cols_topo,
             num_dofs=num_dofs,
-            constraints=[]
+            constraints=compiled_constraints,
+            predefined_fields=compiled_predefined_fields
         )

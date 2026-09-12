@@ -19,12 +19,12 @@ except ImportError:
     HAS_PARDISO = False
 
 from dispsolver.mesh3d import Mesh3D
-from dispsolver.element3d import SolidElement3D, QuadraturePointState3D, Hexa8EASElement, Hexa8FbarElement
 from dispsolver.solver3d.assembly_utils import build_global_topology, scatter_f_int_3d
 from dispsolver.material3d.numba_materials import (
     MAT_LINEAR_ELASTIC,
     MAT_NEO_HOOKEAN,
     MAT_J2_PLASTICITY,
+    MAT_VISCOELASTIC_PRONY,
     MAT_CUSTOM_ELASTIC,
     get_default_sdv_count,
 )
@@ -86,28 +86,7 @@ class DynamicSolver3D:
             [0,          0,          0,          0,  0,  mu]
         ], dtype=np.float64)
 
-        # Element instances mapping
-        self.element_instances: Dict[int, SolidElement3D] = {}
-        self.element_states: Dict[int, List[QuadraturePointState3D]] = {}
-
-        self._initialize_elements()
         self._setup_numba_topology()
-
-    def _initialize_elements(self):
-        """Instantiate 3D element formulations based on elem_type."""
-        for eid, elem in self.mesh.elements.items():
-            if elem.elem_type.upper() in ["C3D8I", "C3D8_EAS"]:
-                inst = Hexa8EASElement(num_eas_modes=9)
-            elif elem.elem_type.upper() in ["C3D8_FBAR", "FBAR"]:
-                inst = Hexa8FbarElement()
-            elif elem.elem_type.upper() in ["C3D8H", "C3D8_HYBRID", "HYBRID"]:
-                inst = Hexa8FbarElement()
-            else:
-                # Default to C3D8I EAS
-                inst = Hexa8EASElement(num_eas_modes=9)
-
-            self.element_instances[eid] = inst
-            self.element_states[eid] = [QuadraturePointState3D.create_initial() for _ in range(inst.num_quad_points)]
 
     def _setup_numba_topology(self):
         """Precompute global assembly topology and DOD multimaterial arrays."""
@@ -118,46 +97,29 @@ class DynamicSolver3D:
             self.elem_mat_types = None
             self.elem_props = None
             self.elem_sdvs = None
+            self.elem_stress_init = None
             self.elem_kernel_groups = {}
             return
 
         nid_map = self.mesh.node_id_to_index()
-        self.elem_conn_0based = np.array(
-            [[nid_map[nid] for nid in elem.node_ids] for elem in self.mesh.elements.values()],
-            dtype=np.int64
-        )
-        self.rows_topo, self.cols_topo = build_global_topology(self.num_dofs, self.elem_conn_0based)
+        elements_list = list(self.mesh.elements.values())
+        try:
+            self.elem_conn_0based = np.array(
+                [[nid_map[nid] for nid in elem.node_ids] for elem in elements_list],
+                dtype=np.int64
+            )
+        except Exception:
+            self.elem_conn_0based = None
 
-        n_elems = self.elem_conn_0based.shape[0]
+        n_elems = len(elements_list)
         self.elem_mat_types = np.full(n_elems, MAT_CUSTOM_ELASTIC, dtype=np.int32)
         self.elem_props = np.zeros((n_elems, 36), dtype=np.float64)
 
-        # Classify element kernel groups for heterogeneous multi-element assembly
-        elem_kernel_indices: Dict[int, List[int]] = {}
-        for idx, elem in enumerate(self.mesh.elements.values()):
-            et = elem.elem_type.upper()
-            if et in ["C3D8I", "C3D8_EAS"]:
-                k = 0
-            elif et in ["C3D8_CR", "C3D8_COROTATIONAL", "C3D8_FBAR_CR"]:
-                k = 1
-            elif et in ["C3D8H", "C3D8_HYBRID", "HYBRID"]:
-                k = 2
-            else:
-                k = 3
-            if k not in elem_kernel_indices:
-                elem_kernel_indices[k] = []
-            elem_kernel_indices[k].append(idx)
-
-        self.elem_kernel_groups = {
-            k: np.array(indices, dtype=np.int64)
-            for k, indices in elem_kernel_indices.items()
-        }
-
         # Populate multimaterial properties per element
         cmat_flat = self.C_mat_default.ravel()
-        for e, elem in enumerate(self.mesh.elements.values()):
+        for e, elem in enumerate(elements_list):
             pid = getattr(elem, "pid", 0)
-            mat_obj = self.materials.get(pid, None)
+            mat_obj = self.materials.get(pid, None) if hasattr(self, "materials") and isinstance(self.materials, dict) else None
             if mat_obj is not None:
                 if hasattr(mat_obj, "mat_type") and hasattr(mat_obj, "props"):
                     self.elem_mat_types[e] = int(mat_obj.mat_type)
@@ -167,23 +129,38 @@ class DynamicSolver3D:
                     self.elem_mat_types[e] = MAT_CUSTOM_ELASTIC
                     self.elem_props[e, :36] = np.asarray(mat_obj.C_mat, dtype=np.float64).ravel()[:36]
                 elif isinstance(mat_obj, dict):
-                    if mat_obj.get("type", "").lower() in ["j2", "plasticity", "j2_plasticity"] or "sigma_y0" in mat_obj:
+                    mtype = mat_obj.get("mat_type", mat_obj.get("type", ""))
+                    if mtype == MAT_J2_PLASTICITY or str(mtype).lower() in ["j2", "plasticity", "j2_plasticity"] or "sigma_y0" in mat_obj or "yield_stress" in mat_obj:
                         self.elem_mat_types[e] = MAT_J2_PLASTICITY
                         E_val = float(mat_obj.get("E", 200000.0))
                         nu_val = float(mat_obj.get("nu", 0.3))
-                        sy_val = float(mat_obj.get("sigma_y0", 400.0))
-                        H_val = float(mat_obj.get("H", 0.0))
+                        sy_val = float(mat_obj.get("yield_stress", mat_obj.get("sigma_y0", 400.0)))
+                        H_val = float(mat_obj.get("hardening_modulus", mat_obj.get("H", 0.0)))
                         self.elem_props[e, :4] = [E_val, nu_val, sy_val, H_val]
-                    elif mat_obj.get("type", "").lower() in ["neohookean", "neo_hookean"]:
+                    elif mtype == MAT_NEO_HOOKEAN or str(mtype).lower() in ["neohookean", "neo_hookean"] or "c10" in mat_obj or "C10" in mat_obj:
                         self.elem_mat_types[e] = MAT_NEO_HOOKEAN
-                        c10 = float(mat_obj.get("C10", 1.0))
-                        d1 = float(mat_obj.get("D1", 0.001))
+                        c10 = float(mat_obj.get("c10", mat_obj.get("C10", 0.1)))
+                        d1 = float(mat_obj.get("d1", mat_obj.get("D1", 0.01)))
                         mu = 2.0 * c10
                         K = 2.0 / max(d1, 1e-12)
                         self.elem_props[e, 0] = mu
                         self.elem_props[e, 1] = K
                         self.elem_props[e, 2] = c10
                         self.elem_props[e, 3] = d1
+                    elif mtype == MAT_VISCOELASTIC_PRONY or str(mtype).lower() in ["viscoelastic", "prony", "visco"]:
+                        self.elem_mat_types[e] = MAT_VISCOELASTIC_PRONY
+                        self.elem_props[e, 0] = float(mat_obj.get("E", 1000.0))
+                        self.elem_props[e, 1] = float(mat_obj.get("nu", 0.45))
+                        self.elem_props[e, 2] = float(mat_obj.get("g1", 0.2))
+                        self.elem_props[e, 3] = float(mat_obj.get("tau1", 1.0))
+                    elif isinstance(mtype, int):
+                        self.elem_mat_types[e] = mtype
+                        if "props" in mat_obj:
+                            p = np.asarray(mat_obj["props"], dtype=np.float64)
+                            self.elem_props[e, :min(36, len(p))] = p[:36]
+                        else:
+                            self.elem_props[e, 0] = float(mat_obj.get("E", 200000.0))
+                            self.elem_props[e, 1] = float(mat_obj.get("nu", 0.3))
                     else:
                         self.elem_mat_types[e] = MAT_LINEAR_ELASTIC
                         self.elem_props[e, 0] = float(mat_obj.get("E", 200000.0))
@@ -195,23 +172,81 @@ class DynamicSolver3D:
                 self.elem_mat_types[e] = MAT_CUSTOM_ELASTIC
                 self.elem_props[e, :36] = cmat_flat
 
-        max_sdvs = 0
+        max_sdvs = 1
         for mt in self.elem_mat_types:
             max_sdvs = max(max_sdvs, get_default_sdv_count(mt))
         self.elem_sdvs = np.zeros((n_elems, 8, max_sdvs), dtype=np.float64)
+        self.elem_stress_init = np.zeros((n_elems, 8, 6), dtype=np.float64)
 
         # Allocate Abaqus-compatible SectionControls array (n_elems, 8)
-        # [0]: distortion_control (1.0=ON, 0.0=OFF)
-        # [1]: length_ratio / j_crit (default 0.1)
-        # [2]: viscous_damping (default 0.0)
-        # [3]: anti_inversion_barrier (1.0=ON, 0.0=OFF)
-        # [4]: min_det_f (default 0.02)
         self.elem_controls = np.zeros((n_elems, 8), dtype=np.float64)
         self.elem_controls[:, 0] = 1.0   # distortion_control default ON
         self.elem_controls[:, 1] = 0.1   # length_ratio default 0.1
         self.elem_controls[:, 2] = 0.0   # viscous_damping default 0.0
         self.elem_controls[:, 3] = 1.0   # anti_inversion_barrier default ON
         self.elem_controls[:, 4] = 0.02  # min_det_f default 0.02
+        
+        # Classify element kernel groups for heterogeneous multi-element assembly
+        elem_kernel_indices: Dict[int, List[int]] = {}
+        for idx, elem in enumerate(elements_list):
+            et = elem.elem_type.upper()
+            if et in ["C3D8I", "C3D8_EAS"]:
+                k = 0
+            elif et in ["C3D8_CR", "C3D8_COROTATIONAL", "C3D8_FBAR_CR"]:
+                k = 1
+            elif et in ["C3D8H", "C3D8_HYBRID", "HYBRID"]:
+                k = 2
+            elif et in ["C3D8_FBAR"]:
+                k = 3
+            elif et in ["C3D8"]:
+                k = 10
+            elif et in ["C3D10M", "C3D10_MODIFIED"]:
+                k = 4
+            elif et in ["C3D10"]:
+                k = 5
+            elif et in ["C3D4"]:
+                k = 6
+            elif et in ["C3D6", "C3D6_WEDGE", "WEDGE6"]:
+                k = 7
+            elif et in ["C3D8R", "C3D8_REDUCED"]:
+                k = 8
+            elif et in ["C3D4_ANP", "ANP"]:
+                k = 9
+            else:
+                raise NotImplementedError(
+                    f"Element type '{et}' is not yet supported in the Numba fast-path."
+                )
+            if k not in elem_kernel_indices:
+                elem_kernel_indices[k] = []
+            elem_kernel_indices[k].append(idx)
+
+        self.elem_kernel_groups = {
+            k: np.array(indices, dtype=np.int64)
+            for k, indices in elem_kernel_indices.items()
+        }
+
+        self.elem_conn_groups = {}
+        for k, indices in self.elem_kernel_groups.items():
+            elem_subset = [elements_list[i] for i in indices]
+            self.elem_conn_groups[k] = np.array(
+                [[nid_map[nid] for nid in elem.node_ids] for elem in elem_subset],
+                dtype=np.int64
+            )
+
+        rows_list = []
+        cols_list = []
+        for k in sorted(self.elem_kernel_groups.keys()):
+            conn_k = self.elem_conn_groups[k]
+            r_k, c_k = build_global_topology(self.num_dofs, conn_k)
+            rows_list.append(r_k)
+            cols_list.append(c_k)
+
+        if len(rows_list) > 0:
+            self.rows_topo = np.concatenate(rows_list)
+            self.cols_topo = np.concatenate(cols_list)
+        else:
+            self.rows_topo = np.zeros(0, dtype=np.int32)
+            self.cols_topo = np.zeros(0, dtype=np.int32)
 
         # Check if mesh or sections provide custom controls
         if hasattr(self.mesh, "elem_controls") and self.mesh.elem_controls is not None:
@@ -251,58 +286,108 @@ class DynamicSolver3D:
         global_dof = 3 * nid_map[node_id] + dof_axis
         self.set_dirichlet_bc(global_dof, value)
 
-    def assemble_system(self, u_vec: np.ndarray, dt: float = 1.0, return_error: bool = False):
+    def assemble_system(self, u_vec: np.ndarray, dt: float = 1.0, return_error: bool = False, update_state: bool = False):
         """Assemble global 3D stiffness matrix K_global and internal force vector f_int."""
         node_coords_all = self.mesh.nodes_array()
 
         if self.nlgeom and self.rows_topo is not None:
             try:
-                n_elems = self.elem_conn_0based.shape[0]
-                f_elems = np.zeros((n_elems, 24), dtype=np.float64)
-                K_elems = np.zeros((n_elems, 24, 24), dtype=np.float64)
+                f_int_global = np.zeros(self.num_dofs, dtype=np.float64)
+                data_topo_list = []
                 has_error = False
 
                 # Heterogeneous element assembly: assemble each group in parallel
-                for k, elem_indices in self.elem_kernel_groups.items():
-                    sub_conn = self.elem_conn_0based[elem_indices]
+                for k in sorted(self.elem_kernel_groups.keys()):
+                    elem_indices = self.elem_kernel_groups[k]
+                    sub_conn = self.elem_conn_groups[k]
                     sub_mat = self.elem_mat_types[elem_indices]
                     sub_props = self.elem_props[elem_indices]
-                    sub_sdvs = self.elem_sdvs[elem_indices]
+                    
+                    if update_state:
+                        sub_sdvs = self.elem_sdvs[elem_indices]
+                    else:
+                        sub_sdvs = self.elem_sdvs[elem_indices].copy()
+                        
+                    sub_stress_init = self.elem_stress_init[elem_indices]
                     sub_controls = self.elem_controls[elem_indices]
 
                     if k == 0:
                         from dispsolver.element3d.c3d8_eas_tl_numba import assemble_mesh_c3d8_eas_tl_numba
                         f_sub, K_sub, err = assemble_mesh_c3d8_eas_tl_numba(
-                            node_coords_all, sub_conn, u_vec, sub_mat, sub_props, sub_sdvs, dt
+                            node_coords_all, sub_conn, u_vec, sub_mat, sub_props, sub_sdvs, dt, elem_stress_init=sub_stress_init
                         )
                     elif k == 1:
                         from dispsolver.element3d.c3d8_corotational_numba import assemble_mesh_c3d8_corotational_numba
                         f_sub, K_sub, err = assemble_mesh_c3d8_corotational_numba(
-                            node_coords_all, sub_conn, u_vec, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls
+                            node_coords_all, sub_conn, u_vec, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls, elem_stress_init=sub_stress_init
                         )
                     elif k == 2:
                         from dispsolver.element3d.c3d8_hybrid_numba import assemble_mesh_c3d8_hybrid_numba
                         f_sub, K_sub, err = assemble_mesh_c3d8_hybrid_numba(
-                            node_coords_all, sub_conn, u_vec, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls
+                            node_coords_all, sub_conn, u_vec, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls, elem_stress_init=sub_stress_init
                         )
-                    else:
+                    elif k == 3:
                         from dispsolver.element3d.c3d8_fbar_tl_numba import assemble_mesh_c3d8_fbar_tl_numba
                         f_sub, K_sub, err = assemble_mesh_c3d8_fbar_tl_numba(
-                            node_coords_all, sub_conn, u_vec, sub_mat, sub_props, sub_sdvs, dt
+                            node_coords_all, sub_conn, u_vec, sub_mat, sub_props, sub_sdvs, dt, elem_stress_init=sub_stress_init
                         )
+                    elif k == 4:
+                        from dispsolver.element3d.c3d10m_numba import assemble_mesh_c3d10m_numba
+                        f_sub, K_sub, err = assemble_mesh_c3d10m_numba(
+                            node_coords_all, sub_conn, u_vec, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls, elem_stress_init=sub_stress_init
+                        )
+                    elif k == 5:
+                        from dispsolver.element3d.c3d10_numba import assemble_mesh_c3d10_numba
+                        f_sub, K_sub = assemble_mesh_c3d10_numba(
+                            node_coords_all, sub_conn, u_vec, self.C_mat_default
+                        )
+                        err = 0
+                    elif k == 6:
+                        from dispsolver.element3d.c3d4_numba import assemble_mesh_c3d4_numba
+                        f_sub, K_sub = assemble_mesh_c3d4_numba(
+                            node_coords_all, sub_conn, u_vec, self.C_mat_default
+                        )
+                        err = 0
+                    elif k == 7:
+                        from dispsolver.element3d.c3d6_numba import assemble_mesh_c3d6_numba
+                        f_sub, K_sub, err = assemble_mesh_c3d6_numba(
+                            node_coords_all, sub_conn, u_vec, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls, elem_stress_init=sub_stress_init
+                        )
+                    elif k == 8:
+                        from dispsolver.element3d.c3d8r_numba import assemble_mesh_c3d8r_numba
+                        f_sub, K_sub, err = assemble_mesh_c3d8r_numba(
+                            node_coords_all, sub_conn, u_vec, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls, elem_stress_init=sub_stress_init
+                        )
+                    elif k == 9:
+                        from dispsolver.element3d.c3d4_anp_numba import assemble_mesh_c3d4_anp_numba
+                        f_sub, K_sub, err = assemble_mesh_c3d4_anp_numba(
+                            node_coords_all, sub_conn, u_vec, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls, elem_stress_init=sub_stress_init
+                        )
+                    elif k == 10:
+                        from dispsolver.element3d.c3d8_numba import assemble_mesh_c3d8_numba
+                        f_sub, K_sub = assemble_mesh_c3d8_numba(
+                            node_coords_all, sub_conn, u_vec, self.C_mat_default
+                        )
+                        err = 0
+                    else:
+                        raise ValueError(f"Unknown element kernel index: {k}")
+
+                    if update_state:
+                        # NumPy advanced indexing creates a copy. We must explicitly write the modified sub_sdvs back.
+                        self.elem_sdvs[elem_indices] = sub_sdvs
 
                     if err:
                         has_error = True
-                    f_elems[elem_indices] = f_sub
-                    K_elems[elem_indices] = K_sub
+
+                    scatter_f_int_3d(f_sub, sub_conn, f_int_global)
+                    data_topo_list.append(K_sub.ravel())
 
                 self.last_assembly_error = has_error
-                f_int_global = np.zeros(self.num_dofs, dtype=np.float64)
-                scatter_f_int_3d(f_elems, self.elem_conn_0based, f_int_global)
+                data_topo = np.concatenate(data_topo_list) if len(data_topo_list) > 0 else np.zeros(0, dtype=np.float64)
 
                 if len(self.constraints) == 0:
                     K_global = csc_matrix(
-                        (K_elems.ravel(), (self.rows_topo, self.cols_topo)),
+                        (data_topo, (self.rows_topo, self.cols_topo)),
                         shape=(self.num_dofs, self.num_dofs)
                     )
                     if return_error:
@@ -312,7 +397,7 @@ class DynamicSolver3D:
                 # If surface tie or MPC constraints exist, append their contributions efficiently
                 rows_all = [self.rows_topo]
                 cols_all = [self.cols_topo]
-                data_all = [K_elems.ravel()]
+                data_all = [data_topo]
 
                 for constraint in self.constraints:
                     if hasattr(constraint, "reproject_deformed"):
@@ -333,67 +418,10 @@ class DynamicSolver3D:
             except Exception as e:
                 import traceback
                 traceback.print_exc()
-                print("Fastpath failed! Falling back to python loop.")
-
-        nid_map = self.mesh.node_id_to_index()
-
-        rows = []
-        cols = []
-        data = []
-        f_int_global = np.zeros(self.num_dofs, dtype=np.float64)
-
-        for eid, elem in self.mesh.elements.items():
-            inst = self.element_instances[eid]
-            states = self.element_states[eid]
-
-            # Gather element node coordinates and displacements
-            elem_node_indices = [nid_map[nid] for nid in elem.node_ids]
-            elem_coords = node_coords_all[elem_node_indices]  # (Nn, 3)
-
-            elem_dofs = []
-            for n_idx in elem_node_indices:
-                elem_dofs.extend([3 * n_idx + 0, 3 * n_idx + 1, 3 * n_idx + 2])
-
-            u_elem = u_vec[elem_dofs]
-
-            # Get material Matrix C for this element's PID if available
-            pid = getattr(elem, "pid", 0)
-            mat_obj = self.materials.get(pid, None)
-
-            if mat_obj is not None and hasattr(mat_obj, "C_mat"):
-                C_mat_e = mat_obj.C_mat
-            else:
-                C_mat_e = self.C_mat_default
-
-            # Compute element K_e and f_int_e
-            if isinstance(inst, Hexa8EASElement):
-                K_e, f_e, _ = inst.compute_element_stiffness_and_force(elem_coords, u_elem, C_mat_e, states)
-            else:
-                K_e, f_e = inst.compute_element_stiffness_and_force(elem_coords, u_elem, C_mat_e, states)
-
-            # Assemble into global arrays
-            for i in range(len(elem_dofs)):
-                f_int_global[elem_dofs[i]] += f_e[i]
-                for j in range(len(elem_dofs)):
-                    rows.append(elem_dofs[i])
-                    cols.append(elem_dofs[j])
-                    data.append(K_e[i, j])
-
-        # Assemble surface tie & MPC constraints
-        for constraint in self.constraints:
-            if hasattr(constraint, "reproject_deformed"):
-                constraint.reproject_deformed(u_vec)
-            f_c, (rows_c, cols_c, data_c), _ = constraint.assemble(u_vec)
-            f_int_global += f_c
-            rows.extend(rows_c)
-            cols.extend(cols_c)
-            data.extend(data_c)
-
-        K_global = csc_matrix((data, (rows, cols)), shape=(self.num_dofs, self.num_dofs))
-        self.last_assembly_error = 0
-        if return_error:
-            return K_global, f_int_global, 0
-        return K_global, f_int_global
+                print("CRITICAL: Numba assembly fastpath failed! Aborting to prevent silent fallback to incorrect physics.")
+                raise e
+        else:
+            raise NotImplementedError("Linear geometry or uninitialized topology is not supported. The Python fallback loop has been removed.")
 
     def apply_boundary_conditions(self, K_global: csc_matrix, residual: np.ndarray, u_k: np.ndarray) -> Tuple[csc_matrix, np.ndarray]:
         """Apply Dirichlet boundary conditions via exact diagonal penalty method."""
@@ -448,29 +476,44 @@ class DynamicSolver3D:
 
             rel_r = r_norm / r_0_norm
             # Commercial CAE convergence criteria (Abaqus standard 0.5% residual tolerance)
-            if (rel_r < 5e-3 or r_norm < 1e-3) and iter_count > 1:
+            bc_err = max([abs(target_val - u_k[dof]) for dof, target_val in self.fixed_dofs.items()], default=0.0)
+            if iter_count > 1 and bc_err < 1e-5 and (rel_r < 5e-3 or r_norm < 1e-3):
                 self.u = u_k
+                # Commit state variables (SDV) for the converged increment
+                self.assemble_system(u_k, dt=dt, update_state=True)
                 return True, iter_count
 
             # Solve linear system \Delta u = K^-1 * r
             try:
                 du = pardiso_spsolve(K_bc, r_bc)
-            except Exception:
-                # Regularization fallback if matrix is singular
-                reg_diag = 1e-4 * np.eye(self.num_dofs)
-                du = np.linalg.solve(K_bc.toarray() + reg_diag, r_bc)
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                raise RuntimeError("Pardiso linear solver failed (matrix is likely singular). Check boundary conditions or rigid body modes.") from e
 
             du_norm = float(np.linalg.norm(du))
-            if du_norm < 1e-3 and iter_count > 1:
-                self.u = u_k + du
+            u_next = u_k + du
+            bc_err_next = max([abs(target_val - u_next[dof]) for dof, target_val in self.fixed_dofs.items()], default=0.0)
+            if iter_count > 1 and du_norm < 1e-4 and bc_err_next < 1e-5:
+                self.u = u_next
+                self.assemble_system(self.u, dt=dt, update_state=True)
                 return True, iter_count
 
-            # Line search for energy/residual minimization
-            s = 1.0
-            best_r_norm = float("inf")
-            best_u = u_k + du
+            # On iteration 1 (kinematic Dirichlet application), take full step s=1.0 unless inverted
+            if iter_count == 1:
+                u_trial = u_k + du
+                _, _ = self.assemble_system(u_trial, dt=dt)
+                if self.last_assembly_error == 0:
+                    u_k = u_trial
+                    continue
 
-            for _ in range(5):
+            # Robust Armijo line search for energy/residual minimization
+            s = 1.0
+            best_r_norm = r_norm
+            best_u = u_k.copy()
+            found_valid = False
+
+            for _ in range(6):
                 u_trial = u_k + s * du
                 _, f_t = self.assemble_system(u_trial, dt=dt)
                 if self.last_assembly_error > 0:
@@ -478,20 +521,356 @@ class DynamicSolver3D:
                     continue
                 r_t = f_ext - f_t
                 r_t_norm = float(np.linalg.norm(r_t[free_dof_mask]))
-                if r_t_norm < best_r_norm:
+                if r_t_norm < best_r_norm or not found_valid:
                     best_r_norm = r_t_norm
                     best_u = u_trial
+                    found_valid = True
                 if r_t_norm <= max(r_norm, 1e-4 * r_0_norm, 1e-6):
                     best_u = u_trial
+                    found_valid = True
                     break
                 s *= 0.5
 
+            if not found_valid:
+                # All trial steps inverted or failed: cutback increment
+                return False, iter_count
+
             u_k = best_u
 
+        # Exhausted max_iters without hitting either convergence branch
+        # above -- do NOT report success unconditionally (this used to
+        # `return True, max_iters` regardless of residual size, silently
+        # masking genuine non-convergence as a converged, physically wrong
+        # answer -- see dev_log/solve_step_false_convergence_20260913.md).
+        # Re-check the SAME criteria the loop itself uses, against the
+        # last computed rel_r/r_norm/bc_err (last iteration's locals are
+        # still in scope here), and only accept if they're actually met.
         self.u = u_k
-        return True, max_iters
+        if bc_err < 1e-5 and (rel_r < 5e-3 or r_norm < 1e-3):
+            self.assemble_system(u_k, dt=dt, update_state=True)
+            return True, max_iters
+        return False, max_iters
 
     def solve_static_step(self, f_ext: np.ndarray, tol: float = 1e-6, max_iters: int = 20) -> bool:
         """Alias for static Newton step returning boolean converged status."""
         converged, _ = self.solve_step(dt=1.0, f_ext=f_ext, tol=tol, max_iters=max_iters)
         return converged
+
+    def _update_step_bcs(self, step: Any, sys: Optional[Any], t: float, total_time: float) -> None:
+        """Evaluate and apply all active BCs and Amplitudes for the given step at time t."""
+        self.fixed_dofs.clear()
+        if not hasattr(step, "get_active_bcs"):
+            return
+
+        active_bcs = step.get_active_bcs()
+        node_coords_all = self.mesh.nodes_array()
+        nid_map = self.mesh.node_id_to_index()
+
+        for bc_name, bc in active_bcs.items():
+            region_nodes = []
+            if sys is not None and hasattr(sys, "global_nsets") and bc.region in sys.global_nsets:
+                node_indices = sys.global_nsets[bc.region]
+                inv_nid = {idx: g for g, idx in sys.nid_to_idx.items()}
+                region_nodes = [inv_nid[idx] for idx in node_indices]
+            elif bc.region == "ALL":
+                region_nodes = list(self.mesh.nodes.keys())
+
+            if not region_nodes:
+                continue
+
+            if hasattr(bc, "evaluate_node"):
+                for gid in region_nodes:
+                    n_idx = nid_map[gid]
+                    coords = node_coords_all[n_idx]
+                    res = bc.evaluate_node(coords, t, step_time=t)
+                    if res is not None:
+                        u1, u2 = res[0], res[1]
+                        u3 = res[2] if len(res) > 2 else None
+                        if u1 is not None:
+                            self.fix_dof(gid, 0, float(u1))
+                        if u2 is not None:
+                            self.fix_dof(gid, 1, float(u2))
+                        if u3 is not None:
+                            self.fix_dof(gid, 2, float(u3))
+
+            elif hasattr(bc, "u1") or hasattr(bc, "u2") or hasattr(bc, "u3"):
+                amp_val = 1.0
+                if bc.amplitude is not None:
+                    amp_obj = None
+                    if isinstance(bc.amplitude, str) and hasattr(step, "parent_model") and hasattr(step.parent_model, "amplitudes"):
+                        amp_obj = step.parent_model.amplitudes.get(bc.amplitude, None)
+                    elif hasattr(bc.amplitude, "evaluate"):
+                        amp_obj = bc.amplitude
+
+                    if amp_obj is not None:
+                        amp_val = amp_obj.evaluate(t, step_time=t, total_time=total_time)
+
+                for gid in region_nodes:
+                    if bc.u1 is not None:
+                        self.fix_dof(gid, 0, float(bc.u1) * amp_val)
+                    if bc.u2 is not None:
+                        self.fix_dof(gid, 1, float(bc.u2) * amp_val)
+                    if bc.u3 is not None:
+                        self.fix_dof(gid, 2, float(bc.u3) * amp_val)
+
+    def _compute_step_external_loads(self, step: Any, sys: Optional[Any], t: float, total_time: float) -> np.ndarray:
+        """Compute external load vector f_ext from active loads in step at time t."""
+        f_ext = np.zeros(self.num_dofs, dtype=np.float64)
+        if not hasattr(step, "get_active_loads"):
+            return f_ext
+
+        active_loads = step.get_active_loads()
+        nid_map = self.mesh.node_id_to_index()
+
+        for load_name, load in active_loads.items():
+            if hasattr(load, "get_force_vector"):
+                region_nodes = []
+                if sys is not None and hasattr(sys, "global_nsets") and load.region in sys.global_nsets:
+                    node_indices = sys.global_nsets[load.region]
+                    inv_nid = {idx: g for g, idx in sys.nid_to_idx.items()}
+                    region_nodes = [inv_nid[idx] for idx in node_indices]
+                elif load.region == "ALL":
+                    region_nodes = list(self.mesh.nodes.keys())
+
+                if region_nodes:
+                    f_vec = load.get_force_vector(t=t, step_time=t, model=getattr(step, "parent_model", None))
+                    for gid in region_nodes:
+                        n_idx = nid_map[gid]
+                        f_ext[3 * n_idx + 0] += f_vec[0]
+                        f_ext[3 * n_idx + 1] += f_vec[1]
+                        f_ext[3 * n_idx + 2] += f_vec[2]
+
+            elif hasattr(load, "get_acceleration_vector"):
+                g_vec = load.get_acceleration_vector(t=t, step_time=t, model=getattr(step, "parent_model", None))
+                if hasattr(self, "elem_conn_0based") and self.elem_conn_0based is not None:
+                    for e in range(self.elem_conn_0based.shape[0]):
+                        conn_e = self.elem_conn_0based[e]
+                        f_node = g_vec / 8.0
+                        for n_idx in conn_e:
+                            f_ext[3 * n_idx + 0] += f_node[0]
+                            f_ext[3 * n_idx + 1] += f_node[1]
+                            f_ext[3 * n_idx + 2] += f_node[2]
+            else:
+                raise NotImplementedError(f"Load type {type(load).__name__} integration is not yet supported in 3D solver.")
+
+        return f_ext
+
+    def _solve_step_with_hooks(
+        self,
+        dt: float,
+        t_next: float,
+        sys: Optional[Any],
+        sensor_mgr: Any,
+        hooks: List[Any],
+        f_ext: Optional[np.ndarray] = None,
+        max_iters: int = 50
+    ) -> Tuple[bool, int]:
+        """Newton-Raphson iteration loop with Sensor evaluation and IterationHooks execution."""
+        from dispsolver.model.sensor import ControlAction
+
+        if f_ext is None:
+            f_ext = np.zeros(self.num_dofs, dtype=np.float64)
+
+        free_dof_mask = np.ones(self.num_dofs, dtype=bool)
+        if self.fixed_dofs:
+            free_dof_mask[list(self.fixed_dofs.keys())] = False
+
+        u_k = self.u.copy()
+        r_0_norm = None
+
+        for iter_count in range(1, max_iters + 1):
+            K_g, f_int = self.assemble_system(u_k, dt=dt)
+            if self.last_assembly_error > 0:
+                return False, iter_count
+
+            residual = f_ext - f_int
+            r_free = residual[free_dof_mask]
+            r_norm = float(np.linalg.norm(r_free))
+            f_ext_free_norm = float(np.linalg.norm(f_ext[free_dof_mask]))
+
+            if r_0_norm is None or r_norm > r_0_norm:
+                r_0_norm = max(r_norm, f_ext_free_norm, 1.0)
+
+            if sensor_mgr and hooks:
+                sensor_vals = sensor_mgr.evaluate_all(self, sys)
+                for hook in hooks:
+                    act = hook.execute(iter_count, t_next, self, sensor_vals)
+                    if act == ControlAction.ABORT_STEP:
+                        return False, iter_count
+
+            K_bc, r_bc = self.apply_boundary_conditions(K_g, residual, u_k)
+            rel_r = r_norm / r_0_norm
+
+            bc_err = max([abs(target_val - u_k[dof]) for dof, target_val in self.fixed_dofs.items()], default=0.0)
+            if iter_count > 1 and bc_err < 1e-5 and (rel_r < 5e-3 or r_norm < 1e-3):
+                self.u = u_k
+                self.assemble_system(u_k, dt=dt, update_state=True)
+                return True, iter_count
+
+            try:
+                du = pardiso_spsolve(K_bc, r_bc)
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                raise RuntimeError("Pardiso linear solver failed (matrix is likely singular). Check boundary conditions or rigid body modes.") from e
+
+            du_free = du[free_dof_mask]
+            du_free_norm = float(np.linalg.norm(du_free))
+            du_norm = float(np.linalg.norm(du))
+            u_next = u_k + du
+            bc_err_next = max([abs(target_val - u_next[dof]) for dof, target_val in self.fixed_dofs.items()], default=0.0)
+            u_free_norm = float(np.linalg.norm(u_k[free_dof_mask]))
+            rel_du = du_free_norm / max(u_free_norm, 1.0)
+
+            if iter_count > 1 and bc_err_next < 1e-5 and (rel_du < 1e-3 or du_free_norm < 1e-3 or du_norm < 1e-4):
+                self.u = u_next
+                self.assemble_system(self.u, dt=dt, update_state=True)
+                return True, iter_count
+
+            # On iteration 1 (kinematic Dirichlet application), take full step s=1.0 unless inverted
+            if iter_count == 1:
+                u_trial = u_k + du
+                _, _ = self.assemble_system(u_trial, dt=dt)
+                if self.last_assembly_error == 0:
+                    u_k = u_trial
+                    continue
+
+            # Robust Armijo line search for energy/residual minimization
+            s = 1.0
+            best_r_norm = r_norm
+            best_u = u_k.copy()
+            found_valid = False
+
+            for _ in range(6):
+                u_trial = u_k + s * du
+                _, f_t = self.assemble_system(u_trial, dt=dt)
+                if self.last_assembly_error > 0:
+                    s *= 0.5
+                    continue
+                r_t = f_ext - f_t
+                r_t_norm = float(np.linalg.norm(r_t[free_dof_mask]))
+                if r_t_norm < best_r_norm or not found_valid:
+                    best_r_norm = r_t_norm
+                    best_u = u_trial
+                    found_valid = True
+                if r_t_norm <= max(r_norm, 1e-4 * r_0_norm, 1e-6):
+                    best_u = u_trial
+                    found_valid = True
+                    break
+                s *= 0.5
+
+            if not found_valid:
+                # All trial steps inverted or failed: cutback increment
+                return False, iter_count
+
+            u_k = best_u
+
+        # Same false-convergence fallthrough as solve_step() above -- fixed
+        # the same way (dev_log/solve_step_false_convergence_20260913.md).
+        self.u = u_k
+        if bc_err < 1e-5 and (rel_r < 5e-3 or r_norm < 1e-3):
+            self.assemble_system(u_k, dt=dt, update_state=True)
+            return True, max_iters
+        return False, max_iters
+
+    def solve(
+        self,
+        step: Any,
+        sys: Optional[Any] = None,
+        time_period: Optional[float] = None,
+        sensors: Optional[List[Any]] = None,
+        iteration_hooks: Optional[List[Any]] = None,
+        verbose: bool = True
+    ) -> bool:
+        """Fully encapsulated Abaqus-like step solve engine."""
+        from dispsolver.solver.dt_controller import AdaptiveDtController
+        from dispsolver.model.sensor import SensorManager, Sensor, IterationHook
+
+        T_total = time_period if time_period is not None else getattr(step, "time_period", 1.0)
+        dt_init = getattr(step, "dt_init", 0.02)
+        dt_min = getattr(step, "dt_min", 1e-5)
+        dt_max = getattr(step, "dt_max", 0.05)
+        target_iters = getattr(step, "target_iters", 8)
+
+        dt_ctrl = AdaptiveDtController(dt_init=dt_init, dt_min=dt_min, dt_max=dt_max, target_iters=target_iters)
+
+        sensor_mgr = SensorManager(sensors if sensors else [])
+        if hasattr(step, "sensors"):
+            for s in step.sensors.values():
+                sensor_mgr.add_sensor(s)
+
+        hooks = list(iteration_hooks) if iteration_hooks else []
+        if hasattr(step, "iteration_hooks"):
+            hooks.extend(list(step.iteration_hooks.values()))
+
+        t = 0.0
+        step_inc = 0
+        total_iters = 0
+
+        if not hasattr(self, "history_u") or self.history_u is None:
+            self.history_u = []
+        self.history_u.clear()
+        self.history_u.append(self.u.copy())
+
+        if not hasattr(self, "history_t") or self.history_t is None:
+            self.history_t = []
+        self.history_t.clear()
+        self.history_t.append(0.0)
+
+        if verbose:
+            print(f"=== Starting Step '{step.name}' Solve (Time Period: {T_total:.3f} s) ===", flush=True)
+
+        while t < T_total - 1e-12:
+            dt = min(dt_ctrl.dt, T_total - t)
+            t_next = t + dt
+            step_inc += 1
+
+            # Backup state in case cutback is needed
+            u_prev = self.u.copy()
+            sdvs_prev = self.elem_sdvs.copy() if self.elem_sdvs is not None else None
+
+            self._update_step_bcs(step, sys, t_next, T_total)
+            f_ext = self._compute_step_external_loads(step, sys, t_next, T_total)
+
+            converged, iters = self._solve_step_with_hooks(
+                dt=dt,
+                t_next=t_next,
+                sys=sys,
+                sensor_mgr=sensor_mgr,
+                hooks=hooks,
+                f_ext=f_ext,
+                max_iters=50
+            )
+
+            total_iters += iters
+
+            if converged:
+                t = t_next
+                self.history_u.append(self.u.copy())
+                self.history_t.append(t)
+                if verbose:
+                    print(f"  Inc {step_inc:3d}: t = {t:6.4f}s | dt = {dt:6.4f}s | Newton Iters = {iters:2d} | STATUS: CONVERGED", flush=True)
+                dt_ctrl.notify_success(iters)
+            else:
+                # Rollback displacement and SDV state on cutback
+                self.u = u_prev
+                if sdvs_prev is not None:
+                    self.elem_sdvs = sdvs_prev.copy()
+                if verbose:
+                    print(f"  Inc {step_inc:3d}: t = {t:6.4f}s | dt = {dt:6.4f}s | Newton Iters = {iters:2d} | STATUS: CUTBACK", flush=True)
+                ok = dt_ctrl.notify_cutback()
+                if not ok:
+                    if verbose:
+                        print(f"!!! STEP ABORTED: dt reduced below dt_min ({dt_min}) !!!", flush=True)
+                    return False
+
+        if verbose:
+            print(f"=== Step '{step.name}' Completed Successfully (Total Inc: {step_inc}, Total Newton Iters: {total_iters}) ===", flush=True)
+
+        # Geostatic reset logic
+        if getattr(step, "procedure", "").upper() == "GEOSTATIC":
+            if verbose:
+                print(f"    * GEOSTATIC PROCEDURE: Zeroing displacement and advancing internal stress baseline.", flush=True)
+            self.u.fill(0.0)
+
+        return True

@@ -75,16 +75,36 @@ if _HAS_NUMBA:
 
     @njit_cached(fastmath=True)
     def _element_rotation(coords_ref: np.ndarray, coords_curr: np.ndarray) -> np.ndarray:
-        """Element rigid rotation from the mean deformed edge directions."""
+        """Element rigid rotation from the mean deformed XI-edge direction.
+
+        Must stay bit-equivalent to `q4_corotational_jax.compute_element_rotation`,
+        which every JAX co-rotational kernel in this library shares. That rule
+        uses the xi-edge pair (`v12 + v43`) ALONE and takes e2 as its
+        perpendicular; it does NOT average in the eta-edge.
+
+        This function used to average the two edge rotations. That is a
+        defensible frame choice in itself, but it is a DIFFERENT element: the
+        co-rotational frame cancels exactly out of a full-integration
+        Green-Lagrange element (E = (F_l^T F_l - I)/2 with F_l = R^T F is
+        R-independent, which is finding F1's "bitwise TL" result), so the
+        choice is invisible there -- but SRI samples the shear off-diagonal
+        of dU/dX in fixed Cartesian components, which is NOT frame-invariant
+        (see q4_sri_jax._F_sri's warning), so the frame choice changes the
+        answer. Measured on contract C10's tilted+distorted probe:
+        theta_jax = -0.014852 deg vs theta_numba = -0.681885 deg, giving a
+        1.54e-03 relative internal-force disagreement between the two
+        lowerings. Everything else in the two kernels -- quadrature, the SRI
+        gradient, B_L, and the J2 return map -- agrees to 2e-16; feeding the
+        two-edge frame's local displacement into the JAX SRI core reproduces
+        this kernel to 1.09e-15, i.e. the frame was the whole of it.
+
+        The removed comment claimed this form matched `q4_sri_numba.py` /
+        `q4_sri_hybrid_numba.py`. It matched them on the TRANSPOSE convention
+        (R[0,1] = -s) only; both siblings use the xi-edge alone, as here now.
+        """
         e1r = coords_ref[1] - coords_ref[0] + coords_ref[2] - coords_ref[3]
         e1c = coords_curr[1] - coords_curr[0] + coords_curr[2] - coords_curr[3]
-        e2r = coords_ref[3] - coords_ref[0] + coords_ref[2] - coords_ref[1]
-        e2c = coords_curr[3] - coords_curr[0] + coords_curr[2] - coords_curr[1]
-        a = np.arctan2(e1c[1], e1c[0]) - np.arctan2(e1r[1], e1r[0])
-        b = np.arctan2(e2c[1], e2c[0]) - np.arctan2(e2r[1], e2r[0])
-        # average the two edge rotations through their vector mean so the
-        # +-pi wrap of either edge cannot flip the result
-        th = np.arctan2(0.5 * (np.sin(a) + np.sin(b)), 0.5 * (np.cos(a) + np.cos(b)))
+        th = np.arctan2(e1c[1], e1c[0]) - np.arctan2(e1r[1], e1r[0])
         R = np.empty((2, 2), dtype=np.float64)
         c = np.cos(th); s = np.sin(th)
         # NOTE: was transposed (R[0,1]=s, R[1,0]=-s) -- fable review 2026-09-08

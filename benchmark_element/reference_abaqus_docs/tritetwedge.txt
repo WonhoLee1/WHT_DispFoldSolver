@@ -1,0 +1,74 @@
+Triangular, tetrahedral, and wedge elements 
+ Triangular, tetrahedral, and wedge elements The library of solid elements in 
+ Abaqus 
+ includes first- and second-order triangles, tetrahedra, and wedge elements for
+ planar, axisymmetric, and three-dimensional analysis.
+ This page discusses: Interpolation Integration 
+ See Also In Other Guides Solid (Continuum) Elements 
+ Products Abaqus/Standard Abaqus/Explicit Hybrid versions of these elements are provided for use with incompressible
+ and nearly incompressible constitutive models (see 
+ Hybrid incompressible solid element formulation 
+ for a detailed discussion of the formulation used). However, these hybrid forms
+ should be used only to fill in regions in meshes made of brick elements;
+ otherwise, too many constraint variables may be introduced.
+ Second-order tetrahedra are not suitable for the analysis of contact
+ problems: a constant pressure on an element face produces zero equivalent loads
+ at the corner nodes. In contact problems this makes the contact condition at
+ the corners indeterminate, with failure of the solution likely because of
+ excessive gap chatter. The same argument holds true for contact on triangular
+ faces of a wedge element.
+ Interpolation 
+ The interpolation is defined in terms of the element coordinates
+ g , h , and r 
+ shown in 
+ Figure 1 .
+ Since 
+ Abaqus 
+ is a Lagrangian code for most applications, these are also material
+ coordinates. They each span a range from 0 to 1 in an element but satisfy the
+ constraint that g + h ≤ 1 
+ for triangles and wedges and g + h + r ≤ 1 
+ for tetrahedra. The node numbering convention used in 
+ Abaqus 
+ for these elements is also shown in 
+ Figure 1 .
+ Corner nodes are numbered first, and then the midside nodes for second-order
+ elements. The interpolation functions are as follows.
+ First-order triangle (3 nodes): 
+ u = ( 1 - g - h ) ⁢ u 1 + g ⁢ u 2 + h ⁢ u 3 Second-order triangle (6 nodes): 
+ u = ​ 2 ⁢ ( 1 2 - g - h ) ⁢ ( 1 - g - h ) ⁢ u 1 + 2 ⁢ g ⁢ ( g - 1 2 ) ⁢ u 2 + 2 ⁢ h ⁢ ( h - 1 2 ) ⁢ u 3 + 4 ⁢ g ⁢ ( 1 - g - h ) ⁢ u 4 + 4 ⁢ g ⁢ h ⁢ u 5 + 4 ⁢ h ⁢ ( 1 - g - h ) ⁢ u 6 First-order tetrahedron (4 nodes): 
+ u = ( 1 - g - h - r ) ⁢ u 1 + g ⁢ u 2 + h ⁢ u 3 + r ⁢ u 4 Second-order tetrahedron (10 nodes): 
+ u = ​ ( 2 ⁢ ( 1 - g - h - r ) - 1 ) ⁢ ( 1 - g - h - r ) ⁢ u 1 + ( 2 ⁢ g - 1 ) ⁢ g ⁢ u 2 + ( 2 ⁢ h - 1 ) ⁢ h ⁢ u 3 + ( 2 ⁢ r - 1 ) ⁢ r ⁢ u 4 + 4 ⁢ ( 1 - g - h - r ) ⁢ g ⁢ u 5 + 4 ⁢ g ⁢ h ⁢ u 6 + 4 ⁢ ( 1 - g - h - r ) ⁢ h ⁢ u 7 + 4 ⁢ ( 1 - g - h - r ) ⁢ r ⁢ u 8 + 4 ⁢ g ⁢ r ⁢ u 9 + 4 ⁢ h ⁢ r ⁢ u 10 Figure 1. Isoparametric main elements. First-order wedge (6 nodes): 
+ u = ​ 1 2 ⁢ ( 1 - g - h ) ⁢ ( 1 - r ) ⁢ u 1 + 1 2 ⁢ g ⁢ ( 1 - r ) ⁢ u 2 + 1 2 ⁢ h ⁢ ( 1 - r ) ⁢ u 3 + 1 2 ⁢ ( 1 - g - h ) ⁢ ( 1 + r ) ⁢ u 4 + 1 2 ⁢ g ⁢ ( 1 + r ) ⁢ u 5 + 1 2 ⁢ h ⁢ ( 1 + r ) ⁢ u 6 Second-order wedge (15 nodes): 
+ u = ​ 1 2 ⁢ ( ( 1 - g - h ) ⁢ ( 2 ⁢ ( 1 - g - h ) - 1 ) ⁢ ( 1 - r ) - ( 1 - g - h ) ⁢ ( 1 - r 2 ) ) ⁢ u 1 + 1 2 ⁢ ( g ⁢ ( 2 ⁢ g - 1 ) ⁢ ( 1 - r ) - g ⁢ ( 1 - r 2 ) ) ⁢ u 2 + 1 2 ⁢ ( h ⁢ ( 2 ⁢ h - 1 ) ⁢ ( 1 - r ) - h ⁢ ( 1 - r 2 ) ) ⁢ u 3 + 1 2 ⁢ ( ( 1 - g - h ) ⁢ ( 2 ⁢ ( 1 - g - h ) - 1 ) ⁢ ( 1 + r ) - ( 1 - g - h ) ⁢ ( 1 - r 2 ) ) ⁢ u 4 + 1 2 ⁢ ( g ⁢ ( 2 ⁢ g - 1 ) ⁢ ( 1 + r ) - g ⁢ ( 1 - r 2 ) ) ⁢ u 5 + 1 2 ⁢ ( h ⁢ ( 2 ⁢ h - 1 ) ⁢ ( 1 + r ) - h ⁢ ( 1 - r 2 ) ) ⁢ u 6 + 2 ⁢ ( 1 - g - h ) ⁢ g ⁢ ( 1 - r ) ⁢ u 7 + 2 ⁢ g ⁢ h ⁢ ( 1 - r ) ⁢ u 8 + 2 ⁢ h ⁢ ( 1 - g - h ) ⁢ ( 1 - r ) ⁢ u 9 + 2 ⁢ ( 1 - g - h ) ⁢ g ⁢ ( 1 + r ) ⁢ u 10 + 2 ⁢ g ⁢ h ⁢ ( 1 + r ) ⁢ u 11 + 2 ⁢ h ⁢ ( 1 - g - h ) ⁢ ( 1 + r ) ⁢ u 12 + ( 1 - g - h ) ⁢ ( 1 - r 2 ) ⁢ u 13 + g ⁢ ( 1 - r 2 ) ⁢ u 14 + h ⁢ ( 1 - r 2 ) ⁢ u 15 Second-order variable 15–18 node wedge (assuming all 18 nodes are defined): 
+ u = ​ ( 1 2 ⁢ ( ( 1 - g - h ) ⁢ ( 2 ⁢ ( 1 - g - h ) - 1 ) ⁢ ( 1 - r ) - ( 1 - g - h ) ⁢ ( 1 - r 2 ) ) + 1 4 ⁢ ( N 16 + N 18 ) ) ⁢ u 1 + ( 1 2 ⁢ ( g ⁢ ( 2 ⁢ g - 1 ) ⁢ ( 1 - r ) - g ⁢ ( 1 - r 2 ) ) + 1 4 ⁢ ( N 16 + N 17 ) ) ⁢ u 2 + ( 1 2 ⁢ ( h ⁢ ( 2 ⁢ h - 1 ) ⁢ ( 1 - r ) - h ⁢ ( 1 - r 2 ) ) + 1 4 ⁢ ( N 17 + N 18 ) ) ⁢ u 3 + ( 1 2 ⁢ ( ( 1 - g - h ) ⁢ ( 2 ⁢ ( 1 - g - h ) - 1 ) ⁢ ( 1 + r ) - ( 1 - g - h ) ⁢ ( 1 - r 2 ) ) + 1 4 ⁢ ( N 16 + N 18 ) ) ⁢ u 4 + ( 1 2 ⁢ ( g ⁢ ( 2 ⁢ g - 1 ) ⁢ ( 1 + r ) - g ⁢ ( 1 - r 2 ) ) + 1 4 ⁢ ( N 16 + N 17 ) ) ⁢ u 5 + ( 1 2 ⁢ ( h ⁢ ( 2 ⁢ h - 1 ) ⁢ ( 1 + r ) - h ⁢ ( 1 - r 2 ) ) + 1 4 ⁢ ( N 17 + N 18 ) ) ⁢ u 6 + ( 2 ⁢ ( 1 - g - h ) ⁢ g ⁢ ( 1 - r ) - 1 2 ⁢ N 16 ) ⁢ u 7 + ( 2 ⁢ g ⁢ h ⁢ ( 1 - r ) - 1 2 ⁢ N 17 ) ⁢ u 8 + ( 2 ⁢ h ⁢ ( 1 - g - h ) ⁢ ( 1 - r ) - 1 2 ⁢ N 18 ) ⁢ u 9 + ( 2 ⁢ ( 1 - g - h ) ⁢ g ⁢ ( 1 + r ) + 1 2 ⁢ N 16 ) ⁢ u 10 + ( 2 ⁢ g ⁢ h ⁢ ( 1 + r ) + 1 2 ⁢ N 17 ) ⁢ u 11 + ( 2 ⁢ h ⁢ ( 1 - g - h ) ⁢ ( 1 + r ) + 1 2 ⁢ N 18 ) ⁢ u 12 + ( ( 1 - g - h ) ⁢ ( 1 - r 2 ) - 1 2 ⁢ ( N 16 + N 18 ) ) ⁢ u 13 + ( g ⁢ ( 1 - r 2 ) - 1 2 ⁢ ( N 16 + N 17 ) ) ⁢ u 14 + ( h ( 1 - r 2 ) - 1 2 ( N 17 + N 18 ) ) u 15 + + N 16 u 16 + N 17 u 17 + N 18 u 18 , where 
+ N 16 = 4 ⁢ g ⁢ ( 1 - g - h ) ⁢ ( 1 - r 2 ) N 17 = 4 ⁢ g ⁢ h ⁢ ( 1 - r 2 ) N 18 = 4 ⁢ h ⁢ ( 1 - g - h ) ⁢ ( 1 - r 2 ) . 
+ Integration 
+ The first-order triangle and tetrahedron are constant stress elements and
+ use a single integration point for the stiffness calculation when used in
+ stress/displacement applications. A lumped mass matrix is used for both
+ elements, with the total mass divided equally over the nodes. For heat transfer
+ applications a three-point integration scheme is used for the conductivity and
+ heat capacity matrices of the first-order triangle, with the integration points
+ midway between the vertices and the centroid of the element; and a four-point
+ integration scheme is used for the first-order tetrahedron. Distributed loads
+ are integrated with two and three points for first-order triangles and
+ tetrahedrons, respectively.
+ The three-point scheme is also used for the stiffness of the second-order
+ triangle when it is used in stress/displacement applications. The mass matrix
+ is integrated with a six-point scheme that integrates fourth-order polynomials
+ exactly ( Cowper,
+ 1973 ). Distributed loads are integrated using three points. The heat
+ transfer versions of the element use the six-point scheme for the conductivity
+ and heat capacity matrices.
+ For stress/displacement applications the second-order tetrahedron uses 4
+ integration points for its stiffness matrix and 15 integration points for its
+ consistent mass matrix. For heat transfer applications the conductivity and
+ heat capacity matrices are integrated using 15 integration points. The
+ first-order wedge uses 2 integration points for its stiffness matrix but 6
+ integration points for its lumped mass matrix. The second-order wedge uses 9
+ integration points for its stiffness matrix but 18 integration points for its
+ consistent mass matrix. The integration schemes used for the second-order
+ tetrahedra and wedge elements can be found in 
+ Stroud
+ (1971) .

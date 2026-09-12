@@ -184,6 +184,7 @@ def compute_element_rotation_3d(coords_ref: np.ndarray, coords_curr: np.ndarray)
 
 
 _EMPTY_CONTROLS = np.empty(0, dtype=np.float64)
+_EMPTY_2D_CONTROLS = np.empty((0, 6), dtype=np.float64)
 
 
 @njit(fastmath=True)
@@ -194,7 +195,8 @@ def compute_c3d8_corotational_element_umat_numba(
     props: np.ndarray,
     sdvs: np.ndarray,
     dt: float = 1.0,
-    controls: np.ndarray = _EMPTY_CONTROLS
+    controls: np.ndarray = _EMPTY_CONTROLS,
+    stress_init: np.ndarray = _EMPTY_2D_CONTROLS
 ):
     """Compute 3D Co-rotational C3D8 element with B-bar kinematics and UMAT constitutive dispatch,
     with Abaqus-compatible distortion control / anti-inversion safeguards.
@@ -352,16 +354,20 @@ def compute_c3d8_corotational_element_umat_numba(
                 if err != 0:
                     error_flag = err
 
+                if stress_init.shape[0] == 8:
+                    for i in range(6):
+                        stress_voigt[i] += stress_init[gp_idx, i]
+
                 if distortion_control_on and vol_ratio < j_crit:
                     j_eff = max(vol_ratio, 1e-4)
                     k_dist = (C_mat[0, 0] + C_mat[1, 1] + C_mat[2, 2]) / 3.0
                     if k_dist <= 0.0:
                         k_dist = 1000.0
                     p_dist = k_dist * j_crit * (j_crit - j_eff) / (j_eff * j_eff * j_eff)
-                    c_dist = k_dist * j_crit * (2.0 * j_crit - j_eff) / (j_eff * j_eff * j_eff * j_eff)
-                    stress_voigt[0] += p_dist
-                    stress_voigt[1] += p_dist
-                    stress_voigt[2] += p_dist
+                    c_dist = k_dist * j_crit * (3.0 * j_crit - 2.0 * j_eff) / (j_eff * j_eff * j_eff * j_eff)
+                    stress_voigt[0] -= p_dist
+                    stress_voigt[1] -= p_dist
+                    stress_voigt[2] -= p_dist
                     for r in range(3):
                         for c in range(3):
                             C_mat[r, c] += c_dist
@@ -406,7 +412,7 @@ def compute_c3d8_corotational_element_umat_numba(
 _EMPTY_2D_CONTROLS = np.empty((0, 0), dtype=np.float64)
 
 
-@njit(parallel=True, fastmath=True, nogil=True)
+@njit(parallel=True, fastmath=True, cache=True)
 def _assemble_mesh_c3d8_corotational_umat_numba(
     node_coords: np.ndarray,
     elem_conn: np.ndarray,
@@ -415,44 +421,44 @@ def _assemble_mesh_c3d8_corotational_umat_numba(
     elem_props: np.ndarray,
     elem_sdvs: np.ndarray,
     dt: float = 1.0,
-    elem_controls: np.ndarray = _EMPTY_2D_CONTROLS
+    elem_controls: np.ndarray = _EMPTY_2D_CONTROLS,
+    elem_stress_init: np.ndarray = _EMPTY_2D_CONTROLS
 ):
     """Parallel OpenMP mesh assembly kernel for 3D Co-rotational C3D8 elements."""
     n_elems = elem_conn.shape[0]
-    has_error = 0
     f_elems = np.zeros((n_elems, 24), dtype=np.float64)
     K_elems = np.zeros((n_elems, 24, 24), dtype=np.float64)
-    use_controls = (elem_controls.ndim == 2 and elem_controls.shape[0] > 0)
+    err_flags = np.zeros(n_elems, dtype=np.int32)
+    use_controls = elem_controls.shape[0] == n_elems
+    has_stress_init = elem_stress_init.shape[0] == n_elems
 
     for e in prange(n_elems):
-        coords = np.zeros((8, 3), dtype=np.float64)
+        conn = elem_conn[e]
+        elem_nodes = np.zeros((8, 3), dtype=np.float64)
         u_elem = np.zeros(24, dtype=np.float64)
-
         for i in range(8):
-            nid = elem_conn[e, i]
-            coords[i, 0] = node_coords[nid, 0]
-            coords[i, 1] = node_coords[nid, 1]
-            coords[i, 2] = node_coords[nid, 2]
-
-            u_elem[3*i + 0] = u_global[3*nid + 0]
-            u_elem[3*i + 1] = u_global[3*nid + 1]
-            u_elem[3*i + 2] = u_global[3*nid + 2]
-
+            nid = conn[i]
+            elem_nodes[i, :] = node_coords[nid, :]
+            u_elem[3*i:3*i+3] = u_global[3*nid:3*nid+3]
+        
         mat_type = elem_mat_types[e]
         props = elem_props[e]
         sdvs = elem_sdvs[e]
         ctrl = elem_controls[e] if use_controls else _EMPTY_CONTROLS
+        stress_init = elem_stress_init[e] if has_stress_init else np.zeros((8, 6), dtype=np.float64)
 
         f_e, K_e, err_e = compute_c3d8_corotational_element_umat_numba(
-            coords, u_elem, mat_type, props, sdvs, dt, ctrl
+            elem_nodes, u_elem, mat_type, props, sdvs, dt, ctrl, stress_init
         )
-        if err_e != 0:
-            has_error = 1
+        f_elems[e, :] = f_e
+        K_elems[e, :, :] = K_e
+        err_flags[e] = err_e
 
-        f_elems[e] = f_e
-        K_elems[e] = K_e
-
-    return f_elems, K_elems, has_error
+    err_sum = 0
+    for e in range(n_elems):
+        err_sum += err_flags[e]
+        
+    return f_elems, K_elems, err_sum
 
 
 def assemble_mesh_c3d8_corotational_numba(
@@ -464,9 +470,13 @@ def assemble_mesh_c3d8_corotational_numba(
 ):
     """Entrypoint wrapper supporting both legacy and modern UMAT signatures."""
     elem_controls = kwargs.get("elem_controls", _EMPTY_2D_CONTROLS)
+    n_elems = elem_conn.shape[0]
+    elem_stress_init = kwargs.get("elem_stress_init", None)
+    if elem_stress_init is None:
+        elem_stress_init = np.zeros((n_elems, 8, 6), dtype=np.float64)
+
     if len(args) == 1 and isinstance(args[0], np.ndarray) and args[0].ndim == 2:
         C_mat = args[0]
-        n_elems = elem_conn.shape[0]
         elem_mat_types = np.full(n_elems, MAT_CUSTOM_ELASTIC, dtype=np.int32)
         elem_props = np.zeros((n_elems, 36), dtype=np.float64)
         cmat_flat = C_mat.ravel()
@@ -474,7 +484,7 @@ def assemble_mesh_c3d8_corotational_numba(
             elem_props[e, :36] = cmat_flat
         elem_sdvs = np.zeros((n_elems, 8, 0), dtype=np.float64)
         return _assemble_mesh_c3d8_corotational_umat_numba(
-            node_coords, elem_conn, u_global, elem_mat_types, elem_props, elem_sdvs, 1.0, elem_controls
+            node_coords, elem_conn, u_global, elem_mat_types, elem_props, elem_sdvs, 1.0, elem_controls, elem_stress_init
         )
     else:
         elem_mat_types = args[0]
@@ -484,5 +494,5 @@ def assemble_mesh_c3d8_corotational_numba(
         if len(args) > 4 and isinstance(args[4], np.ndarray):
             elem_controls = args[4]
         return _assemble_mesh_c3d8_corotational_umat_numba(
-            node_coords, elem_conn, u_global, elem_mat_types, elem_props, elem_sdvs, dt, elem_controls
+            node_coords, elem_conn, u_global, elem_mat_types, elem_props, elem_sdvs, dt, elem_controls, elem_stress_init
         )

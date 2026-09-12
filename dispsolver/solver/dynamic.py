@@ -478,26 +478,15 @@ def _dispatched_element_types() -> frozenset:
     return _DISPATCHED_ELEMENT_TYPES
 
 
+from dispsolver.utils.dispatch_utils import assert_dispatch_integrity
+
 def _assert_dispatch_integrity() -> None:
     """`_ELEMENT_LARGE_DEF` keys and dispatch branches must be the same set."""
-    declared = set(_ELEMENT_LARGE_DEF)
-    dispatched = set(_DISPATCHED_ELEMENT_TYPES)
-    missing_branch = sorted(declared - dispatched)
-    missing_decl = sorted(dispatched - declared)
-    if missing_branch:
-        raise AssertionError(
-            f"_ELEMENT_LARGE_DEF declares {missing_branch} but no assembly "
-            f"branch dispatches them -- element_large_deformation_report() "
-            f"would report a large-deformation treatment the element never "
-            f"receives (AGENTS.md 4.2/4.8)."
-        )
-    if missing_decl:
-        raise AssertionError(
-            f"{missing_decl} are dispatched but not declared in "
-            f"_ELEMENT_LARGE_DEF -- _use_ul_for() fails them closed to Total "
-            f"Lagrangian without saying so. Declare them."
-        )
-
+    assert_dispatch_integrity(
+        set(_ELEMENT_LARGE_DEF.keys()),
+        set(_DISPATCHED_ELEMENT_TYPES),
+        "_ELEMENT_LARGE_DEF"
+    )
 
 _assert_dispatch_integrity()
 
@@ -3846,13 +3835,22 @@ class DynamicSolver:
                         pass
 
                 # CPE4I has its own Numba kernel (incompatible modes, nested-FD
-                # alpha condensation, UL-capable). Validated against JAX:
-                # rigid-rotation canary ~1e-18/1e-20, force error <= 2e-5 on
-                # shear/bend/rotation+bend, matching the exact bug class
-                # (transposed rotation matrix) found and fixed in the SRI
-                # kernel -- this element is TL/enhanced-F based, not
-                # co-rotational, so that specific defect class cannot occur
-                # here, but the canary is kept as a standing regression guard.
+                # alpha condensation, UL-capable).
+                #
+                # Agreement with the JAX kernel, from contract C10/C11
+                # (tests/element_contract/), re-measured 2026-09-12 after the
+                # B2 port below: force 1.70e-15, tangent 7.99e-08 (FD vs
+                # autodiff), C11 mesh-invariance ratio 1.01.
+                #
+                # This comment used to claim "force error <= 2e-5" on the
+                # strength of a rigid-rotation canary. C10 measured the real
+                # number as 1.61e-03: the Numba mirror had never been ported
+                # onto finding B2, so it built B_L from the COMPATIBLE
+                # gradient (dropping the alpha-dependent half of dE_inc/du)
+                # and contracted f_a against the un-pushed S_v. Neither term
+                # vanishes at F_n = I, so a TL canary could not see either --
+                # the same "axis-aligned tests cannot detect a frame defect"
+                # lesson as AGENTS.md 4.14, one level down.
                 if (getattr(self, "enable_new_numba_elements", False)
                         and self.elem_jit == "numba"
                         and self._pid_element_type(pid) == "CPE4I"):
@@ -3920,10 +3918,18 @@ class DynamicSolver:
                 # CPE4RH has its own Numba kernel (1-point reduced
                 # integration + Flanagan-Belytschko hourglass + closed-form
                 # hybrid pressure, UL-capable). Validated by patch test
-                # (tests/test_cpe4rh_patch.py, JAX side) and against the JAX
-                # kernel directly (force error ~1e-16, tangent error ~7e-7 --
-                # FD vs autodiff, same magnitude as every other Numba visco
-                # kernel's FD tangent here). No per-element internal-variable
+                # (tests/test_cpe4rh_patch.py, JAX side) and, by an ad-hoc
+                # 2026-09-08 probe, against the JAX kernel directly (force
+                # ~1e-16, tangent ~7e-7).
+                #
+                # That pair is NOT corroborated by the contract suite: CPE4RH
+                # cannot reach this batch path at all (jax.jit static-argname
+                # hashing fails under vmap -- see
+                # tests/element_contract/harness.py::KNOWN_BROKEN_BATCH), so
+                # C10 never runs on it. Treat the two numbers as unverified.
+                # The same style of ad-hoc claim on the CPE4I and SRI branches
+                # below/above was off by 2-5 orders of magnitude when C10
+                # finally measured it (2026-09-12). No per-element internal-variable
                 # array (unlike CPE4I's alpha): the pressure is closed-form,
                 # so this returns/stores state and F_n only, like CPE4H's
                 # up-batch kernel.
@@ -3993,6 +3999,20 @@ class DynamicSolver:
                 # CPE4I/CPE4IH/CPE4H/CPE4RH must not silently take it (that
                 # would be the AGENTS.md 4.2 "element type quietly ignored"
                 # bug again).
+                #
+                # UL plumbing added 2026-09-12, mirroring the three branches
+                # above. This branch is NOT gated on `enable_new_numba_elements`
+                # and `elem_jit` defaults to "numba", so it is reachable by
+                # default -- yet its kernel had no `F_n` parameter at all and
+                # was handed `elem_coords` with the TOTAL displacement. With
+                # `nlgeom=True` it therefore ran Total Lagrangian while
+                # `_use_ul_for(pid)` returned True, `element_large_deformation_
+                # report()` printed "UL (rotated reference)", and the JAX
+                # branch immediately below ran genuine UL. AGENTS.md 4.8's
+                # silent-fallthrough class. It is also why
+                # verification/abaqus_benchmarks/cook_membrane.py's
+                # Q4_VISCO_SIMO `numba` rows were not comparable with its
+                # `jax` rows -- different formulations, not a backend check.
                 if (self.elem_jit == "numba"
                         and self._pid_element_type(pid) not in _VISCO_EAS_TYPES
                         and self._pid_element_type(pid) not in _VISCO_HYBRID_TYPES
@@ -4002,23 +4022,47 @@ class DynamicSolver:
                         base_name, bparams, kappa = vmat.simo_fs_args(mat_adapter.params)
                         _base_code = {"neohookean": 0, "yeoh": 1, "arruda": 2}.get(base_name)
                         if _base_code is not None:
-                            coords_b = self.elem_coords[elem_indices]
-                            u_b = u[self.dof_indices[elem_indices]]
+                            Ng_ = len(elem_indices)
+                            if self._use_ul_for(pid):
+                                u_ref_b = self._ul_u_ref[self.dof_indices[elem_indices]]
+                                coords_b = self.elem_coords[elem_indices] + u_ref_b.reshape(Ng_, 4, 2)
+                                _xr = coords_b[:, :, 0]; _yr = coords_b[:, :, 1]
+                                _a = np.array([-1., 1., 1., -1.]) * 0.25
+                                _b = np.array([-1., -1., 1., 1.]) * 0.25
+                                _det = (_xr @ _a) * (_yr @ _b) - (_yr @ _a) * (_xr @ _b)
+                                good = _det > 1e-4
+                                coords_b = np.where(good[:, None, None], coords_b,
+                                                    self.elem_coords[elem_indices])
+                                u_b = np.where(good[:, None],
+                                               u[self.dof_indices[elem_indices]] - u_ref_b,
+                                               u[self.dof_indices[elem_indices]])
+                                Fn_b = np.where(good[:, None, None, None],
+                                                self._ul_F_n[elem_indices],
+                                                np.tile(np.eye(2), (Ng_, 4, 1, 1)))
+                            else:
+                                coords_b = self.elem_coords[elem_indices]
+                                u_b = u[self.dof_indices[elem_indices]]
+                                Fn_b = np.tile(np.eye(2), (Ng_, 4, 1, 1))
                             state_b = (self.state[elem_indices, :, :n_vars]
                                        if self.state is not None
-                                       else np.zeros((len(elem_indices), 4, n_vars)))
+                                       else np.zeros((Ng_, 4, n_vars)))
                             t_b = self._elem_thickness[elem_indices]
 
-                            f_es, K_es, se_all = assemble_visco_hybrid_simo_batch_numba(
-                                _base_code, coords_b, u_b, state_b,
+                            f_es, K_es, se_all, _Fn_new = assemble_visco_hybrid_simo_batch_numba(
+                                _base_code, np.ascontiguousarray(coords_b),
+                                np.ascontiguousarray(u_b), np.ascontiguousarray(state_b),
                                 float(kappa), np.asarray(bparams, dtype=np.float64),
                                 np.asarray(vmat.g_i, dtype=np.float64),
                                 np.asarray(vmat.tau_i, dtype=np.float64),
                                 float(vmat.g_inf), dt_h, t_b,
+                                np.ascontiguousarray(Fn_b),
                             )
                             np.add.at(f_int, self.dof_indices[elem_indices].flatten(), f_es.flatten())
                             if state_new is not None:
                                 state_new[elem_indices, :, :n_vars] = se_all
+                            # F5: do NOT write _ul_F_n here -- this runs on every
+                            # Newton iteration. The commit-time resync is the sole
+                            # authoritative write. Same rule as the branches above.
                             all_K_rows.append(self._pid_K_rows[pid])
                             all_K_cols.append(self._pid_K_cols[pid])
                             all_K_vals.append(K_es.reshape(-1))
@@ -4100,9 +4144,23 @@ class DynamicSolver:
                 continue
 
             # Numba path for the co-rotational SRI + J2 element (the PET and
-            # GLASS layers, i.e. most elements in the folding model). Validated
-            # against the JAX kernel: force to 1e-13, tangent to 2e-6 (the
-            # tangent difference is FD vs the JAX analytic C_v).
+            # GLASS layers, i.e. most elements in the folding model).
+            #
+            # Agreement with the JAX kernel, from contract C10 (re-measured
+            # 2026-09-12): force 4.67e-14, tangent 2.27e-06 (FD vs the JAX
+            # analytic C_v, which is the documented modified-Newton
+            # difference of AGENTS.md 4.4, not drift).
+            #
+            # The "force to 1e-13" this comment used to assert was not
+            # measured on this element: C10 found 1.54e-03, because the two
+            # lowerings had DIFFERENT co-rotational frames -- JAX takes the
+            # xi-edge pair alone (q4_corotational_jax.compute_element_rotation,
+            # shared by every JAX co-rotational kernel) while the Numba copy
+            # averaged both edge rotations. That difference is invisible on
+            # any full-integration Green-Lagrange element, since the frame
+            # cancels out of E exactly (finding F1's "bitwise TL" result), and
+            # is visible here only because SRI samples shear in fixed
+            # Cartesian components (q4_sri_jax._F_sri's warning).
             if (getattr(self, "enable_new_numba_elements", False)
                     and self.elem_jit == "numba"
                     and self._pid_element_type(pid) in ("Q4_COROTATIONAL_SRI", "Q4_SRI")

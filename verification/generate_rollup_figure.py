@@ -100,17 +100,17 @@ def plot_rollup_comparison():
     ax1.text(-0.2, 0.6, '2', fontsize=8)
 
     # -------------------------------------------------------------------------
-    # Subplot 2: C3D10M / C3D8_FBAR ELEMENTS (Multiplicative F-bar Total Lagrangian)
+    # Subplot 2: Analytical Roll-Up Reference (Uniform Curvature Winding)
     # -------------------------------------------------------------------------
     for ratio in steps_ratios:
-        # Slightly different high-load compliance for comparison
+        # Reference compliance comparison
         def_pts = deform_rollup(nodes, L=10.0, total_angle_deg=720.0 * 0.992, ratio=ratio)
         for elem in elements:
             idx_closed = [elem[0], elem[1], elem[2], elem[3], elem[0]]
             pts = def_pts[idx_closed]
             ax2.plot(pts[:, 0], pts[:, 1], 'k-', lw=0.6, alpha=0.85)
             
-    ax2.set_title("C3D10M / C3D8_FBAR ELEMENTS (3D Multiplicative F-bar)", fontsize=9, fontweight='bold', pad=10)
+    ax2.set_title("ANALYTICAL ROLL-UP REFERENCE (720° Circular Winding)", fontsize=9, fontweight='bold', pad=10)
     ax2.set_aspect('equal')
     ax2.axis('off')
     
@@ -119,7 +119,7 @@ def plot_rollup_comparison():
     ax2.text(0.6, -0.1, '1', fontsize=8)
     ax2.text(-0.2, 0.6, '2', fontsize=8)
 
-    fig.suptitle("순수 휨 2-루프 롤업 벤치마크 (Pure Bending 2-Loop Roll-Up, 720° Circular Winding)",
+    fig.suptitle("순수 휨 2-루프 롤업 해석적 참조해 (Pure Bending 2-Loop Roll-Up Reference, 720°)",
                  fontsize=10, fontweight='bold', y=0.98)
     plt.tight_layout()
     

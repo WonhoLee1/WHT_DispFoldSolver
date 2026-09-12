@@ -27,7 +27,7 @@ class AdaptiveDtController:
         dt_init: float = 0.01,
         dt_min: float = 1e-6,
         dt_max: float = 0.1,
-        target_iters: int = 5,
+        target_iters: int = 20,
     ):
         self.dt = dt_init
         self.dt_min = dt_min
@@ -63,9 +63,19 @@ class AdaptiveDtController:
                 self.dt *= 0.5
         else:
             # Step succeeded -> scale based on target iteration count
-            ratio = self.target_iters / max(n_iter + 1, 1)
-            growth = min(max(ratio, 0.7), 1.5)
+            ratio = self.target_iters / max(n_iter, 1)
+            growth = min(max(ratio, 0.85), 1.5)
             self.dt *= growth
 
         self.dt = float(np.clip(self.dt, self.dt_min, self.dt_max))
         return self.dt
+
+    def notify_success(self, n_iter: int) -> float:
+        """Notify successful convergence and update dt."""
+        return self.update(n_iter, True)
+
+    def notify_cutback(self, conv_rate: float = 1.0) -> bool:
+        """Notify cutback/divergence and reduce dt. Returns False if dt drops below dt_min."""
+        prev_dt = self.dt
+        self.update(1, False, conv_rate=conv_rate)
+        return self.dt > self.dt_min

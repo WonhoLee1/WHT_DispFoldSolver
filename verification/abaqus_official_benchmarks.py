@@ -5,7 +5,7 @@ Automated Official Abaqus Benchmark Suite for 2D (CPE Series) & 3D Solid Element
 
 Benchmarks Included:
 1. Cook's Membrane Benchmark (Near-incompressible tapered trapezoid under in-plane shear)
-   - Evaluates volumetric & shear locking resistance across CPE4, CPE4I, C3D8, C3D8I, C3D8_FBAR, C3D4_ANP.
+   - Evaluates volumetric & shear locking resistance across CPE4, CPE4I, C3D8, C3D8I, C3D8_FBAR, C3D4.
    - Reference tip vertical displacement v_tip = 23.96 mm (Simo & Armero 1992 / Abaqus reference).
 2. Geometrically Nonlinear Cantilever Deflection Benchmark (Large deformation elastica)
    - P = 269.35 N tip load, L = 10 m, E = 100 MPa, nu = 0.3.
@@ -228,7 +228,7 @@ def main():
     
     print("\n--- 1. Cook's Membrane Benchmark (Near-Incompressible Near nu = 0.49995) ---")
     results_cook = []
-    for elem in ["C3D8I", "C3D8_FBAR", "C3D4_ANP"]:
+    for elem in ["C3D8I", "C3D8_FBAR", "C3D4"]:
         res = run_cooks_membrane_3d(mesh_size=8, elem_type=elem)
         results_cook.append(res)
         print(f"[{res['elem_type']}] Mesh={res['mesh_size']} | Tip Disp={res['v_tip_mm']:.4f} mm | Ref={res['v_ref_mm']:.2f} mm | Error={res['err_pct']:.2f}% | Wall={res['wall_time_s']:.3f}s")
