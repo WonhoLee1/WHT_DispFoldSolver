@@ -7,7 +7,7 @@ from dispsolver.model.part import Part
 from dispsolver.model.material import Material
 from dispsolver.model.section import Section, SolidSection, ShellSection
 from dispsolver.model.assembly import Assembly, FlattenedSolverSystem
-from dispsolver.model.step import Step, DisplacementBC, Amplitude
+from dispsolver.model.step import Step, InitialStep, DisplacementBC, ConcentratedLoad, SurfaceTieInteraction, PredefinedField, Amplitude
 
 
 class Model:
@@ -20,7 +20,9 @@ class Model:
         self.materials: Dict[str, Material] = {}
         self.sections: Dict[str, Section] = {}
         self.amplitudes: Dict[str, Amplitude] = {}
-        self.steps: Dict[str, Step] = {}
+        
+        self.initial_step: InitialStep = InitialStep(name="Initial")
+        self.steps: Dict[str, Step] = {"Initial": self.initial_step}
         self.root_assembly: Assembly = Assembly(name="rootAssembly", dim=self.dim)
 
     # ─── FACTORY & REGISTRATION METHODS ────────────────────────────────
@@ -55,11 +57,56 @@ class Model:
         self.sections[str(name)] = sec
         return sec
 
-    def Step(self, name: str, procedure: str = "STATIC", time_period: float = 1.0) -> Step:
-        """Create and register an analysis Step in this Model."""
-        st = Step(name=str(name), procedure=procedure, time_period=time_period)
+    def Step(
+        self,
+        name: str,
+        previous: str = "Initial",
+        procedure: str = "STATIC",
+        time_period: float = 1.0,
+        dt_init: float = 0.02,
+        dt_min: float = 1e-5,
+        dt_max: float = 0.05
+    ) -> Step:
+        """Create and register an analysis Step in this Model, inheriting from previous step."""
+        parent = self.steps.get(str(previous), self.initial_step)
+        st = Step(
+            name=str(name),
+            procedure=procedure,
+            time_period=time_period,
+            parent_step=parent,
+            dt_init=dt_init,
+            dt_min=dt_min,
+            dt_max=dt_max
+        )
         self.steps[str(name)] = st
         return st
+
+    def create_step_branch(
+        self,
+        branch_name: str,
+        parent_step_name: str,
+        procedure: str = "STATIC",
+        time_period: float = 1.0,
+        dt_init: float = 0.02,
+        dt_min: float = 1e-5,
+        dt_max: float = 0.05
+    ) -> Step:
+        """Create an explicit branch Step off parent_step_name for scenario testing."""
+        return self.Step(
+            name=branch_name,
+            previous=parent_step_name,
+            procedure=procedure,
+            time_period=time_period,
+            dt_init=dt_init,
+            dt_min=dt_min,
+            dt_max=dt_max
+        )
+
+    def PredefinedField(self, name: str, field_type: str, region: str, values: Any) -> PredefinedField:
+        """Create and assign a Predefined Field (Initial Stress, Velocity, SDVs) to InitialStep."""
+        pf = PredefinedField(name=str(name), field_type=field_type, region=str(region), values=values)
+        self.initial_step.add_predefined_field(pf)
+        return pf
 
     def Amplitude(self, name: str, data: Optional[list] = None, smooth: bool = True) -> Amplitude:
         """Create and register an Amplitude in this Model."""
@@ -105,17 +152,19 @@ class Model:
         # If a step is provided, apply its boundary conditions
         if step_name is not None and step_name in self.steps:
             st = self.steps[step_name]
-            for bc in st.boundary_conditions.values():
-                if bc.region in sys.global_nsets:
-                    global_node_indices = sys.global_nsets[bc.region]
-                    inv_nid = {idx: g for g, idx in sys.nid_to_idx.items()}
-                    for node_idx in global_node_indices:
-                        gid = inv_nid[node_idx]
-                        if bc.u1 is not None:
-                            solver.fix_dof(gid, 0, float(bc.u1))
-                        if bc.u2 is not None:
-                            solver.fix_dof(gid, 1, float(bc.u2))
-                        if bc.u3 is not None:
-                            solver.fix_dof(gid, 2, float(bc.u3))
+            for entry in st.boundary_conditions.values():
+                if entry.is_active:
+                    bc = entry.entity
+                    if bc.region in sys.global_nsets:
+                        global_node_indices = sys.global_nsets[bc.region]
+                        inv_nid = {idx: g for g, idx in sys.nid_to_idx.items()}
+                        for node_idx in global_node_indices:
+                            gid = inv_nid[node_idx]
+                            if bc.u1 is not None:
+                                solver.fix_dof(gid, 0, float(bc.u1))
+                            if bc.u2 is not None:
+                                solver.fix_dof(gid, 1, float(bc.u2))
+                            if bc.u3 is not None:
+                                solver.fix_dof(gid, 2, float(bc.u3))
                             
         return solver, sys

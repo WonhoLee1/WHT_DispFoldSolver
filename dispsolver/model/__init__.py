@@ -10,7 +10,16 @@ from dispsolver.model.section import Section, SolidSection, ShellSection
 from dispsolver.model.part import Part, SectionAssignment
 from dispsolver.model.instance import Instance
 from dispsolver.model.assembly import Assembly, FlattenedSolverSystem
-from dispsolver.model.step import Step, DisplacementBC, ConcentratedLoad, Amplitude
+from dispsolver.model.step import (
+    Step,
+    InitialStep,
+    PredefinedField,
+    EntityStatus,
+    StepStateEntry,
+    DisplacementBC,
+    ConcentratedLoad,
+    Amplitude,
+)
 from dispsolver.model.model import Model
 
 __all__ = [
@@ -31,6 +40,10 @@ __all__ = [
     "Assembly",
     "FlattenedSolverSystem",
     "Step",
+    "InitialStep",
+    "PredefinedField",
+    "EntityStatus",
+    "StepStateEntry",
     "DisplacementBC",
     "ConcentratedLoad",
     "Amplitude",

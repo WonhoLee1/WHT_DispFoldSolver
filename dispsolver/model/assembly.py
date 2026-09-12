@@ -101,6 +101,10 @@ class Assembly:
         self.instances[str(name)] = inst
         return inst
 
+    def Instance(self, name: str, part: Part, dependent: bool = True) -> Instance:
+        """Abaqus-style Instance factory alias."""
+        return self.create_instance(name=name, part=part, dependent=dependent)
+
     def add_tie(self, name: str, master: str, slave: str, position_tolerance: float = 0.0) -> None:
         """Define a surface tie constraint between two surfaces."""
         self.ties.append({
