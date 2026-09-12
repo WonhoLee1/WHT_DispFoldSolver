@@ -745,8 +745,8 @@ def bending_2pt(E: float = 72300.0, nu: float = 0.22, t: float = 0.4,
     d_inward = 0.5 * (L - D)
 
     backend_results = {}
-    for bk_name in ['jax', 'numpy_sequential']:
-        elem_type = 'Q4_COROTATIONAL' if bk_name in ('jax', 'numba') else 'Q4'
+    for bk_name in ['jax', 'numba']:
+        elem_type = 'Q4_COROTATIONAL'
         solver = make_solver(mesh, E, nu, backend=bk_name, element_type=elem_type, **SOLVER_KWARGS)
         dt = 1.0 / n_steps
         total_iters = 0
@@ -770,8 +770,30 @@ def bending_2pt(E: float = 72300.0, nu: float = 0.22, t: float = 0.4,
                 dof = int(solver.conn[mid_elem_idx, a]) * 2
                 u_elem[2 * a] = solver.u[dof]
                 u_elem[2 * a + 1] = solver.u[dof + 1]
+
+            coords_curr = coords_e + u_elem.reshape((4, 2))
+            v12 = coords_curr[1] - coords_curr[0]
+            v43 = coords_curr[2] - coords_curr[3]
+            e1_def = v12 + v43
+            e1 = e1_def / (np.linalg.norm(e1_def) + 1e-15)
+            e2 = np.array([-e1[1], e1[0]])
+            R_curr = np.column_stack((e1, e2))
+
+            v12_0 = coords_e[1] - coords_e[0]
+            v43_0 = coords_e[2] - coords_e[3]
+            e1_0_def = v12_0 + v43_0
+            e1_0 = e1_0_def / (np.linalg.norm(e1_0_def) + 1e-15)
+            e2_0 = np.array([-e1_0[1], e1_0[0]])
+            R_ref = np.column_stack((e1_0, e2_0))
+
+            R_elem = R_curr @ R_ref.T
+            T8 = np.zeros((8, 8))
+            for i in range(4):
+                T8[2 * i:2 * i + 2, 2 * i:2 * i + 2] = R_elem
+
+            u_local = T8.T @ u_elem + (T8.T - np.eye(8)) @ coords_e.reshape(-1)
             from dispsolver.element.q4 import compute_strains
-            eps = compute_strains(coords_e, u_elem, xi=0.0, eta=0.0)
+            eps = compute_strains(coords_e, u_local, xi=0.0, eta=0.0)
             D_mat = plane_strain_D(E, nu)
             sigma = D_mat @ eps
             sigma_max_num = abs(sigma[0])

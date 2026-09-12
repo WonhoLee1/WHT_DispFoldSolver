@@ -17,8 +17,22 @@ from dispsolver.model.step import (
     EntityStatus,
     StepStateEntry,
     DisplacementBC,
-    ConcentratedLoad,
-    Amplitude,
+)
+from dispsolver.model.constraint import (
+    Constraint,
+    RigidBody,
+    Tie,
+    Coupling,
+    KinematicCoupling,
+    DistributingCoupling,
+    MPC,
+)
+from dispsolver.model.load import (
+    Load,
+    ConcentratedForce,
+    Pressure,
+    Gravity,
+    BodyForce,
 )
 from dispsolver.model.model import Model
 
@@ -46,7 +60,17 @@ __all__ = [
     "EntityStatus",
     "StepStateEntry",
     "DisplacementBC",
-    "ConcentratedLoad",
-    "Amplitude",
+    "Constraint",
+    "RigidBody",
+    "Tie",
+    "Coupling",
+    "KinematicCoupling",
+    "DistributingCoupling",
+    "MPC",
+    "Load",
+    "ConcentratedForce",
+    "Pressure",
+    "Gravity",
+    "BodyForce",
     "Model",
 ]

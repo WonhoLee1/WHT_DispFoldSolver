@@ -10,11 +10,14 @@ import pytest
 from dispsolver.element3d import (
     Hexa8EASElement,
     Hexa8FbarElement,
+    Tetra4Element,
     Tetra4ANPElement,
     Tetra10Element,
     compute_c3d8_eas_element_numba,
     compute_c3d8_fbar_element_numba,
+    compute_c3d4_element_numba,
     compute_c3d4_anp_element_numba,
+    compute_c3d10_element_numba,
     compute_c3d10m_element_numba,
     assemble_mesh_c3d8_eas_numba,
     assemble_mesh_c3d8_fbar_numba
@@ -172,8 +175,8 @@ def test_3d_anp_numba_kernel():
     assert np.allclose(f_nb, f_jax, atol=1e-10)
 
 
-def test_3d_c3d10m_numba_kernel():
-    """Verify 3D Tet10 C3D10M Numba kernel against JAX reference formulation."""
+def test_3d_c3d10_numba_kernel():
+    """Verify 3D Tet10 C3D10 Numba kernel against JAX reference formulation."""
     coords = np.array([
         [0.0, 0.0, 0.0],
         [1.0, 0.0, 0.0],
@@ -190,7 +193,7 @@ def test_3d_c3d10m_numba_kernel():
     u_elem = np.zeros(30, dtype=np.float64)
     C_mat = np.eye(6, dtype=np.float64) * 2000.0
 
-    K_nb, f_nb = compute_c3d10m_element_numba(coords, u_elem, C_mat)
+    K_nb, f_nb = compute_c3d10_element_numba(coords, u_elem, C_mat)
 
     tet10_jax = Tetra10Element()
     from dispsolver.element3d import QuadraturePointState3D

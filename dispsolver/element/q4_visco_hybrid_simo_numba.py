@@ -263,48 +263,113 @@ if HAS_NUMBA:
         base_code: int, u_elem: np.ndarray, coords: np.ndarray,
         state_elem: np.ndarray, kappa: float, bparams: np.ndarray,
         g_i: np.ndarray, tau_i: np.ndarray, g_inf: float, dt: float,
-        thickness: float,
+        thickness: float, F_n: np.ndarray,
     ):
         """F-bar internal force + updated state. Direct port of
-        q4_visco_simo_fs_jax._internal_force."""
+        q4_visco_simo_fs_jax._internal_force.
+
+        `F_n` (4,2,2): Updated-Lagrangian total deformation gradient at the
+        last converged step, per Gauss point. `coords` is then the last
+        converged configuration and `u_elem` the INCREMENTAL displacement, so
+        the gradient computed here is F_inc and the total one is
+        `F_inc @ F_n[gp]`. Pass a tile of identity for Total Lagrangian.
+
+        UL support added 2026-09-12. This kernel had no `F_n` parameter at
+        all, while its dispatch branch in dynamic.py is NOT gated on
+        `ul_mode` -- so with `nlgeom=True` and `elem_jit="numba"` (both
+        defaults) it silently evaluated Total Lagrangian while
+        `element_large_deformation_report()` printed "UL (rotated
+        reference)" and the JAX branch three lines below ran genuine UL.
+        That is the AGENTS.md 4.8 silent-fallthrough class on a
+        reachable-by-default path, and it is why
+        verification/abaqus_benchmarks/cook_membrane.py's Q4_VISCO_SIMO
+        `numba` rows are not comparable with its `jax` rows.
+        """
         gX0, gY0, _ = _grads_numba(0.0, 0.0, coords)
-        F0 = _F_at_numba(gX0, gY0, u_elem)
+        F0i = _F_at_numba(gX0, gY0, u_elem)
+        # J-bar's reference gradient composes with the element-MEAN F_n, as in
+        # the JAX kernel -- the F-bar dilatation is an element-level quantity.
+        Fn_mean = 0.25 * (F_n[0] + F_n[1] + F_n[2] + F_n[3])
+        F0 = F0i @ Fn_mean
         J0 = F0[0, 0] * F0[1, 1] - F0[0, 1] * F0[1, 0]
 
         n_state = state_elem.shape[1]
         f_int = np.zeros(8, dtype=np.float64)
         state_new = np.zeros((4, n_state), dtype=np.float64)
+        F_n_new = np.zeros((4, 2, 2), dtype=np.float64)
 
         for gp in range(4):
             xi, eta = _GP2[gp, 0], _GP2[gp, 1]
             gX, gY, detJ = _grads_numba(xi, eta, coords)
             w = detJ * thickness
-            F = _F_at_numba(gX, gY, u_elem)
+            F_inc = _F_at_numba(gX, gY, u_elem)
+            F = F_inc @ F_n[gp]
             J = F[0, 0] * F[1, 1] - F[0, 1] * F[1, 0]
-            Fbar = F * np.sqrt(max(J0 / J, 1e-12))
+            # Same clamps as q4_visco_simo_fs_jax._internal_force. They only
+            # bind on near-inverted elements, but divergent guards are how two
+            # lowerings drift apart under exactly the distortion the guard
+            # exists for.
+            J_ratio = max(J0, 0.05) / max(J, 0.05)
+            Fbar = F * np.sqrt(min(max(J_ratio, 0.1), 10.0))
 
             S_v, h_new = _simo_pk2_numba(
                 base_code, Fbar, state_elem[gp], kappa, bparams,
                 g_i, tau_i, g_inf, dt,
             )
-            BL = _BL_columns_numba(Fbar, gX, gY)
-            for i in range(8):
-                for j in range(3):
-                    f_int[i] += BL[j, i] * S_v[j] * w
-            state_new[gp] = h_new
+            # B_L differentiates the UNMODIFIED gradient, not F-bar. In the
+            # F-bar method the modified gradient enters the CONSTITUTIVE call
+            # only; the virtual strain is that of the real motion, which is
+            # what makes the resulting element tangent unsymmetric -- a
+            # documented property of the method (de Souza Neto et al. 1996),
+            # not a defect. Building B_L from `Fbar` instead differentiates a
+            # quantity while holding its own sqrt(J0/J) factor fixed, which is
+            # neither the standard F-bar residual nor the gradient of any
+            # potential. It was this lowering's entire 1.75e-03 contract-C10
+            # disagreement with `q4_visco_simo_fs_jax._internal_force`:
+            # rebuilding the JAX residual with B_L(Fbar) reproduces this
+            # kernel to 1.29e-15.
+            #
+            # Work-conjugacy push-forward (finding F4, mirroring
+            # q4_visco_simo_fs_jax._internal_force): `S_v` is PK2 referred to
+            # the ORIGINAL config (computed from the TOTAL `Fbar`), while
+            # `BL` is built from `F_inc` and `w = detJ` is the step-n volume
+            # element. E_tot = F_n^T E_inc F_n and dV0 = dV_n/det(F_n) give
+            # the conjugate stress on config n as F_n S F_n^T / det(F_n).
+            # Exactly the identity when F_n = I, so TL is bit-unchanged.
+            Fn_gp = F_n[gp]
+            detFn = Fn_gp[0, 0] * Fn_gp[1, 1] - Fn_gp[0, 1] * Fn_gp[1, 0]
+            if abs(detFn) < 1e-30:
+                detFn = 1e-30
+            T00 = Fn_gp[0, 0] * S_v[0] + Fn_gp[0, 1] * S_v[2]
+            T01 = Fn_gp[0, 0] * S_v[2] + Fn_gp[0, 1] * S_v[1]
+            T10 = Fn_gp[1, 0] * S_v[0] + Fn_gp[1, 1] * S_v[2]
+            T11 = Fn_gp[1, 0] * S_v[2] + Fn_gp[1, 1] * S_v[1]
+            S_n0 = (T00 * Fn_gp[0, 0] + T01 * Fn_gp[0, 1]) / detFn
+            S_n1 = (T10 * Fn_gp[1, 0] + T11 * Fn_gp[1, 1]) / detFn
+            S_n2 = (T00 * Fn_gp[1, 0] + T01 * Fn_gp[1, 1]) / detFn
 
-        return f_int, state_new
+            BL = _BL_columns_numba(F_inc, gX, gY)
+            for i in range(8):
+                f_int[i] += (BL[0, i] * S_n0 + BL[1, i] * S_n1
+                             + BL[2, i] * S_n2) * w
+            state_new[gp] = h_new
+            F_n_new[gp, 0, 0] = F[0, 0]; F_n_new[gp, 0, 1] = F[0, 1]
+            F_n_new[gp, 1, 0] = F[1, 0]; F_n_new[gp, 1, 1] = F[1, 1]
+
+        return f_int, state_new, F_n_new
 
     @njit_cached(fastmath=True)
     def compute_visco_hybrid_simo_single_numba(
         base_code: int, coords: np.ndarray, u_elem: np.ndarray,
         state_elem: np.ndarray, kappa: float, bparams: np.ndarray,
         g_i: np.ndarray, tau_i: np.ndarray, g_inf: float, dt: float,
-        thickness: float, h: float = 0.0,
+        thickness: float, F_n: np.ndarray, h: float = 0.0,
     ):
         """F-bar Arruda-Boyce/Yeoh/Neo-Hookean + Prony/WLF Q4 hybrid element.
 
-        Returns (f_e(8,), K_e(8,8), state_new(4,n_state)). Tangent is a
+        Returns (f_e(8,), K_e(8,8), state_new(4,n_state), F_n_new(4,2,2)).
+        `F_n` is the Updated-Lagrangian reference; pass a tile of identity for
+        Total Lagrangian. Tangent is a
         full 8-DOF forward-difference Jacobian of the internal force w.r.t.
         u_elem -- the FD analogue of the JAX reference's exact
         jax.jacobian(f_int)(u_elem), NOT a material-only tangent. A
@@ -345,9 +410,9 @@ if HAS_NUMBA:
         independently of mesh size and units. Pass an explicit positive `h`
         to force the old fixed-step behaviour.
         """
-        f0, state_new = _internal_force_numba(
+        f0, state_new, F_n_new = _internal_force_numba(
             base_code, u_elem, coords, state_elem, kappa, bparams,
-            g_i, tau_i, g_inf, dt, thickness,
+            g_i, tau_i, g_inf, dt, thickness, F_n,
         )
 
         # Element characteristic length: the longer diagonal, which is a
@@ -369,14 +434,14 @@ if HAS_NUMBA:
                 hj = _SQRT_EPS * (uj if uj > L_elem else L_elem)
             u_pert = u_elem.copy()
             u_pert[j] += hj
-            f_pert, _ = _internal_force_numba(
+            f_pert, _, _ = _internal_force_numba(
                 base_code, u_pert, coords, state_elem, kappa, bparams,
-                g_i, tau_i, g_inf, dt, thickness,
+                g_i, tau_i, g_inf, dt, thickness, F_n,
             )
             for i in range(8):
                 K_e[i, j] = (f_pert[i] - f0[i]) / hj
 
-        return f0, K_e, state_new
+        return f0, K_e, state_new, F_n_new
 
     @njit_cached(fastmath=True, parallel=True)
     def assemble_visco_hybrid_simo_batch_numba(
@@ -387,6 +452,7 @@ if HAS_NUMBA:
         kappa: float, bparams: np.ndarray,
         g_i: np.ndarray, tau_i: np.ndarray, g_inf: float, dt: float,
         thicknesses: np.ndarray,   # (N,)
+        F_n: np.ndarray,           # (N, 4, 2, 2)
     ):
         """Multi-threaded Numba batch assembly, N Q4_UP + ViscoelasticMaterial
         (Neo-Hookean/Yeoh/Arruda-Boyce base) elements."""
@@ -395,17 +461,19 @@ if HAS_NUMBA:
         f_all = np.empty((n_elems, 8), dtype=np.float64)
         K_all = np.empty((n_elems, 8, 8), dtype=np.float64)
         state_all = np.empty((n_elems, 4, n_state), dtype=np.float64)
+        Fn_all = np.empty((n_elems, 4, 2, 2), dtype=np.float64)
 
         for e in numba.prange(n_elems):
-            f_e, K_e, s_e = compute_visco_hybrid_simo_single_numba(
+            f_e, K_e, s_e, fn_e = compute_visco_hybrid_simo_single_numba(
                 base_code, elem_coords[e], u_elems[e], state_elems[e],
-                kappa, bparams, g_i, tau_i, g_inf, dt, thicknesses[e],
+                kappa, bparams, g_i, tau_i, g_inf, dt, thicknesses[e], F_n[e],
             )
             f_all[e] = f_e
             K_all[e] = K_e
             state_all[e] = s_e
+            Fn_all[e] = fn_e
 
-        return f_all, K_all, state_all
+        return f_all, K_all, state_all, Fn_all
 
 else:
     def compute_visco_hybrid_simo_single_numba(*args, **kwargs):

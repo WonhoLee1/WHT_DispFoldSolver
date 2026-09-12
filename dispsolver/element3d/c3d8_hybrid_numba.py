@@ -29,7 +29,9 @@ from __future__ import annotations
 import numpy as np
 from numba import njit, prange
 
-from dispsolver.material3d.numba_materials import material_dispatch_3d, MAT_HYPERELASTIC_NEOHOOKEAN
+from dispsolver.material3d.numba_materials import (
+    material_dispatch_3d, MAT_HYPERELASTIC_NEOHOOKEAN, MAT_CUSTOM_ELASTIC, MAT_LINEAR_ELASTIC,
+)
 
 _GP_GAUSS = np.array([-1.0 / np.sqrt(3.0), 1.0 / np.sqrt(3.0)], dtype=np.float64)
 
@@ -181,6 +183,7 @@ def compute_element_rotation_3d(coords_ref: np.ndarray, coords_curr: np.ndarray)
 
 
 _EMPTY_CONTROLS = np.empty(0, dtype=np.float64)
+_EMPTY_2D_CONTROLS = np.empty((0, 6), dtype=np.float64)
 
 
 @njit(fastmath=True)
@@ -191,7 +194,8 @@ def compute_c3d8_hybrid_element_umat_numba(
     props: np.ndarray,
     sdvs: np.ndarray,
     dt: float = 1.0,
-    controls: np.ndarray = _EMPTY_CONTROLS
+    controls: np.ndarray = _EMPTY_CONTROLS,
+    stress_init: np.ndarray = _EMPTY_2D_CONTROLS
 ):
     """Compute 3D Co-Rotational Hybrid Hexahedral Element with mixed u-p volume-averaged pressure
     and Abaqus-compatible distortion control / anti-inversion safeguards.
@@ -279,18 +283,49 @@ def compute_c3d8_hybrid_element_umat_numba(
     for dof in range(24):
         eps_vol_mean += B_vol_bar[dof] * u_local[dof]
 
-    # Decode material bulk and shear moduli
-    p0 = props[0]
-    p1 = props[1]
-    if p1 <= 0.05 and p0 > 0.0:
-        mu = 2.0 * p0
-        K = 2.0 / max(p1, 1e-12)
-    elif p1 < 0.5 and p0 > 1.0:
-        mu = p0 / (2.0 * (1.0 + p1))
-        K = p0 / (3.0 * max(1.0 - 2.0 * p1, 1e-8))
+    # Decode material bulk and shear moduli for the hybrid volumetric-pressure
+    # term. This MUST match how material_dispatch_3d interprets `props` for
+    # the same mat_type below, or the volumetric (mean-dilatation) stiffness
+    # and the deviatoric (per-GP, material_dispatch_3d) stiffness are built
+    # from two different, inconsistent elasticity tensors.
+    #
+    # BUG (found 2026-09-13, benchmark_element/benchmark_3d_mechanics.py):
+    # every benchmark_element caller constructs DynamicSolver3D via the
+    # convenience `material_params={"E":..,"nu":..}` path, which -- per
+    # dynamic3d.py's _setup_numba_topology -- always yields
+    # mat_type=MAT_CUSTOM_ELASTIC (99) with props = flattened 6x6 C matrix
+    # (props[6*i+j] = C[i,j], see numba_materials.py's own MAT_CUSTOM_ELASTIC
+    # branch), NEVER mat_type=MAT_LINEAR_ELASTIC (0) with props=[E,nu]. The
+    # old heuristic below (magnitude-sniffing p0/p1 to guess [mu,K] vs
+    # [E,nu]) silently misread C[0,0]=lam+2mu and C[0,1]=lam as if they were
+    # [E,nu] or [mu,K] pairs, giving a wrong effective K/mu for the hybrid
+    # pressure term specifically (deviatoric part was unaffected --
+    # material_dispatch_3d already decodes MAT_CUSTOM_ELASTIC correctly).
+    # This is why C3D8H measured worse than plain (non-hybrid) C3D8 on every
+    # metric: an internally inconsistent, not just under-performing, element.
+    if mat_type == MAT_CUSTOM_ELASTIC:
+        lam = props[1]        # C[0,1]
+        mu = props[21]        # C[3,3]
+        K = lam + 2.0 * mu / 3.0
+    elif mat_type == MAT_LINEAR_ELASTIC:
+        E_ = props[0]
+        nu_ = props[1]
+        mu = E_ / (2.0 * (1.0 + nu_))
+        K = E_ / (3.0 * max(1.0 - 2.0 * nu_, 1e-8))
     else:
-        mu = p0
-        K = max(p1, 1e-8)
+        # Fallback heuristic for material types not yet given an explicit
+        # branch here (e.g. neo-Hookean) -- unchanged from before.
+        p0 = props[0]
+        p1 = props[1]
+        if p1 <= 0.05 and p0 > 0.0:
+            mu = 2.0 * p0
+            K = 2.0 / max(p1, 1e-12)
+        elif p1 < 0.5 and p0 > 1.0:
+            mu = p0 / (2.0 * (1.0 + p1))
+            K = p0 / (3.0 * max(1.0 - 2.0 * p1, 1e-8))
+        else:
+            mu = p0
+            K = max(p1, 1e-8)
 
     # Check controls
     has_controls = (controls.shape[0] >= 5)
@@ -316,10 +351,10 @@ def compute_c3d8_hybrid_element_umat_numba(
         # p_dist = k_dist * j_crit * (j_crit - j_eff) / j_eff^3
         # C_dist = k_dist * j_crit * (2 * j_crit - j_eff) / j_eff^4
         p_dist = k_dist * j_crit * (j_crit - j_eff) / (j_eff * j_eff * j_eff)
-        c_dist = k_dist * j_crit * (2.0 * j_crit - j_eff) / (j_eff * j_eff * j_eff * j_eff)
+        c_dist = k_dist * j_crit * (3.0 * j_crit - 2.0 * j_eff) / (j_eff * j_eff * j_eff * j_eff)
 
-    # Hybrid constant hydrostatic pressure: p0 = K * eps_vol_mean + p_dist
-    pressure_mean = K * eps_vol_mean + p_dist
+    # Hybrid constant hydrostatic pressure: p0 = K * eps_vol_mean - p_dist
+    pressure_mean = K * eps_vol_mean - p_dist
     K_eff = K + c_dist
 
     # 5. Integrate local stiffness and internal force
@@ -341,6 +376,7 @@ def compute_c3d8_hybrid_element_umat_numba(
             eta = _GP_GAUSS[gj]
             for gk in range(2):
                 zeta = _GP_GAUSS[gk]
+                gp_idx = 4 * gi + 2 * gj + gk
 
                 dN_dxi, dN_deta, dN_dzeta = _sd3d(xi, eta, zeta)
                 _, detJ, invJ = _jacobian3d(xi, eta, zeta, coords)
@@ -379,24 +415,83 @@ def compute_c3d8_hybrid_element_umat_numba(
                 # Deviatoric strain: e_dev = B_dev @ u_local
                 e_dev = B_dev @ u_local
 
-                # Deviatoric shear stress: s_dev = 2 * mu * e_dev
-                s_dev = np.zeros(6, dtype=np.float64)
-                s_dev[0] = 2.0 * mu * e_dev[0]
-                s_dev[1] = 2.0 * mu * e_dev[1]
-                s_dev[2] = 2.0 * mu * e_dev[2]
-                s_dev[3] = mu * e_dev[3]
-                s_dev[4] = mu * e_dev[4]
-                s_dev[5] = mu * e_dev[5]
+                if mat_type == 0:  # MAT_LINEAR_ELASTIC
+                    # Deviatoric shear stress: s_dev = 2 * mu * e_dev
+                    s_dev = np.zeros(6, dtype=np.float64)
+                    s_dev[0] = 2.0 * mu * e_dev[0]
+                    s_dev[1] = 2.0 * mu * e_dev[1]
+                    s_dev[2] = 2.0 * mu * e_dev[2]
+                    s_dev[3] = mu * e_dev[3]
+                    s_dev[4] = mu * e_dev[4]
+                    s_dev[5] = mu * e_dev[5]
 
-                # Deviatoric tangent operator C_dev
-                C_dev = np.zeros((6, 6), dtype=np.float64)
-                for r in range(3):
-                    for c in range(3):
-                        C_dev[r, c] = - (2.0 / 3.0) * mu
-                    C_dev[r, r] += 2.0 * mu
-                C_dev[3, 3] = mu
-                C_dev[4, 4] = mu
-                C_dev[5, 5] = mu
+                    # Deviatoric tangent operator C_dev
+                    C_dev = np.zeros((6, 6), dtype=np.float64)
+                    for r in range(3):
+                        for c in range(3):
+                            C_dev[r, c] = - (2.0 / 3.0) * mu
+                        C_dev[r, r] += 2.0 * mu
+                    C_dev[3, 3] = mu
+                    C_dev[4, 4] = mu
+                    C_dev[5, 5] = mu
+                else:
+                    # Construct B-bar strain for general material dispatcher
+                    strain_bar = e_dev.copy()
+                    strain_bar[0] += eps_vol_mean / 3.0
+                    strain_bar[1] += eps_vol_mean / 3.0
+                    strain_bar[2] += eps_vol_mean / 3.0
+                    sdv_gp = sdvs[gp_idx] if sdvs.shape[0] > gp_idx else np.zeros(0, dtype=np.float64)
+                    vol_ratio = 1.0 + eps_vol_mean
+                    I_3x3 = np.eye(3, dtype=np.float64)
+
+                    stress_bar, C_tangent, sdv_gp_new, mat_err = material_dispatch_3d(
+                        mat_type, props, sdv_gp, strain_bar, I_3x3, vol_ratio, dt
+                    )
+                    if sdvs.shape[0] > gp_idx:
+                        sdvs[gp_idx] = sdv_gp_new
+
+                    trace_s = stress_bar[0] + stress_bar[1] + stress_bar[2]
+                    s_dev = stress_bar.copy()
+                    s_dev[0] -= trace_s / 3.0
+                    s_dev[1] -= trace_s / 3.0
+                    s_dev[2] -= trace_s / 3.0
+
+                    # BUG FIX (2026-09-13): C_dev = C_tangent (the RAW,
+                    # un-projected material tangent) does not match the
+                    # DEVIATORIC-projected stress s_dev used for f_local
+                    # above. f_local's B_std^T @ s_dev is correct regardless
+                    # (the volumetric row of B_std contracts against a
+                    # trace-free s_dev to exactly zero), but K_local's
+                    # B_std^T @ C_dev @ B_std with an un-projected C_dev
+                    # reintroduces a full bulk-stiffness contribution here
+                    # ON TOP OF the explicit mean-dilatation K_vol term
+                    # built above -- i.e. volumetric stiffness was double
+                    # counted in the tangent but not in the residual.
+                    # Measured: element tangent vs its own finite-difference
+                    # Jacobian was 39% off on an undistorted single cube
+                    # before this fix (see fix-c3d8h fork report). Verified
+                    # this codebase's own mat_type==0 branch above already
+                    # builds a proper deviatoric-only isotropic operator
+                    # (2*mu off pure-shear, -2/3*mu coupling among normal
+                    # components) -- mirror that here using the same `mu`
+                    # decoded for the volumetric term, rather than reusing
+                    # the raw C_tangent. This is only exactly correct for
+                    # ISOTROPIC elasticity (every material this benchmark
+                    # suite currently exercises); a general anisotropic
+                    # MAT_CUSTOM_ELASTIC would need a full P@C@P deviatoric
+                    # projection instead, not implemented here.
+                    C_dev = np.zeros((6, 6), dtype=np.float64)
+                    for r in range(3):
+                        for c in range(3):
+                            C_dev[r, c] = -(2.0 / 3.0) * mu
+                        C_dev[r, r] += 2.0 * mu
+                    C_dev[3, 3] = mu
+                    C_dev[4, 4] = mu
+                    C_dev[5, 5] = mu
+                
+                if stress_init.shape[0] == 8:
+                    for i in range(6):
+                        s_dev[i] += stress_init[gp_idx, i]
 
                 # Accumulate deviatoric force: f_dev = B_std^T @ s_dev * dV
                 f_local += (B_std.T @ s_dev) * dV
@@ -435,7 +530,7 @@ def compute_c3d8_hybrid_element_umat_numba(
 _EMPTY_2D_CONTROLS = np.empty((0, 0), dtype=np.float64)
 
 
-@njit(parallel=True, fastmath=True)
+@njit(parallel=True, fastmath=True, cache=True)
 def assemble_mesh_c3d8_hybrid_numba(
     node_coords: np.ndarray,
     elem_conn: np.ndarray,
@@ -444,42 +539,41 @@ def assemble_mesh_c3d8_hybrid_numba(
     elem_props: np.ndarray,
     elem_sdvs: np.ndarray,
     dt: float = 1.0,
-    elem_controls: np.ndarray = _EMPTY_2D_CONTROLS
+    elem_controls: np.ndarray = _EMPTY_2D_CONTROLS,
+    elem_stress_init: np.ndarray = _EMPTY_2D_CONTROLS
 ):
     """Parallel Numba assembly of all C3D8H hybrid elements in the mesh."""
     n_elems = elem_conn.shape[0]
     f_elems = np.zeros((n_elems, 24), dtype=np.float64)
     K_elems = np.zeros((n_elems, 24, 24), dtype=np.float64)
-    has_error = False
-    use_controls = (elem_controls.ndim == 2 and elem_controls.shape[0] > 0)
+    err_flags = np.zeros(n_elems, dtype=np.int32)
+    use_controls = elem_controls.shape[0] == n_elems
+    has_stress_init = elem_stress_init.shape[0] == n_elems
 
     for e in prange(n_elems):
         conn = elem_conn[e]
         elem_coords = np.zeros((8, 3), dtype=np.float64)
         u_elem = np.zeros(24, dtype=np.float64)
-
         for i in range(8):
             nid = conn[i]
-            elem_coords[i, 0] = node_coords[nid, 0]
-            elem_coords[i, 1] = node_coords[nid, 1]
-            elem_coords[i, 2] = node_coords[nid, 2]
+            elem_coords[i, :] = node_coords[nid, :]
+            u_elem[3*i:3*i+3] = u_global[3*nid:3*nid+3]
 
-            u_elem[3 * i + 0] = u_global[3 * nid + 0]
-            u_elem[3 * i + 1] = u_global[3 * nid + 1]
-            u_elem[3 * i + 2] = u_global[3 * nid + 2]
-
-        m_type = elem_mat_types[e]
+        mat_type = elem_mat_types[e]
         props = elem_props[e]
         sdvs = elem_sdvs[e]
         ctrl = elem_controls[e] if use_controls else _EMPTY_CONTROLS
+        stress_init = elem_stress_init[e] if has_stress_init else np.zeros((8, 6), dtype=np.float64)
 
-        fe, Ke, err = compute_c3d8_hybrid_element_umat_numba(
-            elem_coords, u_elem, m_type, props, sdvs, dt, ctrl
+        f_e, K_e, err_e = compute_c3d8_hybrid_element_umat_numba(
+            elem_coords, u_elem, mat_type, props, sdvs, dt, ctrl, stress_init
         )
-        if err != 0:
-            has_error = True
+        f_elems[e, :] = f_e
+        K_elems[e, :, :] = K_e
+        err_flags[e] = err_e
 
-        f_elems[e] = fe
-        K_elems[e] = Ke
+    err_sum = 0
+    for e in range(n_elems):
+        err_sum += err_flags[e]
 
-    return f_elems, K_elems, has_error
+    return f_elems, K_elems, err_sum

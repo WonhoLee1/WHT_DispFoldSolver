@@ -19,7 +19,7 @@ from dispsolver.mesh3d import Mesh3D, Node3D, Element3D
 from dispsolver.element3d import (
     Hexa8EASElement,
     Hexa8FbarElement,
-    Tetra4ANPElement,
+    Tetra4Element,
     Tetra10Element,
     assemble_mesh_c3d8_eas_numba,
     assemble_mesh_c3d8_fbar_numba
@@ -47,8 +47,8 @@ def run_3d_element_benchmark_suite() -> dict:
     element_types = [
         ("C3D8I (9-mode EAS)", "C3D8I", Hexa8EASElement(num_eas_modes=9)),
         ("C3D8_FBAR (Multiplicative F-bar)", "C3D8_FBAR", Hexa8FbarElement()),
-        ("C3D4_ANP (Average Nodal Pressure Tet)", "C3D4_ANP", Tetra4ANPElement()),
-        ("C3D10M (Quadratic 10-node Tet)", "C3D10M", Tetra10Element()),
+        ("C3D8_CR (Co-rotational B-bar)", "C3D8_CR", None),
+        ("C3D8H (Hybrid Hexahedral)", "C3D8H", None),
     ]
 
     for label, elem_type_code, elem_inst in element_types:

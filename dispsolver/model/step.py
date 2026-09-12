@@ -16,60 +16,11 @@ class EntityStatus(Enum):
     REACTIVATED = "REACTIVATED"  # Re-enabled in this step after being deactivated
 
 
-@dataclass
-class Amplitude:
-    """Time-dependent amplitude curve for BCs and Loads."""
-    name: str
-    data: List[Tuple[float, float]] = field(default_factory=list)  # [(time, value), ...]
-    smooth: bool = True
-
-    def evaluate(self, t: float) -> float:
-        """Evaluate amplitude value at time t."""
-        if not self.data:
-            return 1.0
-        if self.smooth:
-            # Smoothstep interpolation between (0, 0) and (1, 1) by default
-            t_clamped = max(0.0, min(1.0, float(t)))
-            return 3.0 * (t_clamped ** 2) - 2.0 * (t_clamped ** 3)
-        # Linear interpolation
-        times = [pt[0] for pt in self.data]
-        values = [pt[1] for pt in self.data]
-        return float(np.interp(t, times, values))
+from dispsolver.model.amplitude import Amplitude, TabularAmplitude, SmoothStepAmplitude, UserFunctionAmplitude
+from dispsolver.model.bc import BoundaryCondition, DisplacementBC, VelocityBC, UserFunctionBC
+from dispsolver.model.sensor import Sensor, SensorManager, IterationHook, ControlAction
 
 
-@dataclass
-class DisplacementBC:
-    """Prescribed displacement boundary condition."""
-    name: str
-    region: str  # Qualified Set name (e.g. "PART_INST.NSET_NAME")
-    u1: Optional[float] = None
-    u2: Optional[float] = None
-    u3: Optional[float] = None
-    ur1: Optional[float] = None
-    ur2: Optional[float] = None
-    ur3: Optional[float] = None
-    amplitude: Optional[str] = None
-
-
-@dataclass
-class ConcentratedLoad:
-    """Concentrated nodal force load."""
-    name: str
-    region: str  # Qualified NodeSet name
-    f1: float = 0.0
-    f2: float = 0.0
-    f3: float = 0.0
-    amplitude: Optional[str] = None
-
-
-@dataclass
-class SurfaceTieInteraction:
-    """Surface-to-surface tied constraint interaction."""
-    name: str
-    slave_region: str
-    master_region: str
-    position_tolerance: float = 0.1
-    adjust: bool = True
 
 
 @dataclass
@@ -125,36 +76,39 @@ class Step:
         self.loads: Dict[str, StepStateEntry] = {}
         self.interactions: Dict[str, StepStateEntry] = {}
         self.predefined_fields: Dict[str, PredefinedField] = {}
+        self.sensors: Dict[str, Sensor] = {}
+        self.iteration_hooks: Dict[str, IterationHook] = {}
 
         # If created from a parent step, propagate active entities from parent
         if parent_step is not None:
             self.propagate_from_parent(parent_step)
 
     def propagate_from_parent(self, parent: Step) -> None:
-        """Propagate active BCs, Loads, and Interactions from parent step as PROPAGATED."""
+        """Propagate active BCs, Loads, and Interactions from parent step as PROPAGATED, and inactive as DEACTIVATED."""
+        import copy
         for name, entry in parent.boundary_conditions.items():
-            if entry.is_active():
-                self.boundary_conditions[name] = StepStateEntry(
-                    entity=entry.entity,
-                    status=EntityStatus.PROPAGATED,
-                    modified_params=dict(entry.modified_params)
-                )
+            status = EntityStatus.PROPAGATED if entry.is_active() else EntityStatus.DEACTIVATED
+            self.boundary_conditions[name] = StepStateEntry(
+                entity=copy.copy(entry.entity),
+                status=status,
+                modified_params=dict(entry.modified_params)
+            )
 
         for name, entry in parent.loads.items():
-            if entry.is_active():
-                self.loads[name] = StepStateEntry(
-                    entity=entry.entity,
-                    status=EntityStatus.PROPAGATED,
-                    modified_params=dict(entry.modified_params)
-                )
+            status = EntityStatus.PROPAGATED if entry.is_active() else EntityStatus.DEACTIVATED
+            self.loads[name] = StepStateEntry(
+                entity=copy.copy(entry.entity),
+                status=status,
+                modified_params=dict(entry.modified_params)
+            )
 
         for name, entry in parent.interactions.items():
-            if entry.is_active():
-                self.interactions[name] = StepStateEntry(
-                    entity=entry.entity,
-                    status=EntityStatus.PROPAGATED,
-                    modified_params=dict(entry.modified_params)
-                )
+            status = EntityStatus.PROPAGATED if entry.is_active() else EntityStatus.DEACTIVATED
+            self.interactions[name] = StepStateEntry(
+                entity=copy.copy(entry.entity),
+                status=status,
+                modified_params=dict(entry.modified_params)
+            )
 
     # ─── BOUNDARY CONDITION LIFECYCLE ──────────────────────────────────
 

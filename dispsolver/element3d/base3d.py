@@ -20,6 +20,7 @@ class QuadraturePointState3D:
     eq_plastic_strain: float   # Equivalent Plastic Strain \bar{\epsilon}^p
     backstress: np.ndarray     # (6,) Kinematic Hardening Backstress
     visco_overstress: np.ndarray # (N_prony, 6) Viscoelastic Memory Tensors
+    stress_initial: np.ndarray # (6,) Initial Stress Tensor (Voigt) for Geostatic balance
     stress_cauchy: np.ndarray  # (6,) Cauchy Stress Tensor (Voigt)
     stress_pk2: np.ndarray     # (6,) 2nd Piola-Kirchhoff Stress Tensor (Voigt)
 
@@ -33,6 +34,7 @@ class QuadraturePointState3D:
             eq_plastic_strain=0.0,
             backstress=np.zeros(6, dtype=np.float64),
             visco_overstress=np.zeros((num_prony, 6), dtype=np.float64) if num_prony > 0 else np.zeros((0, 6), dtype=np.float64),
+            stress_initial=np.zeros(6, dtype=np.float64),
             stress_cauchy=np.zeros(6, dtype=np.float64),
             stress_pk2=np.zeros(6, dtype=np.float64)
         )

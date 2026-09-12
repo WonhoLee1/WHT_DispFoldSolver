@@ -57,6 +57,7 @@ except ImportError:      # pragma: no cover
 if _HAS_NUMBA:
     from .q4_visco_hybrid_simo_numba import (
         _grads_numba, _F_at_numba, _BL_columns_numba, _simo_pk2_numba,
+        _SQRT_EPS,
     )
 
     _GP = np.array([[-0.5773502691896258, -0.5773502691896258],
@@ -160,27 +161,60 @@ if _HAS_NUMBA:
         base_code: int, coords: np.ndarray, u_elem: np.ndarray,
         state_elem: np.ndarray, kappa: float, bparams: np.ndarray,
         g_i: np.ndarray, tau_i: np.ndarray, g_inf: float, dt: float,
-        thickness: float, F_n: np.ndarray, h: float = 1e-6,
+        thickness: float, F_n: np.ndarray, h: float = 0.0,
     ):
         """CPE4H. Returns (f_e(8,), K_e(8,8), state_new, F_n_new).
 
         `K_e` is the CONDENSED tangent: the pressure is recomputed from its
         closed form inside every perturbation, so the FD Jacobian already
         contains `- K_up K_pp^-1 K_pu`.
+
+        Step size (2026-09-12, finding B4 -- the fix `q4_visco_hybrid_simo_numba`
+        already carries, applied here). `h` used to default to a FIXED
+        ABSOLUTE 1e-6. A forward difference's truncation error relative to
+        `K` scales as `h / L_elem`, so a fixed absolute step means the error
+        DOUBLES on every uniform mesh refinement. Contract C11 measured
+        exactly that signature on this kernel: 2.61e-06 / 1.31e-06 / 6.54e-07
+        / 3.27e-07 as the element grows x1/x2/x4/x8 -- a factor-8 spread
+        across a factor-8 size sweep, i.e. error exactly inverse in element
+        size, while `f_int` agreed with JAX throughout.
+
+        `h = 0.0` now means "choose per column", the standard forward-
+        difference step of Dennis & Schnabel, *Numerical Methods for
+        Unconstrained Optimization and Nonlinear Equations* (1983) sec 5.4:
+        ``h_j = sqrt(eps_mach) * max(|u_j|, L_elem)``, which balances
+        truncation against roundoff at ~sqrt(eps) RELATIVE, independently of
+        mesh size and units. Pass an explicit positive `h` for the old
+        fixed-step behaviour.
         """
         f0, state_new, F_n_new, _p = _internal_force_up_numba(
             base_code, u_elem, coords, state_elem, kappa, bparams,
             g_i, tau_i, g_inf, dt, thickness, F_n)
 
+        # Element characteristic length: the longer diagonal, a
+        # rotation-invariant size measure (a bounding-box extent is not).
+        d1 = np.sqrt((coords[2, 0] - coords[0, 0]) ** 2
+                     + (coords[2, 1] - coords[0, 1]) ** 2)
+        d2 = np.sqrt((coords[3, 0] - coords[1, 0]) ** 2
+                     + (coords[3, 1] - coords[1, 1]) ** 2)
+        L_elem = max(d1, d2)
+        if L_elem < 1e-30:
+            L_elem = 1e-30
+
         K_e = np.zeros((8, 8), dtype=np.float64)
         for j in range(8):
+            if h > 0.0:
+                hj = h
+            else:
+                uj = abs(u_elem[j])
+                hj = _SQRT_EPS * (uj if uj > L_elem else L_elem)
             u_pert = u_elem.copy()
-            u_pert[j] += h
+            u_pert[j] += hj
             f_pert, _s, _f, _pp = _internal_force_up_numba(
                 base_code, u_pert, coords, state_elem, kappa, bparams,
                 g_i, tau_i, g_inf, dt, thickness, F_n)
             for i in range(8):
-                K_e[i, j] = (f_pert[i] - f0[i]) / h
+                K_e[i, j] = (f_pert[i] - f0[i]) / hj
 
         # Same NaN/Inf zero-guard every other kernel in this codebase has;
         # see q4_visco_eas_numba.py's identical guard for the full rationale

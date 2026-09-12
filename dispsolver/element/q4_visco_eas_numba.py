@@ -67,6 +67,9 @@ if _HAS_NUMBA:
     # Pfefferkorn et al. (IJNME 2021) reference.
     _ALPHA_MAX_IT = 12
     _LS_STEPS = np.array([1.0, 0.5, 0.25, 0.1])
+    # sqrt(machine epsilon) -- the forward-difference step scale of
+    # Dennis & Schnabel (1983) sec 5.4. See compute_single_eas_numba_status.
+    _SQRT_EPS = 1.4901161193847656e-08
 
     @njit_cached(fastmath=True)
     def _enh_modes_numba(coords: np.ndarray):
@@ -130,14 +133,22 @@ if _HAS_NUMBA:
         gps = np.array([[-gp3, -gp3], [gp3, -gp3], [gp3, gp3], [-gp3, gp3]])
         for gp in range(4):
             gX, gY, detJ = _grads_numba(gps[gp, 0], gps[gp, 1], coords)
-            F_inc = _F_at_numba(gX, gY, u_elem)
-            F_c = F_inc @ F_n[gp]
-            F_e = F_c.copy()
+            # 2026-09-12: ported from q4_visco_eas_jax._residuals (finding B2).
+            # The enhancement belongs in the INCREMENTAL frame, where every
+            # other operator of this element already lives -- `Fenh` is built
+            # from `coords` (= config n), `BL` differentiates the incremental
+            # displacement, and `w = detJ` is the config-n volume element.
+            # This kernel used to add it to the TOTAL gradient
+            # (`F_c = F_inc @ F_n` first, enhancement on top), which mixes
+            # frames and costs the element its variational consistency.
+            F_inc_c = _F_at_numba(gX, gY, u_elem)
+            F_inc = F_inc_c.copy()
             for m in range(4):
-                F_e[0, 0] += alpha[m] * Fenh[gp, m, 0, 0]
-                F_e[0, 1] += alpha[m] * Fenh[gp, m, 0, 1]
-                F_e[1, 0] += alpha[m] * Fenh[gp, m, 1, 0]
-                F_e[1, 1] += alpha[m] * Fenh[gp, m, 1, 1]
+                F_inc[0, 0] += alpha[m] * Fenh[gp, m, 0, 0]
+                F_inc[0, 1] += alpha[m] * Fenh[gp, m, 0, 1]
+                F_inc[1, 0] += alpha[m] * Fenh[gp, m, 1, 0]
+                F_inc[1, 1] += alpha[m] * Fenh[gp, m, 1, 1]
+            F_e = F_inc @ F_n[gp]
 
             S_v, h_new = _simo_pk2_numba(base_code, F_e, state_elem[gp], kappa,
                                          bparams, g_i, tau_i, g_inf, dt)
@@ -150,9 +161,14 @@ if _HAS_NUMBA:
             # PK2 referred to the ORIGINAL config (from the TOTAL F_e);
             # BL(F_inc)/w(detJ) below are step-n quantities. Push forward:
             # S_n = F_n @ S_v @ F_n.T / det(F_n) (identity, i.e. no-op,
-            # when F_n = I -- TL mode unchanged by this fix). f_a keeps
-            # the un-pushed S_v -- its own G operator already uses the
-            # total F_e, not F_inc, so it lacks this specific mismatch.
+            # when F_n = I -- TL mode unchanged by this fix).
+            #
+            # 2026-09-12 (B2): `f_a` used to contract the UN-pushed `S_v`
+            # while `f_u` used `S_n`, so the two were gradients of two
+            # different functionals and `K_au = K_ua^T` -- which
+            # `compute_single_eas_numba_status`'s condensation ASSUMES --
+            # was false. Both now contract the SAME `S_n` against operators
+            # built from the SAME enhanced `F_inc`.
             Fn_gp = F_n[gp]
             detFn = Fn_gp[0, 0] * Fn_gp[1, 1] - Fn_gp[0, 1] * Fn_gp[1, 0]
             if abs(detFn) < 1e-30:
@@ -168,6 +184,13 @@ if _HAS_NUMBA:
             Sn01 = (T00 * Fn_gp[1, 0] + T01 * Fn_gp[1, 1]) / detFn
             S_n0 = Sn00; S_n1 = Sn11; S_n2 = Sn01
 
+            # B_L and G are both built from the ENHANCED incremental gradient:
+            # dE_inc = sym(F_inc^T dF_c) du + sym(F_inc^T Fenh_j) dalpha.
+            # `BL` used to be built from the COMPATIBLE gradient, which
+            # silently dropped the alpha-dependent half of dE_inc/du. That
+            # half does NOT vanish in Total Lagrangian, so it was the whole
+            # of this lowering's 1.61e-03 contract-C10 disagreement with JAX
+            # at F_n = I (alpha itself converged bit-identically in both).
             BL = _BL_columns_numba(F_inc, gX, gY)
             w = detJ * thickness
             for i in range(8):
@@ -176,12 +199,12 @@ if _HAS_NUMBA:
 
             for m in range(4):
                 Fm = Fenh[gp, m]
-                Ft00 = F_e[0, 0] * Fm[0, 0] + F_e[1, 0] * Fm[1, 0]
-                Ft01 = F_e[0, 0] * Fm[0, 1] + F_e[1, 0] * Fm[1, 1]
-                Ft10 = F_e[0, 1] * Fm[0, 0] + F_e[1, 1] * Fm[1, 0]
-                Ft11 = F_e[0, 1] * Fm[0, 1] + F_e[1, 1] * Fm[1, 1]
+                Ft00 = F_inc[0, 0] * Fm[0, 0] + F_inc[1, 0] * Fm[1, 0]
+                Ft01 = F_inc[0, 0] * Fm[0, 1] + F_inc[1, 0] * Fm[1, 1]
+                Ft10 = F_inc[0, 1] * Fm[0, 0] + F_inc[1, 1] * Fm[1, 0]
+                Ft11 = F_inc[0, 1] * Fm[0, 1] + F_inc[1, 1] * Fm[1, 1]
                 Gm0 = Ft00; Gm1 = Ft11; Gm2 = Ft01 + Ft10
-                f_a[m] += (Gm0 * S_v[0] + Gm1 * S_v[1] + Gm2 * S_v[2]) * w
+                f_a[m] += (Gm0 * S_n0 + Gm1 * S_n1 + Gm2 * S_n2) * w
             F_n_new[gp, 0, 0] = F_e[0, 0]; F_n_new[gp, 0, 1] = F_e[0, 1]
             F_n_new[gp, 1, 0] = F_e[1, 0]; F_n_new[gp, 1, 1] = F_e[1, 1]
         return f_u, f_a, state_new, F_n_new
@@ -191,10 +214,24 @@ if _HAS_NUMBA:
         base_code: int, coords: np.ndarray, u_elem: np.ndarray, alpha0: np.ndarray,
         state_elem: np.ndarray, kappa: float, bparams: np.ndarray,
         g_i: np.ndarray, tau_i: np.ndarray, g_inf: float, dt: float,
-        thickness: float, F_n: np.ndarray, h: float = 1e-6,
+        thickness: float, F_n: np.ndarray, h: float = 0.0,
     ):
         """Returns (f_e(8,), K_e(8,8), alpha_new(4,), state_new(4,n_state),
         F_n_new(4,2,2), status()).
+
+        Step size (2026-09-12, finding B4). The `K_e` sweep differentiates
+        w.r.t. `u_elem`, which carries LENGTH units, so a fixed absolute `h`
+        gives a truncation error scaling as `h / L_elem` -- it doubles on
+        every uniform refinement. Contract C11 measured exactly that on this
+        kernel the moment its force agreed with JAX and stopped masking it:
+        6.63e-06 / 3.31e-06 / 1.66e-06 / 8.28e-07 as the element grows
+        x1/x2/x4/x8. `h = 0.0` now selects the per-column Dennis & Schnabel
+        (1983) sec 5.4 step `h_j = sqrt(eps_mach) * max(|u_j|, L_elem)`.
+
+        The `alpha` sweeps keep a step of their own: `alpha` is DIMENSIONLESS
+        (it is added straight into the deformation gradient), so it has no
+        mesh-size dependence to correct -- only the same sqrt(eps)-relative
+        conditioning, via `max(|alpha_j|, 1)`.
 
         `status` is ||d(alpha)||_inf of the last accepted element-local
         Newton correction (0 = converged), or inf when the local solve or the
@@ -205,6 +242,22 @@ if _HAS_NUMBA:
         per GP. Pass a tile of identity for Total-Lagrangian behaviour.
         """
         Fenh = _enh_modes_numba(coords)
+
+        # Element characteristic length: the longer diagonal, a
+        # rotation-invariant size measure (a bounding-box extent is not).
+        d1 = np.sqrt((coords[2, 0] - coords[0, 0]) ** 2
+                     + (coords[2, 1] - coords[0, 1]) ** 2)
+        d2 = np.sqrt((coords[3, 0] - coords[1, 0]) ** 2
+                     + (coords[3, 1] - coords[1, 1]) ** 2)
+        L_elem = max(d1, d2)
+        if L_elem < 1e-30:
+            L_elem = 1e-30
+
+        def _h_alpha(a_j):
+            if h > 0.0:
+                return h
+            aj = abs(a_j)
+            return _SQRT_EPS * (aj if aj > 1.0 else 1.0)
 
         def _solve_alpha(u, a_start):
             """Returns (alpha, da_inf) -- da_inf is ||d(alpha)||_inf of the
@@ -219,12 +272,13 @@ if _HAS_NUMBA:
                     g_i, tau_i, g_inf, dt, thickness, Fenh, F_n)
                 K_aa = np.zeros((4, 4), dtype=np.float64)
                 for j in range(4):
-                    ap = a.copy(); ap[j] += h
+                    hj = _h_alpha(a[j])
+                    ap = a.copy(); ap[j] += hj
                     _, f_ap, _, _ = _residuals_eas_numba(
                         base_code, u, ap, coords, state_elem, kappa, bparams,
                         g_i, tau_i, g_inf, dt, thickness, Fenh, F_n)
                     for i in range(4):
-                        K_aa[i, j] = (f_ap[i] - f_a0[i]) / h
+                        K_aa[i, j] = (f_ap[i] - f_a0[i]) / hj
                 tr = (K_aa[0, 0] + K_aa[1, 1] + K_aa[2, 2] + K_aa[3, 3]) / 4.0
                 reg = 1e-10 * (abs(tr) + 1e-30)
                 for i in range(4):
@@ -281,14 +335,15 @@ if _HAS_NUMBA:
         K_ua = np.zeros((8, 4), dtype=np.float64)
         K_aa = np.zeros((4, 4), dtype=np.float64)
         for j in range(4):
-            ap = a_conv.copy(); ap[j] += h
+            hj = _h_alpha(a_conv[j])
+            ap = a_conv.copy(); ap[j] += hj
             f_up, f_ap, _, _ = _residuals_eas_numba(
                 base_code, u_elem, ap, coords, state_elem, kappa, bparams,
                 g_i, tau_i, g_inf, dt, thickness, Fenh, F_n)
             for i in range(8):
-                K_ua[i, j] = (f_up[i] - f_u0[i]) / h
+                K_ua[i, j] = (f_up[i] - f_u0[i]) / hj
             for i in range(4):
-                K_aa[i, j] = (f_ap[i] - f_a0[i]) / h
+                K_aa[i, j] = (f_ap[i] - f_a0[i]) / hj
         tr = (K_aa[0, 0] + K_aa[1, 1] + K_aa[2, 2] + K_aa[3, 3]) / 4.0
         reg = 1e-10 * (abs(tr) + 1e-30)
         for i in range(4):
@@ -297,13 +352,18 @@ if _HAS_NUMBA:
 
         K_e = np.zeros((8, 8), dtype=np.float64)
         for j in range(8):
-            up = u_elem.copy(); up[j] += h
+            if h > 0.0:
+                hj = h
+            else:
+                uj = abs(u_elem[j])
+                hj = _SQRT_EPS * (uj if uj > L_elem else L_elem)
+            up = u_elem.copy(); up[j] += hj
             a_p, _ = _solve_alpha(up, a_conv)
             f_up, f_ap, _, _ = _residuals_eas_numba(
                 base_code, up, a_p, coords, state_elem, kappa, bparams,
                 g_i, tau_i, g_inf, dt, thickness, Fenh, F_n)
             for i in range(8):
-                K_e[i, j] = (f_up[i] - f_e[i]) / h
+                K_e[i, j] = (f_up[i] - f_e[i]) / hj
 
         # Same NaN/Inf zero-guard every other kernel in this codebase has
         # (JAX kernels: `where(isnan(f)|isnan(K), 0, f)`) -- a trial state
@@ -335,7 +395,7 @@ if _HAS_NUMBA:
         base_code: int, coords: np.ndarray, u_elem: np.ndarray, alpha0: np.ndarray,
         state_elem: np.ndarray, kappa: float, bparams: np.ndarray,
         g_i: np.ndarray, tau_i: np.ndarray, g_inf: float, dt: float,
-        thickness: float, F_n: np.ndarray, h: float = 1e-6,
+        thickness: float, F_n: np.ndarray, h: float = 0.0,
     ):
         """Back-compatible 5-tuple wrapper around
         `compute_single_eas_numba_status` (drops the trailing `status`)."""
