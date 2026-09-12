@@ -88,11 +88,23 @@ def material_dispatch_3d(
         S_voigt = C_mat @ E_voigt
 
     elif mat_type == MAT_HYPERELASTIC_NEOHOOKEAN:
-        # props: [E, nu]
-        E = props[0]
-        nu = props[1]
-        lam = (E * nu) / ((1.0 + nu) * (1.0 - 2.0 * nu))
-        mu = E / (2.0 * (1.0 + nu))
+        # Robust decoding for Neo-Hookean parameters:
+        # Case 1: [C10, D1] (e.g., C10=0.1, D1=0.01) -> mu = 2*C10, K = 2/D1
+        # Case 2: [E, nu] (e.g., E=200000, nu=0.4999) -> mu = E/(2*(1+nu)), K = E/(3*(1-2*nu))
+        # Case 3: [mu, K] -> direct
+        p0 = props[0]
+        p1 = props[1]
+        if p1 <= 0.05 and p0 > 0.0:
+            mu = 2.0 * p0
+            K = 2.0 / max(p1, 1e-12)
+        elif p1 < 0.5 and p0 > 1.0:
+            mu = p0 / (2.0 * (1.0 + p1))
+            K = p0 / (3.0 * max(1.0 - 2.0 * p1, 1e-8))
+        else:
+            mu = p0
+            K = max(p1, 1e-8)
+
+        lam = K - (2.0 / 3.0) * mu
         
         C_mat[0, 0] = lam + 2*mu; C_mat[0, 1] = lam;        C_mat[0, 2] = lam
         C_mat[1, 0] = lam;        C_mat[1, 1] = lam + 2*mu; C_mat[1, 2] = lam

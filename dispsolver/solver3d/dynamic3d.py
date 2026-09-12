@@ -100,6 +100,8 @@ class DynamicSolver3D:
                 inst = Hexa8EASElement(num_eas_modes=9)
             elif elem.elem_type.upper() in ["C3D8_FBAR", "FBAR"]:
                 inst = Hexa8FbarElement()
+            elif elem.elem_type.upper() in ["C3D8H", "C3D8_HYBRID", "HYBRID"]:
+                inst = Hexa8FbarElement()
             else:
                 # Default to C3D8I EAS
                 inst = Hexa8EASElement(num_eas_modes=9)
@@ -116,6 +118,7 @@ class DynamicSolver3D:
             self.elem_mat_types = None
             self.elem_props = None
             self.elem_sdvs = None
+            self.elem_kernel_groups = {}
             return
 
         nid_map = self.mesh.node_id_to_index()
@@ -128,6 +131,27 @@ class DynamicSolver3D:
         n_elems = self.elem_conn_0based.shape[0]
         self.elem_mat_types = np.full(n_elems, MAT_CUSTOM_ELASTIC, dtype=np.int32)
         self.elem_props = np.zeros((n_elems, 36), dtype=np.float64)
+
+        # Classify element kernel groups for heterogeneous multi-element assembly
+        elem_kernel_indices: Dict[int, List[int]] = {}
+        for idx, elem in enumerate(self.mesh.elements.values()):
+            et = elem.elem_type.upper()
+            if et in ["C3D8I", "C3D8_EAS"]:
+                k = 0
+            elif et in ["C3D8_CR", "C3D8_COROTATIONAL", "C3D8_FBAR_CR"]:
+                k = 1
+            elif et in ["C3D8H", "C3D8_HYBRID", "HYBRID"]:
+                k = 2
+            else:
+                k = 3
+            if k not in elem_kernel_indices:
+                elem_kernel_indices[k] = []
+            elem_kernel_indices[k].append(idx)
+
+        self.elem_kernel_groups = {
+            k: np.array(indices, dtype=np.int64)
+            for k, indices in elem_kernel_indices.items()
+        }
 
         # Populate multimaterial properties per element
         cmat_flat = self.C_mat_default.ravel()
@@ -152,8 +176,14 @@ class DynamicSolver3D:
                         self.elem_props[e, :4] = [E_val, nu_val, sy_val, H_val]
                     elif mat_obj.get("type", "").lower() in ["neohookean", "neo_hookean"]:
                         self.elem_mat_types[e] = MAT_NEO_HOOKEAN
-                        self.elem_props[e, 0] = float(mat_obj.get("C10", 1.0))
-                        self.elem_props[e, 1] = float(mat_obj.get("D1", 0.001))
+                        c10 = float(mat_obj.get("C10", 1.0))
+                        d1 = float(mat_obj.get("D1", 0.001))
+                        mu = 2.0 * c10
+                        K = 2.0 / max(d1, 1e-12)
+                        self.elem_props[e, 0] = mu
+                        self.elem_props[e, 1] = K
+                        self.elem_props[e, 2] = c10
+                        self.elem_props[e, 3] = d1
                     else:
                         self.elem_mat_types[e] = MAT_LINEAR_ELASTIC
                         self.elem_props[e, 0] = float(mat_obj.get("E", 200000.0))
@@ -190,27 +220,43 @@ class DynamicSolver3D:
 
         if self.nlgeom and self.rows_topo is not None:
             try:
-                first_elem = next(iter(self.mesh.elements.values()))
-                elem_type_upper = first_elem.elem_type.upper()
+                n_elems = self.elem_conn_0based.shape[0]
+                f_elems = np.zeros((n_elems, 24), dtype=np.float64)
+                K_elems = np.zeros((n_elems, 24, 24), dtype=np.float64)
+                has_error = False
 
-                if elem_type_upper in ["C3D8I", "C3D8_EAS"]:
-                    from dispsolver.element3d.c3d8_eas_tl_numba import assemble_mesh_c3d8_eas_tl_numba
-                    f_elems, K_elems, has_error = assemble_mesh_c3d8_eas_tl_numba(
-                        node_coords_all, self.elem_conn_0based, u_vec,
-                        self.elem_mat_types, self.elem_props, self.elem_sdvs, dt
-                    )
-                elif elem_type_upper in ["C3D8_CR", "C3D8_COROTATIONAL", "C3D8_FBAR_CR"]:
-                    from dispsolver.element3d.c3d8_corotational_numba import assemble_mesh_c3d8_corotational_numba
-                    f_elems, K_elems, has_error = assemble_mesh_c3d8_corotational_numba(
-                        node_coords_all, self.elem_conn_0based, u_vec,
-                        self.elem_mat_types, self.elem_props, self.elem_sdvs, dt
-                    )
-                else:
-                    from dispsolver.element3d.c3d8_fbar_tl_numba import assemble_mesh_c3d8_fbar_tl_numba
-                    f_elems, K_elems, has_error = assemble_mesh_c3d8_fbar_tl_numba(
-                        node_coords_all, self.elem_conn_0based, u_vec,
-                        self.elem_mat_types, self.elem_props, self.elem_sdvs, dt
-                    )
+                # Heterogeneous element assembly: assemble each group in parallel
+                for k, elem_indices in self.elem_kernel_groups.items():
+                    sub_conn = self.elem_conn_0based[elem_indices]
+                    sub_mat = self.elem_mat_types[elem_indices]
+                    sub_props = self.elem_props[elem_indices]
+                    sub_sdvs = self.elem_sdvs[elem_indices]
+
+                    if k == 0:
+                        from dispsolver.element3d.c3d8_eas_tl_numba import assemble_mesh_c3d8_eas_tl_numba
+                        f_sub, K_sub, err = assemble_mesh_c3d8_eas_tl_numba(
+                            node_coords_all, sub_conn, u_vec, sub_mat, sub_props, sub_sdvs, dt
+                        )
+                    elif k == 1:
+                        from dispsolver.element3d.c3d8_corotational_numba import assemble_mesh_c3d8_corotational_numba
+                        f_sub, K_sub, err = assemble_mesh_c3d8_corotational_numba(
+                            node_coords_all, sub_conn, u_vec, sub_mat, sub_props, sub_sdvs, dt
+                        )
+                    elif k == 2:
+                        from dispsolver.element3d.c3d8_hybrid_numba import assemble_mesh_c3d8_hybrid_numba
+                        f_sub, K_sub, err = assemble_mesh_c3d8_hybrid_numba(
+                            node_coords_all, sub_conn, u_vec, sub_mat, sub_props, sub_sdvs, dt
+                        )
+                    else:
+                        from dispsolver.element3d.c3d8_fbar_tl_numba import assemble_mesh_c3d8_fbar_tl_numba
+                        f_sub, K_sub, err = assemble_mesh_c3d8_fbar_tl_numba(
+                            node_coords_all, sub_conn, u_vec, sub_mat, sub_props, sub_sdvs, dt
+                        )
+
+                    if err:
+                        has_error = True
+                    f_elems[elem_indices] = f_sub
+                    K_elems[elem_indices] = K_sub
 
                 self.last_assembly_error = has_error
                 f_int_global = np.zeros(self.num_dofs, dtype=np.float64)

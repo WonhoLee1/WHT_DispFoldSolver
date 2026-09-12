@@ -23,10 +23,10 @@ class AdaptiveDtController:
 def create_4layer_thin_bar():
     mesh = Mesh3D()
     
-    # 4 layers (Y-direction), 1 element in Z (thin bar), 40 elements in X
+    # 4 layers (Y-direction), 3 elements in Z (width-resolved), 40 elements in X
     nx = 40
     ny = 4
-    nz = 1
+    nz = 3
     
     L = 40.0
     W = 1.0
@@ -58,65 +58,72 @@ def create_4layer_thin_bar():
                 n6 = node_map[(i+1, j+1, k+1)]
                 n7 = node_map[(i, j+1, k+1)]
                 
-                # PID 0: PET (Elastic-Plastic), PID 1: PSA (Hyperelastic), etc.
+                # PID 0: PET (J2 Plasticity) -> C3D8_CR
+                # PID 1: PSA (Hyperelastic)   -> C3D8H (Hybrid Element to prevent locking & inversion)
                 pid = 0 if j % 2 == 0 else 1
+                elem_type = "C3D8_CR" if pid == 0 else "C3D8H"
                 
-                elem = mesh.add_element(eid, [n0, n1, n2, n3, n4, n5, n6, n7], "C3D8_CR")
+                elem = mesh.add_element(eid, [n0, n1, n2, n3, n4, n5, n6, n7], elem_type)
                 elem.pid = pid
                 eid += 1
                 
     return mesh
 
 def main():
-    print("Building 4-layer thin bar 3D mesh...")
+    print("Building 4-layer thin bar 3D mesh with nz=3 and C3D8H hybrid elements...")
     mesh = create_4layer_thin_bar()
     
     # Materials setup
     # PID 0: PET (J2 Plasticity) E=4000, nu=0.3, Sy=80, H=400
     mat_pet = {"type": "j2_plasticity", "E": 4000.0, "nu": 0.3, "sigma_y0": 80.0, "H": 400.0}
-    # PID 1: PSA (Neo-Hookean) C10=0.1, D1=0.01
+    # PID 1: PSA (Neo-Hookean) C10=0.1, D1=0.01 -> mu=0.2 MPa, K=200 MPa
     mat_psa = {"type": "neo_hookean", "C10": 0.1, "D1": 0.01}
     
     materials = {0: mat_pet, 1: mat_psa}
     
-    print("Initializing DOD Solver3D...")
+    print("Initializing DOD Solver3D with heterogeneous multi-element support...")
     solver = DynamicSolver3D(mesh, materials=materials)
     
-    # Boundary Conditions: Prescribe folding rotations at both ends
-    # Left end (x = -20) rotates around Z by +theta
-    # Right end (x = +20) rotates around Z by -theta
     # Enforce plane-strain by fixing all nodes in Z
     for nid in mesh.nodes:
         solver.fix_dof(nid, 2, 0.0)
 
-    left_nids = [n.id for n in mesh.nodes.values() if n.x < -19.9]
-    right_nids = [n.id for n in mesh.nodes.values() if n.x > 19.9]
-    
+    # Canonical two-pivot foldable display kinematics:
+    # Left pivot at (-3.0, 0.2), Right pivot at (+3.0, 0.2)
+    # Left wing (X <= -8.0) rotates by +theta around Left Pivot
+    # Right wing (X >= +8.0) rotates by -theta around Right Pivot
+    # Middle span (-8.0 < X < 8.0) bends into a smooth, natural U-shape loop
+    LEFT_PIVOT = np.array([-3.0, 0.2, 0.0])
+    RIGHT_PIVOT = np.array([ 3.0, 0.2, 0.0])
+
+    left_nids = [n.id for n in mesh.nodes.values() if n.x <= -7.99]
+    right_nids = [n.id for n in mesh.nodes.values() if n.x >= 7.99]
+
     def apply_kinematic_fold(theta_rad):
-        # We enforce pure rotation around (X=-20, Y=0.2) and (X=20, Y=0.2)
-        cy = 0.2
+        # Left wing rotation around LEFT_PIVOT by +theta
+        cos_L, sin_L = np.cos(theta_rad), np.sin(theta_rad)
         for nid in left_nids:
             n = mesh.nodes[nid]
-            dx = n.x - (-20.0)
-            dy = n.y - cy
-            # Rotate by +theta
-            ux = dx * np.cos(theta_rad) - dy * np.sin(theta_rad) - dx
-            uy = dx * np.sin(theta_rad) + dy * np.cos(theta_rad) - dy
+            dx = n.x - LEFT_PIVOT[0]
+            dy = n.y - LEFT_PIVOT[1]
+            ux = dx * cos_L - dy * sin_L - dx
+            uy = dx * sin_L + dy * cos_L - dy
             solver.fix_dof(nid, 0, ux)
             solver.fix_dof(nid, 1, uy)
-            solver.fix_dof(nid, 2, 0.0) # Plane strain-like in Z
-            
+            solver.fix_dof(nid, 2, 0.0)
+
+        # Right wing rotation around RIGHT_PIVOT by -theta
+        cos_R, sin_R = np.cos(-theta_rad), np.sin(-theta_rad)
         for nid in right_nids:
             n = mesh.nodes[nid]
-            dx = n.x - (20.0)
-            dy = n.y - cy
-            # Rotate by -theta (vertical/transverse kinematic rotation)
-            # UX constraint is released so the right end acts as a roller pivot,
-            # freely drawing inward (draw-in) due to bending curvature tension
-            uy = dx * np.sin(-theta_rad) + dy * np.cos(-theta_rad) - dy
+            dx = n.x - RIGHT_PIVOT[0]
+            dy = n.y - RIGHT_PIVOT[1]
+            ux = dx * cos_R - dy * sin_R - dx
+            uy = dx * sin_R + dy * cos_R - dy
+            solver.fix_dof(nid, 0, ux)
             solver.fix_dof(nid, 1, uy)
             solver.fix_dof(nid, 2, 0.0)
-            
+
     dt_ctrl = AdaptiveDtController(dt_init=0.02)
     t = 0.0
     t_end = 1.0
