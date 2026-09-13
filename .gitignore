@@ -55,8 +55,8 @@ examples/*.vtkhdf
 # Debug / temporary large binary files (dbg*.pkl, crash_state.npz 등)
 examples/dbg*.pkl
 examples/dbg*.npz
-examples/*.png
-examples/*.jpg
+examples/dbg*.png
+examples/dbg*.jpg
 examples/results/*.pkl
 scratch/*.npz
 scratch/*.pkl
