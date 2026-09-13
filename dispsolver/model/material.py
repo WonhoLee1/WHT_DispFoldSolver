@@ -17,9 +17,11 @@ class Material:
     viscoelastic_prony: Optional[List[Tuple[float, float, float]]] = None  # [(g, k, tau), ...]
     extra_params: Dict[str, Any] = field(default_factory=dict)
 
-    def Elastic(self, table: Any) -> None:
-        """Abaqus-style Elastic property definition."""
-        if isinstance(table, (list, tuple)) and len(table) > 0:
+    def Elastic(self, table: Any = None, E: Optional[float] = None, nu: Optional[float] = None) -> None:
+        """Abaqus-style Elastic property definition (supports table tuple or E, nu keywords)."""
+        if E is not None and nu is not None:
+            self.elastic = (float(E), float(nu))
+        elif isinstance(table, (list, tuple)) and len(table) > 0:
             if isinstance(table[0], (list, tuple)):
                 self.elastic = (float(table[0][0]), float(table[0][1]))
             else:

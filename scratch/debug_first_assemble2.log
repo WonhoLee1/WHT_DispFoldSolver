@@ -1,0 +1,50 @@
+D:\PythonCodeStudy\WHT_DispFoldSolver\dispsolver\io\abaqus_parser.py:131: UserWarning: Unsupported keyword: *SECTION CONTROLS \u2014 skipping
+  warnings.warn(f"Unsupported keyword: *{block.keyword} \u2014 skipping")
+Found translation boundary conditions on 4 DOFs.
+Found prescribed rotations on master nodes: {100000: -1.570796, 100306: 1.570796}
+====================================================================================================
+ MODEL REVIEW
+====================================================================================================
+Materials (4 distinct):
+  - PSA: Arruda-Boyce + Prony viscoelastic: mu=0.015614, lambda_m=3.0, K=0.83333
+  - PET: J2 plasticity: E=4000.0, nu=0.3, sigma_y0=80.0, H=400.0
+  - GLASS: J2 plasticity: E=70000.0, nu=0.22, sigma_y0=1000000000.0, H=0.0
+  - STEEL: NeoHookean: E=20000.0, nu=0.3
+Parts / Layers (16 total):
+  - pid 1: 142 elements, material=PSA, thickness=0.0300 mm (30.0 um), element=CPE4I
+  - pid 2: 606 elements, material=PET, thickness=0.0600 mm (60.0 um), element=Q4_COROTATIONAL_SRI
+  - pid 3: 202 elements, material=PSA, thickness=0.0300 mm (30.0 um), element=CPE4I
+  - pid 4: 606 elements, material=PET, thickness=0.0600 mm (60.0 um), element=Q4_COROTATIONAL_SRI
+  - pid 5: 202 elements, material=PSA, thickness=0.0300 mm (30.0 um), element=CPE4I
+  - pid 6: 606 elements, material=PET, thickness=0.0600 mm (60.0 um), element=Q4_COROTATIONAL_SRI
+  - pid 7: 202 elements, material=PSA, thickness=0.0300 mm (30.0 um), element=CPE4I
+  - pid 8: 606 elements, material=PET, thickness=0.0600 mm (60.0 um), element=Q4_COROTATIONAL_SRI
+  - pid 9: 202 elements, material=PSA, thickness=0.0300 mm (30.0 um), element=CPE4I
+  - pid 10: 606 elements, material=PET, thickness=0.0600 mm (60.0 um), element=Q4_COROTATIONAL_SRI
+  - pid 11: 202 elements, material=PSA, thickness=0.0300 mm (30.0 um), element=CPE4I
+  - pid 12: 606 elements, material=PET, thickness=0.0600 mm (60.0 um), element=Q4_COROTATIONAL_SRI
+  - pid 13: 202 elements, material=PSA, thickness=0.0300 mm (30.0 um), element=CPE4I
+  - pid 14: 606 elements, material=GLASS, thickness=0.0600 mm (60.0 um), element=Q4_COROTATIONAL_SRI
+  - Plate Left: 240 elements, material=STEEL, thickness=0.5000 mm (500.0 um), element=Q4_COROTATIONAL
+  - Plate Right: 240 elements, material=STEEL, thickness=0.5000 mm (500.0 um), element=Q4_COROTATIONAL
+Total elements: 6076, total layers/parts: 16
+====================================================================================================
+[PNG] Deformed shape saved: D:\PythonCodeStudy\WHT_DispFoldSolver\examples\dbg_before.png
+----------------------------------------------------------------------------------------------------
+Step 1 | Attempting time increment: dt = 0.00500s (t: 0.0000s -> 0.0050s)
+----------------------------------------------------------------------------------------------------
+[assemble call #1] starting...
+[assemble call #1] done in 89.0s
+
+  Nonlinear Iteration Summary (Newton-Raphson)
+  ==========================================================================================================================
+  Time increment dt: 5.000e-03
+  Convergence Tol  : 1.0e-02 (Disp Ratio)     Max Iterations: 50
+  --------------------------------------------------------------------------------------------------------------------------
+  Iter   Max Res.Force  (Node/DOF)    Max Disp.Corr  (Node/DOF)    Max Disp.Incr  Disp.Ratio  Energy.Err  LS.alpha  TieNodes
+  --------------------------------------------------------------------------------------------------------------------------
+[assemble call #2] starting...
+[assemble call #2] done in 0.4s
+[assemble call #3] starting...
+[assemble call #3] done in 0.4s
+Stopping after 3 assemble calls (debug probe).

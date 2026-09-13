@@ -1,0 +1,1081 @@
+====================================================================================================
+ EX12: 90-Degree Display Folding Directly from Abaqus .inp File
+====================================================================================================
+Reading Abaqus input deck: D:\PythonCodeStudy\WHT_DispFoldSolver\examples\ex12_rigid_plate_display_fold.inp
+D:\PythonCodeStudy\WHT_DispFoldSolver\dispsolver\io\abaqus_parser.py:131: UserWarning: Unsupported keyword: *SECTION CONTROLS \u2014 skipping
+  warnings.warn(f"Unsupported keyword: *{block.keyword} \u2014 skipping")
+Parsed result: ModelBuilderResult(mesh=yes, materials=16, constraints=0, penalty_constraints=2, rbe2_elements=0, rbe2_constraints=2, amplitudes=0, dloads=0, contact_pairs=0, surfaces=4, contact_objects=0)
+Found translation boundary conditions on 4 DOFs.
+Found prescribed rotations on master nodes: {10000: -1.570796, 10306: 1.570796}
+====================================================================================================
+ MODEL REVIEW
+====================================================================================================
+Materials (4 distinct):
+  - PSA: Arruda-Boyce + Prony viscoelastic: mu=0.016779, lambda_m=3.0, K=0.83333
+  - PET: J2 plasticity: E=4000.0, nu=0.3, sigma_y0=80.0, H=400.0
+  - GLASS: J2 plasticity: E=70000.0, nu=0.22, sigma_y0=1000000000.0, H=0.0
+  - STEEL: NeoHookean: E=20000.0, nu=0.3
+Parts / Layers (16 total):
+  - pid 1: 142 elements, material=PSA, thickness=0.0300 mm (30.0 um), element=Q4_VISCO_SIMO
+  - pid 2: 606 elements, material=PET, thickness=0.0600 mm (60.0 um), element=Q4_COROTATIONAL_EAS
+  - pid 3: 202 elements, material=PSA, thickness=0.0300 mm (30.0 um), element=Q4_VISCO_SIMO
+  - pid 4: 606 elements, material=PET, thickness=0.0600 mm (60.0 um), element=Q4_COROTATIONAL_EAS
+  - pid 5: 202 elements, material=PSA, thickness=0.0300 mm (30.0 um), element=Q4_VISCO_SIMO
+  - pid 6: 606 elements, material=PET, thickness=0.0600 mm (60.0 um), element=Q4_COROTATIONAL_EAS
+  - pid 7: 202 elements, material=PSA, thickness=0.0300 mm (30.0 um), element=Q4_VISCO_SIMO
+  - pid 8: 606 elements, material=PET, thickness=0.0600 mm (60.0 um), element=Q4_COROTATIONAL_EAS
+  - pid 9: 202 elements, material=PSA, thickness=0.0300 mm (30.0 um), element=Q4_VISCO_SIMO
+  - pid 10: 606 elements, material=PET, thickness=0.0600 mm (60.0 um), element=Q4_COROTATIONAL_EAS
+  - pid 11: 202 elements, material=PSA, thickness=0.0300 mm (30.0 um), element=Q4_VISCO_SIMO
+  - pid 12: 606 elements, material=PET, thickness=0.0600 mm (60.0 um), element=Q4_COROTATIONAL_EAS
+  - pid 13: 202 elements, material=PSA, thickness=0.0300 mm (30.0 um), element=Q4_VISCO_SIMO
+  - pid 14: 606 elements, material=GLASS, thickness=0.0600 mm (60.0 um), element=Q4_COROTATIONAL_EAS
+  - Plate Left: 240 elements, material=STEEL, thickness=0.5000 mm (500.0 um), element=Q4_COROTATIONAL
+  - Plate Right: 240 elements, material=STEEL, thickness=0.5000 mm (500.0 um), element=Q4_COROTATIONAL
+Total elements: 6076, total layers/parts: 16
+====================================================================================================
+[PNG] Deformed shape saved: D:\PythonCodeStudy\WHT_DispFoldSolver\examples\ex12_before_folding_shape.png
+----------------------------------------------------------------------------------------------------
+Step 1 | Attempting time increment: dt = 0.00250s (t: 0.0000s -> 0.0025s)
+----------------------------------------------------------------------------------------------------
+
+  Nonlinear Iteration Summary (Newton-Raphson)
+  ==========================================================================================================================
+  Time increment dt: 2.500e-03
+  Convergence Tol  : 1.0e-02 (Disp Ratio)     Max Iterations: 50
+  --------------------------------------------------------------------------------------------------------------------------
+  Iter   Max Res.Force  (Node/DOF)    Max Disp.Corr  (Node/DOF)    Max Disp.Incr  Disp.Ratio  Energy.Err  LS.alpha  TieNodes
+  --------------------------------------------------------------------------------------------------------------------------
+     1    1.4724e+01  N144(UY)       9.4384e-06  N1(UY)         9.4384e-06     9.37e-01    8.34e-03      1.00       144
+     2    3.0876e-05  N144(UY)       2.6185e-07  N5321(UY)      9.4384e-06     1.87e-02    7.29e-14      1.00       144
+     3    1.5764e-06  N144(UY)       1.4843e-07  N652(UY)       9.4384e-06     9.72e-03    3.25e-15      1.00       144
+  ---------------------------------------------------------------------------------------------------------------------
+  => Increment Converged. (Time: 45.59 s)
+
+
+  STEP   INC   ATT   SEVERE   EQUIL     TOTAL      STEP      INC OF
+                     DISCON   ITERS      TIME       TIME       TIME
+     1     1     1       0       2     0.0025     0.0025     0.0025
+
+  [MONITOR] Step   1 | Time 0.0025s / 1.0s (  0.2%)
+            Fold Angle: Target +-  0.00deg | Actual [-0.00deg, +0.00deg]
+            Plate Tips Y: Left= -0.50mm | Right= -0.50mm | Max Disp=  0.00mm
+            Newton Iters:  2 | dt: 0.00250s
+            [DIAGNOSTIC] display/plate max|u| ratio=1.0000 (display=0.000mm, plate=0.000mm)
+            [DIAGNOSTIC] Real tie gap (not just active-pair count): DISPLAY_BOT_L_PLATE_L_TOP_TIE: max_gap=0.0000mm mean=0.0000mm n=72 | DISPLAY_BOT_R_PLATE_R_TOP_TIE: max_gap=0.0000mm mean=0.0000mm n=72
+            [DIAGNOSTIC] Hinge curvature: max_curv_ratio=60792.63 kink_detected=True at x=-8.50mm
+
+[PNG] Deformed shape saved: D:\PythonCodeStudy\WHT_DispFoldSolver\examples\ex12_final_folding_shape.png
+----------------------------------------------------------------------------------------------------
+Step 2 | Attempting time increment: dt = 0.00375s (t: 0.0025s -> 0.0063s)
+----------------------------------------------------------------------------------------------------
+
+  Nonlinear Iteration Summary (Newton-Raphson)
+  ==========================================================================================================================
+  Time increment dt: 3.750e-03
+  Convergence Tol  : 1.0e-02 (Disp Ratio)     Max Iterations: 50
+  --------------------------------------------------------------------------------------------------------------------------
+  Iter   Max Res.Force  (Node/DOF)    Max Disp.Corr  (Node/DOF)    Max Disp.Incr  Disp.Ratio  Energy.Err  LS.alpha  TieNodes
+  --------------------------------------------------------------------------------------------------------------------------
+     1    1.2679e+02  N144(UY)       8.1276e-05  N1(UY)         1.3721e-04     5.19e-01    6.18e-01      1.00       144
+     2    2.6188e-04  N144(UY)       2.8558e-06  N5321(UY)      1.3721e-04     1.29e-02    5.79e-12      1.00       144
+     3    9.4996e-06  N144(UY)       1.6042e-06  N652(UY)       1.3721e-04     6.75e-03    3.68e-13      1.00       144
+  ---------------------------------------------------------------------------------------------------------------------
+  => Increment Converged. (Time: 17.54 s)
+
+     1     2     1       0       2     0.0063     0.0037     0.0037
+
+  [MONITOR] Step   2 | Time 0.0063s / 1.0s (  0.6%)
+            Fold Angle: Target +-  0.00deg | Actual [-0.00deg, +0.00deg]
+            Plate Tips Y: Left= -0.50mm | Right= -0.50mm | Max Disp=  0.00mm
+            Newton Iters:  2 | dt: 0.00375s
+            [DIAGNOSTIC] display/plate max|u| ratio=1.0000 (display=0.000mm, plate=0.000mm)
+            [DIAGNOSTIC] Real tie gap (not just active-pair count): DISPLAY_BOT_L_PLATE_L_TOP_TIE: max_gap=0.0000mm mean=0.0000mm n=72 | DISPLAY_BOT_R_PLATE_R_TOP_TIE: max_gap=0.0000mm mean=0.0000mm n=72
+
+[PNG] Deformed shape saved: D:\PythonCodeStudy\WHT_DispFoldSolver\examples\ex12_final_folding_shape.png
+----------------------------------------------------------------------------------------------------
+Step 3 | Attempting time increment: dt = 0.00562s (t: 0.0063s -> 0.0119s)
+----------------------------------------------------------------------------------------------------
+
+  Nonlinear Iteration Summary (Newton-Raphson)
+  ==========================================================================================================================
+  Time increment dt: 5.625e-03
+  Convergence Tol  : 1.0e-02 (Disp Ratio)     Max Iterations: 50
+  --------------------------------------------------------------------------------------------------------------------------
+  Iter   Max Res.Force  (Node/DOF)    Max Disp.Corr  (Node/DOF)    Max Disp.Incr  Disp.Ratio  Energy.Err  LS.alpha  TieNodes
+  --------------------------------------------------------------------------------------------------------------------------
+     1    2.7792e+02  N144(UY)       1.7815e-04  N144(UY)       8.5069e-04     1.67e-01    2.97e+00      1.00       144
+     2    5.8227e-04  N144(UY)       9.2731e-06  N652(UY)       8.5069e-04     6.00e-03    3.51e-11      1.00       144
+  ---------------------------------------------------------------------------------------------------------------------
+  => Increment Converged. (Time: 11.14 s)
+
+     1     3     1       0       1     0.0119     0.0056     0.0056
+
+  [MONITOR] Step   3 | Time 0.0119s / 1.0s (  1.2%)
+            Fold Angle: Target +-  0.00deg | Actual [-0.00deg, +0.00deg]
+            Plate Tips Y: Left= -0.50mm | Right= -0.50mm | Max Disp=  0.00mm
+            Newton Iters:  1 | dt: 0.00562s
+            [DIAGNOSTIC] display/plate max|u| ratio=1.0000 (display=0.001mm, plate=0.000mm)
+            [DIAGNOSTIC] Real tie gap (not just active-pair count): DISPLAY_BOT_L_PLATE_L_TOP_TIE: max_gap=0.0000mm mean=0.0000mm n=72 | DISPLAY_BOT_R_PLATE_R_TOP_TIE: max_gap=0.0000mm mean=0.0000mm n=72
+
+[PNG] Deformed shape saved: D:\PythonCodeStudy\WHT_DispFoldSolver\examples\ex12_final_folding_shape.png
+----------------------------------------------------------------------------------------------------
+Step 4 | Attempting time increment: dt = 0.00844s (t: 0.0119s -> 0.0203s)
+----------------------------------------------------------------------------------------------------
+
+  Nonlinear Iteration Summary (Newton-Raphson)
+  ==========================================================================================================================
+  Time increment dt: 8.438e-03
+  Convergence Tol  : 1.0e-02 (Disp Ratio)     Max Iterations: 50
+  --------------------------------------------------------------------------------------------------------------------------
+  Iter   Max Res.Force  (Node/DOF)    Max Disp.Corr  (Node/DOF)    Max Disp.Incr  Disp.Ratio  Energy.Err  LS.alpha  TieNodes
+  --------------------------------------------------------------------------------------------------------------------------
+     1    1.0981e+03  N144(UY)       7.0459e-04  N5219(UY)      3.9307e-03     1.34e-01    4.64e+01      1.00       144
+     2    2.2518e-03  N1(UY)         4.0312e-05  N652(UY)       3.9307e-03     5.27e-03    5.83e-10      1.00       144
+  ---------------------------------------------------------------------------------------------------------------------
+  => Increment Converged. (Time: 11.68 s)
+
+     1     4     1       0       1     0.0203     0.0084     0.0084
+
+  [MONITOR] Step   4 | Time 0.0203s / 1.0s (  2.0%)
+            Fold Angle: Target +-  0.01deg | Actual [-0.01deg, +0.01deg]
+            Plate Tips Y: Left= -0.50mm | Right= -0.50mm | Max Disp=  0.00mm
+            Newton Iters:  1 | dt: 0.00844s
+            [DIAGNOSTIC] display/plate max|u| ratio=1.0000 (display=0.005mm, plate=0.000mm)
+            [DIAGNOSTIC] Real tie gap (not just active-pair count): DISPLAY_BOT_L_PLATE_L_TOP_TIE: max_gap=0.0000mm mean=0.0000mm n=72 | DISPLAY_BOT_R_PLATE_R_TOP_TIE: max_gap=0.0000mm mean=0.0000mm n=72
+
+[PNG] Deformed shape saved: D:\PythonCodeStudy\WHT_DispFoldSolver\examples\ex12_final_folding_shape.png
+----------------------------------------------------------------------------------------------------
+Step 5 | Attempting time increment: dt = 0.01000s (t: 0.0203s -> 0.0303s)
+----------------------------------------------------------------------------------------------------
+
+  Nonlinear Iteration Summary (Newton-Raphson)
+  ==========================================================================================================================
+  Time increment dt: 1.000e-02
+  Convergence Tol  : 1.0e-02 (Disp Ratio)     Max Iterations: 50
+  --------------------------------------------------------------------------------------------------------------------------
+  Iter   Max Res.Force  (Node/DOF)    Max Disp.Corr  (Node/DOF)    Max Disp.Incr  Disp.Ratio  Energy.Err  LS.alpha  TieNodes
+  --------------------------------------------------------------------------------------------------------------------------
+     1    1.9236e+03  N1(UY)         1.2331e-03  N1(UY)         1.1201e-02     7.18e-02    1.42e+02      1.00       144
+     2    3.3446e-03  N1(UY)         9.4734e-05  N652(UY)       1.1201e-02     3.73e-03    2.19e-09      1.00       144
+  ---------------------------------------------------------------------------------------------------------------------
+  => Increment Converged. (Time: 10.82 s)
+
+     1     5     1       0       1     0.0303     0.0100     0.0100
+
+  [MONITOR] Step   5 | Time 0.0303s / 1.0s (  3.0%)
+            Fold Angle: Target +-  0.02deg | Actual [-0.02deg, +0.02deg]
+            Plate Tips Y: Left= -0.48mm | Right= -0.48mm | Max Disp=  0.02mm
+            Newton Iters:  1 | dt: 0.01000s
+            [DIAGNOSTIC] display/plate max|u| ratio=1.0000 (display=0.016mm, plate=0.000mm)
+            [DIAGNOSTIC] Real tie gap (not just active-pair count): DISPLAY_BOT_L_PLATE_L_TOP_TIE: max_gap=0.0000mm mean=0.0000mm n=72 | DISPLAY_BOT_R_PLATE_R_TOP_TIE: max_gap=0.0000mm mean=0.0000mm n=72
+
+[PNG] Deformed shape saved: D:\PythonCodeStudy\WHT_DispFoldSolver\examples\ex12_final_folding_shape.png
+----------------------------------------------------------------------------------------------------
+Step 6 | Attempting time increment: dt = 0.01000s (t: 0.0303s -> 0.0403s)
+----------------------------------------------------------------------------------------------------
+
+  Nonlinear Iteration Summary (Newton-Raphson)
+  ==========================================================================================================================
+  Time increment dt: 1.000e-02
+  Convergence Tol  : 1.0e-02 (Disp Ratio)     Max Iterations: 50
+  --------------------------------------------------------------------------------------------------------------------------
+  Iter   Max Res.Force  (Node/DOF)    Max Disp.Corr  (Node/DOF)    Max Disp.Incr  Disp.Ratio  Energy.Err  LS.alpha  TieNodes
+  --------------------------------------------------------------------------------------------------------------------------
+     1    1.6983e+03  N1(UY)         1.0895e-03  N5219(UY)      2.1229e-02     2.75e-02    1.11e+02      1.00       144
+     2    1.4014e-03  N1(UY)         1.0571e-04  N652(UY)       2.1229e-02     1.78e-03    2.05e-09      1.00       144
+  ---------------------------------------------------------------------------------------------------------------------
+  => Increment Converged. (Time: 11.90 s)
+
+     1     6     1       0       1     0.0403     0.0100     0.0100
+
+  [MONITOR] Step   6 | Time 0.0403s / 1.0s (  4.0%)
+            Fold Angle: Target +-  0.06deg | Actual [-0.06deg, +0.06deg]
+            Plate Tips Y: Left= -0.46mm | Right= -0.46mm | Max Disp=  0.04mm
+            Newton Iters:  1 | dt: 0.01000s
+            [DIAGNOSTIC] display/plate max|u| ratio=1.0000 (display=0.037mm, plate=0.000mm)
+            [DIAGNOSTIC] Real tie gap (not just active-pair count): DISPLAY_BOT_L_PLATE_L_TOP_TIE: max_gap=0.0000mm mean=0.0000mm n=72 | DISPLAY_BOT_R_PLATE_R_TOP_TIE: max_gap=0.0000mm mean=0.0000mm n=72
+
+[PNG] Deformed shape saved: D:\PythonCodeStudy\WHT_DispFoldSolver\examples\ex12_final_folding_shape.png
+----------------------------------------------------------------------------------------------------
+Step 7 | Attempting time increment: dt = 0.01000s (t: 0.0403s -> 0.0503s)
+----------------------------------------------------------------------------------------------------
+
+  Nonlinear Iteration Summary (Newton-Raphson)
+  ==========================================================================================================================
+  Time increment dt: 1.000e-02
+  Convergence Tol  : 1.0e-02 (Disp Ratio)     Max Iterations: 50
+  --------------------------------------------------------------------------------------------------------------------------
+  Iter   Max Res.Force  (Node/DOF)    Max Disp.Corr  (Node/DOF)    Max Disp.Incr  Disp.Ratio  Energy.Err  LS.alpha  TieNodes
+  --------------------------------------------------------------------------------------------------------------------------
+     1    1.5581e+03  N1(UY)         9.9901e-04  N347(UY)       3.4153e-02     1.31e-02    9.34e+01      1.00       144
+     2    7.8706e-04  N144(UY)       3.9650e-05  N5321(UY)      3.4153e-02     3.63e-04    5.49e-10      1.00       144
+  ---------------------------------------------------------------------------------------------------------------------
+  => Increment Converged. (Time: 11.77 s)
+
+     1     7     1       0       1     0.0503     0.0100     0.0100
+
+  [MONITOR] Step   7 | Time 0.0503s / 1.0s (  5.0%)
+            Fold Angle: Target +-  0.11deg | Actual [-0.11deg, +0.11deg]
+            Plate Tips Y: Left= -0.43mm | Right= -0.43mm | Max Disp=  0.07mm
+            Newton Iters:  1 | dt: 0.01000s
+            [DIAGNOSTIC] display/plate max|u| ratio=1.0000 (display=0.072mm, plate=0.000mm)
+            [DIAGNOSTIC] Real tie gap (not just active-pair count): DISPLAY_BOT_L_PLATE_L_TOP_TIE: max_gap=0.0000mm mean=0.0000mm n=72 | DISPLAY_BOT_R_PLATE_R_TOP_TIE: max_gap=0.0000mm mean=0.0000mm n=72
+
+[PNG] Deformed shape saved: D:\PythonCodeStudy\WHT_DispFoldSolver\examples\ex12_final_folding_shape.png
+----------------------------------------------------------------------------------------------------
+Step 8 | Attempting time increment: dt = 0.01000s (t: 0.0503s -> 0.0603s)
+----------------------------------------------------------------------------------------------------
+
+  Nonlinear Iteration Summary (Newton-Raphson)
+  ==========================================================================================================================
+  Time increment dt: 1.000e-02
+  Convergence Tol  : 1.0e-02 (Disp Ratio)     Max Iterations: 50
+  --------------------------------------------------------------------------------------------------------------------------
+  Iter   Max Res.Force  (Node/DOF)    Max Disp.Corr  (Node/DOF)    Max Disp.Incr  Disp.Ratio  Energy.Err  LS.alpha  TieNodes
+  --------------------------------------------------------------------------------------------------------------------------
+     1    1.5163e+03  N1(UY)         9.7455e-04  N5219(UY)      4.9771e-02     7.50e-03    8.85e+01      1.00       144
+     2    4.1256e-03  N144(UY)       8.8174e-06  N652(UY)       4.9771e-02     3.68e-05    9.25e-10      1.00       144
+  ---------------------------------------------------------------------------------------------------------------------
+  => Increment Converged. (Time: 12.45 s)
+
+     1     8     1       0       1     0.0603     0.0100     0.0100
+
+  [MONITOR] Step   8 | Time 0.0603s / 1.0s (  6.0%)
+            Fold Angle: Target +-  0.18deg | Actual [-0.18deg, +0.18deg]
+            Plate Tips Y: Left= -0.38mm | Right= -0.38mm | Max Disp=  0.12mm
+            Newton Iters:  1 | dt: 0.01000s
+            [DIAGNOSTIC] display/plate max|u| ratio=1.0000 (display=0.121mm, plate=0.000mm)
+            [DIAGNOSTIC] Real tie gap (not just active-pair count): DISPLAY_BOT_L_PLATE_L_TOP_TIE: max_gap=0.0000mm mean=0.0000mm n=72 | DISPLAY_BOT_R_PLATE_R_TOP_TIE: max_gap=0.0000mm mean=0.0000mm n=72
+
+[PNG] Deformed shape saved: D:\PythonCodeStudy\WHT_DispFoldSolver\examples\ex12_final_folding_shape.png
+----------------------------------------------------------------------------------------------------
+Step 9 | Attempting time increment: dt = 0.01000s (t: 0.0603s -> 0.0703s)
+----------------------------------------------------------------------------------------------------
+
+  Nonlinear Iteration Summary (Newton-Raphson)
+  ==========================================================================================================================
+  Time increment dt: 1.000e-02
+  Convergence Tol  : 1.0e-02 (Disp Ratio)     Max Iterations: 50
+  --------------------------------------------------------------------------------------------------------------------------
+  Iter   Max Res.Force  (Node/DOF)    Max Disp.Corr  (Node/DOF)    Max Disp.Incr  Disp.Ratio  Energy.Err  LS.alpha  TieNodes
+  --------------------------------------------------------------------------------------------------------------------------
+     1    1.3206e+03  N1(UY)         8.4812e-04  N145(UY)       6.7892e-02     4.20e-03    6.72e+01      1.00       144
+     2    7.0568e-03  N144(UY)       5.3652e-05  N652(UY)       6.7892e-02     1.81e-04    2.54e-09      1.00       144
+  ---------------------------------------------------------------------------------------------------------------------
+  => Increment Converged. (Time: 12.91 s)
+
+     1     9     1       0       1     0.0703     0.0100     0.0100
+
+  [MONITOR] Step   9 | Time 0.0703s / 1.0s (  7.0%)
+            Fold Angle: Target +-  0.28deg | Actual [-0.28deg, +0.28deg]
+            Plate Tips Y: Left= -0.31mm | Right= -0.31mm | Max Disp=  0.19mm
+            Newton Iters:  1 | dt: 0.01000s
+            [DIAGNOSTIC] display/plate max|u| ratio=1.0000 (display=0.189mm, plate=0.000mm)
+            [DIAGNOSTIC] Real tie gap (not just active-pair count): DISPLAY_BOT_L_PLATE_L_TOP_TIE: max_gap=0.0000mm mean=0.0000mm n=72 | DISPLAY_BOT_R_PLATE_R_TOP_TIE: max_gap=0.0000mm mean=0.0000mm n=72
+
+[PNG] Deformed shape saved: D:\PythonCodeStudy\WHT_DispFoldSolver\examples\ex12_final_folding_shape.png
+----------------------------------------------------------------------------------------------------
+Step 10 | Attempting time increment: dt = 0.01000s (t: 0.0703s -> 0.0803s)
+----------------------------------------------------------------------------------------------------
+
+  Nonlinear Iteration Summary (Newton-Raphson)
+  ==========================================================================================================================
+  Time increment dt: 1.000e-02
+  Convergence Tol  : 1.0e-02 (Disp Ratio)     Max Iterations: 50
+  --------------------------------------------------------------------------------------------------------------------------
+  Iter   Max Res.Force  (Node/DOF)    Max Disp.Corr  (Node/DOF)    Max Disp.Incr  Disp.Ratio  Energy.Err  LS.alpha  TieNodes
+  --------------------------------------------------------------------------------------------------------------------------
+     1    1.2879e+03  N144(UY)       8.2916e-04  N347(UY)       8.8325e-02     2.85e-03    6.40e+01      1.00       144
+     2    1.1415e-02  N144(UY)       1.3957e-04  N652(UY)       8.8325e-02     3.13e-04    7.98e-09      1.00       144
+  ---------------------------------------------------------------------------------------------------------------------
+  => Increment Converged. (Time: 14.46 s)
+
+     1    10     1       0       1     0.0803     0.0100     0.0100
+
+  [MONITOR] Step  10 | Time 0.0803s / 1.0s (  8.0%)
+            Fold Angle: Target +-  0.41deg | Actual [-0.41deg, +0.41deg]
+            Plate Tips Y: Left= -0.22mm | Right= -0.22mm | Max Disp=  0.28mm
+            Newton Iters:  1 | dt: 0.01000s
+            [DIAGNOSTIC] display/plate max|u| ratio=1.0000 (display=0.277mm, plate=0.000mm)
+            [DIAGNOSTIC] Real tie gap (not just active-pair count): DISPLAY_BOT_L_PLATE_L_TOP_TIE: max_gap=0.0000mm mean=0.0000mm n=72 | DISPLAY_BOT_R_PLATE_R_TOP_TIE: max_gap=0.0000mm mean=0.0000mm n=72
+            [DIAGNOSTIC] Hinge curvature: max_curv_ratio=23010322.46 kink_detected=True at x=8.50mm
+
+[PNG] Deformed shape saved: D:\PythonCodeStudy\WHT_DispFoldSolver\examples\ex12_final_folding_shape.png
+----------------------------------------------------------------------------------------------------
+Step 11 | Attempting time increment: dt = 0.01000s (t: 0.0803s -> 0.0903s)
+----------------------------------------------------------------------------------------------------
+
+  Nonlinear Iteration Summary (Newton-Raphson)
+  ==========================================================================================================================
+  Time increment dt: 1.000e-02
+  Convergence Tol  : 1.0e-02 (Disp Ratio)     Max Iterations: 50
+  --------------------------------------------------------------------------------------------------------------------------
+  Iter   Max Res.Force  (Node/DOF)    Max Disp.Corr  (Node/DOF)    Max Disp.Incr  Disp.Ratio  Energy.Err  LS.alpha  TieNodes
+  --------------------------------------------------------------------------------------------------------------------------
+     1    1.1158e+03  N1(UY)         7.2014e-04  N145(UY)       1.1088e-01     1.75e-03    4.82e+01      1.00       144
+     2    1.4014e-02  N144(UY)       9.8174e-05  N652(UY)       1.1089e-01     1.58e-04    9.09e-09      1.00       144
+  ---------------------------------------------------------------------------------------------------------------------
+  => Increment Converged. (Time: 15.38 s)
+
+     1    11     1       0       1     0.0903     0.0100     0.0100
+
+  [MONITOR] Step  11 | Time 0.0903s / 1.0s (  9.0%)
+            Fold Angle: Target +-  0.58deg | Actual [-0.58deg, +0.58deg]
+            Plate Tips Y: Left= -0.11mm | Right= -0.11mm | Max Disp=  0.39mm
+            Newton Iters:  1 | dt: 0.01000s
+            [DIAGNOSTIC] display/plate max|u| ratio=1.0000 (display=0.388mm, plate=0.000mm)
+            [DIAGNOSTIC] Real tie gap (not just active-pair count): DISPLAY_BOT_L_PLATE_L_TOP_TIE: max_gap=0.0000mm mean=0.0000mm n=72 | DISPLAY_BOT_R_PLATE_R_TOP_TIE: max_gap=0.0000mm mean=0.0000mm n=72
+
+[PNG] Deformed shape saved: D:\PythonCodeStudy\WHT_DispFoldSolver\examples\ex12_final_folding_shape.png
+----------------------------------------------------------------------------------------------------
+Step 12 | Attempting time increment: dt = 0.01000s (t: 0.0903s -> 0.1003s)
+----------------------------------------------------------------------------------------------------
+
+  Nonlinear Iteration Summary (Newton-Raphson)
+  ==========================================================================================================================
+  Time increment dt: 1.000e-02
+  Convergence Tol  : 1.0e-02 (Disp Ratio)     Max Iterations: 50
+  --------------------------------------------------------------------------------------------------------------------------
+  Iter   Max Res.Force  (Node/DOF)    Max Disp.Corr  (Node/DOF)    Max Disp.Incr  Disp.Ratio  Energy.Err  LS.alpha  TieNodes
+  --------------------------------------------------------------------------------------------------------------------------
+     1    1.0612e+03  N144(UY)       6.8744e-04  N347(UY)       1.3539e-01     1.23e-03    4.39e+01      1.00       144
+     2    1.8213e-02  N144(UY)       3.2413e-06  N468(UY)       1.3539e-01     3.98e-06    1.29e-08      1.00       144
+  ---------------------------------------------------------------------------------------------------------------------
+  => Increment Converged. (Time: 14.91 s)
+
+     1    12     1       0       1     0.1003     0.0100     0.0100
+
+  [MONITOR] Step  12 | Time 0.1003s / 1.0s ( 10.0%)
+            Fold Angle: Target +-  0.78deg | Actual [-0.78deg, +0.78deg]
+            Plate Tips Y: Left= +0.02mm | Right= +0.02mm | Max Disp=  0.52mm
+            Newton Iters:  1 | dt: 0.01000s
+            [DIAGNOSTIC] display/plate max|u| ratio=1.0000 (display=0.524mm, plate=0.000mm)
+            [DIAGNOSTIC] Real tie gap (not just active-pair count): DISPLAY_BOT_L_PLATE_L_TOP_TIE: max_gap=0.0000mm mean=0.0000mm n=72 | DISPLAY_BOT_R_PLATE_R_TOP_TIE: max_gap=0.0000mm mean=0.0000mm n=72
+
+[PNG] Deformed shape saved: D:\PythonCodeStudy\WHT_DispFoldSolver\examples\ex12_final_folding_shape.png
+----------------------------------------------------------------------------------------------------
+Step 13 | Attempting time increment: dt = 0.01000s (t: 0.1003s -> 0.1103s)
+----------------------------------------------------------------------------------------------------
+
+  Nonlinear Iteration Summary (Newton-Raphson)
+  ==========================================================================================================================
+  Time increment dt: 1.000e-02
+  Convergence Tol  : 1.0e-02 (Disp Ratio)     Max Iterations: 50
+  --------------------------------------------------------------------------------------------------------------------------
+  Iter   Max Res.Force  (Node/DOF)    Max Disp.Corr  (Node/DOF)    Max Disp.Incr  Disp.Ratio  Energy.Err  LS.alpha  TieNodes
+  --------------------------------------------------------------------------------------------------------------------------
+     1    9.2421e+02  N2(UY)         5.9955e-04  N145(UY)       1.6167e-01     8.35e-04    3.33e+01      1.00       144
+     2    1.9790e-02  N144(UY)       9.5252e-05  N1261(UY)      1.6167e-01     8.70e-05    1.65e-08      1.00       144
+  ---------------------------------------------------------------------------------------------------------------------
+  => Increment Converged. (Time: 16.90 s)
+
+     1    13     1       0       1     0.1103     0.0100     0.0100
+
+  [MONITOR] Step  13 | Time 0.1103s / 1.0s ( 11.0%)
+            Fold Angle: Target +-  1.02deg | Actual [-1.02deg, +1.02deg]
+            Plate Tips Y: Left= +0.19mm | Right= +0.19mm | Max Disp=  0.69mm
+            Newton Iters:  1 | dt: 0.01000s
+            [DIAGNOSTIC] display/plate max|u| ratio=1.0000 (display=0.685mm, plate=0.000mm)
+            [DIAGNOSTIC] Real tie gap (not just active-pair count): DISPLAY_BOT_L_PLATE_L_TOP_TIE: max_gap=0.0000mm mean=0.0000mm n=72 | DISPLAY_BOT_R_PLATE_R_TOP_TIE: max_gap=0.0000mm mean=0.0000mm n=72
+
+[PNG] Deformed shape saved: D:\PythonCodeStudy\WHT_DispFoldSolver\examples\ex12_final_folding_shape.png
+----------------------------------------------------------------------------------------------------
+Step 14 | Attempting time increment: dt = 0.01000s (t: 0.1103s -> 0.1203s)
+----------------------------------------------------------------------------------------------------
+
+  Nonlinear Iteration Summary (Newton-Raphson)
+  ==========================================================================================================================
+  Time increment dt: 1.000e-02
+  Convergence Tol  : 1.0e-02 (Disp Ratio)     Max Iterations: 50
+  --------------------------------------------------------------------------------------------------------------------------
+  Iter   Max Res.Force  (Node/DOF)    Max Disp.Corr  (Node/DOF)    Max Disp.Incr  Disp.Ratio  Energy.Err  LS.alpha  TieNodes
+  --------------------------------------------------------------------------------------------------------------------------
+     1    8.5870e+02  N143(UY)       6.7517e-04  N246(UY)       1.8956e-01     7.75e-04    2.88e+01      1.00       144
+     2    2.2876e-02  N1(UY)         3.7714e-04  N2073(UY)      1.8956e-01     2.66e-04    4.09e-08      1.00       144
+  ---------------------------------------------------------------------------------------------------------------------
+  => Increment Converged. (Time: 16.48 s)
+
+     1    14     1       0       1     0.1203     0.0100     0.0100
+
+  [MONITOR] Step  14 | Time 0.1203s / 1.0s ( 12.0%)
+            Fold Angle: Target +-  1.30deg | Actual [-1.30deg, +1.30deg]
+            Plate Tips Y: Left= +0.37mm | Right= +0.37mm | Max Disp=  0.88mm
+            Newton Iters:  1 | dt: 0.01000s
+            [DIAGNOSTIC] display/plate max|u| ratio=1.0000 (display=0.875mm, plate=0.000mm)
+            [DIAGNOSTIC] Real tie gap (not just active-pair count): DISPLAY_BOT_L_PLATE_L_TOP_TIE: max_gap=0.0000mm mean=0.0000mm n=72 | DISPLAY_BOT_R_PLATE_R_TOP_TIE: max_gap=0.0000mm mean=0.0000mm n=72
+
+[PNG] Deformed shape saved: D:\PythonCodeStudy\WHT_DispFoldSolver\examples\ex12_final_folding_shape.png
+----------------------------------------------------------------------------------------------------
+Step 15 | Attempting time increment: dt = 0.01000s (t: 0.1203s -> 0.1303s)
+----------------------------------------------------------------------------------------------------
+
+  Nonlinear Iteration Summary (Newton-Raphson)
+  ==========================================================================================================================
+  Time increment dt: 1.000e-02
+  Convergence Tol  : 1.0e-02 (Disp Ratio)     Max Iterations: 50
+  --------------------------------------------------------------------------------------------------------------------------
+  Iter   Max Res.Force  (Node/DOF)    Max Disp.Corr  (Node/DOF)    Max Disp.Incr  Disp.Ratio  Energy.Err  LS.alpha  TieNodes
+  --------------------------------------------------------------------------------------------------------------------------
+     1    7.4833e+02  N143(UY)       8.5970e-04  N246(UY)       2.1888e-01     6.56e-04    2.19e+01      1.00       144
+     2    2.3718e-02  N1(UY)         4.5223e-04  N2885(UY)      2.1888e-01     2.56e-04    5.24e-08      1.00       144
+  ---------------------------------------------------------------------------------------------------------------------
+  => Increment Converged. (Time: 17.73 s)
+
+     1    15     1       0       1     0.1303     0.0100     0.0100
+
+  [MONITOR] Step  15 | Time 0.1303s / 1.0s ( 13.0%)
+            Fold Angle: Target +-  1.62deg | Actual [-1.62deg, +1.62deg]
+            Plate Tips Y: Left= +0.59mm | Right= +0.59mm | Max Disp=  1.09mm
+            Newton Iters:  1 | dt: 0.01000s
+            [DIAGNOSTIC] display/plate max|u| ratio=1.0000 (display=1.094mm, plate=0.000mm)
+            [DIAGNOSTIC] Real tie gap (not just active-pair count): DISPLAY_BOT_L_PLATE_L_TOP_TIE: max_gap=0.0000mm mean=0.0000mm n=72 | DISPLAY_BOT_R_PLATE_R_TOP_TIE: max_gap=0.0000mm mean=0.0000mm n=72
+
+[PNG] Deformed shape saved: D:\PythonCodeStudy\WHT_DispFoldSolver\examples\ex12_final_folding_shape.png
+----------------------------------------------------------------------------------------------------
+Step 16 | Attempting time increment: dt = 0.01000s (t: 0.1303s -> 0.1403s)
+----------------------------------------------------------------------------------------------------
+
+  Nonlinear Iteration Summary (Newton-Raphson)
+  ==========================================================================================================================
+  Time increment dt: 1.000e-02
+  Convergence Tol  : 1.0e-02 (Disp Ratio)     Max Iterations: 50
+  --------------------------------------------------------------------------------------------------------------------------
+  Iter   Max Res.Force  (Node/DOF)    Max Disp.Corr  (Node/DOF)    Max Disp.Incr  Disp.Ratio  Energy.Err  LS.alpha  TieNodes
+  --------------------------------------------------------------------------------------------------------------------------
+     1    6.7874e+02  N143(UY)       4.3760e-04  N347(UY)       2.4949e-01     3.47e-04    1.81e+01      1.00       144
+     2    2.6606e-02  N1(UY)         1.5742e-04  N3697(UY)      2.4949e-01     7.33e-05    3.14e-08      1.00       144
+  ---------------------------------------------------------------------------------------------------------------------
+  => Increment Converged. (Time: 16.07 s)
+
+     1    16     1       0       1     0.1403     0.0100     0.0100
+
+  [MONITOR] Step  16 | Time 0.1403s / 1.0s ( 14.0%)
+            Fold Angle: Target +-  1.99deg | Actual [-1.99deg, +1.99deg]
+            Plate Tips Y: Left= +0.84mm | Right= +0.84mm | Max Disp=  1.34mm
+            Newton Iters:  1 | dt: 0.01000s
+            [DIAGNOSTIC] display/plate max|u| ratio=1.0000 (display=1.343mm, plate=0.000mm)
+            [DIAGNOSTIC] Real tie gap (not just active-pair count): DISPLAY_BOT_L_PLATE_L_TOP_TIE: max_gap=0.0000mm mean=0.0000mm n=72 | DISPLAY_BOT_R_PLATE_R_TOP_TIE: max_gap=0.0000mm mean=0.0000mm n=72
+
+[PNG] Deformed shape saved: D:\PythonCodeStudy\WHT_DispFoldSolver\examples\ex12_final_folding_shape.png
+----------------------------------------------------------------------------------------------------
+Step 17 | Attempting time increment: dt = 0.01000s (t: 0.1403s -> 0.1503s)
+----------------------------------------------------------------------------------------------------
+
+  Nonlinear Iteration Summary (Newton-Raphson)
+  ==========================================================================================================================
+  Time increment dt: 1.000e-02
+  Convergence Tol  : 1.0e-02 (Disp Ratio)     Max Iterations: 50
+  --------------------------------------------------------------------------------------------------------------------------
+  Iter   Max Res.Force  (Node/DOF)    Max Disp.Corr  (Node/DOF)    Max Disp.Incr  Disp.Ratio  Energy.Err  LS.alpha  TieNodes
+  --------------------------------------------------------------------------------------------------------------------------
+     1    5.8923e+02  N143(UY)       3.7833e-04  N145(UY)       2.8123e-01     2.34e-04    1.37e+01      1.00       144
+     2    2.9023e-02  N1(UY)         7.9675e-06  N2090(UY)      2.8123e-01     3.07e-06    3.27e-08      1.00       144
+  ---------------------------------------------------------------------------------------------------------------------
+  => Increment Converged. (Time: 14.97 s)
+
+     1    17     1       0       1     0.1503     0.0100     0.0100
+
+  [MONITOR] Step  17 | Time 0.1503s / 1.0s ( 15.0%)
+            Fold Angle: Target +-  2.41deg | Actual [-2.41deg, +2.41deg]
+            Plate Tips Y: Left= +1.12mm | Right= +1.12mm | Max Disp=  1.62mm
+            Newton Iters:  1 | dt: 0.01000s
+            [DIAGNOSTIC] display/plate max|u| ratio=1.0000 (display=1.625mm, plate=0.000mm)
+            [DIAGNOSTIC] Real tie gap (not just active-pair count): DISPLAY_BOT_L_PLATE_L_TOP_TIE: max_gap=0.0000mm mean=0.0000mm n=72 | DISPLAY_BOT_R_PLATE_R_TOP_TIE: max_gap=0.0000mm mean=0.0000mm n=72
+
+[PNG] Deformed shape saved: D:\PythonCodeStudy\WHT_DispFoldSolver\examples\ex12_final_folding_shape.png
+----------------------------------------------------------------------------------------------------
+Step 18 | Attempting time increment: dt = 0.01000s (t: 0.1503s -> 0.1603s)
+----------------------------------------------------------------------------------------------------
+
+  Nonlinear Iteration Summary (Newton-Raphson)
+  ==========================================================================================================================
+  Time increment dt: 1.000e-02
+  Convergence Tol  : 1.0e-02 (Disp Ratio)     Max Iterations: 50
+  --------------------------------------------------------------------------------------------------------------------------
+  Iter   Max Res.Force  (Node/DOF)    Max Disp.Corr  (Node/DOF)    Max Disp.Incr  Disp.Ratio  Energy.Err  LS.alpha  TieNodes
+  --------------------------------------------------------------------------------------------------------------------------
+     1    5.2397e+02  N143(UY)       6.3939e-04  N5321(UY)      3.1398e-01     2.88e-04    1.09e+01      1.00       144
+     2    3.5220e-02  N1(UY)         3.0285e-04  N5321(UY)      3.1398e-01     9.76e-05    6.46e-08      1.00       144
+  ---------------------------------------------------------------------------------------------------------------------
+  => Increment Converged. (Time: 15.44 s)
+
+     1    18     1       0       1     0.1603     0.0100     0.0100
+
+  [MONITOR] Step  18 | Time 0.1603s / 1.0s ( 16.0%)
+            Fold Angle: Target +-  2.87deg | Actual [-2.87deg, +2.87deg]
+            Plate Tips Y: Left= +1.44mm | Right= +1.44mm | Max Disp=  1.94mm
+            Newton Iters:  1 | dt: 0.01000s
+            [DIAGNOSTIC] display/plate max|u| ratio=1.0000 (display=1.939mm, plate=0.000mm)
+            [DIAGNOSTIC] Real tie gap (not just active-pair count): DISPLAY_BOT_L_PLATE_L_TOP_TIE: max_gap=0.0000mm mean=0.0000mm n=72 | DISPLAY_BOT_R_PLATE_R_TOP_TIE: max_gap=0.0000mm mean=0.0000mm n=72
+
+[PNG] Deformed shape saved: D:\PythonCodeStudy\WHT_DispFoldSolver\examples\ex12_final_folding_shape.png
+----------------------------------------------------------------------------------------------------
+Step 19 | Attempting time increment: dt = 0.01000s (t: 0.1603s -> 0.1703s)
+----------------------------------------------------------------------------------------------------
+
+  Nonlinear Iteration Summary (Newton-Raphson)
+  ==========================================================================================================================
+  Time increment dt: 1.000e-02
+  Convergence Tol  : 1.0e-02 (Disp Ratio)     Max Iterations: 50
+  --------------------------------------------------------------------------------------------------------------------------
+  Iter   Max Res.Force  (Node/DOF)    Max Disp.Corr  (Node/DOF)    Max Disp.Incr  Disp.Ratio  Energy.Err  LS.alpha  TieNodes
+  --------------------------------------------------------------------------------------------------------------------------
+     1    5.3028e+02  N144(UX)       7.8757e-04  N5321(UY)      3.4759e-01     2.75e-04    8.26e+00      1.00       144
+     2    4.5112e-02  N1(UY)         3.4038e-04  N5321(UY)      3.4759e-01     9.30e-05    1.02e-07      1.00       144
+  ---------------------------------------------------------------------------------------------------------------------
+  => Increment Converged. (Time: 14.56 s)
+
+     1    19     1       0       1     0.1703     0.0100     0.0100
+
+  [MONITOR] Step  19 | Time 0.1703s / 1.0s ( 17.0%)
+            Fold Angle: Target +-  3.39deg | Actual [-3.39deg, +3.39deg]
+            Plate Tips Y: Left= +1.78mm | Right= +1.78mm | Max Disp=  2.29mm
+            Newton Iters:  1 | dt: 0.01000s
+            [DIAGNOSTIC] display/plate max|u| ratio=1.0000 (display=2.286mm, plate=0.000mm)
+            [DIAGNOSTIC] Real tie gap (not just active-pair count): DISPLAY_BOT_L_PLATE_L_TOP_TIE: max_gap=0.0000mm mean=0.0000mm n=72 | DISPLAY_BOT_R_PLATE_R_TOP_TIE: max_gap=0.0000mm mean=0.0000mm n=72
+
+[PNG] Deformed shape saved: D:\PythonCodeStudy\WHT_DispFoldSolver\examples\ex12_final_folding_shape.png
+----------------------------------------------------------------------------------------------------
+Step 20 | Attempting time increment: dt = 0.01000s (t: 0.1703s -> 0.1803s)
+----------------------------------------------------------------------------------------------------
+
+  Nonlinear Iteration Summary (Newton-Raphson)
+  ==========================================================================================================================
+  Time increment dt: 1.000e-02
+  Convergence Tol  : 1.0e-02 (Disp Ratio)     Max Iterations: 50
+  --------------------------------------------------------------------------------------------------------------------------
+  Iter   Max Res.Force  (Node/DOF)    Max Disp.Corr  (Node/DOF)    Max Disp.Incr  Disp.Ratio  Energy.Err  LS.alpha  TieNodes
+  --------------------------------------------------------------------------------------------------------------------------
+     1    5.8870e+02  N1(UX)         6.3929e-04  N1667(UY)      3.8196e-01     1.75e-04    6.51e+00      1.00       144
+     2    6.4194e-02  N143(UY)       2.0348e-04  N5523(UY)      3.8196e-01     4.61e-05    1.70e-07      1.00       144
+  ---------------------------------------------------------------------------------------------------------------------
+  => Increment Converged. (Time: 15.07 s)
+
+     1    20     1       0       1     0.1803     0.0100     0.0100
+
+  [MONITOR] Step  20 | Time 0.1803s / 1.0s ( 18.0%)
+            Fold Angle: Target +-  3.95deg | Actual [-3.95deg, +3.95deg]
+            Plate Tips Y: Left= +2.16mm | Right= +2.16mm | Max Disp=  2.67mm
+            Newton Iters:  1 | dt: 0.01000s
+            [DIAGNOSTIC] display/plate max|u| ratio=1.0000 (display=2.668mm, plate=0.000mm)
+            [DIAGNOSTIC] Real tie gap (not just active-pair count): DISPLAY_BOT_L_PLATE_L_TOP_TIE: max_gap=0.0000mm mean=0.0000mm n=72 | DISPLAY_BOT_R_PLATE_R_TOP_TIE: max_gap=0.0000mm mean=0.0000mm n=72
+            [DIAGNOSTIC] Hinge curvature: max_curv_ratio=2460059.70 kink_detected=True at x=8.50mm
+
+[PNG] Deformed shape saved: D:\PythonCodeStudy\WHT_DispFoldSolver\examples\ex12_final_folding_shape.png
+----------------------------------------------------------------------------------------------------
+Step 21 | Attempting time increment: dt = 0.01000s (t: 0.1803s -> 0.1903s)
+----------------------------------------------------------------------------------------------------
+
+  Nonlinear Iteration Summary (Newton-Raphson)
+  ==========================================================================================================================
+  Time increment dt: 1.000e-02
+  Convergence Tol  : 1.0e-02 (Disp Ratio)     Max Iterations: 50
+  --------------------------------------------------------------------------------------------------------------------------
+  Iter   Max Res.Force  (Node/DOF)    Max Disp.Corr  (Node/DOF)    Max Disp.Incr  Disp.Ratio  Energy.Err  LS.alpha  TieNodes
+  --------------------------------------------------------------------------------------------------------------------------
+     1    6.4555e+02  N1(UX)         7.1774e-04  N5321(UY)      4.1702e-01     1.61e-04    5.07e+00      1.00       144
+     2    9.4693e-02  N143(UY)       2.0591e-04  N5320(UY)      4.1702e-01     4.08e-05    3.61e-07      1.00       144
+  ---------------------------------------------------------------------------------------------------------------------
+  => Increment Converged. (Time: 14.50 s)
+
+     1    21     1       0       1     0.1903     0.0100     0.0100
+
+  [MONITOR] Step  21 | Time 0.1903s / 1.0s ( 19.0%)
+            Fold Angle: Target +-  4.57deg | Actual [-4.57deg, +4.57deg]
+            Plate Tips Y: Left= +2.58mm | Right= +2.58mm | Max Disp=  3.09mm
+            Newton Iters:  1 | dt: 0.01000s
+            [DIAGNOSTIC] display/plate max|u| ratio=1.0000 (display=3.085mm, plate=0.000mm)
+            [DIAGNOSTIC] Real tie gap (not just active-pair count): DISPLAY_BOT_L_PLATE_L_TOP_TIE: max_gap=0.0000mm mean=0.0000mm n=72 | DISPLAY_BOT_R_PLATE_R_TOP_TIE: max_gap=0.0000mm mean=0.0000mm n=72
+
+[PNG] Deformed shape saved: D:\PythonCodeStudy\WHT_DispFoldSolver\examples\ex12_final_folding_shape.png
+----------------------------------------------------------------------------------------------------
+Step 22 | Attempting time increment: dt = 0.01000s (t: 0.1903s -> 0.2003s)
+----------------------------------------------------------------------------------------------------
+
+  Nonlinear Iteration Summary (Newton-Raphson)
+  ==========================================================================================================================
+  Time increment dt: 1.000e-02
+  Convergence Tol  : 1.0e-02 (Disp Ratio)     Max Iterations: 50
+  --------------------------------------------------------------------------------------------------------------------------
+  Iter   Max Res.Force  (Node/DOF)    Max Disp.Corr  (Node/DOF)    Max Disp.Incr  Disp.Ratio  Energy.Err  LS.alpha  TieNodes
+  --------------------------------------------------------------------------------------------------------------------------
+     1    6.9984e+02  N1(UX)         1.2057e-03  N5321(UY)      4.5275e-01     2.45e-04    4.15e+00      1.00       144
+     2    1.4420e-01  N143(UY)       3.7447e-04  N5321(UY)      4.5275e-01     6.75e-05    8.52e-07      1.00       144
+  ---------------------------------------------------------------------------------------------------------------------
+  => Increment Converged. (Time: 13.87 s)
+
+     1    22     1       0       1     0.2003     0.0100     0.0100
+
+  [MONITOR] Step  22 | Time 0.2003s / 1.0s ( 20.0%)
+            Fold Angle: Target +-  5.23deg | Actual [-5.23deg, +5.23deg]
+            Plate Tips Y: Left= +3.02mm | Right= +3.02mm | Max Disp=  3.54mm
+            Newton Iters:  1 | dt: 0.01000s
+            [DIAGNOSTIC] display/plate max|u| ratio=1.0000 (display=3.538mm, plate=0.000mm)
+            [DIAGNOSTIC] Real tie gap (not just active-pair count): DISPLAY_BOT_L_PLATE_L_TOP_TIE: max_gap=0.0000mm mean=0.0000mm n=72 | DISPLAY_BOT_R_PLATE_R_TOP_TIE: max_gap=0.0000mm mean=0.0000mm n=72
+
+[PNG] Deformed shape saved: D:\PythonCodeStudy\WHT_DispFoldSolver\examples\ex12_final_folding_shape.png
+----------------------------------------------------------------------------------------------------
+Step 23 | Attempting time increment: dt = 0.01000s (t: 0.2003s -> 0.2103s)
+----------------------------------------------------------------------------------------------------
+
+  Nonlinear Iteration Summary (Newton-Raphson)
+  ==========================================================================================================================
+  Time increment dt: 1.000e-02
+  Convergence Tol  : 1.0e-02 (Disp Ratio)     Max Iterations: 50
+  --------------------------------------------------------------------------------------------------------------------------
+  Iter   Max Res.Force  (Node/DOF)    Max Disp.Corr  (Node/DOF)    Max Disp.Incr  Disp.Ratio  Energy.Err  LS.alpha  TieNodes
+  --------------------------------------------------------------------------------------------------------------------------
+     1    7.5054e+02  N1(UX)         5.9009e-04  N5098(UY)      4.8926e-01     1.29e-04    3.50e+00      1.00       144
+     2    2.2174e-01  N143(UY)       1.4225e-04  N5321(UY)      4.8925e-01     2.36e-05    1.92e-06      1.00       144
+  ---------------------------------------------------------------------------------------------------------------------
+  => Increment Converged. (Time: 14.10 s)
+
+     1    23     1       0       1     0.2103     0.0100     0.0100
+
+  [MONITOR] Step  23 | Time 0.2103s / 1.0s ( 21.0%)
+            Fold Angle: Target +-  5.95deg | Actual [-5.95deg, +5.95deg]
+            Plate Tips Y: Left= +3.51mm | Right= +3.51mm | Max Disp=  4.03mm
+            Newton Iters:  1 | dt: 0.01000s
+            [DIAGNOSTIC] display/plate max|u| ratio=1.0000 (display=4.027mm, plate=0.000mm)
+            [DIAGNOSTIC] Real tie gap (not just active-pair count): DISPLAY_BOT_L_PLATE_L_TOP_TIE: max_gap=0.0000mm mean=0.0000mm n=72 | DISPLAY_BOT_R_PLATE_R_TOP_TIE: max_gap=0.0000mm mean=0.0000mm n=72
+
+[PNG] Deformed shape saved: D:\PythonCodeStudy\WHT_DispFoldSolver\examples\ex12_final_folding_shape.png
+----------------------------------------------------------------------------------------------------
+Step 24 | Attempting time increment: dt = 0.01000s (t: 0.2103s -> 0.2203s)
+----------------------------------------------------------------------------------------------------
+
+  Nonlinear Iteration Summary (Newton-Raphson)
+  ==========================================================================================================================
+  Time increment dt: 1.000e-02
+  Convergence Tol  : 1.0e-02 (Disp Ratio)     Max Iterations: 50
+  --------------------------------------------------------------------------------------------------------------------------
+  Iter   Max Res.Force  (Node/DOF)    Max Disp.Corr  (Node/DOF)    Max Disp.Incr  Disp.Ratio  Energy.Err  LS.alpha  TieNodes
+  --------------------------------------------------------------------------------------------------------------------------
+     1    7.9670e+02  N1(UX)         1.0051e-03  N5320(UY)      5.2689e-01     1.51e-04    3.16e+00      1.00       144
+     2    3.4024e-01  N143(UY)       2.1094e-04  N5519(UY)      5.2687e-01     2.91e-05    4.49e-06      1.00       144
+  ---------------------------------------------------------------------------------------------------------------------
+  => Increment Converged. (Time: 13.71 s)
+  Mesh quality NOTICE: min det(J)=3.507e-01 ? approaching inversion threshold (2 elements warped)
+
+     1    24     1       0       1     0.2203     0.0100     0.0100
+
+  [MONITOR] Step  24 | Time 0.2203s / 1.0s ( 22.0%)
+            Fold Angle: Target +-  6.72deg | Actual [-6.72deg, +6.72deg]
+            Plate Tips Y: Left= +4.02mm | Right= +4.02mm | Max Disp=  4.55mm
+            Newton Iters:  1 | dt: 0.01000s
+            [DIAGNOSTIC] display/plate max|u| ratio=1.0000 (display=4.554mm, plate=0.000mm)
+            [DIAGNOSTIC] Real tie gap (not just active-pair count): DISPLAY_BOT_L_PLATE_L_TOP_TIE: max_gap=0.0000mm mean=0.0000mm n=72 | DISPLAY_BOT_R_PLATE_R_TOP_TIE: max_gap=0.0000mm mean=0.0000mm n=72
+
+[PNG] Deformed shape saved: D:\PythonCodeStudy\WHT_DispFoldSolver\examples\ex12_final_folding_shape.png
+----------------------------------------------------------------------------------------------------
+Step 25 | Attempting time increment: dt = 0.01000s (t: 0.2203s -> 0.2303s)
+----------------------------------------------------------------------------------------------------
+
+  Nonlinear Iteration Summary (Newton-Raphson)
+  ==========================================================================================================================
+  Time increment dt: 1.000e-02
+  Convergence Tol  : 1.0e-02 (Disp Ratio)     Max Iterations: 50
+  --------------------------------------------------------------------------------------------------------------------------
+  Iter   Max Res.Force  (Node/DOF)    Max Disp.Corr  (Node/DOF)    Max Disp.Incr  Disp.Ratio  Energy.Err  LS.alpha  TieNodes
+  --------------------------------------------------------------------------------------------------------------------------
+     1    1.3623e+05  N143(UX)       1.2284e-02  N10367(UY)     5.6717e-01     7.45e-04    2.81e+02      1.00       144
+     2    1.3573e+05  N143(UX)       1.3209e-02  N10367(UY)     5.7362e-01     1.01e-03    9.88e+02      1.00       144
+  ---------------------------------------------------------------------------------------------------------------------
+  => Increment Converged. (Time: 14.18 s)
+  Mesh quality WARNING: min det(J)=2.303e-02  inverted=0  warped=2
+
+     1    25     1       0       1     0.2303     0.0100     0.0100
+
+  Nonlinear Iteration Summary (Newton-Raphson)
+  ==========================================================================================================================
+  Time increment dt: 1.000e-06
+  Convergence Tol  : 1.0e-02 (Disp Ratio)     Max Iterations: 50
+  --------------------------------------------------------------------------------------------------------------------------
+  Iter   Max Res.Force  (Node/DOF)    Max Disp.Corr  (Node/DOF)    Max Disp.Incr  Disp.Ratio  Energy.Err  LS.alpha  TieNodes
+  --------------------------------------------------------------------------------------------------------------------------
+     1    2.6109e+05  N143(UX)       6.4506e-03  N10367(UY)     1.3297e-03     3.83e-04    2.07e+03      1.00       144
+     2    2.6086e+05  N143(UX)       6.7746e-03  N10367(UY)     3.6126e-03     4.11e-04    2.29e+03      1.00       144
+  ---------------------------------------------------------------------------------------------------------------------
+  => Increment Converged. (Time: 14.53 s)
+  Mesh quality WARNING: min det(J)=2.316e-02  inverted=0  warped=2
+
+     1    26     1       0       1     0.2303     0.0000     0.0000
+
+  Nonlinear Iteration Summary (Newton-Raphson)
+  ==========================================================================================================================
+  Time increment dt: 1.000e-06
+  Convergence Tol  : 1.0e-02 (Disp Ratio)     Max Iterations: 50
+  --------------------------------------------------------------------------------------------------------------------------
+  Iter   Max Res.Force  (Node/DOF)    Max Disp.Corr  (Node/DOF)    Max Disp.Incr  Disp.Ratio  Energy.Err  LS.alpha  TieNodes
+  --------------------------------------------------------------------------------------------------------------------------
+     1    4.1577e+05  N143(UX)       1.1266e-03  N10367(UY)     9.9536e-04     5.55e-05    4.05e+02      1.00       144
+     2    4.1576e+05  N143(UX)       1.1258e-03  N10367(UY)     9.8834e-04     5.54e-05    4.04e+02      1.00       144
+  ---------------------------------------------------------------------------------------------------------------------
+  => Increment Converged. (Time: 14.69 s)
+  Mesh quality WARNING: min det(J)=2.252e-02  inverted=0  warped=2
+
+     1    27     1       0       1     0.2303     0.0000     0.0000
+
+  Nonlinear Iteration Summary (Newton-Raphson)
+  ==========================================================================================================================
+  Time increment dt: 1.000e-06
+  Convergence Tol  : 1.0e-02 (Disp Ratio)     Max Iterations: 50
+  --------------------------------------------------------------------------------------------------------------------------
+  Iter   Max Res.Force  (Node/DOF)    Max Disp.Corr  (Node/DOF)    Max Disp.Incr  Disp.Ratio  Energy.Err  LS.alpha  TieNodes
+  --------------------------------------------------------------------------------------------------------------------------
+     1    6.3601e+05  N143(UX)       4.1946e-03  N10001(UY)     1.2609e-03     2.20e-04    5.55e+02      1.00       144
+     2    6.3534e+05  N143(UX)       4.1624e-03  N10001(UY)     1.7321e-03     2.18e-04    6.03e+02      1.00       144
+  ---------------------------------------------------------------------------------------------------------------------
+  => Increment Converged. (Time: 15.17 s)
+  Mesh quality WARNING: min det(J)=1.979e-02  inverted=0  warped=2
+
+     1    28     1       0       1     0.2303     0.0000     0.0000
+
+  Nonlinear Iteration Summary (Newton-Raphson)
+  ==========================================================================================================================
+  Time increment dt: 1.000e-06
+  Convergence Tol  : 1.0e-02 (Disp Ratio)     Max Iterations: 50
+  --------------------------------------------------------------------------------------------------------------------------
+  Iter   Max Res.Force  (Node/DOF)    Max Disp.Corr  (Node/DOF)    Max Disp.Incr  Disp.Ratio  Energy.Err  LS.alpha  TieNodes
+  --------------------------------------------------------------------------------------------------------------------------
+     1    1.0097e+06  N143(UX)       3.6237e-03  N10001(UY)     1.4377e-03     1.76e-04    1.74e+03      1.00       144
+     2    1.0086e+06  N143(UX)       3.5809e-03  N10001(UY)     2.0788e-03     1.74e-04    1.77e+03      1.00       144
+  ---------------------------------------------------------------------------------------------------------------------
+  => Increment Converged. (Time: 15.18 s)
+  Mesh quality WARNING: min det(J)=1.703e-02  inverted=0  warped=2
+
+     1    29     1       0       1     0.2303     0.0000     0.0000
+
+  Nonlinear Iteration Summary (Newton-Raphson)
+  ==========================================================================================================================
+  Time increment dt: 1.000e-06
+  Convergence Tol  : 1.0e-02 (Disp Ratio)     Max Iterations: 50
+  --------------------------------------------------------------------------------------------------------------------------
+  Iter   Max Res.Force  (Node/DOF)    Max Disp.Corr  (Node/DOF)    Max Disp.Incr  Disp.Ratio  Energy.Err  LS.alpha  TieNodes
+  --------------------------------------------------------------------------------------------------------------------------
+     1    1.8636e+06  N143(UX)       1.2764e-03  N10001(UY)     1.0543e-03     6.17e-05    1.05e+03      1.00       144
+     2    1.8636e+06  N143(UX)       1.2748e-03  N10001(UY)     1.1356e-03     6.16e-05    1.05e+03      1.00       144
+  ---------------------------------------------------------------------------------------------------------------------
+  => Increment Converged. (Time: 15.19 s)
+  Mesh quality WARNING: min det(J)=1.428e-02  inverted=0  warped=2
+
+     1    30     1       0       1     0.2303     0.0000     0.0000
+
+  Nonlinear Iteration Summary (Newton-Raphson)
+  ==========================================================================================================================
+  Time increment dt: 1.000e-06
+  Convergence Tol  : 1.0e-02 (Disp Ratio)     Max Iterations: 50
+  --------------------------------------------------------------------------------------------------------------------------
+  Iter   Max Res.Force  (Node/DOF)    Max Disp.Corr  (Node/DOF)    Max Disp.Incr  Disp.Ratio  Energy.Err  LS.alpha  TieNodes
+  --------------------------------------------------------------------------------------------------------------------------
+     1    4.9478e+06  N144(UY)       2.2585e-04  N10001(UY)     1.0000e-03     1.09e-05    2.58e+02      1.00       144
+     2    4.9478e+06  N144(UY)       2.2584e-04  N10001(UY)     1.0000e-03     1.09e-05    2.58e+02      1.00       144
+  ---------------------------------------------------------------------------------------------------------------------
+  => Increment Converged. (Time: 14.31 s)
+  Mesh quality WARNING: min det(J)=1.154e-02  inverted=0  warped=2
+
+     1    31     1       0       1     0.2303     0.0000     0.0000
+
+  Nonlinear Iteration Summary (Newton-Raphson)
+  ==========================================================================================================================
+  Time increment dt: 1.000e-06
+  Convergence Tol  : 1.0e-02 (Disp Ratio)     Max Iterations: 50
+  --------------------------------------------------------------------------------------------------------------------------
+  Iter   Max Res.Force  (Node/DOF)    Max Disp.Corr  (Node/DOF)    Max Disp.Incr  Disp.Ratio  Energy.Err  LS.alpha  TieNodes
+  --------------------------------------------------------------------------------------------------------------------------
+     1    2.1493e+07  N144(UY)       1.0873e-03  N10001(UY)     1.0008e-03     5.26e-05    1.60e+03      1.00       144
+     2    2.1493e+07  N144(UY)       1.0871e-03  N10001(UY)     1.0023e-03     5.26e-05    1.59e+03      1.00       144
+  ---------------------------------------------------------------------------------------------------------------------
+  => Increment Converged. (Time: 14.86 s)
+  Mesh quality WARNING: min det(J)=8.787e-03  inverted=0  warped=2
+
+     1    32     1       0       1     0.2303     0.0000     0.0000
+
+  Nonlinear Iteration Summary (Newton-Raphson)
+  ==========================================================================================================================
+  Time increment dt: 1.000e-06
+  Convergence Tol  : 1.0e-02 (Disp Ratio)     Max Iterations: 50
+  --------------------------------------------------------------------------------------------------------------------------
+  Iter   Max Res.Force  (Node/DOF)    Max Disp.Corr  (Node/DOF)    Max Disp.Incr  Disp.Ratio  Energy.Err  LS.alpha  TieNodes
+  --------------------------------------------------------------------------------------------------------------------------
+     1    1.6391e+08  N144(UY)       1.6723e-03  N10001(UY)     1.0029e-03     8.09e-05    3.09e+03      1.00       144
+     2    1.6391e+08  N144(UY)       1.6688e-03  N10001(UY)     1.0072e-03     8.08e-05    3.06e+03      1.00       144
+  ---------------------------------------------------------------------------------------------------------------------
+  => Increment Converged. (Time: 14.61 s)
+  Mesh quality WARNING: min det(J)=6.037e-03  inverted=0  warped=2
+
+     1    33     1       0       1     0.2303     0.0000     0.0000
+            [AL] tie gap correction: 8 extra solve(s), final max_gap=0.0538mm
+
+  [MONITOR] Step  25 | Time 0.2303s / 1.0s ( 23.0%)
+            Fold Angle: Target +-  7.55deg | Actual [-7.55deg, +7.55deg]
+            Plate Tips Y: Left= +4.57mm | Right= +4.57mm | Max Disp=  5.13mm
+            Newton Iters:  1 | dt: 0.01000s
+            [DIAGNOSTIC] display/plate max|u| ratio=1.0000 (display=5.129mm, plate=0.000mm)
+            [DIAGNOSTIC] Real tie gap (not just active-pair count): DISPLAY_BOT_L_PLATE_L_TOP_TIE: max_gap=0.0518mm mean=0.0049mm n=72 | DISPLAY_BOT_R_PLATE_R_TOP_TIE: max_gap=0.0538mm mean=0.0024mm n=72
+
+[PNG] Deformed shape saved: D:\PythonCodeStudy\WHT_DispFoldSolver\examples\ex12_final_folding_shape.png
+----------------------------------------------------------------------------------------------------
+Step 26 | Attempting time increment: dt = 0.01000s (t: 0.2303s -> 0.2403s)
+----------------------------------------------------------------------------------------------------
+
+  Nonlinear Iteration Summary (Newton-Raphson)
+  ==========================================================================================================================
+  Time increment dt: 1.000e-02
+  Convergence Tol  : 1.0e-02 (Disp Ratio)     Max Iterations: 50
+  --------------------------------------------------------------------------------------------------------------------------
+  Iter   Max Res.Force  (Node/DOF)    Max Disp.Corr  (Node/DOF)    Max Disp.Incr  Disp.Ratio  Energy.Err  LS.alpha  TieNodes
+  --------------------------------------------------------------------------------------------------------------------------
+  *** ELEMENT INVERSION: det(F) <= 0 detected at iteration 1. Cutting back dt.
+     1    34     1       0      50     0.2303     0.0000     0.0100   *** CUTBACK: element inversion (det(F) <= 0) (Retrying step with smaller dt & target angle) ***
+  *** STEP 26 FAILED (conv=-50, cutback 1/20). Cutting back dt to 0.00500s ***
+
+----------------------------------------------------------------------------------------------------
+Step 26 | Attempting time increment: dt = 0.00500s (t: 0.2303s -> 0.2353s)
+----------------------------------------------------------------------------------------------------
+
+  Nonlinear Iteration Summary (Newton-Raphson)
+  ==========================================================================================================================
+  Time increment dt: 5.000e-03
+  Convergence Tol  : 1.0e-02 (Disp Ratio)     Max Iterations: 50
+  --------------------------------------------------------------------------------------------------------------------------
+  Iter   Max Res.Force  (Node/DOF)    Max Disp.Corr  (Node/DOF)    Max Disp.Incr  Disp.Ratio  Energy.Err  LS.alpha  TieNodes
+  --------------------------------------------------------------------------------------------------------------------------
+  *** ELEMENT INVERSION: det(F) <= 0 detected at iteration 1. Cutting back dt.
+     1    34     2       0      50     0.2303     0.0000     0.0050   *** CUTBACK: element inversion (det(F) <= 0) (Retrying step with smaller dt & target angle) ***
+  *** STEP 26 FAILED (conv=-50, cutback 1/20). Cutting back dt to 0.00250s ***
+
+----------------------------------------------------------------------------------------------------
+Step 26 | Attempting time increment: dt = 0.00250s (t: 0.2303s -> 0.2328s)
+----------------------------------------------------------------------------------------------------
+
+  Nonlinear Iteration Summary (Newton-Raphson)
+  ==========================================================================================================================
+  Time increment dt: 2.500e-03
+  Convergence Tol  : 1.0e-02 (Disp Ratio)     Max Iterations: 50
+  --------------------------------------------------------------------------------------------------------------------------
+  Iter   Max Res.Force  (Node/DOF)    Max Disp.Corr  (Node/DOF)    Max Disp.Incr  Disp.Ratio  Energy.Err  LS.alpha  TieNodes
+  --------------------------------------------------------------------------------------------------------------------------
+  *** ELEMENT INVERSION: det(F) <= 0 detected at iteration 1. Cutting back dt.
+     1    34     3       0      50     0.2303     0.0000     0.0025   *** CUTBACK: element inversion (det(F) <= 0) (Retrying step with smaller dt & target angle) ***
+  *** STEP 26 FAILED (conv=-50, cutback 1/20). Cutting back dt to 0.00125s ***
+
+----------------------------------------------------------------------------------------------------
+Step 26 | Attempting time increment: dt = 0.00125s (t: 0.2303s -> 0.2316s)
+----------------------------------------------------------------------------------------------------
+
+  Nonlinear Iteration Summary (Newton-Raphson)
+  ==========================================================================================================================
+  Time increment dt: 1.250e-03
+  Convergence Tol  : 1.0e-02 (Disp Ratio)     Max Iterations: 50
+  --------------------------------------------------------------------------------------------------------------------------
+  Iter   Max Res.Force  (Node/DOF)    Max Disp.Corr  (Node/DOF)    Max Disp.Incr  Disp.Ratio  Energy.Err  LS.alpha  TieNodes
+  --------------------------------------------------------------------------------------------------------------------------
+  *** ELEMENT INVERSION: det(F) <= 0 detected at iteration 1. Cutting back dt.
+     1    34     4       0      50     0.2303     0.0000     0.0013   *** CUTBACK: element inversion (det(F) <= 0) (Retrying step with smaller dt & target angle) ***
+  *** STEP 26 FAILED (conv=-50, cutback 1/20). Cutting back dt to 0.00063s ***
+
+----------------------------------------------------------------------------------------------------
+Step 26 | Attempting time increment: dt = 0.00063s (t: 0.2303s -> 0.2309s)
+----------------------------------------------------------------------------------------------------
+
+  Nonlinear Iteration Summary (Newton-Raphson)
+  ==========================================================================================================================
+  Time increment dt: 6.250e-04
+  Convergence Tol  : 1.0e-02 (Disp Ratio)     Max Iterations: 50
+  --------------------------------------------------------------------------------------------------------------------------
+  Iter   Max Res.Force  (Node/DOF)    Max Disp.Corr  (Node/DOF)    Max Disp.Incr  Disp.Ratio  Energy.Err  LS.alpha  TieNodes
+  --------------------------------------------------------------------------------------------------------------------------
+  *** ELEMENT INVERSION: det(F) <= 0 detected at iteration 1. Cutting back dt.
+     1    34     5       0      50     0.2303     0.0000     0.0006   *** CUTBACK: element inversion (det(F) <= 0) (Retrying step with smaller dt & target angle) ***
+  *** STEP 26 FAILED (conv=-50, cutback 1/20). Cutting back dt to 0.00031s ***
+
+----------------------------------------------------------------------------------------------------
+Step 26 | Attempting time increment: dt = 0.00031s (t: 0.2303s -> 0.2306s)
+----------------------------------------------------------------------------------------------------
+
+  Nonlinear Iteration Summary (Newton-Raphson)
+  ==========================================================================================================================
+  Time increment dt: 3.125e-04
+  Convergence Tol  : 1.0e-02 (Disp Ratio)     Max Iterations: 50
+  --------------------------------------------------------------------------------------------------------------------------
+  Iter   Max Res.Force  (Node/DOF)    Max Disp.Corr  (Node/DOF)    Max Disp.Incr  Disp.Ratio  Energy.Err  LS.alpha  TieNodes
+  --------------------------------------------------------------------------------------------------------------------------
+DEBUG: NaN detected in assembly at iter 1!
+  f_int has NaN: True
+  K_T.data has NaN: True
+  self.state has NaN: False
+  Max displacement magnitude in u_k: 5.13609e+00 at Node 550(UY)
+  ---------------------------------------------------------------------------------------------------------------------
+  *** ERROR: Search direction contains NaN/Inf at iteration 1. (Time: 7.45 s)
+
+     1    34     6       0      50     0.2303     0.0000     0.0003   *** CUTBACK: NaN/Inf in search direction (Retrying step with smaller dt & target angle) ***
+  *** STEP 26 FAILED (conv=-1, cutback 1/20). Cutting back dt to 0.00016s ***
+
+----------------------------------------------------------------------------------------------------
+Step 26 | Attempting time increment: dt = 0.00016s (t: 0.2303s -> 0.2305s)
+----------------------------------------------------------------------------------------------------
+
+  Nonlinear Iteration Summary (Newton-Raphson)
+  ==========================================================================================================================
+  Time increment dt: 1.563e-04
+  Convergence Tol  : 1.0e-02 (Disp Ratio)     Max Iterations: 50
+  --------------------------------------------------------------------------------------------------------------------------
+  Iter   Max Res.Force  (Node/DOF)    Max Disp.Corr  (Node/DOF)    Max Disp.Incr  Disp.Ratio  Energy.Err  LS.alpha  TieNodes
+  --------------------------------------------------------------------------------------------------------------------------
+DEBUG: NaN detected in assembly at iter 1!
+  f_int has NaN: True
+  K_T.data has NaN: True
+  self.state has NaN: False
+  Max displacement magnitude in u_k: 5.13611e+00 at Node 550(UY)
+  ---------------------------------------------------------------------------------------------------------------------
+  *** ERROR: Search direction contains NaN/Inf at iteration 1. (Time: 7.19 s)
+
+     1    34     7       0      50     0.2303     0.0000     0.0002   *** CUTBACK: NaN/Inf in search direction (Retrying step with smaller dt & target angle) ***
+  *** STEP 26 FAILED (conv=-1, cutback 1/20). Cutting back dt to 0.00008s ***
+
+----------------------------------------------------------------------------------------------------
+Step 26 | Attempting time increment: dt = 0.00008s (t: 0.2303s -> 0.2304s)
+----------------------------------------------------------------------------------------------------
+
+  Nonlinear Iteration Summary (Newton-Raphson)
+  ==========================================================================================================================
+  Time increment dt: 7.813e-05
+  Convergence Tol  : 1.0e-02 (Disp Ratio)     Max Iterations: 50
+  --------------------------------------------------------------------------------------------------------------------------
+  Iter   Max Res.Force  (Node/DOF)    Max Disp.Corr  (Node/DOF)    Max Disp.Incr  Disp.Ratio  Energy.Err  LS.alpha  TieNodes
+  --------------------------------------------------------------------------------------------------------------------------
+DEBUG: NaN detected in assembly at iter 1!
+  f_int has NaN: True
+  K_T.data has NaN: True
+  self.state has NaN: False
+  Max displacement magnitude in u_k: 5.13611e+00 at Node 550(UY)
+  ---------------------------------------------------------------------------------------------------------------------
+  *** ERROR: Search direction contains NaN/Inf at iteration 1. (Time: 6.82 s)
+
+     1    34     8       0      50     0.2303     0.0000     0.0001   *** CUTBACK: NaN/Inf in search direction (Retrying step with smaller dt & target angle) ***
+  *** STEP 26 FAILED (conv=-1, cutback 1/20). Cutting back dt to 0.00004s ***
+
+----------------------------------------------------------------------------------------------------
+Step 26 | Attempting time increment: dt = 0.00004s (t: 0.2303s -> 0.2304s)
+----------------------------------------------------------------------------------------------------
+
+  Nonlinear Iteration Summary (Newton-Raphson)
+  ==========================================================================================================================
+  Time increment dt: 3.906e-05
+  Convergence Tol  : 1.0e-02 (Disp Ratio)     Max Iterations: 50
+  --------------------------------------------------------------------------------------------------------------------------
+  Iter   Max Res.Force  (Node/DOF)    Max Disp.Corr  (Node/DOF)    Max Disp.Incr  Disp.Ratio  Energy.Err  LS.alpha  TieNodes
+  --------------------------------------------------------------------------------------------------------------------------
+DEBUG: NaN detected in assembly at iter 1!
+  f_int has NaN: True
+  K_T.data has NaN: True
+  self.state has NaN: False
+  Max displacement magnitude in u_k: 5.13612e+00 at Node 550(UY)
+  ---------------------------------------------------------------------------------------------------------------------
+  *** ERROR: Search direction contains NaN/Inf at iteration 1. (Time: 7.28 s)
+
+     1    34     9       0      50     0.2303     0.0000     0.0000   *** CUTBACK: NaN/Inf in search direction (Retrying step with smaller dt & target angle) ***
+  *** STEP 26 FAILED (conv=-1, cutback 1/20). Cutting back dt to 0.00002s ***
+
+----------------------------------------------------------------------------------------------------
+Step 26 | Attempting time increment: dt = 0.00002s (t: 0.2303s -> 0.2303s)
+----------------------------------------------------------------------------------------------------
+
+  Nonlinear Iteration Summary (Newton-Raphson)
+  ==========================================================================================================================
+  Time increment dt: 1.953e-05
+  Convergence Tol  : 1.0e-02 (Disp Ratio)     Max Iterations: 50
+  --------------------------------------------------------------------------------------------------------------------------
+  Iter   Max Res.Force  (Node/DOF)    Max Disp.Corr  (Node/DOF)    Max Disp.Incr  Disp.Ratio  Energy.Err  LS.alpha  TieNodes
+  --------------------------------------------------------------------------------------------------------------------------
+DEBUG: NaN detected in assembly at iter 1!
+  f_int has NaN: True
+  K_T.data has NaN: True
+  self.state has NaN: False
+  Max displacement magnitude in u_k: 5.13612e+00 at Node 550(UY)
+  ---------------------------------------------------------------------------------------------------------------------
+  *** ERROR: Search direction contains NaN/Inf at iteration 1. (Time: 5.67 s)
+
+     1    34    10       0      50     0.2303     0.0000     0.0000   *** CUTBACK: NaN/Inf in search direction (Retrying step with smaller dt & target angle) ***
+FATAL: Exceeded maximum cutbacks (20) or dt below minimum tolerance. Simulation aborted.
+====================================================================================================
+ FAILED: Simulation did not reach target time.
+====================================================================================================
+Saved result (25 steps) for re-analysis: D:\PythonCodeStudy\WHT_DispFoldSolver\examples\ex12_result.pkl
+  reload with: from dispsolver.postprocess import load_result; r = load_result(r'D:\PythonCodeStudy\WHT_DispFoldSolver\examples\ex12_result.pkl')
+
+=======================================================================================================================================================================================================================================================================
+ Interlayer slip at x = -40.00 mm   [um, cumulative from bottom surface]
+=======================================================================================================================================================================================================================================================================
+ theta[deg]       L1       L2       L3       L4       L5       L6       L7       L8       L9      L10      L11      L12      L13      L14      L15      L16      L17      L18      L19      L20      L21      L22      L23      L24      L25      L26      L27      L28
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+       0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00
+       0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00
+       0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.01     0.01     0.01     0.01     0.01     0.01     0.01     0.01     0.01     0.01     0.01     0.01     0.01     0.01     0.01     0.01     0.02     0.02     0.02     0.02
+       0.01     0.01     0.01     0.01     0.01     0.02     0.02     0.02     0.02     0.03     0.03     0.03     0.03     0.04     0.04     0.04     0.04     0.05     0.05     0.05     0.05     0.06     0.06     0.06     0.06     0.08     0.08     0.08     0.08
+       0.02     0.03     0.03     0.03     0.03     0.07     0.07     0.07     0.07     0.10     0.10     0.10     0.10     0.14     0.14     0.14     0.14     0.18     0.18     0.18     0.18     0.21     0.21     0.21     0.21     0.25     0.25     0.25     0.25
+       0.06     0.08     0.08     0.08     0.08     0.16     0.16     0.16     0.16     0.24     0.24     0.24     0.24     0.32     0.32     0.32     0.32     0.41     0.41     0.41     0.41     0.49     0.49     0.49     0.49     0.57     0.57     0.57     0.57
+       0.11     0.16     0.16     0.16     0.16     0.31     0.31     0.31     0.31     0.46     0.46     0.46     0.46     0.62     0.62     0.62     0.62     0.78     0.78     0.78     0.78     0.95     0.95     0.95     0.95     1.10     1.10     1.10     1.10
+       0.18     0.31     0.31     0.31     0.31     0.54     0.54     0.54     0.54     0.79     0.79     0.80     0.80     1.06     1.06     1.07     1.07     1.34     1.34     1.34     1.34     1.61     1.61     1.61     1.61     1.88     1.88     1.88     1.88
+       0.28     0.54     0.54     0.54     0.54     0.87     0.87     0.87     0.87     1.27     1.27     1.27     1.27     1.68     1.68     1.68     1.69     2.11     2.11     2.11     2.11     2.53     2.54     2.54     2.54     2.95     2.95     2.95     2.95
+       0.41     0.91     0.91     0.91     0.91     1.35     1.35     1.35     1.35     1.91     1.91     1.91     1.91     2.51     2.51     2.51     2.52     3.13     3.13     3.14     3.14     3.76     3.76     3.76     3.76     4.36     4.36     4.36     4.36
+       0.58     1.49     1.49     1.49     1.48     2.02     2.02     2.02     2.02     2.77     2.77     2.77     2.77     3.59     3.59     3.60     3.60     4.46     4.46     4.46     4.46     5.32     5.32     5.32     5.33     6.17     6.17     6.17     6.17
+       0.78     2.37     2.36     2.36     2.35     2.94     2.94     2.94     2.94     3.88     3.88     3.88     3.88     4.98     4.98     4.98     4.98     6.13     6.13     6.13     6.13     7.29     7.29     7.29     7.29     8.43     8.43     8.43     8.43
+       1.02     3.66     3.65     3.64     3.63     4.19     4.19     4.18     4.18     5.33     5.33     5.33     5.32     6.72     6.72     6.72     6.72     8.20     8.20     8.21     8.21     9.72     9.72     9.72     9.72    11.20    11.20    11.20    11.20
+       1.30     5.52     5.50     5.48     5.47     5.87     5.86     5.85     5.84     7.18     7.18     7.18     7.17     8.89     8.89     8.89     8.89    10.76    10.76    10.76    10.76    12.68    12.68    12.68    12.68    14.57    14.57    14.57    14.57
+       1.62     8.15     8.12     8.09     8.06     8.11     8.10     8.08     8.07     9.56     9.55     9.55     9.54    11.61    11.61    11.60    11.60    13.91    13.91    13.91    13.91    16.29    16.29    16.29    16.29    18.64    18.64    18.64    18.64
+       1.99    11.78    11.73    11.69    11.65    11.09    11.06    11.04    11.02    12.60    12.58    12.57    12.56    15.00    14.99    14.98    14.98    17.77    17.76    17.76    17.76    20.67    20.66    20.66    20.66    23.54    23.53    23.53    23.53
+       2.41    16.70    16.64    16.57    16.50    14.99    14.95    14.92    14.88    16.46    16.43    16.41    16.39    19.20    19.19    19.17    19.16    22.48    22.47    22.46    22.45    25.95    25.94    25.94    25.93    29.40    29.39    29.39    29.38
+       2.87    23.26    23.16    23.07    22.97    20.05    20.00    19.95    19.90    21.33    21.29    21.26    21.23    24.39    24.37    24.35    24.33    28.21    28.20    28.18    28.17    32.31    32.29    32.28    32.27    36.40    36.39    36.38    36.37
+       3.39    31.86    31.72    31.58    31.45    26.56    26.48    26.41    26.33    27.44    27.39    27.35    27.30    30.79    30.75    30.72    30.69    35.17    35.14    35.12    35.10    39.94    39.92    39.90    39.88    44.73    44.72    44.70    44.68
+       3.95    42.98    42.79    42.60    42.41    34.82    34.71    34.61    34.50    35.04    34.98    34.91    34.84    38.60    38.55    38.50    38.46    43.55    43.52    43.48    43.45    49.04    49.02    48.99    48.96    54.59    54.57    54.55    54.52
+       4.57    57.22    56.96    56.70    56.44    45.19    45.05    44.90    44.76    44.41    44.31    44.22    44.12    48.06    47.99    47.93    47.86    53.58    53.53    53.48    53.44    59.84    59.80    59.76    59.72    66.20    66.16    66.13    66.09
+       5.23    75.40    75.05    74.70    74.35    58.18    57.98    57.78    57.58    55.89    55.76    55.63    55.50    59.48    59.39    59.30    59.20    65.55    65.48    65.41    65.34    72.59    72.53    72.48    72.42    79.81    79.76    79.71    79.66
+       5.95    98.71    98.24    97.78    97.31    74.43    74.17    73.90    73.63    69.96    69.79    69.61    69.43    73.24    73.12    72.99    72.86    79.78    79.69    79.59    79.49    87.62    87.55    87.47    87.39    95.74    95.67    95.61    95.54
+       6.72   128.58   127.98   127.38   126.78    94.82    94.46    94.10    93.74    87.19    86.95    86.71    86.46    89.80    89.62    89.44    89.26    96.70    96.56    96.42    96.29   105.33   105.21   105.10   104.99   114.37   114.27   114.17   114.07
+       7.55  -181.51  -172.34  -169.18  -165.76  -126.41  -125.90  -125.40  -124.90  -113.48  -113.03  -112.57  -112.12  -114.11  -113.72  -113.33  -112.93  -120.46  -120.11  -119.75  -119.40  -129.11  -128.79  -128.47  -128.15  -138.37  -138.06  -137.76  -137.45
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ final total staircase : -137.45 um at theta = 7.55 deg
+ carried by            : GLASS +0.92 um (0.5%),  PET +21.82 um (11.9%),  PSA -160.19 um (87.6%)
+ (equal-thickness rows -> a ~50/50 split means bending tilt, not interlayer shear)
+
+=======================================================================================================================================================================================================================================================================
+ Interlayer slip at x = +40.00 mm   [um, cumulative from bottom surface]
+=======================================================================================================================================================================================================================================================================
+ theta[deg]       L1       L2       L3       L4       L5       L6       L7       L8       L9      L10      L11      L12      L13      L14      L15      L16      L17      L18      L19      L20      L21      L22      L23      L24      L25      L26      L27      L28
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+       0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00
+       0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00
+       0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.00     0.01     0.01     0.01     0.01     0.01     0.01     0.01     0.01     0.01     0.01     0.01     0.01     0.01     0.01     0.01     0.01     0.02     0.02     0.02     0.02
+       0.01     0.01     0.01     0.01     0.01     0.02     0.02     0.02     0.02     0.03     0.03     0.03     0.03     0.04     0.04     0.04     0.04     0.05     0.05     0.05     0.05     0.06     0.06     0.06     0.06     0.08     0.08     0.08     0.08
+       0.02     0.03     0.03     0.03     0.03     0.07     0.07     0.07     0.07     0.10     0.10     0.10     0.10     0.14     0.14     0.14     0.14     0.18     0.18     0.18     0.18     0.21     0.21     0.21     0.21     0.25     0.25     0.25     0.25
+       0.06     0.08     0.08     0.08     0.08     0.16     0.16     0.16     0.16     0.24     0.24     0.24     0.24     0.32     0.32     0.32     0.32     0.41     0.41     0.41     0.41     0.49     0.49     0.49     0.49     0.57     0.57     0.57     0.57
+       0.11     0.16     0.16     0.16     0.16     0.31     0.31     0.31     0.31     0.46     0.46     0.46     0.46     0.62     0.62     0.62     0.62     0.78     0.78     0.78     0.78     0.95     0.95     0.95     0.95     1.10     1.10     1.10     1.10
+       0.18     0.31     0.31     0.31     0.31     0.54     0.54     0.54     0.54     0.79     0.79     0.80     0.80     1.06     1.06     1.07     1.07     1.34     1.34     1.34     1.34     1.61     1.61     1.61     1.61     1.88     1.88     1.88     1.88
+       0.28     0.54     0.54     0.54     0.54     0.87     0.87     0.87     0.87     1.27     1.27     1.27     1.27     1.68     1.68     1.68     1.69     2.11     2.11     2.11     2.11     2.53     2.54     2.54     2.54     2.95     2.95     2.95     2.95
+       0.41     0.91     0.91     0.91     0.91     1.35     1.35     1.35     1.35     1.91     1.91     1.91     1.91     2.51     2.51     2.51     2.52     3.13     3.13     3.14     3.14     3.76     3.76     3.76     3.76     4.36     4.36     4.36     4.36
+       0.58     1.49     1.49     1.49     1.48     2.02     2.02     2.02     2.02     2.77     2.77     2.77     2.77     3.59     3.59     3.60     3.60     4.46     4.46     4.46     4.46     5.32     5.32     5.32     5.33     6.17     6.17     6.17     6.17
+       0.78     2.37     2.36     2.36     2.35     2.94     2.94     2.94     2.94     3.88     3.88     3.88     3.88     4.98     4.98     4.98     4.98     6.13     6.13     6.13     6.13     7.29     7.29     7.29     7.29     8.43     8.43     8.43     8.43
+       1.02     3.66     3.65     3.64     3.63     4.19     4.19     4.18     4.18     5.33     5.33     5.33     5.32     6.72     6.72     6.72     6.72     8.20     8.20     8.21     8.21     9.72     9.72     9.72     9.72    11.20    11.20    11.20    11.20
+       1.30     5.52     5.50     5.48     5.47     5.87     5.86     5.85     5.84     7.18     7.18     7.18     7.17     8.89     8.89     8.89     8.89    10.76    10.76    10.76    10.76    12.68    12.68    12.68    12.68    14.57    14.57    14.57    14.57
+       1.62     8.15     8.12     8.09     8.06     8.11     8.10     8.08     8.07     9.56     9.55     9.55     9.54    11.61    11.61    11.60    11.60    13.91    13.91    13.91    13.91    16.29    16.29    16.29    16.29    18.64    18.64    18.64    18.64
+       1.99    11.78    11.73    11.69    11.65    11.09    11.06    11.04    11.02    12.60    12.58    12.57    12.56    15.00    14.99    14.98    14.98    17.77    17.76    17.76    17.76    20.67    20.66    20.66    20.66    23.54    23.53    23.53    23.53
+       2.41    16.70    16.64    16.57    16.50    14.99    14.95    14.92    14.88    16.46    16.43    16.41    16.39    19.20    19.19    19.17    19.16    22.48    22.47    22.46    22.45    25.95    25.94    25.94    25.93    29.40    29.39    29.39    29.38
+       2.87    23.26    23.16    23.07    22.97    20.05    20.00    19.95    19.90    21.33    21.29    21.26    21.23    24.39    24.37    24.35    24.33    28.21    28.20    28.18    28.17    32.31    32.29    32.28    32.27    36.40    36.39    36.38    36.37
+       3.39    31.86    31.72    31.58    31.45    26.56    26.48    26.41    26.33    27.44    27.39    27.35    27.30    30.79    30.75    30.72    30.69    35.17    35.14    35.12    35.10    39.94    39.92    39.90    39.88    44.73    44.72    44.70    44.68
+       3.95    42.98    42.79    42.60    42.41    34.82    34.71    34.61    34.50    35.04    34.98    34.91    34.84    38.60    38.55    38.50    38.46    43.55    43.52    43.48    43.45    49.04    49.02    48.99    48.96    54.59    54.57    54.55    54.52
+       4.57    57.22    56.96    56.70    56.44    45.19    45.05    44.90    44.76    44.41    44.31    44.22    44.12    48.06    47.99    47.93    47.86    53.58    53.53    53.48    53.44    59.84    59.80    59.76    59.72    66.20    66.16    66.13    66.09
+       5.23    75.40    75.05    74.70    74.35    58.18    57.98    57.78    57.58    55.89    55.76    55.63    55.50    59.48    59.39    59.30    59.20    65.55    65.48    65.41    65.34    72.59    72.53    72.48    72.42    79.81    79.76    79.71    79.66
+       5.95    98.71    98.24    97.78    97.31    74.43    74.17    73.90    73.63    69.96    69.79    69.61    69.43    73.24    73.12    72.99    72.86    79.78    79.69    79.59    79.49    87.62    87.55    87.47    87.39    95.74    95.67    95.61    95.54
+       6.72   128.58   127.98   127.38   126.78    94.82    94.46    94.10    93.74    87.19    86.95    86.71    86.46    89.80    89.62    89.44    89.27    96.70    96.56    96.42    96.29   105.33   105.21   105.10   104.99   114.37   114.27   114.17   114.07
+       7.55  -159.46  -171.19  -153.13  -153.13  -113.74  -111.41  -109.09  -106.77   -94.65   -92.61   -90.57   -88.53   -89.47   -87.58   -85.68   -83.79   -90.02   -88.23   -86.43   -84.64   -92.89   -91.16   -89.43   -87.70   -96.35   -94.66   -92.98   -91.29
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ final total staircase : -91.29 um at theta = 7.55 deg
+ carried by            : GLASS +5.06 um (2.9%),  PET +35.65 um (20.6%),  PSA -132.00 um (76.4%)
+ (equal-thickness rows -> a ~50/50 split means bending tilt, not interlayer shear)
+
+Saving final shape visualization to: D:\PythonCodeStudy\WHT_DispFoldSolver\examples\ex12_final_folding_shape.png
+[PNG] Deformed shape saved: D:\PythonCodeStudy\WHT_DispFoldSolver\examples\ex12_final_folding_shape.png
+Done.

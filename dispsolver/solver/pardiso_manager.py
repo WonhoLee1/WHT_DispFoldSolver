@@ -213,7 +213,32 @@ class PardisoNonlinearSolver:
         )
 
         if self._cached_pattern != pattern_key:
-            # Sparsity pattern changed or first solve: Phase 11 (Symbolic analysis)
+            # Sparsity pattern changed (not just values) or first solve.
+            # Release the PREVIOUS pattern's internal MKL analysis/
+            # factorization structures before allocating new ones for the
+            # new pattern -- reusing the same persistent `pt` handle
+            # across two structurally different systems without an
+            # intervening release is a known way to leak native MKL
+            # memory that Python's own gc.collect() has no visibility
+            # into (it isn't Python-heap memory). Only fires on a real
+            # pattern change (e.g. a contact active-set update adding/
+            # removing nonzeros), not on every Newton iteration -- most
+            # iterations keep the same pattern and hit Phase 23 (cheap
+            # reuse) below instead.
+            if self._cached_pattern is not None:
+                try:
+                    # everything=True (Pardiso phase -1): the upcoming
+                    # Phase 11 below fully redoes the symbolic analysis
+                    # anyway, so there's no reuse value in a partial
+                    # release (everything=False only frees the LU
+                    # factorization, phase 0, and would leave the OLD
+                    # pattern's now-invalid analysis/reordering structures
+                    # behind) -- full release is both simpler and correct
+                    # here.
+                    self._solver.free_memory(everything=True)
+                except Exception:
+                    pass
+            # Phase 11 (Symbolic analysis)
             self._solver.set_phase(11)
             self._solver._call_pardiso(A_solve, b_fortran)
             self._cached_pattern = pattern_key

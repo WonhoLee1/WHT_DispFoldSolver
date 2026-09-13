@@ -81,13 +81,31 @@ class Tie(Constraint):
     """Surface-to-surface or node-to-surface tie constraint (*TIE in Abaqus).
     
     Fuses two surfaces/sets together so that relative displacement is zero.
+    Follows modern Abaqus/CAE standard terminology: 'main' and 'secondary'
+    (with full backward compatibility for legacy 'master' and 'slave').
     """
-    master: Union[str, Any]  # Master surface name or GeneralSet
-    slave: Union[str, Any]   # Slave surface name or GeneralSet
+    main: Optional[Union[str, Any]] = None
+    secondary: Optional[Union[str, Any]] = None
+    master: Optional[Union[str, Any]] = None
+    slave: Optional[Union[str, Any]] = None
     position_tolerance: Optional[float] = None
     adjust: bool = True
     tie_rotations: bool = False
     constraint_enforcement: str = "SURFACE_TO_SURFACE"  # "NODE_TO_SURFACE" or "SURFACE_TO_SURFACE"
+
+    def __post_init__(self):
+        if self.main is None and self.master is not None:
+            self.main = self.master
+        elif self.master is None and self.main is not None:
+            self.master = self.main
+
+        if self.secondary is None and self.slave is not None:
+            self.secondary = self.slave
+        elif self.slave is None and self.secondary is not None:
+            self.slave = self.secondary
+
+        if self.main is None or self.secondary is None:
+            raise ValueError("Tie constraint requires both 'main' (or 'master') and 'secondary' (or 'slave').")
 
 
 @dataclass

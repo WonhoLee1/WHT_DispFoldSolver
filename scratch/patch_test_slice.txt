@@ -1,0 +1,9 @@
+
+Failed benchmarks:
+  - Patch Test (Element Level): Single Q4 element (2.0��1.0), ��=1.0e-03. Strain: ��_xx=1.000000e-03, ��_yy=-4.285714e-04. Stress ��_xx=1.0989. U_theory=1.098901e-03. NumPy strain error: 0.00e+00 (machine precision).
+  - 2-Point Bending (Gulati Elastica): Substrate t=0.4mm, plate gap D=80.0mm, E=72300.0MPa. Gulati 2-point bending peak stress ��_max=457.44 MPa.
+  - Convergence Cantilever Mesh (Q4 B-bar): ny= 4 nx= 40: ��=3.732733e-03 err(vs ny=12)=2.41e-02
+ny= 6 nx= 60: ��=3.660667e-03 err(vs ny=12)=4.37e-03
+ny= 8 nx= 80: ��=3.648666e-03 err(vs ny=12)=1.07e-03
+
+[exited with code 0]
