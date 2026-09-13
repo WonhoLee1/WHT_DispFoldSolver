@@ -51,3 +51,15 @@ examples/*_u.npy
 # Solver result files (derived; regenerate by re-running the example)
 examples/*_result.pkl
 examples/*.vtkhdf
+
+# Debug / temporary large binary files (dbg*.pkl, crash_state.npz 등)
+examples/dbg*.pkl
+examples/dbg*.npz
+examples/*.png
+examples/*.jpg
+examples/results/*.pkl
+scratch/*.npz
+scratch/*.pkl
+scratch/*.log
+scratch/*.png
+scratch/*.jpg
