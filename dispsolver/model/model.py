@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 from typing import Dict, Optional, Any, Union
+import numpy as np
 
 from dispsolver.model.part import Part
 from dispsolver.model.material import Material
@@ -59,6 +60,12 @@ class Model:
         m = Material(name=str(name), mat_type=mat_type)
         self.materials[str(name)] = m
         return m
+
+    def HomogeneousSolidSection(self, name: str, material: str, thickness: float = 1.0) -> SolidSection:
+        """Create and register a SolidSection in this Model (Abaqus parity)."""
+        sec = SolidSection(name=str(name), material_name=str(material), thickness=float(thickness))
+        self.sections[str(name)] = sec
+        return sec
 
     def SectionControls(
         self,
@@ -261,6 +268,64 @@ class Model:
         step = self.steps.get(str(createStepName), self.initial_step)
         step.add_boundary_condition(bc)
         return bc
+
+    def FieldOutputRequest(
+        self,
+        name: str,
+        createStepName: str,
+        variables: Optional[Sequence[str]] = None,
+        frequency: Optional[int] = 1,
+        num_intervals: Optional[int] = None,
+        time_interval: Optional[float] = None,
+        time_points: Optional[Sequence[float]] = None,
+        exact_time_points: bool = True,
+        position: str = "INTEGRATION_POINTS",
+        region: Optional[str] = None,
+        modes: str = "ALL",
+        condition: Optional[Any] = None
+    ) -> Any:
+        """Create and assign a FieldOutputRequest to a Step (*OUTPUT, FIELD in Abaqus)."""
+        step = self.steps.get(str(createStepName), None)
+        if step is None:
+            raise KeyError(f"Step '{createStepName}' does not exist in model '{self.name}'.")
+        return step.FieldOutputRequest(
+            name=name,
+            variables=variables,
+            frequency=frequency,
+            num_intervals=num_intervals,
+            time_interval=time_interval,
+            time_points=time_points,
+            exact_time_points=exact_time_points,
+            position=position,
+            region=region,
+            modes=modes,
+            condition=condition
+        )
+
+    def HistoryOutputRequest(
+        self,
+        name: str,
+        createStepName: str,
+        variables: Optional[Sequence[str]] = None,
+        frequency: Optional[int] = 1,
+        num_intervals: Optional[int] = None,
+        time_interval: Optional[float] = None,
+        region: Optional[str] = None,
+        section_name: Optional[str] = None
+    ) -> Any:
+        """Create and assign a HistoryOutputRequest to a Step (*OUTPUT, HISTORY in Abaqus)."""
+        step = self.steps.get(str(createStepName), None)
+        if step is None:
+            raise KeyError(f"Step '{createStepName}' does not exist in model '{self.name}'.")
+        return step.HistoryOutputRequest(
+            name=name,
+            variables=variables,
+            frequency=frequency,
+            num_intervals=num_intervals,
+            time_interval=time_interval,
+            region=region,
+            section_name=section_name
+        )
 
     def Sensor(
         self,
@@ -553,6 +618,27 @@ class Model:
         """Flatten root assembly into global solver structures."""
         return self.root_assembly.build_solver_system(self)
 
+    def create_solver(self, step_name: Optional[str] = None):
+        """Create and configure a production DynamicSolver instance, auto-detecting 2D vs 3D."""
+        sys = self.build_solver_system()
+        is_3d = False
+        if sys.coords.shape[1] == 3 and np.any(np.abs(sys.coords[:, 2]) > 1e-12):
+            is_3d = True
+        else:
+            for part in self.parts.values():
+                for elem in part.elements.values():
+                    etype = getattr(elem, "elem_type", "")
+                    if etype.startswith("C3D"):
+                        is_3d = True
+                        break
+                if is_3d:
+                    break
+
+        if is_3d:
+            return self.create_solver3d(step_name=step_name)
+        else:
+            return self.create_solver2d(step_name=step_name)
+
     def create_solver3d(self, step_name: Optional[str] = None):
         """Create and configure a production DynamicSolver3D instance from this Model."""
         from dispsolver.solver3d.dynamic3d import DynamicSolver3D
@@ -628,3 +714,61 @@ class Model:
                                 solver.elem_stress_init[idx, :, :] = s_vec
                             
         return solver, sys
+
+    def create_solver2d(self, step_name: Optional[str] = None):
+        """Create and configure a production DynamicSolver2D instance from this Model."""
+        from dispsolver.solver2d.dynamic2d import DynamicSolver2D
+        sys = self.build_solver_system()
+        mesh2d = sys.to_mesh2d()
+        
+        solver = DynamicSolver2D(mesh=mesh2d, materials=sys.materials_by_pid)
+        
+        # If a step is provided, apply its boundary conditions
+        if step_name is not None and step_name in self.steps:
+            st = self.steps[step_name]
+            for entry in st.boundary_conditions.values():
+                if entry.is_active:
+                    bc = entry.entity
+                    if bc.region in sys.global_nsets:
+                        global_node_indices = sys.global_nsets[bc.region]
+                        inv_nid = {idx: g for g, idx in sys.nid_to_idx.items()}
+                        for node_idx in global_node_indices:
+                            gid = inv_nid[node_idx]
+                            u1_val = getattr(bc, "u1", None)
+                            u2_val = getattr(bc, "u2", None)
+                            if u1_val is not None:
+                                solver.fix_dof(gid, 0, float(u1_val))
+                            if u2_val is not None:
+                                solver.fix_dof(gid, 1, float(u2_val))
+
+        # Apply Predefined Fields (Initial Stress/SDV)
+        if len(sys.predefined_fields) > 0:
+            for pf in sys.predefined_fields:
+                if pf.field_type.upper() == "STRESS":
+                    el_indices = sys.global_elsets.get(pf.region, [])
+                    for idx in el_indices:
+                        gid = idx + 1
+                        states = solver.element_states.get(gid)
+                        if states:
+                            for q, state in enumerate(states):
+                                s_vec = np.zeros(3, dtype=np.float64)
+                                if callable(pf.values):
+                                    conn = sys.elem_conn_0based[idx]
+                                    coords = sys.coords[conn]
+                                    cx, cy = np.mean(coords[:, :2], axis=0)
+                                    val = pf.values(cx, cy)
+                                    s_vec[:] = val
+                                elif isinstance(pf.values, (list, np.ndarray, tuple)):
+                                    s_vec[:] = pf.values[:3]
+                                else:
+                                    p = float(pf.values)
+                                    s_vec[0] = p
+                                    s_vec[1] = p
+                                    s_vec[2] = 0.0
+                                state.stress_initial[:] = s_vec
+                            
+                            if hasattr(solver, "elem_stress_init") and solver.elem_stress_init is not None:
+                                solver.elem_stress_init[idx, :, :] = s_vec
+                            
+        return solver, sys
+

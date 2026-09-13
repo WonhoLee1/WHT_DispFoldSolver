@@ -444,17 +444,42 @@ user's deferral direction.
   side projects onto which need an explicit, documented choice, not an
   implicit one.
 - Add the active-set-stability convergence check and contact damping
-  from §8 — Phase 1's simpler geometry (rigid plane, single well-
-  separated contact patch) is much less likely to expose chattering than
-  a real deformable-vs-deformable case, so this is a reasonable point to
-  add real robustness machinery rather than before it's needed.
-- Acceptance target: TBD when reached — no currently-reviewed benchmark
-  from the static-analysis list (`dev_log/static_analysis_benchmark_design_20260913.md`)
-  is a clean deformable-vs-deformable frictionless case; would need a
-  fresh literature check at that time, or an in-house-designed test
-  (two elastic blocks compressed together, checked against a simpler
-  closed-form or a mesh-refinement convergence study rather than an
-  external reference).
+  from §8. **Correction, 2026-09-13 (`dev_log/hertz_contact_benchmark_20260913.md`):**
+  the line above originally assumed Phase 1's rigid-plane/single-patch
+  geometry was "much less likely to expose chattering" than deformable-
+  vs-deformable, and that this robustness work could wait. That is now
+  falsified by direct measurement: the Hertz curved-block benchmark
+  (rigid plane, single contact patch, exactly this "simpler" case)
+  reliably DIVERGES the moment growing contact requires a new node
+  column to activate, independent of load-step size (bisection swept
+  1/128 to 1/8192, same failure point every time) — the "residual grows
+  monotonically instead of decreasing" pathology `tests/test_contact_phase1.py`
+  already named, now reproduced quantitatively. This is NOT the
+  chattering failure mode §8 was written to prevent (chattering is an
+  active set flip-flopping between iterations; this is a single new
+  activation event that the line search cannot get past at all) — it is
+  a DIFFERENT, apparently more basic robustness gap, present even in the
+  supposedly-easy case. **Re-prioritize accordingly**: the active-set
+  handling in §8 needs to address single-activation-event line-search
+  failure BEFORE (or at least alongside) multi-body chattering, since the
+  simpler case already fails without it.
+- Acceptance target: **`benchmark_element/benchmark_3d_contact.py`'s
+  Hertz curved-block benchmark (see `dev_log/hertz_contact_benchmark_20260913.md`)
+  is now the concrete Phase 1-carried-over regression to re-run first** —
+  it should reach full target displacement with multiple contact columns
+  active and converged (not diverge on column activation), and its
+  measured `ratio_b_fem_to_ref` should be evaluated at a genuinely
+  converged, deliberately-chosen load (not an accidental mid-ramp stall
+  point as in the current characterization) before being trusted as a
+  quantitative Hertz agreement number. A separate deformable-vs-
+  deformable acceptance target is still TBD — no currently-reviewed
+  benchmark from the static-analysis list
+  (`dev_log/static_analysis_benchmark_design_20260913.md`) is a clean
+  deformable-vs-deformable frictionless case; would need a fresh
+  literature check at that time, or an in-house-designed test (two
+  elastic blocks compressed together, checked against a simpler closed-
+  form or a mesh-refinement convergence study rather than an external
+  reference).
 
 ### Phase 3 — Frictionless-to-friction
 - Isotropic Coulomb friction, penalty enforcement in the tangent plane

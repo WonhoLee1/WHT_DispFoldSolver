@@ -260,12 +260,51 @@ A comprehensive suite of 11 commercial-grade 3D solid finite elements, implement
 | **`C3D10M`** | 10 / 4 | Modified quadratic tet with volumetric B-bar, shear HG stabilization, positive contact traction | Hibbitt, Karlsson & Sorensen (HKS / Abaqus Development Team, 1999); A. Czekanski, S. A. Meguid (Univ. of Toronto) | Abaqus Theory Guide §3.2.6 (1999) / Czekanski & Meguid (2001), *FEAD* | Abaqus C3D10M / LS-DYNA ELFORM 17 |
 | **`C3D6`** | 6 / 6 | Linear triangular prism / wedge element with 6-point numerical integration | Olgierd C. Zienkiewicz, Bruce M. Irons (Swansea Univ.); Klaus-Jurgen Bathe (MIT) | Zienkiewicz, Irons et al. (1969) / Bathe (1996) | Abaqus C3D6 / Ansys SOLID186 (Wedge) / LS-DYNA ELFORM 15 |
 
+### 2.3 2D Solid Elements Library (`dispsolver/element2d/`, `dispsolver/solver2d/`)
+
+A comprehensive suite of 10 commercial-grade Abaqus-compatible 2D solid plane-strain finite elements implemented with high-performance Numba parallel kernels in `dispsolver/element2d/` and assembled via `dispsolver/solver2d/dynamic2d.py`. Includes Flexible Display multilayer composite 2-point bending benchmark (`benchmark_element/two_point_bending_multilayer_theory.py`, `figures_2d.py`).
+Detailed verification matrices, rank tests, and benchmark results are tracked in [`dev_log/benchmark_2d_elements_20260913.md`](file:///D:/PythonCodeStudy/WHT_DispFoldSolver/dev_log/benchmark_2d_elements_20260913.md) and [`dev_log/element2d_theoretical_code_deep_analysis_20260913.md`](file:///D:/PythonCodeStudy/WHT_DispFoldSolver/dev_log/element2d_theoretical_code_deep_analysis_20260913.md).
+**Verified state**: All 10 elements achieve **100% Rank Sufficiency** (exactly 3 rigid-body modes, 0 spurious modes), **machine-precision tangent consistency** (Frobenius error $\sim 10^{-14}$), and **Irons 2D Patch Test** ($10^{-19} \sim 10^{-20}$ machine precision).
+
+| Element | Nodes / GPs | Formulation & Mechanics | Original Inventors & Literature | Commercial CAE Equivalents |
+|:---|:---:|:---|:---|:---|
+| **`CPE4`** | 4 / 4 | Standard 4-node quad, full 2×2 Gauss quadrature | Irons & Zienkiewicz (1968) | Abaqus CPE4 / Ansys PLANE182 (Full) |
+| **`CPE4I`** | 4 / 4 | 4-mode Enhanced Assumed Strain (EAS), internal static condensation | Simo & Rifai (1990), *IJNME* | Abaqus CPE4I / Ansys Incompatible Modes |
+| **`CPE4R`** | 4 / 1 | 1-point reduced integration with orthogonal Flanagan-Belytschko hourglass control | Flanagan & Belytschko (1981), *IJNME* | Abaqus CPE4R / LS-DYNA 2D Shell ELFORM 1 |
+| **`CPE4H`** | 4 / 4 | Mixed Hellinger-Reissner $u-p$ variational formulation for incompressibility | Herrmann (1965) / Simo, Taylor & Pister (1985) | Abaqus CPE4H / Ansys Mixed u-P PLANE182 |
+| **`CPE4_FBAR`** | 4 / 4 | Multiplicative Centroid $F$-bar volume projection $\bar{F} = (J_0/J)^{1/2} F$ | de Souza Neto, Peric, Owen (1996), *IJSS* | Abaqus CPE4 (F-bar) |
+| **`CPE4_CR`** | 4 / 4 | Polar decomposition co-rotational frame with SectionControls distortion barrier | Belytschko & Hsieh (1973) / Felippa & Haugen (2005) | Abaqus CPE4 with *SECTION CONTROLS |
+| **`CPE3`** | 3 / 1 | Linear 3-node Constant Strain Triangle (CST) | Turner, Clough, Martin & Topp (1956) | Abaqus CPE3 / Ansys PLANE182 (Tri) |
+| **`CPE6`** | 6 / 3 | Standard 6-node quadratic triangle, 3-point area Gauss integration | Argyris (1965) / Zienkiewicz (1971) | Abaqus CPE6 / Ansys PLANE183 (Tri) |
+| **`CPE6M`** | 6 / 3 | Modified quadratic triangle with volumetric B-bar and shear HG stabilization | Abaqus Theory Guide §3.2.6 / Czekanski & Meguid (2001) | Abaqus CPE6M |
+| **`CPE8`** | 8 / 9 | Serendipity quadratic 8-node quad, 3×3 Gauss integration | Zienkiewicz et al. (1970) | Abaqus CPE8 / Ansys PLANE183 (Quad) |
+
+### 2.4 Flexible Display 180° Pure Bending Roll-Up Benchmark & Nonlinear Finite Element Know-How
+
+A comprehensive 10-candidate benchmark (`benchmark_element/benchmark_pure_moment_rollup.py`, `dev_log/benchmark_pure_moment_rollup_20260913.md`) testing a 40 mm × 0.21 mm 5-layer composite display panel (PET-PSA-PET-PSA-PET) transitioning from flat to a complete 180° semicircular arc ($R_{\text{theory}} = 12.732\,\text{mm}$) under end kinematic pure moment rotation. 3D interactive visualization and high-resolution rendering are implemented in `benchmark_element/view_rollup_pyvista.py`.
+
+#### Four Core Engineering Mechanics Findings:
+1. **Kinematic Silhouette vs. Mechanics Moments**:
+   Under displacement-controlled roll-up, severely locked formulations (`2D-Base`, `2D-CR`, `3D-Base`, `3D-CR`) still produce visually "perfect" 180° circular arcs ($<0.1\%$ shape error). **Never judge locking from silhouette alone**; reaction moment ($M \approx 0.2317\,\text{N}\cdot\text{mm}$) must be evaluated. Volumetric locking spikes reaction moments by $7.5\times$ ($1.738\,\text{N}\cdot\text{mm}$).
+2. **Co-Rotational (CR) Outer Hull × Local TL/u-P Hybrid Requirement**:
+   The CR framework filters large rigid body rotations ($180^\circ$) but does not reduce internal strain. In the incompressible PSA layer ($t=30\,\mu\text{m}$, $\nu=0.499$), interlayer shear slip reaches $210\,\mu\text{m}$ ($\gamma_{xz} \approx 700\%$). Therefore, the CR outer hull **must be coupled locally** with Herrmann $u-p$ mixed formulations (`CPE4H_CR`, `C3D8H_CR`) or $F$-bar Total Lagrangian to eliminate volumetric locking.
+3. **Deformed Current Coordinate System for Reaction Moments**:
+   Moment arms $\mathbf{r} = \mathbf{x} - \mathbf{x}_c$ in `compute_section_reactions()` must use the **deformed current coordinates** $\mathbf{x} = \mathbf{X} + \mathbf{u}$, not the initial reference coordinates $\mathbf{X}$. Only then does action-reaction equilibrium $|M_{\text{root}}| = |M_{\text{tip}}| = M_{\text{theory}}$ hold exactly.
+4. **Recommended Production Formulations**:
+   - **2D Recommended**: `2D-Opt1` (`CPE4I_CR + CPE4H_CR`) — $M_{\text{root}} = -0.2307\,\text{N}\cdot\text{mm}$ ($-0.4\%$ error), slip $209.9\,\mu\text{m}$.
+   - **3D Recommended**: `3D-Opt1` (`C3D8I_CR + C3D8H_CR`) — $M_{\text{root}} = +0.2307\,\text{N}\cdot\text{mm}$ ($-0.4\%$ error, 6-digit match with 2D-Opt1), slip $209.9\,\mu\text{m}$.
+   - **3D Fast Alternative**: `3D-Opt2-H` (`C3D8R_CR + C3D8H_CR`) — $M_{\text{root}} = +0.2544\,\text{N}\cdot\text{mm}$ ($+9.8\%$ error), slip $209.9\,\mu\text{m}$.
+
 ---
 
 ## 3. How to run / verify
 
 ```bash
 pytest tests/test_convergence_fixes.py tests/test_rigid_plate_tie.py -q
+pytest tests/test_2d_elements.py -v                   # 2D element rank, tangent, and multilayer 2-point bending unit tests (25 tests)
+python -u benchmark_element/benchmark_2d_elements.py  # 10 2D elements rank, tangent, and speed benchmark
+python -u benchmark_element/benchmark_2d_mechanics.py # 10 2D elements patch test, cantilever bending, incompressibility, and multilayer 2-point bending
+
 python -u examples/ex03_corotational_v4.py     # simplified hinge-only, 90 deg, ~50 steps, ~a few min
 python -u examples/ex11_rigid_plate_display_fold.py   # true plate+tie architecture, not yet re-validated with corotational element
 python -u benchmark_element/benchmark_3d_elements.py  # 11 3D elements rank, tangent, and performance benchmark

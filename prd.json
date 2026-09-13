@@ -1,0 +1,65 @@
+{
+  "title": "Abaqus benchmark-driven EAS element validation (Cook's membrane + nlgeo cantilever)",
+  "evidence": "dev_log/eas_frame_consistency_benchmarks_20260910.md",
+  "stories": [
+    {
+      "id": "US-001",
+      "title": "Confirm the _ALPHA_TOL fix resolves the cantilever benchmark (JAX)",
+      "passes": true,
+      "acceptanceCriteria": [
+        "scratch/bmk_nlgeo_cantilever.py run_one(10,'Q4_EAS',elem_jit='jax') and run_one(20,'Q4_EAS',elem_jit='jax') both return a finite uy (no cutback-exhaustion failure)",
+        "Q4_EAS uy at nx=20 (fine mesh) is within 10% of the exact Bisshopp-Drucker elastica y_tip",
+        "Q4_COROTATIONAL uy at nx=10 (coarse) is noticeably stiffer (smaller uy) than Q4_EAS at nx=10, reproducing the doc's CPS4-vs-CPS4I qualitative finding"
+      ],
+      "result": "PASS, but the _ALPHA_TOL/_da tolerance fix was NOT sufficient on its own. Root cause was a separate, deeper defect (dev_log B1): q4_eas_jax.py never applied the AGENTS.md 4.14 finding-F4 work-conjugacy push-forward, so under UL its K_aa was not the Jacobian of its own f_alpha -- measured 97.6% relative error vs a finite-difference Jacobian on the real failing element (39 deg accumulated reference rotation), with the true Jacobian 151% asymmetric (complex eigenvalues). Exactly 0 error at F_n=I, which is why every TL/axis-aligned test passed. Fixed by pushing BOTH stress and tangent onto config n. After: K_aa vs FD = 4.6e-10, local Newton quadratic in 2 iterations. nx=10 uy=7.7799 (-4.04%), nx=20 uy=8.0702 (-0.46%), both 0 cutbacks (before: FAILED at t=0.2118/10 cutbacks and t=0.1587/15 cutbacks). Q4_COROTATIONAL -83.10% at nx=10 vs Q4_EAS -4.04% -- CPS4-vs-CPS4I reproduced. The previously reported 'chaotic call-order sensitivity' was not an XLA bug: with a 97.6%-wrong Jacobian the iteration is genuinely chaotic and was exiting on a knife edge just under _ALPHA_CONV_TOL."
+    },
+    {
+      "id": "US-002",
+      "title": "Check whether q4_eas_numba.py / q4_eas.py need the same tolerance-class fix",
+      "passes": true,
+      "acceptanceCriteria": [
+        "scratch/bmk_nlgeo_cantilever.py run_one(10,'Q4_EAS',elem_jit='numba') and (20,...) both succeed, or a root-caused reason is documented for why numba needs a different/no fix",
+        "If a fix is needed, it is applied to q4_eas_numba.py (and q4_eas.py if its sequential fallback is actually exercised) with the same dimensionless ||d(alpha)|| criterion, not a re-guess of a new absolute tolerance"
+      ],
+      "result": "PASS, no fix needed, root-caused by direct instrumentation rather than inference. Wrapping all three EAS entry points and running the cantilever with elem_jit='numba' gives kernel call counts {numba_batch: 0, numpy_seq: 0, jax_vmap: 1}: dynamic.py:4092 gates the Numba EAS batch on `not self.ul_mode`, so under NLGEOM it is unreachable and elem_jit='numba' silently runs the JAX kernel -- which is why the numba and jax rows are identical to the last digit (both uy=7.7799, 0 cutbacks). q4_eas.py's sequential fallback is likewise never called (it only runs on JAX-vmap NaN, which no longer occurs). Flagged but deliberately not fixed: q4_eas.py pairs a config-n weight with a config-0 strain measure (missing 1/det(F_n)), an F4-class residue; its local Newton is self-consistent and the path is dead in every current model."
+    },
+    {
+      "id": "US-003",
+      "title": "Cook's membrane full sweep matches the digitized official curve",
+      "passes": true,
+      "acceptanceCriteria": [
+        "scratch/bmk_cook_membrane.py full sweep (n=4/8/16/32, Q4_VISCO_SIMO + CPE4I, jax + numba) completes without FAILED rows",
+        "CPE4I (EAS) results track the digitized CPE4IH reference curve (scratch/abaqus_bmk_docs/cook2d_convergence.png) within roughly 10% at every mesh density, and are less locked (closer to converged) than Q4_VISCO_SIMO at n=4 coarse mesh, matching the doc's own CPE4H-vs-CPE4IH finding"
+      ],
+      "result": "PASS. Two independent defects, both root-caused with a finite-difference tangent harness before any code change. (B2) q4_visco_eas_jax.py _residuals: f_u contracted the pushed S_n while f_a contracted the raw S_v, and B_L was built from the compatible rather than the enhanced gradient -- so K_au = K_ua^T, which the static condensation ASSUMES (and whose comment claimed 'verified to 1.8e-15'), was false by 4.0e-2 in TL and 7.8e-2 in UL, leaving the condensed tangent 3.0e-2 / 1.28 away from a finite-difference df_e/du. That is what collapsed the GLOBAL Newton line search while the element-local Newton still reported convergence. (B4) q4_visco_hybrid_simo_numba.py used a fixed absolute FD step h=1e-6, so its tangent error scaled as h/L_elem and doubled every refinement (9.3e-8/1.7e-7/3.3e-7/6.5e-7 at n=4/8/16/32, matching the predicted h/L to within 3%); replaced with the Dennis-Schnabel sqrt(eps)*max(|u_j|, L_elem) per-column step, now mesh-invariant at 2.4-2.8e-8. CPE4I after: n=4 -3.48%, n=8 -0.77%, n=16 -0.03%, n=32 +0.10%, all 0 cutbacks, jax and numba identical (before: every CPE4I row FAILED, n=4 stalling at t=0.0373). Q4_VISCO_SIMO numba n=32 went from FAILED (t=0.0000, 16 cutbacks) to 6.9167 (+0.24%, 1 cutback) and n=16 from 1 cutback to 0. Less-locked ordering holds at n=4: CPE4I 6.3224 vs Q4_VISCO_SIMO 6.2053 against a converged ~6.90. Also fixed while in the file (B3): the CPE4H/CPE4IH hybrid u-p path had the same split plus r_p integrated on config n, giving CPE4IH 5.4e-1 asymmetry and an 18%-wrong condensed tangent under UL -- the element the display fold uses for its PSA layers. All four hybrid configurations now exact to machine precision."
+    },
+    {
+      "id": "US-004",
+      "title": "Full regression: no new failures",
+      "passes": true,
+      "acceptanceCriteria": [
+        "pytest tests/test_cpe4_element.py tests/test_ul_tl_consistency.py tests/test_cpe4rh_patch.py tests/test_eas_jax_verify.py -q all pass",
+        "Full `pytest tests/ -q` shows no new failures beyond the established baseline (2 failed/265 passed: test_abaqus_config.py::test_config_presets, test_prescribed_skip.py)",
+        "`python -m verification.run_all` stays at its documented baseline (no new failures)"
+      ],
+      "result": "PASS. Targeted subset 54 passed. Full suite 3 failed / 284 passed / 4 skipped / 4 xfailed: the two documented baseline failures plus test_3d_numba.py::test_3d_dod_multimaterial_assembly, which is NOT from this work -- commit 96f8adb (concurrent 3D-solids work, landed mid-session) changed DynamicSolver3D.assemble_system to return a 3-tuple (K, f_int, has_error) while tests/test_3d_numba.py:162 still unpacks 2. Every file involved is 3D and untouched here; left for that change's owner. The prd.json baseline of '2 failed/265 passed' is superseded by those same mid-session commits, which also added tests. verification.run_all: 12/14 passed, byte-identical to the baseline committed at HEAD -- git show HEAD:verification/results/verification_report.md also reads '12 passed, 2 failed' with the same two benchmarks, and the Q4 B-bar order_fit matches to all 16 digits (4.471560358967913). No new failures, no changed values."
+    },
+    {
+      "id": "US-005",
+      "title": "Document + cleanup",
+      "passes": true,
+      "acceptanceCriteria": [
+        "A dev_log entry documents the _ALPHA_TOL/_da bug, the fix, and before/after benchmark numbers in table form",
+        "Temporary DEBUG_DU_PRINT / DEBUG_EAS_DUMP env-gated debug code removed from dispsolver/solver/dynamic.py",
+        "DISPFOLD_CACHE_VERSION bumped in dispsolver/_jit_cache.py IF any numba kernel constant changed (US-002); left alone otherwise with a note why"
+      ],
+      "result": "PASS. dev_log/eas_frame_consistency_benchmarks_20260910.md documents all four defects (B1-B4) with before/after tables, the finite-difference evidence for each, the two full benchmark tables, the regression results, and the generalizable lesson extending AGENTS.md 4.14. DEBUG_DU_PRINT / DEBUG_EAS_DUMP / DEBUG_VISCO_EAS_DUMP removed from dispsolver/solver/dynamic.py (grep-verified zero occurrences repo-wide). DISPFOLD_CACHE_VERSION bumped v5 -> v6: required after all, not for US-002 (no numba EAS change was needed) but for US-003's B4 fix, which changed a @njit(cache=True) kernel's differencing and added a module-level _SQRT_EPS constant."
+    }
+  ],
+  "openItems": [
+    "test_3d_numba.py::test_3d_dod_multimaterial_assembly is red from commit 96f8adb's 3-tuple assemble_system change (concurrent 3D-solids work). Not touched here; needs the owner of that change to update the test or restore the 2-tuple.",
+    "q4_visco_eas_numba.py (Numba mirror of CPE4I) was NOT ported onto B2's formulation. It is unreachable today (dynamic.py:3765 gates it behind enable_new_numba_elements, default False everywhere in dispsolver/), so the two backends currently agree only because numba falls through to JAX. Anyone enabling that flag must port B2 first.",
+    "Four sibling Numba kernels still carry B4's fixed absolute h=1e-6 FD step: q4_plastic_numba.py, q4_visco_eas_numba.py, q4_visco_hybrid_reduced_numba.py, q4_visco_hybrid_up_numba.py. None is exercised by these two benchmarks, so none was changed without a measurement; the scaling law and fix pattern in the dev_log make it a mechanical follow-up.",
+    "q4_eas.py (NumPy EAS) pairs a config-n integration weight with a config-0 strain measure -- an F4-class residue. Its element-local Newton is self-consistent and the path is dead in every current model, so it was flagged rather than changed."
+  ]
+}

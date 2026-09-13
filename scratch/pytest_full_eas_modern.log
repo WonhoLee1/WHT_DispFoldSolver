@@ -1,0 +1,258 @@
+....F................................................................... [ 26%]
+............................................sssxx.xs.................... [ 52%]
+...................F.................x.................................. [ 78%]
+...........................................................              [100%]
+================================== FAILURES ===================================
+_____________________________ test_config_presets _____________________________
+
+    def test_config_presets():
+        """Verify predefined config presets."""
+        teardrop = FoldModelConfig.get_preset("teardrop")
+        assert teardrop.geometry.hinge_half_gap == 7.5
+>       assert teardrop.drive.dt_max == 0.1
+E       AssertionError: assert 0.01 == 0.1
+E        +  where 0.01 = DriveConfig(theta_max_deg=90.0, t_total=1.0, dt_init=0.005, dt_max=0.01, dt_min=1e-05).dt_max
+E        +    where DriveConfig(theta_max_deg=90.0, t_total=1.0, dt_init=0.005, dt_max=0.01, dt_min=1e-05) = FoldModelConfig(geometry=GeometryConfig(display_half_length=40.0, hinge_half_gap=7.5, hinge_pivot_x=1.4, tie_attach_st...so_mtype='auto', pardiso_phase_reuse=True, max_displacement_corr=None, distortion_control=True, distortion_j_crit=0.2)).drive
+
+tests\test_abaqus_config.py:125: AssertionError
+__________________ test_prescribed_skip_solution_equivalence __________________
+
+    def test_prescribed_skip_solution_equivalence():
+        """Verify that solver with skip_fully_prescribed=True yields identical u to False."""
+        mesh, xs, ys, node_map = create_two_block_mesh()
+    
+        mat0 = J2Plasticity(E=1000.0, nu=0.3, sigma_y0=100.0, H=100.0)
+        mat1 = NeoHookean()
+        materials = {0: mat0, 1: mat1}
+        mat_params = {0: {}, 1: {"E": 2000.0, "nu": 0.3}}
+    
+        conn, nid_to_idx, sorted_nids, elem_ids = mesh.connectivity_array()
+    
+        # Prescribe all nodes with x >= 10 with a displacement of 1e-4 in Y
+        bc_dofs = []
+        bc_vals = []
+        for (x, y), nid in node_map.items():
+            if x >= 10.0:
+                idx = nid_to_idx[nid]
+                bc_dofs.extend([idx * 2, idx * 2 + 1])
+                bc_vals.extend([0.0, 1e-4])
+            elif x == 0.0:
+                # Fix x=0
+                idx = nid_to_idx[nid]
+                bc_dofs.extend([idx * 2, idx * 2 + 1])
+                bc_vals.extend([0.0, 0.0])
+    
+        bc_dofs = np.array(bc_dofs, dtype=np.int32)
+        bc_vals = np.array(bc_vals, dtype=np.float64)
+    
+        # Solve with skip_fully_prescribed = False
+        s_full = DynamicSolver(
+            mesh=mesh,
+            material=materials,
+            material_params=mat_params,
+            rho=1.0,
+            skip_fully_prescribed=False,
+            mode="quasistatic",
+            tol=1e-4,
+        )
+        s_full.set_prescribed_dofs(bc_dofs, bc_vals)
+        ret_full = s_full.solve_step(1.0)
+        assert ret_full >= 0
+    
+        # Solve with skip_fully_prescribed = True
+        s_skip = DynamicSolver(
+            mesh=mesh,
+            material=materials,
+            material_params=mat_params,
+            rho=1.0,
+            skip_fully_prescribed=True,
+            mode="quasistatic",
+            tol=1e-4,
+        )
+        s_skip.set_prescribed_dofs(bc_dofs, bc_vals)
+        ret_skip = s_skip.solve_step(1.0)
+        assert ret_skip >= 0
+    
+        # Displacements must match to machine precision
+>       np.testing.assert_allclose(s_skip.u, s_full.u, atol=1e-10, rtol=1e-8)
+E       AssertionError: 
+E       Not equal to tolerance rtol=1e-08, atol=1e-10
+E       
+E       Mismatched elements: 6 / 30 (20%)
+E       Max absolute difference among violations: 2.16696352e-09
+E       Max relative difference among violations: 0.19563723
+E        ACTUAL: array([ 0.000000e+00,  0.000000e+00,  7.612462e-06,  4.971947e-05,
+E               0.000000e+00,  1.000000e-04,  0.000000e+00,  1.000000e-04,
+E               0.000000e+00,  1.000000e-04,  0.000000e+00, -1.735364e-22,...
+E        DESIRED: array([ 0.000000e+00,  0.000000e+00,  7.614629e-06,  4.971749e-05,
+E               0.000000e+00,  1.000000e-04,  0.000000e+00,  1.000000e-04,
+E               0.000000e+00,  1.000000e-04,  0.000000e+00,  3.671182e-23,...
+
+tests\test_prescribed_skip.py:149: AssertionError
+---------------------------- Captured stdout call -----------------------------
+
+  STEP   INC   ATT   SEVERE   EQUIL     TOTAL      STEP      INC OF
+                     DISCON   ITERS      TIME       TIME       TIME
+     1     1     1       0       7     1.0000     1.0000     1.0000
+
+  STEP   INC   ATT   SEVERE   EQUIL     TOTAL      STEP      INC OF
+                     DISCON   ITERS      TIME       TIME       TIME
+     1     1     1       0       7     1.0000     1.0000     1.0000
+============================== warnings summary ===============================
+C:\Users\GOODMAN\miniconda3\envs\vdmc\Lib\site-packages\koreanize_matplotlib\koreanize_matplotlib.py:16
+  C:\Users\GOODMAN\miniconda3\envs\vdmc\Lib\site-packages\koreanize_matplotlib\koreanize_matplotlib.py:16: DeprecationWarning: distutils Version classes are deprecated. Use packaging.version instead.
+    is_support_createFontList = LooseVersion(matplotlib.__version__) < '3.2'
+
+C:\Users\GOODMAN\miniconda3\envs\vdmc\Lib\site-packages\setuptools\_distutils\version.py:336
+  C:\Users\GOODMAN\miniconda3\envs\vdmc\Lib\site-packages\setuptools\_distutils\version.py:336: DeprecationWarning: distutils Version classes are deprecated. Use packaging.version instead.
+    other = LooseVersion(other)
+
+tests/test_large_deformation_element_suitability.py: 10 warnings
+  C:\Users\GOODMAN\miniconda3\envs\vdmc\Lib\site-packages\_pytest\fixtures.py:1313: PytestRemovedIn10Warning: Class-scoped fixture defined as instance method is deprecated.
+  Instance attributes set in this fixture will NOT be visible to test methods,
+  as each test gets a new instance while the fixture runs only once per class.
+  Use @classmethod decorator and set attributes on cls instead.
+  See https://docs.pytest.org/en/stable/deprecations.html#class-scoped-fixture-as-instance-method
+    fixturefunc = resolve_fixture_function(fixturedef, request)
+
+tests/test_rbe2_condensation_reconstruction.py::test_rbe2_condensation_reconstruction
+tests/test_tie_gap_verification.py::test_surface_tie_large_rotation_gap_quantitative
+  D:\\PythonCodeStudy\\WHT_DispFoldSolver\\dispsolver\\io\\abaqus_parser.py:131: UserWarning: Unsupported keyword: *SECTION CONTROLS \u2014 skipping\n    warnings.warn(f"Unsupported keyword: *{block.keyword} \u2014 skipping")
+
+tests/test_tie_gap_verification.py::test_surface_tie_large_rotation_gap_quantitative
+  D:\PythonCodeStudy\WHT_DispFoldSolver\dispsolver\export\plotter.py:232: UserWarning: Glyph 51340 (\N{HANGUL SYLLABLE JWA}) missing from font(s) DejaVu Sans.
+    fig.tight_layout()
+
+tests/test_tie_gap_verification.py::test_surface_tie_large_rotation_gap_quantitative
+  D:\PythonCodeStudy\WHT_DispFoldSolver\dispsolver\export\plotter.py:232: UserWarning: Glyph 54364 (\N{HANGUL SYLLABLE PYO}) missing from font(s) DejaVu Sans.
+    fig.tight_layout()
+
+tests/test_tie_gap_verification.py::test_surface_tie_large_rotation_gap_quantitative
+  D:\PythonCodeStudy\WHT_DispFoldSolver\dispsolver\export\plotter.py:232: UserWarning: Glyph 48320 (\N{HANGUL SYLLABLE BYEON}) missing from font(s) DejaVu Sans.
+    fig.tight_layout()
+
+tests/test_tie_gap_verification.py::test_surface_tie_large_rotation_gap_quantitative
+  D:\PythonCodeStudy\WHT_DispFoldSolver\dispsolver\export\plotter.py:232: UserWarning: Glyph 50948 (\N{HANGUL SYLLABLE WI}) missing from font(s) DejaVu Sans.
+    fig.tight_layout()
+
+tests/test_tie_gap_verification.py::test_surface_tie_large_rotation_gap_quantitative
+  D:\PythonCodeStudy\WHT_DispFoldSolver\dispsolver\export\plotter.py:232: UserWarning: Glyph 53356 (\N{HANGUL SYLLABLE KEU}) missing from font(s) DejaVu Sans.
+    fig.tight_layout()
+
+tests/test_tie_gap_verification.py::test_surface_tie_large_rotation_gap_quantitative
+  D:\PythonCodeStudy\WHT_DispFoldSolver\dispsolver\export\plotter.py:232: UserWarning: Glyph 44592 (\N{HANGUL SYLLABLE GI}) missing from font(s) DejaVu Sans.
+    fig.tight_layout()
+
+tests/test_tie_gap_verification.py::test_surface_tie_large_rotation_gap_quantitative
+  D:\PythonCodeStudy\WHT_DispFoldSolver\dispsolver\export\plotter.py:232: UserWarning: Glyph 46356 (\N{HANGUL SYLLABLE DI}) missing from font(s) DejaVu Sans.
+    fig.tight_layout()
+
+tests/test_tie_gap_verification.py::test_surface_tie_large_rotation_gap_quantitative
+  D:\PythonCodeStudy\WHT_DispFoldSolver\dispsolver\export\plotter.py:232: UserWarning: Glyph 49828 (\N{HANGUL SYLLABLE SEU}) missing from font(s) DejaVu Sans.
+    fig.tight_layout()
+
+tests/test_tie_gap_verification.py::test_surface_tie_large_rotation_gap_quantitative
+  D:\PythonCodeStudy\WHT_DispFoldSolver\dispsolver\export\plotter.py:232: UserWarning: Glyph 54540 (\N{HANGUL SYLLABLE PEUL}) missing from font(s) DejaVu Sans.
+    fig.tight_layout()
+
+tests/test_tie_gap_verification.py::test_surface_tie_large_rotation_gap_quantitative
+  D:\PythonCodeStudy\WHT_DispFoldSolver\dispsolver\export\plotter.py:232: UserWarning: Glyph 47112 (\N{HANGUL SYLLABLE RE}) missing from font(s) DejaVu Sans.
+    fig.tight_layout()
+
+tests/test_tie_gap_verification.py::test_surface_tie_large_rotation_gap_quantitative
+  D:\PythonCodeStudy\WHT_DispFoldSolver\dispsolver\export\plotter.py:232: UserWarning: Glyph 51060 (\N{HANGUL SYLLABLE I}) missing from font(s) DejaVu Sans.
+    fig.tight_layout()
+
+tests/test_tie_gap_verification.py::test_surface_tie_large_rotation_gap_quantitative
+  D:\PythonCodeStudy\WHT_DispFoldSolver\dispsolver\export\plotter.py:233: UserWarning: Glyph 51340 (\N{HANGUL SYLLABLE JWA}) missing from font(s) DejaVu Sans.
+    fig.savefig(save_path, dpi=dpi, bbox_inches='tight')
+
+tests/test_tie_gap_verification.py::test_surface_tie_large_rotation_gap_quantitative
+  D:\PythonCodeStudy\WHT_DispFoldSolver\dispsolver\export\plotter.py:233: UserWarning: Glyph 54364 (\N{HANGUL SYLLABLE PYO}) missing from font(s) DejaVu Sans.
+    fig.savefig(save_path, dpi=dpi, bbox_inches='tight')
+
+tests/test_tie_gap_verification.py::test_surface_tie_large_rotation_gap_quantitative
+  D:\PythonCodeStudy\WHT_DispFoldSolver\dispsolver\export\plotter.py:233: UserWarning: Glyph 48320 (\N{HANGUL SYLLABLE BYEON}) missing from font(s) DejaVu Sans.
+    fig.savefig(save_path, dpi=dpi, bbox_inches='tight')
+
+tests/test_tie_gap_verification.py::test_surface_tie_large_rotation_gap_quantitative
+  D:\PythonCodeStudy\WHT_DispFoldSolver\dispsolver\export\plotter.py:233: UserWarning: Glyph 50948 (\N{HANGUL SYLLABLE WI}) missing from font(s) DejaVu Sans.
+    fig.savefig(save_path, dpi=dpi, bbox_inches='tight')
+
+tests/test_tie_gap_verification.py::test_surface_tie_large_rotation_gap_quantitative
+  D:\PythonCodeStudy\WHT_DispFoldSolver\dispsolver\export\plotter.py:233: UserWarning: Glyph 53356 (\N{HANGUL SYLLABLE KEU}) missing from font(s) DejaVu Sans.
+    fig.savefig(save_path, dpi=dpi, bbox_inches='tight')
+
+tests/test_tie_gap_verification.py::test_surface_tie_large_rotation_gap_quantitative
+  D:\PythonCodeStudy\WHT_DispFoldSolver\dispsolver\export\plotter.py:233: UserWarning: Glyph 44592 (\N{HANGUL SYLLABLE GI}) missing from font(s) DejaVu Sans.
+    fig.savefig(save_path, dpi=dpi, bbox_inches='tight')
+
+tests/test_tie_gap_verification.py::test_surface_tie_large_rotation_gap_quantitative
+  D:\PythonCodeStudy\WHT_DispFoldSolver\dispsolver\export\plotter.py:233: UserWarning: Glyph 46356 (\N{HANGUL SYLLABLE DI}) missing from font(s) DejaVu Sans.
+    fig.savefig(save_path, dpi=dpi, bbox_inches='tight')
+
+tests/test_tie_gap_verification.py::test_surface_tie_large_rotation_gap_quantitative
+  D:\PythonCodeStudy\WHT_DispFoldSolver\dispsolver\export\plotter.py:233: UserWarning: Glyph 49828 (\N{HANGUL SYLLABLE SEU}) missing from font(s) DejaVu Sans.
+    fig.savefig(save_path, dpi=dpi, bbox_inches='tight')
+
+tests/test_tie_gap_verification.py::test_surface_tie_large_rotation_gap_quantitative
+  D:\PythonCodeStudy\WHT_DispFoldSolver\dispsolver\export\plotter.py:233: UserWarning: Glyph 54540 (\N{HANGUL SYLLABLE PEUL}) missing from font(s) DejaVu Sans.
+    fig.savefig(save_path, dpi=dpi, bbox_inches='tight')
+
+tests/test_tie_gap_verification.py::test_surface_tie_large_rotation_gap_quantitative
+  D:\PythonCodeStudy\WHT_DispFoldSolver\dispsolver\export\plotter.py:233: UserWarning: Glyph 47112 (\N{HANGUL SYLLABLE RE}) missing from font(s) DejaVu Sans.
+    fig.savefig(save_path, dpi=dpi, bbox_inches='tight')
+
+tests/test_tie_gap_verification.py::test_surface_tie_large_rotation_gap_quantitative
+  D:\PythonCodeStudy\WHT_DispFoldSolver\dispsolver\export\plotter.py:233: UserWarning: Glyph 51060 (\N{HANGUL SYLLABLE I}) missing from font(s) DejaVu Sans.
+    fig.savefig(save_path, dpi=dpi, bbox_inches='tight')
+
+tests/test_tie_gap_verification.py::test_surface_tie_large_rotation_gap_quantitative
+  D:\PythonCodeStudy\WHT_DispFoldSolver\dispsolver\export\plotter.py:225: UserWarning: Glyph 51340 (\N{HANGUL SYLLABLE JWA}) missing from font(s) DejaVu Sans.
+    fig.tight_layout(rect=[0, 0.08, 1, 1])
+
+tests/test_tie_gap_verification.py::test_surface_tie_large_rotation_gap_quantitative
+  D:\PythonCodeStudy\WHT_DispFoldSolver\dispsolver\export\plotter.py:225: UserWarning: Glyph 54364 (\N{HANGUL SYLLABLE PYO}) missing from font(s) DejaVu Sans.
+    fig.tight_layout(rect=[0, 0.08, 1, 1])
+
+tests/test_tie_gap_verification.py::test_surface_tie_large_rotation_gap_quantitative
+  D:\PythonCodeStudy\WHT_DispFoldSolver\dispsolver\export\plotter.py:225: UserWarning: Glyph 48320 (\N{HANGUL SYLLABLE BYEON}) missing from font(s) DejaVu Sans.
+    fig.tight_layout(rect=[0, 0.08, 1, 1])
+
+tests/test_tie_gap_verification.py::test_surface_tie_large_rotation_gap_quantitative
+  D:\PythonCodeStudy\WHT_DispFoldSolver\dispsolver\export\plotter.py:225: UserWarning: Glyph 50948 (\N{HANGUL SYLLABLE WI}) missing from font(s) DejaVu Sans.
+    fig.tight_layout(rect=[0, 0.08, 1, 1])
+
+tests/test_tie_gap_verification.py::test_surface_tie_large_rotation_gap_quantitative
+  D:\PythonCodeStudy\WHT_DispFoldSolver\dispsolver\export\plotter.py:225: UserWarning: Glyph 53356 (\N{HANGUL SYLLABLE KEU}) missing from font(s) DejaVu Sans.
+    fig.tight_layout(rect=[0, 0.08, 1, 1])
+
+tests/test_tie_gap_verification.py::test_surface_tie_large_rotation_gap_quantitative
+  D:\PythonCodeStudy\WHT_DispFoldSolver\dispsolver\export\plotter.py:225: UserWarning: Glyph 44592 (\N{HANGUL SYLLABLE GI}) missing from font(s) DejaVu Sans.
+    fig.tight_layout(rect=[0, 0.08, 1, 1])
+
+tests/test_tie_gap_verification.py::test_surface_tie_large_rotation_gap_quantitative
+  D:\PythonCodeStudy\WHT_DispFoldSolver\dispsolver\export\plotter.py:225: UserWarning: Glyph 46356 (\N{HANGUL SYLLABLE DI}) missing from font(s) DejaVu Sans.
+    fig.tight_layout(rect=[0, 0.08, 1, 1])
+
+tests/test_tie_gap_verification.py::test_surface_tie_large_rotation_gap_quantitative
+  D:\PythonCodeStudy\WHT_DispFoldSolver\dispsolver\export\plotter.py:225: UserWarning: Glyph 49828 (\N{HANGUL SYLLABLE SEU}) missing from font(s) DejaVu Sans.
+    fig.tight_layout(rect=[0, 0.08, 1, 1])
+
+tests/test_tie_gap_verification.py::test_surface_tie_large_rotation_gap_quantitative
+  D:\PythonCodeStudy\WHT_DispFoldSolver\dispsolver\export\plotter.py:225: UserWarning: Glyph 54540 (\N{HANGUL SYLLABLE PEUL}) missing from font(s) DejaVu Sans.
+    fig.tight_layout(rect=[0, 0.08, 1, 1])
+
+tests/test_tie_gap_verification.py::test_surface_tie_large_rotation_gap_quantitative
+  D:\PythonCodeStudy\WHT_DispFoldSolver\dispsolver\export\plotter.py:225: UserWarning: Glyph 47112 (\N{HANGUL SYLLABLE RE}) missing from font(s) DejaVu Sans.
+    fig.tight_layout(rect=[0, 0.08, 1, 1])
+
+tests/test_tie_gap_verification.py::test_surface_tie_large_rotation_gap_quantitative
+  D:\PythonCodeStudy\WHT_DispFoldSolver\dispsolver\export\plotter.py:225: UserWarning: Glyph 51060 (\N{HANGUL SYLLABLE I}) missing from font(s) DejaVu Sans.
+    fig.tight_layout(rect=[0, 0.08, 1, 1])
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED tests/test_abaqus_config.py::test_config_presets - AssertionError: ass...
+FAILED tests/test_prescribed_skip.py::test_prescribed_skip_solution_equivalence
+2 failed, 265 passed, 4 skipped, 4 xfailed, 47 warnings in 576.51s (0:09:36)

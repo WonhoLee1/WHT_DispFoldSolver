@@ -105,6 +105,57 @@ def test_stress_recovery_c3d4_matches_finite_strain_target():
         assert rel < 1e-6, f"element {v.element_id}: rel error {rel:.2e}"
 
 
+def test_stress_recovery_c3d10_matches_finite_strain_target():
+    sfo = _run_patch_and_recover("C3D10")
+    target = _finite_strain_consistent_target()
+    vals = sfo.values()
+    assert len(vals) == 48
+    for v in vals:
+        rel = np.max(np.abs(v.data - target)) / 2000.0
+        assert rel < 1e-6, f"element {v.element_id}: rel error {rel:.2e}"
+
+
+def test_stress_recovery_c3d10m_matches_finite_strain_target():
+    sfo = _run_patch_and_recover("C3D10M")
+    target = _finite_strain_consistent_target()
+    vals = sfo.values()
+    assert len(vals) == 48
+    for v in vals:
+        rel = np.max(np.abs(v.data - target)) / 2000.0
+        assert rel < 1e-6, f"element {v.element_id}: rel error {rel:.2e}"
+
+
+def test_stress_recovery_c3d6_matches_finite_strain_target():
+    sfo = _run_patch_and_recover("C3D6")
+    target = _finite_strain_consistent_target()
+    vals = sfo.values()
+    assert len(vals) == 16
+    for v in vals:
+        rel = np.max(np.abs(v.data - target)) / 2000.0
+        assert rel < 1e-6, f"element {v.element_id}: rel error {rel:.2e}"
+
+
+def test_stress_recovery_c3d8_fbar_matches_finite_strain_target():
+    sfo = _run_patch_and_recover("C3D8_FBAR")
+    target = _finite_strain_consistent_target()
+    vals = sfo.values()
+    assert len(vals) == 8
+    for v in vals:
+        rel = np.max(np.abs(v.data - target)) / 2000.0
+        assert rel < 1e-6, f"element {v.element_id}: rel error {rel:.2e}"
+
+
+def test_c3d8i_and_c3d8h_are_reported_as_skipped():
+    """C3D8I (EAS) and C3D8H (hybrid pressure) cannot be recovered without
+    a solver-level change (their converged internal DOFs are not
+    persisted) -- confirm this is reported via skipped_element_types, not
+    silently producing zero values or a wrong stress."""
+    for et in ["C3D8I", "C3D8H"]:
+        sfo = _run_patch_and_recover(et)
+        assert et in sfo.skipped_element_types
+        assert sfo.values() == []
+
+
 def test_at_element_returns_same_values_subset():
     sfo = _run_patch_and_recover("C3D4")
     all_vals = sfo.values()

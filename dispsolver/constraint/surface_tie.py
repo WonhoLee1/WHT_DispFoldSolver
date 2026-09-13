@@ -44,6 +44,7 @@ class SurfaceTieConstraint:
         penalty_stiffness: float = 1e6,
         position_tolerance: float = 0.5,
         name: str = "SURFACE_TIE",
+        freeze_projection: bool = True,
     ):
         self.slave_node_ids = list(slave_node_ids)
         self.master_node_ids = list(master_node_ids)
@@ -52,6 +53,7 @@ class SurfaceTieConstraint:
         self.k_tie = float(penalty_stiffness)
         self.position_tolerance = position_tolerance
         self.name = name
+        self.freeze_projection = bool(freeze_projection)
         self._k_auto_scale = 1.0
 
         # Persistent per-slave-node Augmented Lagrange multipliers
@@ -64,6 +66,27 @@ class SurfaceTieConstraint:
         # Map pairs: list of tuples (slave_nid, master1_nid, master2_nid, xi)
         self.pairs: List[Tuple[int, int, int, float]] = []
         self._build_tie_pairs()
+
+        # Precompute fixed sparse topology (rows, cols)
+        row_list = []
+        col_list = []
+        for s_nid, m1_nid, m2_nid, xi in self.pairs:
+            s_idx = self.nid_to_idx[s_nid]
+            m1_idx = self.nid_to_idx[m1_nid]
+            m2_idx = self.nid_to_idx[m2_nid]
+            dofs = np.array([
+                2 * s_idx, 2 * s_idx + 1,
+                2 * m1_idx, 2 * m1_idx + 1,
+                2 * m2_idx, 2 * m2_idx + 1,
+            ], dtype=np.int32)
+            row_list.append(np.repeat(dofs, 6))
+            col_list.append(np.tile(dofs, 6))
+        if row_list:
+            self.rows_tie = np.concatenate(row_list).astype(np.int32)
+            self.cols_tie = np.concatenate(col_list).astype(np.int32)
+        else:
+            self.rows_tie = np.zeros(0, dtype=np.int32)
+            self.cols_tie = np.zeros(0, dtype=np.int32)
 
     @property
     def _lam(self) -> Optional[np.ndarray]:
@@ -109,6 +132,8 @@ class SurfaceTieConstraint:
 
     def reproject_deformed(self, u: np.ndarray) -> None:
         """Dynamically re-neighbor and update projection parameter xi for all slave nodes using current deformed geometry."""
+        if getattr(self, "freeze_projection", True):
+            return
         target_slave_nids = getattr(self, "_initial_tied_slave_nids", self.slave_node_ids)
         if not target_slave_nids or not self.master_segments:
             return
@@ -256,4 +281,64 @@ class SurfaceTieConstraint:
                     np.add.at(K_eff, (dofs[:, None], dofs[None, :]), K_local)
 
         return total_energy
+
+    def assemble(self, u: np.ndarray) -> Tuple[np.ndarray, Tuple[np.ndarray, np.ndarray, np.ndarray], float]:
+        """High-performance vectorized penalty assembly returning precomputed sparse topology (rows, cols, data)."""
+        n_dof = len(u)
+        f_int = np.zeros(n_dof, dtype=np.float64)
+        total_energy = 0.0
+        I2 = np.eye(2, dtype=np.float64)
+
+        data_blocks = []
+
+        for s_nid, m1_nid, m2_nid, xi in self.pairs:
+            s_idx = self.nid_to_idx[s_nid]
+            m1_idx = self.nid_to_idx[m1_nid]
+            m2_idx = self.nid_to_idx[m2_nid]
+
+            xs = self.coords[s_idx] + u[2 * s_idx : 2 * s_idx + 2]
+            xm1 = self.coords[m1_idx] + u[2 * m1_idx : 2 * m1_idx + 2]
+            xm2 = self.coords[m2_idx] + u[2 * m2_idx : 2 * m2_idx + 2]
+
+            N1 = 0.5 * (1.0 - xi)
+            N2 = 0.5 * (1.0 + xi)
+
+            gap = xs - (N1 * xm1 + N2 * xm2)
+            gap_norm = float(np.linalg.norm(gap))
+            total_energy += 0.5 * self.k_tie * (gap_norm ** 2)
+
+            lam = self._lam_dict[s_nid]
+            total_energy += float(np.dot(lam, gap))
+
+            dofs = np.array([
+                2 * s_idx, 2 * s_idx + 1,
+                2 * m1_idx, 2 * m1_idx + 1,
+                2 * m2_idx, 2 * m2_idx + 1,
+            ], dtype=int)
+
+            f_pen = self.k_tie * gap + lam
+            f_local = np.concatenate([f_pen, -N1 * f_pen, -N2 * f_pen])
+            np.add.at(f_int, dofs, f_local)
+
+            # Standard 3-node kinematic block (6, 6)
+            B_mat = np.block([[I2, -N1 * I2, -N2 * I2]])
+            K_local = self.k_tie * (B_mat.T @ B_mat)
+
+            # Rotational / Large Deformation Tangent Stiffness Coupling
+            seg_vec = xm2 - xm1
+            L2 = np.dot(seg_vec, seg_vec)
+            if L2 > 1e-12:
+                t_vec = seg_vec / np.sqrt(L2)
+                G_mat = np.block([[np.zeros((2, 2)), -I2, I2]])
+                K_rot = - (self.k_tie / np.sqrt(L2)) * (B_mat.T @ np.outer(t_vec, gap) @ G_mat)
+                K_local = K_local + 0.5 * (K_rot + K_rot.T)
+
+            data_blocks.append(K_local.ravel())
+
+        if data_blocks:
+            data = np.concatenate(data_blocks)
+        else:
+            data = np.zeros(0, dtype=np.float64)
+
+        return f_int, (self.rows_tie, self.cols_tie, data), total_energy
 

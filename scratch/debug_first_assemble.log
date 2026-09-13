@@ -1,0 +1,9 @@
+reading inp...
+D:\PythonCodeStudy\WHT_DispFoldSolver\dispsolver\io\abaqus_parser.py:131: UserWarning: Unsupported keyword: *SECTION CONTROLS \u2014 skipping
+  warnings.warn(f"Unsupported keyword: *{block.keyword} \u2014 skipping")
+read done in 0.1s
+Traceback (most recent call last):
+  File "D:\PythonCodeStudy\WHT_DispFoldSolver\scratch\debug_first_assemble.py", line 12, in <module>
+    solver = result.solver
+             ^^^^^^^^^^^^^
+AttributeError: 'ModelBuilderResult' object has no attribute 'solver'

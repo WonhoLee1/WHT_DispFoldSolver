@@ -1,0 +1,53 @@
+====================================================================================================
+ EX12: 90-Degree Display Folding Directly from Abaqus .inp File
+====================================================================================================
+Reading Abaqus input deck: D:\PythonCodeStudy\WHT_DispFoldSolver\examples\ex12_rigid_plate_display_fold.inp
+D:\PythonCodeStudy\WHT_DispFoldSolver\dispsolver\io\abaqus_parser.py:131: UserWarning: Unsupported keyword: *SECTION CONTROLS \u2014 skipping
+  warnings.warn(f"Unsupported keyword: *{block.keyword} \u2014 skipping")
+Parsed result: ModelBuilderResult(mesh=yes, materials=16, constraints=0, penalty_constraints=2, rbe2_elements=0, rbe2_constraints=2, amplitudes=0, dloads=0, contact_pairs=0, surfaces=4, contact_objects=0)
+Found translation boundary conditions on 4 DOFs.
+Found prescribed rotations on master nodes: {10000: -1.570796, 10306: 1.570796}
+====================================================================================================
+ MODEL REVIEW
+====================================================================================================
+Materials (4 distinct):
+  - PSA: Arruda-Boyce + Prony viscoelastic: mu=0.015614, lambda_m=3.0, K=0.83333
+  - PET: J2 plasticity: E=4000.0, nu=0.3, sigma_y0=80.0, H=400.0
+  - GLASS: J2 plasticity: E=70000.0, nu=0.22, sigma_y0=1000000000.0, H=0.0
+  - STEEL: NeoHookean: E=20000.0, nu=0.3
+Parts / Layers (16 total):
+  - pid 1: 600 elements, material=PSA, thickness=0.0300 mm (30.0 um), element=CPE4H
+  - pid 2: 1800 elements, material=PET, thickness=0.0600 mm (60.0 um), element=Q4_COROTATIONAL_SRI
+  - pid 3: 1200 elements, material=PSA, thickness=0.0300 mm (30.0 um), element=CPE4H
+  - pid 4: 1800 elements, material=PET, thickness=0.0600 mm (60.0 um), element=Q4_COROTATIONAL_SRI
+  - pid 5: 1200 elements, material=PSA, thickness=0.0300 mm (30.0 um), element=CPE4H
+  - pid 6: 1800 elements, material=PET, thickness=0.0600 mm (60.0 um), element=Q4_COROTATIONAL_SRI
+  - pid 7: 1200 elements, material=PSA, thickness=0.8000 mm (800.0 um), element=CPE4H
+  - pid 8: 1320 elements, material=PET, thickness=0.8600 mm (860.0 um), element=Q4_COROTATIONAL_SRI
+  - pid 9: 1200 elements, material=PSA, thickness=0.0300 mm (30.0 um), element=CPE4H
+  - pid 10: 1800 elements, material=PET, thickness=0.0600 mm (60.0 um), element=Q4_COROTATIONAL_SRI
+  - pid 11: 1200 elements, material=PSA, thickness=0.0300 mm (30.0 um), element=CPE4H
+  - pid 12: 1800 elements, material=PET, thickness=0.0600 mm (60.0 um), element=Q4_COROTATIONAL_SRI
+  - pid 13: 1200 elements, material=PSA, thickness=0.0300 mm (30.0 um), element=CPE4H
+  - pid 14: 1800 elements, material=GLASS, thickness=0.0600 mm (60.0 um), element=Q4_COROTATIONAL_SRI
+  - Plate Left: 240 elements, material=STEEL, thickness=0.5000 mm (500.0 um), element=Q4_COROTATIONAL
+  - Plate Right: 240 elements, material=STEEL, thickness=0.5000 mm (500.0 um), element=Q4_COROTATIONAL
+Total elements: 20400, total layers/parts: 16
+====================================================================================================
+[PNG] Deformed shape saved: D:\PythonCodeStudy\WHT_DispFoldSolver\examples\ex12_before_folding_shape.png
+----------------------------------------------------------------------------------------------------
+Step 1 | Attempting time increment: dt = 0.00250s (t: 0.0000s -> 0.0025s)
+----------------------------------------------------------------------------------------------------
+
+  Nonlinear Iteration Summary (Newton-Raphson)
+  ==========================================================================================================================
+  Time increment dt: 2.500e-03
+  Convergence Tol  : 1.0e-02 (Disp Ratio)     Max Iterations: 50
+  --------------------------------------------------------------------------------------------------------------------------
+  Iter   Max Res.Force  (Node/DOF)    Max Disp.Corr  (Node/DOF)    Max Disp.Incr  Disp.Ratio  Energy.Err  LS.alpha  TieNodes
+  --------------------------------------------------------------------------------------------------------------------------
+     1    1.4724e+01  N302(UY)       8.3003e-06  N12753(UY)     9.4384e-06     9.85e-01    8.23e-03      1.00       122
+     2    1.1651e+01  N1(UY)         7.4689e-06  N10001(UY)     9.4384e-06     2.14e-01    4.59e-03      1.00       122
+     3    1.1651e+01  N1(UY)         7.4689e-06  N10001(UY)     9.4384e-06     1.91e-01    4.59e-03      1.00       122
+     4    1.1651e+01  N1(UY)         7.4689e-06  N10001(UY)     9.4384e-06     1.91e-01    4.59e-03      1.00       122
+     5    1.1651e+01  N1(UY)         7.4689e-06  N10001(UY)     9.4384e-06     1.91e-01    4.59e-03      1.00       122

@@ -1,0 +1,112 @@
+Warming up JAX JIT compilation...
+JAX warm-up complete.
+
+======================================================================
+  Running: patch_test_element
+======================================================================
+  => PASS
+     numpy_q4_bbar            :   1.098901e-03  err=  0.0000%
+     numpy_q4_eas             :   1.098901e-03  err=  0.0000%
+     numpy_q4_corotational_eas:   1.098897e-03  err=  0.0003%
+     numpy_t3                 :   5.494505e-04  err=  0.0000%
+     numba_q4_bbar            :   1.098901e-03  err=  0.0000%
+     numba_q4_eas             :   1.098901e-03  err=  0.0000%
+     numba_q4_corotational_eas:   1.098901e-03  err=  0.0000%
+     numba_q4_up              :   1.098901e-03  err=  0.0000%
+     numba_q4_corotational    :   1.098901e-03  err=  0.0000%
+     numba_t3                 :   5.494505e-04  err=  0.0000%
+     jax_t3                   :   5.494505e-04  err=  0.0000%
+     jax_q4_bbar              :   1.098901e-03  err=  0.0000%
+     jax_q4_eas               :   1.098901e-03  err=  0.0000%
+     jax_q4_corotational_eas  :   1.098901e-03  err=  0.0000%
+     jax_q4_up                :   1.098901e-03  err=  0.0000%
+     jax_q4_visco_fs          :   1.098901e-03  err=  0.0000%
+     jax_q4_simo_fs           :   1.098901e-03  err=  0.0000%
+     numpy_q4_bbar_strain     :   0.000000e+00  err=  0.0000%
+
+======================================================================
+  Running: patch_test_solver
+======================================================================
+[PARDISO] factorising 18x18 system (52 nnz) took 2.3s (one-time per matrix structure)
+  => PASS
+     jax                      :   1.048267e-07  err=  0.0000%
+     numpy_sequential         :   9.543852e-08  err=  0.0000%
+
+======================================================================
+  Running: bending_3pt
+======================================================================
+  => PASS
+     jax                      :   2.369503e-04  err=  0.7013%
+     numpy_sequential         :   2.466733e-04  err=  4.8335%
+
+======================================================================
+  Running: bending_4pt
+======================================================================
+  => PASS
+     jax                      :   3.219844e-04  err=  1.6646%
+     numpy_sequential         :   3.284024e-04  err=  3.6910%
+
+======================================================================
+  Running: cantilever
+======================================================================
+  => PASS
+     jax                      :   3.729310e-03  err=  1.5829%
+     numpy_sequential         :   3.839312e-03  err=  4.5792%
+
+======================================================================
+  Running: uniaxial_tension
+======================================================================
+  => PASS
+     jax                      :   1.098901e+00  err=  0.0000%
+     numpy_sequential         :   1.098901e+00  err=  0.0000%
+
+======================================================================
+  Running: uniaxial_compression
+======================================================================
+  => PASS
+     jax                      :  -1.098901e+00  err=  0.0000%
+     numpy_sequential         :  -1.098901e+00  err=  0.0000%
+
+======================================================================
+  Running: volumetric_compression
+======================================================================
+  => PASS
+     jax                      :  -9.615385e-01  err=  0.0000%
+     numpy_sequential         :  -9.615385e-01  err=  0.0000%
+
+======================================================================
+  Running: volumetric_tension
+======================================================================
+  => PASS
+     jax                      :   9.615385e-01  err=  0.0000%
+     numpy_sequential         :   9.615385e-01  err=  0.0000%
+
+======================================================================
+  Running: convergence_cantilever_mesh_q4bbar
+======================================================================
+  => FAIL
+     order_fit                :   2.565486e+00  err= 35.8629%
+
+======================================================================
+  Running: convergence_elastica_mesh_corotational
+======================================================================
+  => PASS
+     order_fit                :   2.609159e+00  err=  3.3645%
+
+======================================================================
+  Running: convergence_elastica_loadstep_corotational
+======================================================================
+  => PASS
+     order_fit                :   2.635566e+00  err=  9.8153%
+Saved JSON: D:\PythonCodeStudy\WHT_DispFoldSolver\verification\results\results.json
+Saved CSV: D:\PythonCodeStudy\WHT_DispFoldSolver\verification\results\results.csv
+Saved report: D:\PythonCodeStudy\WHT_DispFoldSolver\verification\results\verification_report.md
+
+======================================================================
+  VERIFICATION COMPLETE: 11/12 passed in 142.6s
+======================================================================
+
+Failed benchmarks:
+  - Convergence Cantilever Mesh (Q4 B-bar): ny= 4 nx= 40: ¥ä=3.729310e-03 err(vs ny=12)=3.11e-02
+ny= 6 nx= 60: ¥ä=3.653469e-03 err(vs ny=12)=1.01e-02
+ny= 8 nx= 80: ¥ä=3.636096e-03 err(vs ny=12)=5.30e-03

@@ -130,6 +130,7 @@ class SurfaceTieConstraint3D:
         coords: np.ndarray,
         penalty_stiffness: float = 1e6,
         position_tolerance: float = 2.0,
+        freeze_projection: bool = True,
         name: str = "SURFACE_TIE_3D",
     ):
         self.slave_node_ids = list(slave_node_ids)
@@ -138,6 +139,7 @@ class SurfaceTieConstraint3D:
         self.coords = coords
         self.k_tie = float(penalty_stiffness)
         self.position_tolerance = float(position_tolerance)
+        self.freeze_projection = bool(freeze_projection)
         self.name = name
 
         # Persistent per-slave-node Augmented Lagrange multipliers (3D vector)
@@ -148,26 +150,67 @@ class SurfaceTieConstraint3D:
         # Map pairs: list of tuples (slave_nid, (m1_nid, m2_nid, m3_nid, m4_nid), xi, eta)
         self.pairs: List[Tuple[int, Tuple[int, int, int, int], float, float]] = []
         self._build_tie_pairs()
+        self._build_sparse_indices()
 
-    def _build_tie_pairs( me ) -> None:
+    def _build_sparse_indices(self) -> None:
+        """Pre-build COO sparse matrix index arrays and constant stiffness data for fast assembly."""
+        row_list = []
+        col_list = []
+        data_list = []
+        for s_nid, m_face, xi, eta in self.pairs:
+            s_idx = self.nid_to_idx[s_nid]
+            m1_idx = self.nid_to_idx[m_face[0]]
+            m2_idx = self.nid_to_idx[m_face[1]]
+            m3_idx = self.nid_to_idx[m_face[2]]
+            m4_idx = self.nid_to_idx[m_face[3]]
+
+            N1 = 0.25 * (1.0 - xi) * (1.0 - eta)
+            N2 = 0.25 * (1.0 + xi) * (1.0 - eta)
+            N3 = 0.25 * (1.0 + xi) * (1.0 + eta)
+            N4 = 0.25 * (1.0 - xi) * (1.0 + eta)
+            weights = np.array([1.0, -N1, -N2, -N3, -N4], dtype=np.float64)
+            node_indices = [s_idx, m1_idx, m2_idx, m3_idx, m4_idx]
+
+            for a in range(5):
+                idx_a = node_indices[a]
+                w_a = weights[a]
+                for b in range(5):
+                    idx_b = node_indices[b]
+                    w_b = weights[b]
+                    k_ab = self.k_tie * w_a * w_b
+                    for d in range(3):
+                        row_list.append(3 * idx_a + d)
+                        col_list.append(3 * idx_b + d)
+                        data_list.append(k_ab)
+
+        if row_list:
+            self.rows_tie = np.array(row_list, dtype=np.int32)
+            self.cols_tie = np.array(col_list, dtype=np.int32)
+            self.data_tie = np.array(data_list, dtype=np.float64)
+        else:
+            self.rows_tie = np.zeros(0, dtype=np.int32)
+            self.cols_tie = np.zeros(0, dtype=np.int32)
+            self.data_tie = np.zeros(0, dtype=np.float64)
+
+    def _build_tie_pairs(self) -> None:
         """Find nearest master face for each slave node based on initial 3D geometry."""
-        for s_nid in me.slave_node_ids:
-            s_idx = me.nid_to_idx[s_nid]
-            xs_0 = me.coords[s_idx]
+        for s_nid in self.slave_node_ids:
+            s_idx = self.nid_to_idx[s_nid]
+            xs_0 = self.coords[s_idx]
 
             best_pair = None
             min_dist = float("inf")
 
-            for m_face in me.master_faces:
-                m1_idx = me.nid_to_idx[m_face[0]]
-                m2_idx = me.nid_to_idx[m_face[1]]
-                m3_idx = me.nid_to_idx[m_face[2]]
-                m4_idx = me.nid_to_idx[m_face[3]]
+            for m_face in self.master_faces:
+                m1_idx = self.nid_to_idx[m_face[0]]
+                m2_idx = self.nid_to_idx[m_face[1]]
+                m3_idx = self.nid_to_idx[m_face[2]]
+                m4_idx = self.nid_to_idx[m_face[3]]
 
-                q1 = me.coords[m1_idx]
-                q2 = me.coords[m2_idx]
-                q3 = me.coords[m3_idx]
-                q4 = me.coords[m4_idx]
+                q1 = self.coords[m1_idx]
+                q2 = self.coords[m2_idx]
+                q3 = self.coords[m3_idx]
+                q4 = self.coords[m4_idx]
 
                 xi, eta, dist, _ = _project_point_to_quad4(xs_0, q1, q2, q3, q4)
 
@@ -175,12 +218,14 @@ class SurfaceTieConstraint3D:
                     min_dist = dist
                     best_pair = (s_nid, m_face, xi, eta)
 
-            if best_pair is not None and min_dist <= me.position_tolerance:
-                me.pairs.append(best_pair)
-        me._initial_tied_slave_nids = [pair[0] for pair in me.pairs]
+            if best_pair is not None and min_dist <= self.position_tolerance:
+                self.pairs.append(best_pair)
+        self._initial_tied_slave_nids = [pair[0] for pair in self.pairs]
 
     def reproject_deformed(self, u: np.ndarray) -> None:
         """Dynamically update projection parameters (xi, eta) for all slave nodes using current 3D deformed geometry."""
+        if getattr(self, "freeze_projection", True):
+            return
         target_slave_nids = getattr(self, "_initial_tied_slave_nids", self.slave_node_ids)
         if not target_slave_nids or not self.master_faces:
             return
@@ -214,8 +259,9 @@ class SurfaceTieConstraint3D:
                 new_pairs.append(best_pair)
 
         self.pairs = new_pairs
+        self._build_sparse_indices()
 
-    def assemble(self, u: np.ndarray) -> Tuple[np.ndarray, np.ndarray, Dict[str, float]]:
+    def assemble(self, u: np.ndarray) -> Tuple[np.ndarray, Tuple[np.ndarray, np.ndarray, np.ndarray], Dict[str, float]]:
         """Assemble 3D penalty residual forces and stiffness matrices for all tie pairs.
 
         Parameters
@@ -227,15 +273,13 @@ class SurfaceTieConstraint3D:
         -------
         f_tie : np.ndarray
             (3 * n_nodes,) Global 3D internal tie penalty force vector
-        K_tie_data : tuple or ndarray
+        K_tie_data : tuple of (ndarray, ndarray, ndarray)
             Triple (rows, cols, data) for COO sparse matrix assembly
         stats : dict
             Diagnostic metrics (max_gap, mean_gap)
         """
         n_dof = len(u)
         f_tie = np.zeros(n_dof, dtype=np.float64)
-
-        rows, cols, data = [], [], []
 
         max_gap = 0.0
         sum_gap = 0.0
@@ -274,30 +318,10 @@ class SurfaceTieConstraint3D:
             # Penalty Force: f_s = k_tie * gap_vec, f_ma = -N_a * k_tie * gap_vec
             f_slave = self.k_tie * gap_vec
             f_tie[3 * s_idx : 3 * s_idx + 3] += f_slave
-
             f_tie[3 * m1_idx : 3 * m1_idx + 3] -= N1 * f_slave
             f_tie[3 * m2_idx : 3 * m2_idx + 3] -= N2 * f_slave
             f_tie[3 * m3_idx : 3 * m3_idx + 3] -= N3 * f_slave
             f_tie[3 * m4_idx : 3 * m4_idx + 3] -= N4 * f_slave
-
-            # Local 15-DOF Linear Transformation Matrix L (3 x 15)
-            # L = [ I_3, -N1*I_3, -N2*I_3, -N3*I_3, -N4*I_3 ]
-            node_indices = [s_idx, m1_idx, m2_idx, m3_idx, m4_idx]
-            weights = [1.0, -N1, -N2, -N3, -N4]
-
-            for a in range(5):
-                idx_a = node_indices[a]
-                w_a = weights[a]
-                for b in range(5):
-                    idx_b = node_indices[b]
-                    w_b = weights[b]
-
-                    k_ab = self.k_tie * w_a * w_b
-
-                    for d in range(3):
-                        rows.append(3 * idx_a + d)
-                        cols.append(3 * idx_b + d)
-                        data.append(k_ab)
 
         n_pairs = max(len(self.pairs), 1)
         stats = {
@@ -306,4 +330,4 @@ class SurfaceTieConstraint3D:
             "n_pairs": len(self.pairs)
         }
 
-        return f_tie, (np.array(rows, dtype=np.int32), np.array(cols, dtype=np.int32), np.array(data, dtype=np.float64)), stats
+        return f_tie, (self.rows_tie, self.cols_tie, self.data_tie), stats

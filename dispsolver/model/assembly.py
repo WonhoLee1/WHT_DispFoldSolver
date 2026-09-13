@@ -65,6 +65,23 @@ class FlattenedSolverSystem:
             
         return mesh
 
+    def to_mesh2d(self):
+        """Construct a modern Mesh2D instance for DynamicSolver2D."""
+        from dispsolver.mesh2d import Mesh2D
+        mesh = Mesh2D()
+        inv_nid = {idx: g for g, idx in self.nid_to_idx.items()}
+        for gid, idx in self.nid_to_idx.items():
+            c = self.coords[idx]
+            mesh.add_node(gid, c[0], c[1])
+            
+        for e_idx in range(len(self.elem_conn_0based)):
+            gid = e_idx + 1
+            conn_0 = self.elem_conn_0based[e_idx]
+            ordered_conn = [inv_nid[idx] for idx in conn_0]
+            mesh.add_element(gid, ordered_conn, self.elem_types[e_idx], pid=int(self.elem_pids[e_idx]))
+            
+        return mesh
+
     def to_legacy_mesh2d(self):
         """Construct a legacy 2D Mesh instance for DynamicSolver."""
         from dispsolver.mesh import Mesh, Node, Element
@@ -107,6 +124,23 @@ class Assembly:
     def Instance(self, name: str, part: Part, dependent: bool = True) -> Instance:
         """Abaqus-style Instance factory alias."""
         return self.create_instance(name=name, part=part, dependent=dependent)
+
+    def Set(
+        self,
+        name: str,
+        nodes: Optional[Sequence[int]] = None,
+        elements: Optional[Sequence[int]] = None
+    ) -> Any:
+        """Abaqus-compatible Set factory on Assembly."""
+        if nodes is not None:
+            nset = NodeSet(name=str(name), node_ids=[int(n) for n in nodes], scope=SetScope.ASSEMBLY)
+            self.node_sets[str(name)] = nset
+            return nset
+        elif elements is not None:
+            elset = ElementSet(name=str(name), element_ids=[int(e) for e in elements], scope=SetScope.ASSEMBLY)
+            self.element_sets[str(name)] = elset
+            return elset
+        return None
 
     def add_tie(self, name: str, master: str, slave: str, position_tolerance: float = 0.0) -> None:
         """Define a surface tie constraint between two surfaces."""
@@ -232,12 +266,22 @@ class Assembly:
                 gids = [node_local_to_global[(inst_name, nid)] for nid in nset.node_ids if (inst_name, nid) in node_local_to_global]
                 global_nsets[qual_name] = np.array(sorted([nid_to_idx[g] for g in gids]), dtype=np.int64)
 
+        # Assembly-level node sets
+        for sname, nset in self.node_sets.items():
+            gids = [nid for nid in nset.node_ids if nid in nid_to_idx]
+            global_nsets[sname] = np.array(sorted([nid_to_idx[g] for g in gids]), dtype=np.int64)
+
         global_elsets: Dict[str, np.ndarray] = {}
         for inst_name, inst in self.instances.items():
             for sname, elset in inst.part.element_sets.items():
                 qual_name = f"{inst_name}.{sname}"
                 gids = [elem_local_to_global[(inst_name, eid)] for eid in elset.element_ids if (inst_name, eid) in elem_local_to_global]
                 global_elsets[qual_name] = np.array(sorted([g - 1 for g in gids]), dtype=np.int64)
+
+        # Assembly-level element sets
+        for sname, elset in self.element_sets.items():
+            gids = [eid for eid in elset.element_ids if eid <= len(elem_conn_0based)]
+            global_elsets[sname] = np.array(sorted([g - 1 for g in gids]), dtype=np.int64)
 
         # Also resolve GeneralSets with associative resolution
         for inst_name, inst in self.instances.items():

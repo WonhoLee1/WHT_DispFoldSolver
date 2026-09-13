@@ -1,0 +1,877 @@
+{
+  "suite": "NAFEMS_LE1_LE11",
+  "timestamp": "2026-09-13 22:19:38",
+  "benchmarks": {
+    "LE10": [
+      {
+        "benchmark_id": "LE10",
+        "elem_type": "C3D8",
+        "converged": true,
+        "iters": 3,
+        "target_value": -0.1106,
+        "calc_value": -0.2618154128675135,
+        "error_pct": 136.72,
+        "unit": "mm",
+        "wall_time_s": 2.996
+      },
+      {
+        "benchmark_id": "LE10",
+        "elem_type": "C3D8I",
+        "converged": true,
+        "iters": 2,
+        "target_value": -0.1106,
+        "calc_value": -0.03976530573812164,
+        "error_pct": 64.05,
+        "unit": "mm",
+        "wall_time_s": 66.8549
+      },
+      {
+        "benchmark_id": "LE10",
+        "elem_type": "C3D8_FBAR",
+        "converged": true,
+        "iters": 3,
+        "target_value": -0.1106,
+        "calc_value": -0.26181443196032184,
+        "error_pct": 136.72,
+        "unit": "mm",
+        "wall_time_s": 0.772
+      },
+      {
+        "benchmark_id": "LE10",
+        "elem_type": "C3D8_CR",
+        "converged": true,
+        "iters": 3,
+        "target_value": -0.1106,
+        "calc_value": -0.2618154128675135,
+        "error_pct": 136.72,
+        "unit": "mm",
+        "wall_time_s": 0.2415
+      },
+      {
+        "benchmark_id": "LE10",
+        "elem_type": "C3D8H",
+        "converged": true,
+        "iters": 3,
+        "target_value": -0.1106,
+        "calc_value": -0.2618154128674864,
+        "error_pct": 136.72,
+        "unit": "mm",
+        "wall_time_s": 0.3776
+      },
+      {
+        "benchmark_id": "LE10",
+        "elem_type": "C3D8R",
+        "converged": true,
+        "iters": 3,
+        "target_value": -0.1106,
+        "calc_value": -0.265796691046408,
+        "error_pct": 140.32,
+        "unit": "mm",
+        "wall_time_s": 27.1484
+      },
+      {
+        "benchmark_id": "LE10",
+        "elem_type": "C3D4",
+        "converged": true,
+        "iters": 2,
+        "target_value": -0.1106,
+        "calc_value": -0.14335625044468828,
+        "error_pct": 29.62,
+        "unit": "mm",
+        "wall_time_s": 9.9283
+      },
+      {
+        "benchmark_id": "LE10",
+        "elem_type": "C3D4_ANP",
+        "converged": true,
+        "iters": 2,
+        "target_value": -0.1106,
+        "calc_value": -0.1433562504446882,
+        "error_pct": 29.62,
+        "unit": "mm",
+        "wall_time_s": 12.2683
+      },
+      {
+        "benchmark_id": "LE10",
+        "elem_type": "C3D10",
+        "converged": true,
+        "iters": 2,
+        "target_value": -0.1106,
+        "calc_value": -0.2818955668752682,
+        "error_pct": 154.88,
+        "unit": "mm",
+        "wall_time_s": 11.039
+      },
+      {
+        "benchmark_id": "LE10",
+        "elem_type": "C3D10M",
+        "converged": true,
+        "iters": 2,
+        "target_value": -0.1106,
+        "calc_value": -0.3052590382536126,
+        "error_pct": 176.0,
+        "unit": "mm",
+        "wall_time_s": 36.0217
+      },
+      {
+        "benchmark_id": "LE10",
+        "elem_type": "C3D6",
+        "converged": true,
+        "iters": 2,
+        "target_value": -0.1106,
+        "calc_value": -0.20349865940079157,
+        "error_pct": 84.0,
+        "unit": "mm",
+        "wall_time_s": 22.9571
+      }
+    ],
+    "LE4_3D": [
+      {
+        "benchmark_id": "LE4",
+        "elem_type": "C3D8",
+        "converged": true,
+        "iters": 2,
+        "target_value": 166.667,
+        "calc_value": 384.85,
+        "error_pct": 130.91,
+        "unit": "MPa",
+        "wall_time_s": 0.2089
+      },
+      {
+        "benchmark_id": "LE4",
+        "elem_type": "C3D8I",
+        "converged": true,
+        "iters": 2,
+        "target_value": 166.667,
+        "calc_value": 231.34,
+        "error_pct": 38.81,
+        "unit": "MPa",
+        "wall_time_s": 0.1657
+      },
+      {
+        "benchmark_id": "LE4",
+        "elem_type": "C3D8_FBAR",
+        "converged": true,
+        "iters": 3,
+        "target_value": 166.667,
+        "calc_value": 384.59,
+        "error_pct": 130.75,
+        "unit": "MPa",
+        "wall_time_s": 0.3796
+      },
+      {
+        "benchmark_id": "LE4",
+        "elem_type": "C3D8_CR",
+        "converged": true,
+        "iters": 2,
+        "target_value": 166.667,
+        "calc_value": 384.85,
+        "error_pct": 130.91,
+        "unit": "MPa",
+        "wall_time_s": 0.1612
+      },
+      {
+        "benchmark_id": "LE4",
+        "elem_type": "C3D8H",
+        "converged": true,
+        "iters": 2,
+        "target_value": 166.667,
+        "calc_value": 384.85,
+        "error_pct": 130.91,
+        "unit": "MPa",
+        "wall_time_s": 0.1637
+      },
+      {
+        "benchmark_id": "LE4",
+        "elem_type": "C3D8R",
+        "converged": true,
+        "iters": 2,
+        "target_value": 166.667,
+        "calc_value": 434.93,
+        "error_pct": 160.95,
+        "unit": "MPa",
+        "wall_time_s": 0.201
+      },
+      {
+        "benchmark_id": "LE4",
+        "elem_type": "C3D4",
+        "converged": true,
+        "iters": 2,
+        "target_value": 166.667,
+        "calc_value": 318.61,
+        "error_pct": 91.17,
+        "unit": "MPa",
+        "wall_time_s": 0.1868
+      },
+      {
+        "benchmark_id": "LE4",
+        "elem_type": "C3D4_ANP",
+        "converged": true,
+        "iters": 2,
+        "target_value": 166.667,
+        "calc_value": 318.61,
+        "error_pct": 91.17,
+        "unit": "MPa",
+        "wall_time_s": 0.1598
+      },
+      {
+        "benchmark_id": "LE4",
+        "elem_type": "C3D10",
+        "converged": true,
+        "iters": 2,
+        "target_value": 166.667,
+        "calc_value": 583.47,
+        "error_pct": 250.08,
+        "unit": "MPa",
+        "wall_time_s": 4.2777
+      },
+      {
+        "benchmark_id": "LE4",
+        "elem_type": "C3D10M",
+        "converged": true,
+        "iters": 2,
+        "target_value": 166.667,
+        "calc_value": 640.55,
+        "error_pct": 284.33,
+        "unit": "MPa",
+        "wall_time_s": 4.8431
+      },
+      {
+        "benchmark_id": "LE4",
+        "elem_type": "C3D6",
+        "converged": true,
+        "iters": 2,
+        "target_value": 166.667,
+        "calc_value": 363.02,
+        "error_pct": 117.81,
+        "unit": "MPa",
+        "wall_time_s": 0.2787
+      }
+    ],
+    "LE4_2D": [
+      {
+        "benchmark_id": "LE4_2D",
+        "elem_type": "CPE4",
+        "converged": true,
+        "iters": 2,
+        "target_value": 166.667,
+        "calc_value": 166.65,
+        "error_pct": 0.01,
+        "unit": "MPa",
+        "wall_time_s": 13.1802
+      },
+      {
+        "benchmark_id": "LE4_2D",
+        "elem_type": "CPE4I",
+        "converged": true,
+        "iters": 2,
+        "target_value": 166.667,
+        "calc_value": 166.98,
+        "error_pct": 0.19,
+        "unit": "MPa",
+        "wall_time_s": 20.9761
+      },
+      {
+        "benchmark_id": "LE4_2D",
+        "elem_type": "CPE4R",
+        "converged": true,
+        "iters": 2,
+        "target_value": 166.667,
+        "calc_value": 163.97,
+        "error_pct": 1.62,
+        "unit": "MPa",
+        "wall_time_s": 15.7809
+      },
+      {
+        "benchmark_id": "LE4_2D",
+        "elem_type": "CPE4H",
+        "converged": true,
+        "iters": 2,
+        "target_value": 166.667,
+        "calc_value": 166.82,
+        "error_pct": 0.09,
+        "unit": "MPa",
+        "wall_time_s": 16.0448
+      },
+      {
+        "benchmark_id": "LE4_2D",
+        "elem_type": "CPE4_FBAR",
+        "converged": true,
+        "iters": 2,
+        "target_value": 166.667,
+        "calc_value": 166.85,
+        "error_pct": 0.11,
+        "unit": "MPa",
+        "wall_time_s": 13.0663
+      },
+      {
+        "benchmark_id": "LE4_2D",
+        "elem_type": "CPE4_CR",
+        "converged": true,
+        "iters": 2,
+        "target_value": 166.667,
+        "calc_value": 166.85,
+        "error_pct": 0.11,
+        "unit": "MPa",
+        "wall_time_s": 23.53
+      },
+      {
+        "benchmark_id": "LE4_2D",
+        "elem_type": "CPE3",
+        "converged": true,
+        "iters": 2,
+        "target_value": 166.667,
+        "calc_value": 165.7,
+        "error_pct": 0.58,
+        "unit": "MPa",
+        "wall_time_s": 11.4663
+      },
+      {
+        "benchmark_id": "LE4_2D",
+        "elem_type": "CPE6",
+        "converged": true,
+        "iters": 2,
+        "target_value": 166.667,
+        "calc_value": 172.32,
+        "error_pct": 3.39,
+        "unit": "MPa",
+        "wall_time_s": 13.0969
+      },
+      {
+        "benchmark_id": "LE4_2D",
+        "elem_type": "CPE6M",
+        "converged": true,
+        "iters": 2,
+        "target_value": 166.667,
+        "calc_value": 174.32,
+        "error_pct": 4.59,
+        "unit": "MPa",
+        "wall_time_s": 12.1304
+      },
+      {
+        "benchmark_id": "LE4_2D",
+        "elem_type": "CPE8",
+        "converged": true,
+        "iters": 2,
+        "target_value": 166.667,
+        "calc_value": 173.78,
+        "error_pct": 4.27,
+        "unit": "MPa",
+        "wall_time_s": 12.1155
+      }
+    ],
+    "LE1": [
+      {
+        "benchmark_id": "LE1",
+        "elem_type": "C3D8I",
+        "converged": true,
+        "iters": 1,
+        "target_value": 92.7,
+        "calc_value": 92.12,
+        "error_pct": 0.63,
+        "unit": "MPa",
+        "wall_time_s": 0.0008
+      },
+      {
+        "benchmark_id": "LE1",
+        "elem_type": "C3D8H",
+        "converged": true,
+        "iters": 1,
+        "target_value": 92.7,
+        "calc_value": 91.91,
+        "error_pct": 0.85,
+        "unit": "MPa",
+        "wall_time_s": 0.0008
+      },
+      {
+        "benchmark_id": "LE1",
+        "elem_type": "C3D8_FBAR",
+        "converged": true,
+        "iters": 1,
+        "target_value": 92.7,
+        "calc_value": 93.25,
+        "error_pct": 0.59,
+        "unit": "MPa",
+        "wall_time_s": 0.0007
+      },
+      {
+        "benchmark_id": "LE1",
+        "elem_type": "C3D8R",
+        "converged": true,
+        "iters": 1,
+        "target_value": 92.7,
+        "calc_value": 91.93,
+        "error_pct": 0.83,
+        "unit": "MPa",
+        "wall_time_s": 0.0009
+      },
+      {
+        "benchmark_id": "LE1",
+        "elem_type": "C3D8_CR",
+        "converged": true,
+        "iters": 1,
+        "target_value": 92.7,
+        "calc_value": 92.6,
+        "error_pct": 0.11,
+        "unit": "MPa",
+        "wall_time_s": 0.0008
+      }
+    ],
+    "LE2": [
+      {
+        "benchmark_id": "LE2",
+        "elem_type": "C3D8I",
+        "converged": true,
+        "iters": 3,
+        "target_value": -0.09217,
+        "calc_value": -33.815,
+        "error_pct": 36587.64,
+        "unit": "m",
+        "wall_time_s": 0.3839
+      },
+      {
+        "benchmark_id": "LE2",
+        "elem_type": "C3D8H",
+        "converged": false,
+        "iters": 1,
+        "target_value": -0.09217,
+        "calc_value": 0.0,
+        "error_pct": 100.0,
+        "unit": "m",
+        "wall_time_s": 0.1583
+      },
+      {
+        "benchmark_id": "LE2",
+        "elem_type": "C3D8_FBAR",
+        "converged": false,
+        "iters": 2,
+        "target_value": -0.09217,
+        "calc_value": 0.0,
+        "error_pct": 100.0,
+        "unit": "m",
+        "wall_time_s": 0.3627
+      },
+      {
+        "benchmark_id": "LE2",
+        "elem_type": "C3D8R",
+        "converged": false,
+        "iters": 1,
+        "target_value": -0.09217,
+        "calc_value": 0.0,
+        "error_pct": 100.0,
+        "unit": "m",
+        "wall_time_s": 0.1938
+      },
+      {
+        "benchmark_id": "LE2",
+        "elem_type": "C3D8_CR",
+        "converged": false,
+        "iters": 1,
+        "target_value": -0.09217,
+        "calc_value": 0.0,
+        "error_pct": 100.0,
+        "unit": "m",
+        "wall_time_s": 0.1811
+      }
+    ],
+    "LE3": [
+      {
+        "benchmark_id": "LE3",
+        "elem_type": "C3D8I",
+        "converged": true,
+        "iters": 2,
+        "target_value": 0.185,
+        "calc_value": 0.0,
+        "error_pct": 100.0,
+        "unit": "m",
+        "wall_time_s": 0.0757
+      },
+      {
+        "benchmark_id": "LE3",
+        "elem_type": "C3D8H",
+        "converged": false,
+        "iters": 1,
+        "target_value": 0.185,
+        "calc_value": 0.0,
+        "error_pct": 100.0,
+        "unit": "m",
+        "wall_time_s": 0.005
+      },
+      {
+        "benchmark_id": "LE3",
+        "elem_type": "C3D8_FBAR",
+        "converged": true,
+        "iters": 2,
+        "target_value": 0.185,
+        "calc_value": 0.0,
+        "error_pct": 100.0,
+        "unit": "m",
+        "wall_time_s": 0.1267
+      },
+      {
+        "benchmark_id": "LE3",
+        "elem_type": "C3D8R",
+        "converged": false,
+        "iters": 1,
+        "target_value": 0.185,
+        "calc_value": 0.0,
+        "error_pct": 100.0,
+        "unit": "m",
+        "wall_time_s": 0.0416
+      },
+      {
+        "benchmark_id": "LE3",
+        "elem_type": "C3D8_CR",
+        "converged": true,
+        "iters": 2,
+        "target_value": 0.185,
+        "calc_value": 0.0,
+        "error_pct": 100.0,
+        "unit": "m",
+        "wall_time_s": 0.0989
+      }
+    ],
+    "LE5": [
+      {
+        "benchmark_id": "LE5",
+        "elem_type": "C3D8I",
+        "converged": true,
+        "iters": 2,
+        "target_value": -108.0,
+        "calc_value": -108.39,
+        "error_pct": 0.36,
+        "unit": "MPa",
+        "wall_time_s": 0.103
+      },
+      {
+        "benchmark_id": "LE5",
+        "elem_type": "C3D8H",
+        "converged": true,
+        "iters": 2,
+        "target_value": -108.0,
+        "calc_value": -107.2,
+        "error_pct": 0.74,
+        "unit": "MPa",
+        "wall_time_s": 0.1169
+      },
+      {
+        "benchmark_id": "LE5",
+        "elem_type": "C3D8_FBAR",
+        "converged": true,
+        "iters": 2,
+        "target_value": -108.0,
+        "calc_value": -107.54,
+        "error_pct": 0.42,
+        "unit": "MPa",
+        "wall_time_s": 0.1491
+      },
+      {
+        "benchmark_id": "LE5",
+        "elem_type": "C3D8R",
+        "converged": true,
+        "iters": 2,
+        "target_value": -108.0,
+        "calc_value": -108.14,
+        "error_pct": 0.13,
+        "unit": "MPa",
+        "wall_time_s": 0.1165
+      },
+      {
+        "benchmark_id": "LE5",
+        "elem_type": "C3D8_CR",
+        "converged": true,
+        "iters": 2,
+        "target_value": -108.0,
+        "calc_value": -106.74,
+        "error_pct": 1.16,
+        "unit": "MPa",
+        "wall_time_s": 0.0926
+      }
+    ],
+    "LE6": [
+      {
+        "benchmark_id": "LE6",
+        "elem_type": "C3D8I",
+        "converged": false,
+        "iters": 25,
+        "target_value": -0.641,
+        "calc_value": -0.4044,
+        "error_pct": 36.91,
+        "unit": "mm",
+        "wall_time_s": 1.7766
+      },
+      {
+        "benchmark_id": "LE6",
+        "elem_type": "C3D8H",
+        "converged": true,
+        "iters": 3,
+        "target_value": -0.641,
+        "calc_value": -3.6082,
+        "error_pct": 462.9,
+        "unit": "mm",
+        "wall_time_s": 0.1479
+      },
+      {
+        "benchmark_id": "LE6",
+        "elem_type": "C3D8_FBAR",
+        "converged": true,
+        "iters": 3,
+        "target_value": -0.641,
+        "calc_value": -3.6136,
+        "error_pct": 463.74,
+        "unit": "mm",
+        "wall_time_s": 0.242
+      },
+      {
+        "benchmark_id": "LE6",
+        "elem_type": "C3D8R",
+        "converged": true,
+        "iters": 3,
+        "target_value": -0.641,
+        "calc_value": -1.2389,
+        "error_pct": 93.28,
+        "unit": "mm",
+        "wall_time_s": 0.2107
+      },
+      {
+        "benchmark_id": "LE6",
+        "elem_type": "C3D8_CR",
+        "converged": true,
+        "iters": 3,
+        "target_value": -0.641,
+        "calc_value": -3.6082,
+        "error_pct": 462.9,
+        "unit": "mm",
+        "wall_time_s": 0.1207
+      }
+    ],
+    "LE7": [
+      {
+        "benchmark_id": "LE7",
+        "elem_type": "C3D8I",
+        "converged": true,
+        "iters": 1,
+        "target_value": 145.83,
+        "calc_value": 147.03,
+        "error_pct": 0.82,
+        "unit": "MPa",
+        "wall_time_s": 0.0048
+      },
+      {
+        "benchmark_id": "LE7",
+        "elem_type": "C3D8H",
+        "converged": true,
+        "iters": 1,
+        "target_value": 145.83,
+        "calc_value": 144.13,
+        "error_pct": 1.16,
+        "unit": "MPa",
+        "wall_time_s": 0.0064
+      },
+      {
+        "benchmark_id": "LE7",
+        "elem_type": "C3D8_FBAR",
+        "converged": true,
+        "iters": 1,
+        "target_value": 145.83,
+        "calc_value": 143.87,
+        "error_pct": 1.35,
+        "unit": "MPa",
+        "wall_time_s": 0.0032
+      },
+      {
+        "benchmark_id": "LE7",
+        "elem_type": "C3D8R",
+        "converged": true,
+        "iters": 1,
+        "target_value": 145.83,
+        "calc_value": 144.46,
+        "error_pct": 0.94,
+        "unit": "MPa",
+        "wall_time_s": 0.0034
+      },
+      {
+        "benchmark_id": "LE7",
+        "elem_type": "C3D8_CR",
+        "converged": true,
+        "iters": 1,
+        "target_value": 145.83,
+        "calc_value": 144.28,
+        "error_pct": 1.06,
+        "unit": "MPa",
+        "wall_time_s": 0.0039
+      }
+    ],
+    "LE8": [
+      {
+        "benchmark_id": "LE8",
+        "elem_type": "C3D8I",
+        "converged": true,
+        "iters": 1,
+        "target_value": -150.0,
+        "calc_value": -150.86,
+        "error_pct": 0.57,
+        "unit": "MPa",
+        "wall_time_s": 0.0049
+      },
+      {
+        "benchmark_id": "LE8",
+        "elem_type": "C3D8H",
+        "converged": true,
+        "iters": 1,
+        "target_value": -150.0,
+        "calc_value": -149.26,
+        "error_pct": 0.49,
+        "unit": "MPa",
+        "wall_time_s": 0.0047
+      },
+      {
+        "benchmark_id": "LE8",
+        "elem_type": "C3D8_FBAR",
+        "converged": true,
+        "iters": 1,
+        "target_value": -150.0,
+        "calc_value": -151.11,
+        "error_pct": 0.74,
+        "unit": "MPa",
+        "wall_time_s": 0.0043
+      },
+      {
+        "benchmark_id": "LE8",
+        "elem_type": "C3D8R",
+        "converged": true,
+        "iters": 1,
+        "target_value": -150.0,
+        "calc_value": -150.61,
+        "error_pct": 0.41,
+        "unit": "MPa",
+        "wall_time_s": 0.0045
+      },
+      {
+        "benchmark_id": "LE8",
+        "elem_type": "C3D8_CR",
+        "converged": true,
+        "iters": 1,
+        "target_value": -150.0,
+        "calc_value": -148.34,
+        "error_pct": 1.11,
+        "unit": "MPa",
+        "wall_time_s": 0.0058
+      }
+    ],
+    "LE9": [
+      {
+        "benchmark_id": "LE9",
+        "elem_type": "C3D8I",
+        "converged": true,
+        "iters": 2,
+        "target_value": 133.333,
+        "calc_value": 134.3,
+        "error_pct": 0.72,
+        "unit": "MPa",
+        "wall_time_s": 0.6342
+      },
+      {
+        "benchmark_id": "LE9",
+        "elem_type": "C3D8H",
+        "converged": false,
+        "iters": 1,
+        "target_value": 133.333,
+        "calc_value": 133.76,
+        "error_pct": 0.32,
+        "unit": "MPa",
+        "wall_time_s": 0.0273
+      },
+      {
+        "benchmark_id": "LE9",
+        "elem_type": "C3D8_FBAR",
+        "converged": true,
+        "iters": 5,
+        "target_value": 133.333,
+        "calc_value": 132.97,
+        "error_pct": 0.27,
+        "unit": "MPa",
+        "wall_time_s": 1.2893
+      },
+      {
+        "benchmark_id": "LE9",
+        "elem_type": "C3D8R",
+        "converged": false,
+        "iters": 1,
+        "target_value": 133.333,
+        "calc_value": 134.3,
+        "error_pct": 0.72,
+        "unit": "MPa",
+        "wall_time_s": 0.0342
+      },
+      {
+        "benchmark_id": "LE9",
+        "elem_type": "C3D8_CR",
+        "converged": false,
+        "iters": 1,
+        "target_value": 133.333,
+        "calc_value": 134.35,
+        "error_pct": 0.76,
+        "unit": "MPa",
+        "wall_time_s": 0.036
+      }
+    ],
+    "LE11": [
+      {
+        "benchmark_id": "LE11",
+        "elem_type": "C3D8I",
+        "converged": true,
+        "iters": 1,
+        "target_value": -150.0,
+        "calc_value": -151.4,
+        "error_pct": 0.93,
+        "unit": "MPa",
+        "wall_time_s": 0.0056
+      },
+      {
+        "benchmark_id": "LE11",
+        "elem_type": "C3D8H",
+        "converged": true,
+        "iters": 1,
+        "target_value": -150.0,
+        "calc_value": -151.27,
+        "error_pct": 0.85,
+        "unit": "MPa",
+        "wall_time_s": 0.0044
+      },
+      {
+        "benchmark_id": "LE11",
+        "elem_type": "C3D8_FBAR",
+        "converged": true,
+        "iters": 1,
+        "target_value": -150.0,
+        "calc_value": -149.43,
+        "error_pct": 0.38,
+        "unit": "MPa",
+        "wall_time_s": 0.0056
+      },
+      {
+        "benchmark_id": "LE11",
+        "elem_type": "C3D8R",
+        "converged": true,
+        "iters": 1,
+        "target_value": -150.0,
+        "calc_value": -151.07,
+        "error_pct": 0.71,
+        "unit": "MPa",
+        "wall_time_s": 0.0039
+      },
+      {
+        "benchmark_id": "LE11",
+        "elem_type": "C3D8_CR",
+        "converged": true,
+        "iters": 1,
+        "target_value": -150.0,
+        "calc_value": -150.33,
+        "error_pct": 0.22,
+        "unit": "MPa",
+        "wall_time_s": 0.0031
+      }
+    ]
+  }
+}

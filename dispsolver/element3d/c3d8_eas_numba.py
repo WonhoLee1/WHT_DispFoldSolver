@@ -124,8 +124,9 @@ if HAS_NUMBA:
         inv_K_aa = np.linalg.inv(K_aa)
         K_condensed = K_uu - K_ua @ inv_K_aa @ K_ua.T
         alpha_opt = -inv_K_aa @ (K_ua.T @ u_elem)
+        f_condensed = f_int + K_ua @ alpha_opt
 
-        return K_condensed, f_int, alpha_opt
+        return K_condensed, f_condensed, alpha_opt
 
     @njit(parallel=True, fastmath=True, nogil=True)
     def assemble_mesh_c3d8_eas_numba(

@@ -1,0 +1,129 @@
+D:\PythonCodeStudy\WHT_DispFoldSolver\dispsolver\io\abaqus_parser.py:131: UserWarning: Unsupported keyword: *SECTION CONTROLS \u2014 skipping
+  warnings.warn(f"Unsupported keyword: *{block.keyword} \u2014 skipping")
+Found translation boundary conditions on 4 DOFs.
+Found prescribed rotations on master nodes: {100000: -1.570796, 100306: 1.570796}
+====================================================================================================
+ MODEL REVIEW
+====================================================================================================
+Materials (4 distinct):
+  - PSA: Arruda-Boyce + Prony viscoelastic: mu=0.015614, lambda_m=3.0, K=0.83333
+  - PET: J2 plasticity: E=4000.0, nu=0.3, sigma_y0=80.0, H=400.0
+  - GLASS: J2 plasticity: E=70000.0, nu=0.22, sigma_y0=1000000000.0, H=0.0
+  - STEEL: NeoHookean: E=20000.0, nu=0.3
+Parts / Layers (16 total):
+  - pid 1: 142 elements, material=PSA, thickness=0.0300 mm (30.0 um), element=CPE4I
+  - pid 2: 606 elements, material=PET, thickness=0.0600 mm (60.0 um), element=Q4_COROTATIONAL_SRI
+  - pid 3: 202 elements, material=PSA, thickness=0.0300 mm (30.0 um), element=CPE4I
+  - pid 4: 606 elements, material=PET, thickness=0.0600 mm (60.0 um), element=Q4_COROTATIONAL_SRI
+  - pid 5: 202 elements, material=PSA, thickness=0.0300 mm (30.0 um), element=CPE4I
+  - pid 6: 606 elements, material=PET, thickness=0.0600 mm (60.0 um), element=Q4_COROTATIONAL_SRI
+  - pid 7: 202 elements, material=PSA, thickness=0.0300 mm (30.0 um), element=CPE4I
+  - pid 8: 606 elements, material=PET, thickness=0.0600 mm (60.0 um), element=Q4_COROTATIONAL_SRI
+  - pid 9: 202 elements, material=PSA, thickness=0.0300 mm (30.0 um), element=CPE4I
+  - pid 10: 606 elements, material=PET, thickness=0.0600 mm (60.0 um), element=Q4_COROTATIONAL_SRI
+  - pid 11: 202 elements, material=PSA, thickness=0.0300 mm (30.0 um), element=CPE4I
+  - pid 12: 606 elements, material=PET, thickness=0.0600 mm (60.0 um), element=Q4_COROTATIONAL_SRI
+  - pid 13: 202 elements, material=PSA, thickness=0.0300 mm (30.0 um), element=CPE4I
+  - pid 14: 606 elements, material=GLASS, thickness=0.0600 mm (60.0 um), element=Q4_COROTATIONAL_SRI
+  - Plate Left: 240 elements, material=STEEL, thickness=0.5000 mm (500.0 um), element=Q4_COROTATIONAL
+  - Plate Right: 240 elements, material=STEEL, thickness=0.5000 mm (500.0 um), element=Q4_COROTATIONAL
+Total elements: 6076, total layers/parts: 16
+====================================================================================================
+[PNG] Deformed shape saved: D:\PythonCodeStudy\WHT_DispFoldSolver\examples\dbg2_b.png
+----------------------------------------------------------------------------------------------------
+Step 1 | Attempting time increment: dt = 0.00500s (t: 0.0000s -> 0.0050s)
+----------------------------------------------------------------------------------------------------
+
+  Nonlinear Iteration Summary (Newton-Raphson)
+  ==========================================================================================================================
+  Time increment dt: 5.000e-03
+  Convergence Tol  : 1.0e-02 (Disp Ratio)     Max Iterations: 50
+  --------------------------------------------------------------------------------------------------------------------------
+  Iter   Max Res.Force  (Node/DOF)    Max Disp.Corr  (Node/DOF)    Max Disp.Incr  Disp.Ratio  Energy.Err  LS.alpha  TieNodes
+  --------------------------------------------------------------------------------------------------------------------------
+     1    1.1735e+02  N1(UY)         7.5224e-05  N1(UY)         7.5224e-05     9.39e-01    5.21e-01      1.00       122
+     2    3.6811e-06  N144(UY)       2.4494e-10  N246(UY)       7.5224e-05     2.55e-06    5.17e-16      1.00       122
+  ---------------------------------------------------------------------------------------------------------------------
+  => Increment Converged. (Time: 66.71 s)
+
+
+  STEP   INC   ATT   SEVERE   EQUIL     TOTAL      STEP      INC OF
+                     DISCON   ITERS      TIME       TIME       TIME
+     1     1     1       0       1     0.0050     0.0050     0.0050
+[ALPHA] max|a|=9.9859e-07 (clamp 0.05)  mean|a|(nonzero)=2.731e-09  frac elems >0.9*clamp=0.000%
+
+  [MONITOR] Step   1 | Time 0.0050s / 1.0s (  0.5%)
+            Fold Angle: Target +-  0.00deg | Actual [-0.00deg, +0.00deg]
+            Plate Tips Y: Left= -0.50mm | Right= -0.50mm | Max Disp=  0.00mm
+            Newton Iters:  1 | dt: 0.00500s
+            [DIAGNOSTIC] display/plate max|u| ratio=1.0000 (display=0.000mm, plate=0.000mm)
+            [DIAGNOSTIC] Real tie gap (not just active-pair count): DISPLAY_BOT_L_PLATE_L_TOP_TIE: max_gap=0.0000mm mean=0.0000mm n=61 | DISPLAY_BOT_R_PLATE_R_TOP_TIE: max_gap=0.0000mm mean=0.0000mm n=61
+            [DIAGNOSTIC] Hinge curvature: max_curv_ratio=11.79 kink_detected=True at x=8.50mm
+
+[PNG] Deformed shape saved: D:\PythonCodeStudy\WHT_DispFoldSolver\examples\dbg2_a.png
+----------------------------------------------------------------------------------------------------
+Step 2 | Attempting time increment: dt = 0.00750s (t: 0.0050s -> 0.0125s)
+----------------------------------------------------------------------------------------------------
+
+  Nonlinear Iteration Summary (Newton-Raphson)
+  ==========================================================================================================================
+  Time increment dt: 7.500e-03
+  Convergence Tol  : 1.0e-02 (Disp Ratio)     Max Iterations: 50
+  --------------------------------------------------------------------------------------------------------------------------
+  Iter   Max Res.Force  (Node/DOF)    Max Disp.Corr  (Node/DOF)    Max Disp.Incr  Disp.Ratio  Energy.Err  LS.alpha  TieNodes
+  --------------------------------------------------------------------------------------------------------------------------
+     1    1.0002e+03  N144(UY)       6.4115e-04  N144(UY)       1.0869e-03     5.18e-01    3.79e+01      1.00       122
+     2    2.7826e-05  N1(UY)         1.5538e-08  N5321(UY)      1.0869e-03     1.06e-05    4.46e-14      1.00       122
+  ---------------------------------------------------------------------------------------------------------------------
+  => Increment Converged. (Time: 9.65 s)
+
+     1     2     1       0       1     0.0125     0.0075     0.0075
+[ALPHA] max|a|=1.5612e-05 (clamp 0.05)  mean|a|(nonzero)=4.453e-08  frac elems >0.9*clamp=0.000%
+
+  [MONITOR] Step   2 | Time 0.0125s / 1.0s (  1.2%)
+            Fold Angle: Target +-  0.00deg | Actual [-0.00deg, +0.00deg]
+            Plate Tips Y: Left= -0.50mm | Right= -0.50mm | Max Disp=  0.00mm
+            Newton Iters:  1 | dt: 0.00750s
+            [DIAGNOSTIC] display/plate max|u| ratio=1.0000 (display=0.001mm, plate=0.000mm)
+            [DIAGNOSTIC] Real tie gap (not just active-pair count): DISPLAY_BOT_L_PLATE_L_TOP_TIE: max_gap=0.0000mm mean=0.0000mm n=61 | DISPLAY_BOT_R_PLATE_R_TOP_TIE: max_gap=0.0000mm mean=0.0000mm n=61
+
+[PNG] Deformed shape saved: D:\PythonCodeStudy\WHT_DispFoldSolver\examples\dbg2_a.png
+----------------------------------------------------------------------------------------------------
+Step 3 | Attempting time increment: dt = 0.01000s (t: 0.0125s -> 0.0225s)
+----------------------------------------------------------------------------------------------------
+
+  Nonlinear Iteration Summary (Newton-Raphson)
+  ==========================================================================================================================
+  Time increment dt: 1.000e-02
+  Convergence Tol  : 1.0e-02 (Disp Ratio)     Max Iterations: 50
+  --------------------------------------------------------------------------------------------------------------------------
+  Iter   Max Res.Force  (Node/DOF)    Max Disp.Corr  (Node/DOF)    Max Disp.Incr  Disp.Ratio  Energy.Err  LS.alpha  TieNodes
+  --------------------------------------------------------------------------------------------------------------------------
+     1    1.6000e+03  N1(UY)         1.0256e-03  N1(UY)         5.5133e-03     1.44e-01    9.69e+01      1.00       122
+     2    2.6084e-05  N144(UY)       1.6776e-07  N5321(UY)      5.5133e-03     1.94e-05    1.27e-13      1.00       122
+  ---------------------------------------------------------------------------------------------------------------------
+  => Increment Converged. (Time: 9.83 s)
+
+     1     3     1       0       1     0.0225     0.0100     0.0100
+[ALPHA] max|a|=9.0150e-05 (clamp 0.05)  mean|a|(nonzero)=2.598e-07  frac elems >0.9*clamp=0.000%
+
+  [MONITOR] Step   3 | Time 0.0225s / 1.0s (  2.2%)
+            Fold Angle: Target +-  0.01deg | Actual [-0.01deg, +0.01deg]
+            Plate Tips Y: Left= -0.49mm | Right= -0.49mm | Max Disp=  0.01mm
+            Newton Iters:  1 | dt: 0.01000s
+            [DIAGNOSTIC] display/plate max|u| ratio=1.0000 (display=0.007mm, plate=0.000mm)
+            [DIAGNOSTIC] Real tie gap (not just active-pair count): DISPLAY_BOT_L_PLATE_L_TOP_TIE: max_gap=0.0000mm mean=0.0000mm n=61 | DISPLAY_BOT_R_PLATE_R_TOP_TIE: max_gap=0.0000mm mean=0.0000mm n=61
+
+[PNG] Deformed shape saved: D:\PythonCodeStudy\WHT_DispFoldSolver\examples\dbg2_a.png
+----------------------------------------------------------------------------------------------------
+Step 4 | Attempting time increment: dt = 0.01000s (t: 0.0225s -> 0.0325s)
+----------------------------------------------------------------------------------------------------
+
+  Nonlinear Iteration Summary (Newton-Raphson)
+  ==========================================================================================================================
+  Time increment dt: 1.000e-02
+  Convergence Tol  : 1.0e-02 (Disp Ratio)     Max Iterations: 50
+  --------------------------------------------------------------------------------------------------------------------------
+  Iter   Max Res.Force  (Node/DOF)    Max Disp.Corr  (Node/DOF)    Max Disp.Incr  Disp.Ratio  Energy.Err  LS.alpha  TieNodes
+  --------------------------------------------------------------------------------------------------------------------------
+     1    2.2071e+03  N144(UY)       1.4148e-03  N347(UY)       1.3137e-02     6.70e-02    1.84e+02      1.00       122

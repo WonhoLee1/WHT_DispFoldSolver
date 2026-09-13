@@ -78,6 +78,12 @@ class Step:
         self.predefined_fields: Dict[str, PredefinedField] = {}
         self.sensors: Dict[str, Sensor] = {}
         self.iteration_hooks: Dict[str, IterationHook] = {}
+        self.field_output_requests: Dict[str, Any] = {}
+        self.history_output_requests: Dict[str, Any] = {}
+
+        # Abaqus Parity: Default Output Requests on creation
+        if self.procedure != "INITIAL":
+            self._init_default_output_requests()
 
         # If created from a parent step, propagate active entities from parent
         if parent_step is not None:
@@ -209,6 +215,82 @@ class Step:
     def get_active_interactions(self) -> Dict[str, Any]:
         """Return dict of active Interactions in this step."""
         return {name: entry.entity for name, entry in self.interactions.items() if entry.is_active()}
+
+    # ─── OUTPUT REQUESTS (ABAQUS PARITY) ───────────────────────────────
+
+    def _init_default_output_requests(self) -> None:
+        """Initialize standard default Abaqus Field and History output requests."""
+        from dispsolver.output.requests import FieldOutputRequest, HistoryOutputRequest
+        self.field_output_requests["F-Output-1"] = FieldOutputRequest(
+            name="F-Output-1",
+            create_step_name=self.name,
+            variables=["U", "RF", "S", "LE", "PEEQ"],
+            frequency=1
+        )
+        self.history_output_requests["H-Output-1"] = HistoryOutputRequest(
+            name="H-Output-1",
+            create_step_name=self.name,
+            variables=["ALLIE", "ALLSE", "ALLPD", "ALLVD", "ALLKE", "ALLWK", "ETOTAL"],
+            frequency=1
+        )
+
+    def FieldOutputRequest(
+        self,
+        name: str = "F-Output-1",
+        variables: Optional[Sequence[str]] = None,
+        frequency: Optional[int] = 1,
+        num_intervals: Optional[int] = None,
+        time_interval: Optional[float] = None,
+        time_points: Optional[Sequence[float]] = None,
+        exact_time_points: bool = True,
+        position: str = "INTEGRATION_POINTS",
+        region: Optional[str] = None,
+        modes: str = "ALL",
+        condition: Optional[Any] = None
+    ) -> Any:
+        """Create or configure a FieldOutputRequest in this Step (Abaqus parity)."""
+        from dispsolver.output.requests import FieldOutputRequest
+        req = FieldOutputRequest(
+            name=str(name),
+            create_step_name=self.name,
+            variables=list(variables) if variables is not None else ["U", "RF", "S", "LE", "PEEQ"],
+            frequency=frequency,
+            num_intervals=num_intervals,
+            time_interval=time_interval,
+            time_points=time_points,
+            exact_time_points=exact_time_points,
+            position=position,
+            region=region,
+            modes=modes,
+            condition=condition
+        )
+        self.field_output_requests[str(name)] = req
+        return req
+
+    def HistoryOutputRequest(
+        self,
+        name: str = "H-Output-1",
+        variables: Optional[Sequence[str]] = None,
+        frequency: Optional[int] = 1,
+        num_intervals: Optional[int] = None,
+        time_interval: Optional[float] = None,
+        region: Optional[str] = None,
+        section_name: Optional[str] = None
+    ) -> Any:
+        """Create or configure a HistoryOutputRequest in this Step (Abaqus parity)."""
+        from dispsolver.output.requests import HistoryOutputRequest
+        req = HistoryOutputRequest(
+            name=str(name),
+            create_step_name=self.name,
+            variables=list(variables) if variables is not None else ["ALLIE", "ALLSE", "ALLPD", "ALLVD", "ALLWK", "ETOTAL"],
+            frequency=frequency,
+            num_intervals=num_intervals,
+            time_interval=time_interval,
+            region=region,
+            section_name=section_name
+        )
+        self.history_output_requests[str(name)] = req
+        return req
 
 
 class InitialStep(Step):
