@@ -401,7 +401,7 @@ class DynamicSolver3D:
         """Assemble global 3D stiffness matrix K_global and internal force vector f_int."""
         node_coords_all = self.mesh.nodes_array()
 
-        if self.nlgeom and self.rows_topo is not None:
+        if self.rows_topo is not None:
             try:
                 f_int_global = np.zeros(self.num_dofs, dtype=np.float64)
                 data_topo_list = []
