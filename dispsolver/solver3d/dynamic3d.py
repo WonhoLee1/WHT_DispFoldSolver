@@ -283,6 +283,8 @@ class DynamicSolver3D:
                     k = 7
                 elif et in ["C3D4_ANP", "ANP"]:
                     k = 9
+                elif et in ["SOLID_SHELL", "C3D8_SS"]:
+                    k = 12
                 else:
                     k = 1 if not is_nearly_incompressible else 3
             else:
@@ -315,6 +317,8 @@ class DynamicSolver3D:
                     k = 2
                 elif et in ["C3D8R_CR"]:
                     k = 13
+                elif et in ["SOLID_SHELL", "C3D8_SS"]:
+                    k = 12
                 else:
                     raise NotImplementedError(
                         f"Element type '{et}' is not yet supported in the Numba fast-path."
@@ -485,6 +489,11 @@ class DynamicSolver3D:
                         f_sub, K_sub, err = assemble_mesh_c3d8i_cr_numba(
                             node_coords_all, sub_conn, u_vec, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls, elem_stress_init=sub_stress_init
                         )
+                    elif k == 12:
+                        from dispsolver.element3d.solid_shell_numba import assemble_mesh_solid_shell_numba
+                        f_sub, K_sub, err = assemble_mesh_solid_shell_numba(
+                            node_coords_all, sub_conn, u_vec, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls, elem_stress_init=sub_stress_init
+                        )
                     elif k == 13:
                         from dispsolver.element3d.cr_wrapper_3d import assemble_mesh_c3d8r_cr_numba
                         f_sub, K_sub, err = assemble_mesh_c3d8r_cr_numba(
@@ -584,9 +593,35 @@ class DynamicSolver3D:
         tol: float = 1e-5,
         max_iters: int = 25,
         max_sdi_iters: int = 200,
+        augment_relaxation: float = 1.0,
+        use_anderson_accel: bool = False,
+        anderson_m: int = 4,
+        anderson_beta: float = 1.0,
     ) -> Tuple[bool, int]:
         """Solve a 3D non-linear incremental step using Newton-Raphson with
         Armijo line search.
+
+        PDASS / single-loop augmented Lagrangian (design doc
+        dev_log/contact_pdass_precise_design_20260915.md): for any
+        constraint with `augmented_lagrange=True`,
+        `update_augmented_multipliers()` is called once per ACCEPTED
+        Newton iterate (both commit points below), not once per fully-
+        converged `solve_step()` call as the old `solve_step_augmented()`
+        outer-loop design did. This is the Simo & Laursen (1992) single-
+        loop construction: nesting the Uzawa multiplier update inside the
+        Newton loop itself converges the multiplier at Newton's own rate
+        instead of a much slower outer-cycle rate, with NO change to
+        `assemble()`'s own math (design doc sec1: the per-node residual/
+        tangent formula was already exactly correct for a momentarily-
+        frozen multiplier; only *when* it gets updated changes).
+        Deliberately NOT called from inside `assemble()` itself (design
+        doc sec2.1): `assemble_system()` runs multiple times per Newton
+        iteration against trial (not necessarily accepted) displacement
+        vectors -- the iteration-1 probe and up to 6 line-search
+        halvings -- so updating the multiplier there would advance it
+        once per CALL instead of once per accepted ITERATE, an
+        irreproducible bug depending on how many line-search trials
+        happened to run.
 
         Severe discontinuity iterations (SDI): when a contact constraint's
         active set (which nodes are currently penetrating) changes between
@@ -630,6 +665,11 @@ class DynamicSolver3D:
 
         u_k = self.u.copy()
         r_0_norm = None
+
+        accelerator = None
+        if use_anderson_accel:
+            from dispsolver.solver.anderson_acceleration import AndersonAccelerator
+            accelerator = AndersonAccelerator(m=anderson_m, beta=anderson_beta)
 
         prev_active_set = self._contact_active_set(u_k)
         equil_iters = 0
@@ -700,36 +740,38 @@ class DynamicSolver3D:
                 u_trial = u_k + du
                 _, _ = self.assemble_system(u_trial, dt=dt)
                 if self.last_assembly_error == 0:
+                    if accelerator is not None:
+                        accelerator.record(u_k, du)
                     u_k = u_trial
+                    for c in self.constraints:
+                        if getattr(c, "augmented_lagrange", False):
+                            c.update_augmented_multipliers(u_k, omega=augment_relaxation)
                     continue
 
+            # If Anderson Acceleration is active, attempt accelerated trial step first
+            aa_accepted = False
+            if accelerator is not None and iter_count > 1:
+                u_aa = accelerator.step(u_k, du, mask=free_dof_mask)
+                for dof, target_val in self.fixed_dofs.items():
+                    u_aa[dof] = target_val
+
+                _, f_aa = self.assemble_system(u_aa, dt=dt)
+                if self.last_assembly_error == 0:
+                    r_aa = f_ext - f_aa
+                    r_aa_norm = float(np.linalg.norm(r_aa[free_dof_mask]))
+                    # Accept accelerated iterate if it doesn't cause divergence
+                    if r_aa_norm < r_norm or r_aa_norm <= max(1.2 * r_norm, 1e-4 * r_0_norm, 1e-5):
+                        u_k = u_aa
+                        aa_accepted = True
+                        for c in self.constraints:
+                            if getattr(c, "augmented_lagrange", False):
+                                c.update_augmented_multipliers(u_k, omega=augment_relaxation)
+                        continue
+
+                # AA trial rejected by safeguard: pop the unverified record
+                accelerator.pop_last()
+
             # Robust Armijo line search for energy/residual minimization.
-            #
-            # FIXED 2026-09-13 (dev_log/hertz_contact_benchmark_20260913.md,
-            # found while verifying the SDI fix above): this loop used to
-            # set `found_valid = True` unconditionally on its very FIRST
-            # trial (`r_t_norm < best_r_norm or not found_valid`, and
-            # `not found_valid` is always True on trial 0) -- so best_u
-            # was seeded to the FULL step (s=1.0) regardless of whether it
-            # actually improved the residual, and the `if not found_valid:
-            # return False` cutback a few lines below could then only ever
-            # fire if literally every one of the 6 halvings caused element
-            # inversion. A full step that made the residual WORSE, with
-            # none of the 5 remaining (smaller) halvings improving on it
-            # either, was silently accepted anyway. This is not contact-
-            # specific -- it is a base Newton-loop defect that happened to
-            # rarely trigger because most of this solver's problems have a
-            # full Newton step that naturally decreases residual; a
-            # multi-node-simultaneous-contact system exposed it directly
-            # (measured: residual crept from 1.112 to 1.143 over 50
-            # "accepted" full-step iterations, never once rejected).
-            # Fixed: found_valid is now only set True on a GENUINE
-            # improvement over the running best (seeded to this
-            # iteration's own r_norm, not an arbitrary first guess) or on
-            # meeting the acceptance threshold -- so if none of the 6
-            # halvings actually helps, found_valid correctly stays False
-            # and the increment is genuinely cut back, exactly as a real
-            # Armijo line search requires.
             s = 1.0
             best_r_norm = r_norm
             best_u = u_k.copy()
@@ -758,6 +800,12 @@ class DynamicSolver3D:
                 return False, iter_count
 
             u_k = best_u
+            if accelerator is not None and not aa_accepted:
+                accelerator.record(u_k - s * du, s * du)
+
+            for c in self.constraints:
+                if getattr(c, "augmented_lagrange", False):
+                    c.update_augmented_multipliers(u_k, omega=augment_relaxation)
 
         # Exhausted the equilibrium-iteration budget (max_iters, counting
         # only non-SDI iterations) or the total raw budget
@@ -803,36 +851,50 @@ class DynamicSolver3D:
         max_penetration contracts geometrically (~0.77x per cycle on the
         single-element case) toward zero, matching standard Uzawa theory.
 
+        **UPGRADED, 2026-09-15** (dev_log/contact_pdass_precise_design_20260915.md,
+        the Simo & Laursen 1992 single-loop construction): `solve_step()`
+        itself now calls `update_augmented_multipliers()` once per
+        ACCEPTED Newton iterate (not once per fully-converged outer
+        cycle), so the multiplier is already being driven toward its
+        fixed point at Newton's own rate DURING the single call below.
+        This method is therefore no longer the mechanism that converges
+        the augmentation -- it is a thin pass-through plus a safety net:
+        call `solve_step()` once, and only fall back to additional outer
+        cycles if `max_penetration` is somehow still above `augment_tol`
+        after that single call (expected NOT to trigger on this
+        codebase's existing regression cases, per the design doc's own
+        falsifiable prediction -- `n_augment_cycles == 1` is now the
+        expected, checked outcome, not an accident of a lucky outer loop).
+
         Only meaningful when at least one of self.constraints has
         augmented_lagrange=True (SurfaceContactConstraint3D); with none,
-        this degenerates to exactly one call to solve_step() (the inner
-        loop) since update_augmented_multipliers() is a no-op for a
-        plain-penalty constraint and max_penetration reports 0
-        immediately, satisfying augment_tol on the first outer cycle.
+        this degenerates to exactly one call to solve_step().
 
         Returns (converged, n_augment_cycles, last_inner_iters). The
-        u/state are committed by solve_step() itself as usual; this
-        method's only additional side effect is updating each augmented
-        constraint's persistent self._lam across outer cycles (undone
-        implicitly on failure only in the sense that a failed inner solve
-        leaves lam at its PREVIOUS cycle's value -- lam is deliberately
-        NOT rolled back on inner failure, matching the design doc's
-        description of augmentation as operating on an already-converged
-        equilibrium, never on a failed one).
+        u/state are committed by solve_step() itself as usual.
         """
         augmented_constraints = [c for c in self.constraints if getattr(c, "augmented_lagrange", False)]
 
         for augment_iter in range(1, max_augment_iters + 1):
-            converged, inner_iters = self.solve_step(dt=dt, f_ext=f_ext, max_iters=max_iters, max_sdi_iters=max_sdi_iters)
+            converged, inner_iters = self.solve_step(
+                dt=dt, f_ext=f_ext, max_iters=max_iters, max_sdi_iters=max_sdi_iters,
+                augment_relaxation=augment_relaxation,
+            )
             if not converged:
                 return False, augment_iter, inner_iters
 
             if not augmented_constraints:
                 return True, augment_iter, inner_iters
 
+            # Pure query (assemble(), NOT update_augmented_multipliers()):
+            # solve_step() already advanced self._lam once per accepted
+            # iterate above -- calling the mutating update again here
+            # would double-update it. This just reads the CURRENT
+            # max_penetration to decide whether a safety-net extra cycle
+            # is actually needed.
             max_pen = 0.0
             for c in augmented_constraints:
-                stats = c.update_augmented_multipliers(self.u, omega=augment_relaxation)
+                _, _, stats = c.assemble(self.u)
                 max_pen = max(max_pen, stats["max_penetration"])
 
             if max_pen < augment_tol:

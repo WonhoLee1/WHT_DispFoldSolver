@@ -181,7 +181,7 @@ def make_hertz_curved_block_mesh(
     return mesh, grid, xs
 
 
-def _solve_with_cutback(solver, set_bc_fn, uz_target, n_steps=40, max_iters=80, min_frac=1.0 / 128.0):
+def _solve_with_cutback(solver, set_bc_fn, uz_target, n_steps=40, max_iters=80, min_frac=1.0 / 128.0, augmented=False):
     d = uz_target / n_steps
     cur = 0.0
     u_saved = solver.u.copy()
@@ -193,7 +193,10 @@ def _solve_with_cutback(solver, set_bc_fn, uz_target, n_steps=40, max_iters=80, 
         set_bc_fn(trial)
         if getattr(solver, "debug_sdi", False):
             print(f"[CUTBACK] attempt trial={trial:.8f} cur={cur:.8f} d={d:.8f}", flush=True)
-        converged, _iters = solver.solve_step(dt=1.0, max_iters=max_iters)
+        if augmented:
+            converged, _aug_iters, _iters = solver.solve_step_augmented(dt=1.0, max_iters=max_iters)
+        else:
+            converged, _iters = solver.solve_step(dt=1.0, max_iters=max_iters)
         n_calls += 1
         if getattr(solver, "debug_sdi", False):
             print(f"[CUTBACK] -> converged={converged} iters={_iters}", flush=True)
@@ -213,6 +216,7 @@ def run_hertz_contact_benchmark(
     nx=60, ny=2, nz=8, uz_target=-0.06, n_steps=40,
     x_fine=None, dx_fine=None, n_coarse=20, max_iters=120, min_frac=1.0 / 1024,
     stabilization_coefficient=0.0, debug_sdi=False, penalty_form="LINEAR",
+    constraint_enforcement="PENALTY",
 ):
     """Run the curved-block-vs-rigid-plane FEM contact solve, read off the
     reaction line load, compute the Hertz reference half-width/peak
@@ -252,7 +256,10 @@ def run_hertz_contact_benchmark(
     slave_set = GeneralSet(name="ARC_BOTTOM", nodes=bottom_nodes)
     plane = AnalyticalRigidSurface(name="FLOOR", point=[0.0, 0.0, 0.0], normal=[0.0, 0.0, 1.0])
     prop = ContactProperty(name="FRICTIONLESS_HARD", penalty_form=penalty_form)
-    pair = ContactPair(name="CYLINDER_TO_FLOOR", master=plane, slave=slave_set, interaction_property=prop)
+    pair = ContactPair(
+        name="CYLINDER_TO_FLOOR", master=plane, slave=slave_set, interaction_property=prop,
+        constraint_enforcement=constraint_enforcement,
+    )
 
     # Representative element stiffness scale for the penalty: use the
     # FINEST local element size near the contact patch (dx_fine when
@@ -288,6 +295,7 @@ def run_hertz_contact_benchmark(
     reached, final_uz, n_calls = _solve_with_cutback(
         solver, set_uz, uz_target=uz_target, n_steps=n_steps,
         max_iters=max_iters, min_frac=min_frac,
+        augmented=(constraint_enforcement == "AUGMENTED_LAGRANGE"),
     )
 
     f_contact, _, stats = contact.assemble(solver.u)
