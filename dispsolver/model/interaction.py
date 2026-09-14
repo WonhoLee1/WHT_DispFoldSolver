@@ -146,6 +146,51 @@ def _resolve_node_ids(region: Union[str, Any], model: Any = None) -> list:
     return []
 
 
+# First-order hex (C3D8-family) face -> local node index map, matching
+# dispsolver/model/set.py's ElementFace docstring convention exactly
+# (0=Bottom(0,1,2,3), 1=Top(4,5,6,7), 2=Front(0,1,5,4), 3=Right(1,2,6,5),
+# 4=Back(2,3,7,6), 5=Left(3,0,4,7)). Deformable-vs-deformable contact's
+# master surface is scoped to first-order hex meshes for now, matching
+# every other contact/tie example in this codebase (AGENTS.md sec4.16's
+# own note that second-order-face ambiguity doesn't apply here yet).
+_HEX_FACE_LOCAL_NODES = {
+    0: (0, 1, 2, 3), 1: (4, 5, 6, 7), 2: (0, 1, 5, 4),
+    3: (1, 2, 6, 5), 4: (2, 3, 7, 6), 5: (3, 0, 4, 7),
+}
+
+
+def _resolve_master_faces(region: Union[str, Any], mesh: Any, model: Any = None) -> list:
+    """Resolve a deformable-vs-deformable ContactPair's `master` into a
+    concrete list of Quad4 face node-ID tuples, mirroring
+    `_resolve_node_ids`'s own resolver pattern: accepts a raw list of
+    4-tuples already, a `dispsolver.model.set.Surface` (anything with a
+    get_faces() method), or a string name looked up via model.get_set(...).
+    """
+    if region is None:
+        return []
+    if isinstance(region, (list, tuple)) and region and isinstance(region[0], (list, tuple)):
+        return [tuple(f) for f in region]
+
+    faces = None
+    if hasattr(region, "get_faces"):
+        faces = region.get_faces(exterior_only=True)
+    elif isinstance(region, str) and model is not None and hasattr(model, "get_set"):
+        s = model.get_set(region)
+        if s is not None and hasattr(s, "get_faces"):
+            faces = s.get_faces(exterior_only=True)
+    if not faces:
+        return []
+
+    result = []
+    for ef in faces:
+        elem = mesh.elements[ef.element_id]
+        local = _HEX_FACE_LOCAL_NODES.get(ef.face_id)
+        if local is None:
+            continue
+        result.append(tuple(elem.node_ids[i] for i in local))
+    return result
+
+
 @dataclass
 class ContactPair:
     """A single contact interaction between a main and a secondary surface
@@ -154,9 +199,14 @@ class ContactPair:
     """
     name: str
     interaction_property: ContactProperty
-    main: Optional[Union[str, "AnalyticalRigidSurface"]] = None
+    # main/master: an AnalyticalRigidSurface (rigid-plane contact, the
+    # original Phase 1 scope), OR -- for deformable-vs-deformable contact
+    # (design doc sec9 Phase 2) -- anything _resolve_master_faces accepts:
+    # a Surface (dispsolver.model.set), a raw list of Quad4 face node-ID
+    # tuples, or a string set name.
+    main: Optional[Union[str, "AnalyticalRigidSurface", Any]] = None
     secondary: Optional[Union[str, Any]] = None
-    master: Optional[Union[str, "AnalyticalRigidSurface"]] = None
+    master: Optional[Union[str, "AnalyticalRigidSurface", Any]] = None
     slave: Optional[Union[str, Any]] = None
     sliding: str = "SMALL"
     constraint_enforcement: str = "PENALTY"
@@ -207,13 +257,31 @@ class ContactPair:
                 "not implemented -- only 'PENALTY' (Phase 1, design doc §4) and "
                 "'AUGMENTED_LAGRANGE' (Phase 2, design doc §4) are supported."
             )
-        if not isinstance(self.master, AnalyticalRigidSurface):
-            raise NotImplementedError(
-                f"ContactPair '{self.name}': master must be an AnalyticalRigidSurface for Phase 1 -- "
-                "deformable-vs-deformable contact is Phase 2 (design doc §9), not implemented."
-            )
+        is_rigid_master = isinstance(self.master, AnalyticalRigidSurface)
+        if not is_rigid_master:
+            # Deformable-vs-deformable (design doc sec9 Phase 2), first
+            # cut: HARD+LINEAR penalty only, via DeformableSurfaceContactConstraint3D.
+            # Nonlinear penalty, soft laws, and augmented Lagrangian are
+            # not yet wired for a moving master surface -- the law-
+            # resolution logic below is already generic (built from
+            # `self.master` only at the very end), so extending this is a
+            # smaller follow-on than the initial mechanism, not a rewrite.
+            if self.constraint_enforcement != "PENALTY":
+                raise NotImplementedError(
+                    f"ContactPair '{self.name}': deformable-vs-deformable contact only supports "
+                    f"constraint_enforcement='PENALTY' -- got '{self.constraint_enforcement}' "
+                    "(augmented Lagrangian's Uzawa update is not yet generalized to a moving, "
+                    "shape-function-weighted master stencil)."
+                )
 
         prop = self.interaction_property
+        if not is_rigid_master and (prop.normal_behavior != "HARD" or prop.penalty_form != "LINEAR"):
+            raise NotImplementedError(
+                f"ContactPair '{self.name}': deformable-vs-deformable contact only supports "
+                f"normal_behavior='HARD' with penalty_form='LINEAR' for now -- got "
+                f"normal_behavior='{prop.normal_behavior}', penalty_form='{prop.penalty_form}' "
+                "(nonlinear penalty and soft laws are not yet wired for a moving master surface)."
+            )
         valid_behaviors = ("HARD", "SOFT_LINEAR", "SOFT_EXPONENTIAL", "SOFT_TABULAR")
         if prop.normal_behavior not in valid_behaviors:
             raise NotImplementedError(
@@ -361,9 +429,28 @@ class ContactPair:
                 c0 = delta
                 p0 = 0.9 * K_target * delta / np.log(10.0)
                 sample_law = ExponentialSoftLaw(c0=c0, p0=p0 * prop.stiffness_scale_factor)
-                h_pts = list(-np.geomspace(c0, 3.0 * delta, 6))
+                # Ascending h (overclosure), from activation start (-c0)
+                # through touching (h=0) out to deep penetration (3*delta)
+                # -- TabularSoftLaw requires strictly increasing h_pts.
+                h_pts = list(np.linspace(-c0, 3.0 * delta, 6))
                 p_pts = [sample_law.evaluate(h)[0] for h in h_pts]
             law = TabularSoftLaw(h_pts=h_pts, p_pts=p_pts)
+
+        if not is_rigid_master:
+            from dispsolver.constraint3d.surface_contact3d_deformable import DeformableSurfaceContactConstraint3D
+
+            master_faces = _resolve_master_faces(self.master, mesh, model=model)
+            if len(master_faces) == 0:
+                raise ValueError(f"ContactPair '{self.name}': master region resolved to zero faces.")
+            return DeformableSurfaceContactConstraint3D(
+                slave_node_ids=slave_node_ids,
+                master_faces=master_faces,
+                nid_to_idx=nid_to_idx,
+                coords=coords,
+                penalty_stiffness=float(k_hard_for_augmented),
+                law=law,
+                name=self.name,
+            )
 
         return SurfaceContactConstraint3D(
             slave_node_ids=slave_node_ids,
