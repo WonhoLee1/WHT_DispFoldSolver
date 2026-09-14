@@ -35,8 +35,10 @@ bonded TIE (see the design doc §0 for the full comparison):
     stiffness with respect to.
 """
 
-from typing import List, Tuple, Dict, Optional
+from typing import Any, List, Tuple, Dict, Optional
 import numpy as np
+
+from dispsolver.constraint3d.pressure_overclosure import HardLaw
 
 
 class SurfaceContactConstraint3D:
@@ -86,6 +88,7 @@ class SurfaceContactConstraint3D:
         strain_free_adjust: bool = True,
         stabilization_coefficient: float = 0.0,
         augmented_lagrange: bool = False,
+        law: Optional[Any] = None,
         name: str = "SURFACE_CONTACT_3D",
     ):
         self.slave_node_ids = list(slave_node_ids)
@@ -97,7 +100,28 @@ class SurfaceContactConstraint3D:
         self.normal = self.normal / n_norm
         self.nid_to_idx = nid_to_idx
         self.coords = coords
+        # k_contact is kept as a raw scalar (not routed through `law`)
+        # specifically for the augmented-Lagrangian raw linear term below --
+        # design doc sec B.4: augmented Lagrangian is restricted to HARD
+        # contact only, so its math needs the UNCLAMPED k*penetration value
+        # (lam + k*penetration, clamped at zero only after adding lam), not
+        # a law object that already clamps to zero for h<=0 on its own.
         self.k_contact = float(penalty_stiffness)
+        # Pressure-overclosure law seam (design doc sec B.6): every non-
+        # augmented evaluation goes through `self.law.evaluate(h) -> (p,
+        # dp/dh)`. Defaults to a HardLaw built from `penalty_stiffness`,
+        # reproducing the pre-existing hard-contact-only behavior bit-for-
+        # bit when no explicit law is given -- this parameter is additive,
+        # not a breaking change for any existing caller.
+        if augmented_lagrange and law is not None and not isinstance(law, HardLaw):
+            raise ValueError(
+                f"SurfaceContactConstraint3D '{name}': augmented_lagrange=True requires "
+                "a HardLaw (or the default) -- Abaqus restricts the augmented Lagrange "
+                "method to hard pressure-overclosure relationships only "
+                "(dev_log/contact_abaqus_grade_design_20260915.md sec B.4). "
+                f"Got law={type(law).__name__}."
+            )
+        self.law = law if law is not None else HardLaw(self.k_contact)
         # Activation stabilization (dev_log/hertz_contact_benchmark_20260913.md,
         # design doc's sec8 point 2 "contact damping" -- re-prioritized after
         # that benchmark found Newton reliably diverging the instant a NEW
@@ -221,8 +245,10 @@ class SurfaceContactConstraint3D:
                 p = self._lam[s_nid] + self.k_contact * (-gap)
                 if p > 0.0:
                     active.add(s_nid)
-            elif gap < 0.0:
-                active.add(s_nid)
+            else:
+                p, _ = self.law.evaluate(-gap)
+                if p > 0.0:
+                    active.add(s_nid)
         return frozenset(active)
 
     def assemble(self, u: np.ndarray) -> Tuple[np.ndarray, Tuple[np.ndarray, np.ndarray, np.ndarray], Dict[str, float]]:
@@ -277,21 +303,22 @@ class SurfaceContactConstraint3D:
                 if f_mag <= 0.0:
                     continue
                 penetration = -gap  # for stats only; may be negative (separated) once lam>0
+                k_diag = self.k_contact
             else:
-                # One-sided activation: contact contributes NOTHING when
-                # separated (gap >= 0). This is evaluated fresh here, every
-                # call -- the cheapest correct per-iteration active-set
-                # update.
-                if gap >= 0.0:
-                    continue
+                # Pressure-overclosure law seam (design doc sec B.6):
+                # `self.law` handles the one-sided activation itself
+                # (returns (0,0) once inactive), covering HardLaw's old
+                # `gap>=0: continue` branch exactly when c0=0, plus
+                # nonlinear-penalty and every soft law through the same
+                # interface.
                 penetration = -gap
-                f_mag = self.k_contact * penetration
+                f_mag, k_diag = self.law.evaluate(penetration)
+                if f_mag <= 0.0:
+                    continue
 
             n_active += 1
             if penetration > max_penetration:
                 max_penetration = penetration
-
-            k_diag = self.k_contact
 
             if self.c_stab > 0.0:
                 # Pseudo-velocity: gap change since the last assemble()

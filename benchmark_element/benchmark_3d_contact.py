@@ -212,7 +212,7 @@ def run_hertz_contact_benchmark(
     R=254.0, E=206000.0, nu=0.3, half_w=30.0, H=30.0, depth=1.0,
     nx=60, ny=2, nz=8, uz_target=-0.06, n_steps=40,
     x_fine=None, dx_fine=None, n_coarse=20, max_iters=120, min_frac=1.0 / 1024,
-    stabilization_coefficient=0.0, debug_sdi=False,
+    stabilization_coefficient=0.0, debug_sdi=False, penalty_form="LINEAR",
 ):
     """Run the curved-block-vs-rigid-plane FEM contact solve, read off the
     reaction line load, compute the Hertz reference half-width/peak
@@ -251,19 +251,25 @@ def run_hertz_contact_benchmark(
 
     slave_set = GeneralSet(name="ARC_BOTTOM", nodes=bottom_nodes)
     plane = AnalyticalRigidSurface(name="FLOOR", point=[0.0, 0.0, 0.0], normal=[0.0, 0.0, 1.0])
-    prop = ContactProperty(name="FRICTIONLESS_HARD")
+    prop = ContactProperty(name="FRICTIONLESS_HARD", penalty_form=penalty_form)
     pair = ContactPair(name="CYLINDER_TO_FLOOR", master=plane, slave=slave_set, interaction_property=prop)
 
     # Representative element stiffness scale for the penalty: use the
     # FINEST local element size near the contact patch (dx_fine when
     # grading is active), not the coarse far-field spacing -- what
     # matters for contact activation robustness is the stiffness of the
-    # elements actually touching the plane.
+    # elements actually touching the plane. Only used for penalty_form=
+    # "LINEAR" (an explicit override); "NONLINEAR" derives Ki/Kf from the
+    # auto k_ref estimator instead (dev_log/contact_abaqus_grade_design_20260915.md
+    # sec A.2), which is why `materials` is now passed through so that
+    # estimator picks up the benchmark's actual E rather than its 200000
+    # MPa fallback default.
     dx_local = float(np.min(np.diff(xs)))
     k_rep = E * dx_local
     contact = pair.build_runtime_constraint(
         mesh, nid_to_idx, penalty_stiffness=0.1 * k_rep,
         stabilization_coefficient=stabilization_coefficient,
+        materials={0: {"E": E, "nu": nu}},
     )
     solver.constraints.append(contact)
 

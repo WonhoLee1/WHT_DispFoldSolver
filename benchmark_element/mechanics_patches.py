@@ -643,3 +643,344 @@ def make_hollow_cylinder_wedge_mesh(
             groups["base"].append(the_nid)
 
     return mesh, groups
+
+
+def make_twisted_beam_mesh(
+    elem_type: str,
+    L: float = 12.0,
+    W: float = 1.1,
+    t: float = 0.32,
+    twist_deg: float = 90.0,
+    nx: int = 12,
+    ny: int = 2,
+    nz: int = 2
+) -> Tuple[Mesh3D, List[int], List[int], int]:
+    """Generate MacNeal-Harder (1985) Twisted Beam mesh.
+    
+    Geometry:
+      - Beam extends along X in [0, L].
+      - At root x=0, cross section has width W along Y, thickness t along Z.
+      - Along length, section rotates about X axis by theta(x) = twist_deg * (x / L).
+      - At tip x=L, twist is 90 deg -> width is along Z, thickness is along Y.
+    
+    Returns:
+        (mesh, root_nodes, tip_nodes, tip_center_nid)
+    """
+    elem_type = elem_type.upper()
+    mesh = Mesh3D()
+
+    xs = np.linspace(0.0, L, nx + 1)
+    etas = np.linspace(-W / 2.0, W / 2.0, ny + 1)
+    zetas = np.linspace(-t / 2.0, t / 2.0, nz + 1)
+
+    max_theta = np.deg2rad(twist_deg)
+
+    nid = 1
+    node_grid = {}
+    root_nodes = []
+    tip_nodes = []
+    tip_center_nid = -1
+
+    for k in range(nz + 1):
+        for j in range(ny + 1):
+            for i in range(nx + 1):
+                x = xs[i]
+                theta = max_theta * (x / L)
+                eta = etas[j]
+                zeta = zetas[k]
+
+                # Rotate local cross-section coordinates (eta, zeta) by theta
+                y = eta * np.cos(theta) - zeta * np.sin(theta)
+                z = eta * np.sin(theta) + zeta * np.cos(theta)
+
+                mesh.add_node(nid, x, y, z)
+                node_grid[(i, j, k)] = nid
+
+                if i == 0:
+                    root_nodes.append(nid)
+                elif i == nx:
+                    tip_nodes.append(nid)
+                    if j == ny // 2 and k == nz // 2:
+                        tip_center_nid = nid
+
+                nid += 1
+
+    eid = 1
+    if elem_type in ["C3D8", "C3D8I", "C3D8_FBAR", "C3D8_CR", "C3D8H", "C3D8R"]:
+        for k in range(nz):
+            for j in range(ny):
+                for i in range(nx):
+                    conn = [
+                        node_grid[(i,     j,     k    )],
+                        node_grid[(i + 1, j,     k    )],
+                        node_grid[(i + 1, j + 1, k    )],
+                        node_grid[(i,     j + 1, k    )],
+                        node_grid[(i,     j,     k + 1)],
+                        node_grid[(i + 1, j,     k + 1)],
+                        node_grid[(i + 1, j + 1, k + 1)],
+                        node_grid[(i,     j + 1, k + 1)]
+                    ]
+                    mesh.add_element(eid, conn, elem_type=elem_type)
+                    eid += 1
+
+    elif elem_type in ["C3D6", "C3D6_WEDGE", "WEDGE6"]:
+        for k in range(nz):
+            for j in range(ny):
+                for i in range(nx):
+                    n1 = node_grid[(i,     j,     k    )]
+                    n2 = node_grid[(i + 1, j,     k    )]
+                    n3 = node_grid[(i + 1, j + 1, k    )]
+                    n4 = node_grid[(i,     j + 1, k    )]
+                    n5 = node_grid[(i,     j,     k + 1)]
+                    n6 = node_grid[(i + 1, j,     k + 1)]
+                    n7 = node_grid[(i + 1, j + 1, k + 1)]
+                    n8 = node_grid[(i,     j + 1, k + 1)]
+
+                    mesh.add_element(eid, [n1, n2, n4, n5, n6, n8], elem_type="C3D6")
+                    eid += 1
+                    mesh.add_element(eid, [n2, n3, n4, n6, n7, n8], elem_type="C3D6")
+                    eid += 1
+
+    elif elem_type in ["C3D4", "C3D4_ANP", "ANP"]:
+        for k in range(nz):
+            for j in range(ny):
+                for i in range(nx):
+                    n1 = node_grid[(i,     j,     k    )]
+                    n2 = node_grid[(i + 1, j,     k    )]
+                    n3 = node_grid[(i + 1, j + 1, k    )]
+                    n4 = node_grid[(i,     j + 1, k    )]
+                    n5 = node_grid[(i,     j,     k + 1)]
+                    n6 = node_grid[(i + 1, j,     k + 1)]
+                    n7 = node_grid[(i + 1, j + 1, k + 1)]
+                    n8 = node_grid[(i,     j + 1, k + 1)]
+
+                    tets = [
+                        [n1, n2, n3, n7],
+                        [n1, n3, n4, n7],
+                        [n1, n4, n8, n7],
+                        [n1, n8, n5, n7],
+                        [n1, n5, n6, n7],
+                        [n1, n6, n2, n7]
+                    ]
+                    for t_conn in tets:
+                        mesh.add_element(eid, t_conn, elem_type=elem_type)
+                        eid += 1
+
+    elif elem_type in ["C3D10", "C3D10M", "C3D10_MODIFIED"]:
+        c_dict = {n_id: np.array([node.x, node.y, node.z]) for n_id, node in mesh.nodes.items()}
+        edge_nodes = {}
+        next_nid = len(mesh.nodes) + 1
+
+        for k in range(nz):
+            for j in range(ny):
+                for i in range(nx):
+                    n1 = node_grid[(i,     j,     k    )]
+                    n2 = node_grid[(i + 1, j,     k    )]
+                    n3 = node_grid[(i + 1, j + 1, k    )]
+                    n4 = node_grid[(i,     j + 1, k    )]
+                    n5 = node_grid[(i,     j,     k + 1)]
+                    n6 = node_grid[(i + 1, j,     k + 1)]
+                    n7 = node_grid[(i + 1, j + 1, k + 1)]
+                    n8 = node_grid[(i,     j + 1, k + 1)]
+
+                    tets = [
+                        [n1, n2, n4, n5],
+                        [n2, n3, n4, n7],
+                        [n2, n5, n6, n7],
+                        [n4, n5, n7, n8],
+                        [n2, n4, n5, n7]
+                    ]
+                    for corners in tets:
+                        c1, c2, c3, c4 = corners
+                        edges = [
+                            (min(c1, c2), max(c1, c2)),
+                            (min(c2, c3), max(c2, c3)),
+                            (min(c3, c1), max(c3, c1)),
+                            (min(c1, c4), max(c1, c4)),
+                            (min(c2, c4), max(c2, c4)),
+                            (min(c3, c4), max(c3, c4)),
+                        ]
+                        mids = []
+                        for ea, eb in edges:
+                            if (ea, eb) not in edge_nodes:
+                                mid_coord = 0.5 * (c_dict[ea] + c_dict[eb])
+                                mesh.add_node(next_nid, mid_coord[0], mid_coord[1], mid_coord[2])
+                                c_dict[next_nid] = mid_coord
+                                if abs(mid_coord[0] - 0.0) < 1e-6:
+                                    root_nodes.append(next_nid)
+                                elif abs(mid_coord[0] - L) < 1e-6:
+                                    tip_nodes.append(next_nid)
+                                edge_nodes[(ea, eb)] = next_nid
+                                next_nid += 1
+                            mids.append(edge_nodes[(ea, eb)])
+
+                        full_conn = [c1, c2, c3, c4, mids[0], mids[1], mids[2], mids[3], mids[4], mids[5]]
+                        mesh.add_element(eid, full_conn, elem_type=elem_type)
+                        eid += 1
+
+    return mesh, root_nodes, tip_nodes, tip_center_nid
+
+
+def make_cooks_membrane_mesh_3d(
+    elem_type: str,
+    thickness: float = 1.0,
+    nx: int = 8,
+    ny: int = 8,
+    nz: int = 1
+) -> Tuple[Mesh3D, List[int], List[int]]:
+    """Cook's Membrane 3D benchmark: tapered clamped panel under end shear.
+    
+    Geometry:
+      - Left edge (clamped): x = 0, y in [0, 44]
+      - Right edge (sheared): x = 48, y in [44, 60]
+      - Out-of-plane: z in [-thickness/2, thickness/2]
+    
+    Returns:
+        (mesh, root_nodes_at_x0, tip_nodes_at_x48)
+    """
+    elem_type = elem_type.upper()
+    mesh = Mesh3D()
+
+    xis = np.linspace(0.0, 1.0, nx + 1)
+    etas = np.linspace(0.0, 1.0, ny + 1)
+    zetas = np.linspace(-thickness / 2.0, thickness / 2.0, nz + 1)
+
+    node_grid = {}
+    nid = 1
+    root_nodes = []
+    tip_nodes = []
+
+    for k in range(nz + 1):
+        for j in range(ny + 1):
+            for i in range(nx + 1):
+                xi = xis[i]
+                eta = etas[j]
+                x = 48.0 * xi
+                y = 44.0 * xi + eta * (44.0 - 28.0 * xi)
+                z = zetas[k]
+
+                mesh.add_node(nid, x, y, z)
+                node_grid[(i, j, k)] = nid
+
+                if i == 0:
+                    root_nodes.append(nid)
+                elif i == nx:
+                    tip_nodes.append(nid)
+
+                nid += 1
+
+    eid = 1
+    if elem_type in ["C3D8", "C3D8I", "C3D8_FBAR", "C3D8_CR", "C3D8H", "C3D8R"]:
+        for k in range(nz):
+            for j in range(ny):
+                for i in range(nx):
+                    conn = [
+                        node_grid[(i,     j,     k    )],
+                        node_grid[(i + 1, j,     k    )],
+                        node_grid[(i + 1, j + 1, k    )],
+                        node_grid[(i,     j + 1, k    )],
+                        node_grid[(i,     j,     k + 1)],
+                        node_grid[(i + 1, j,     k + 1)],
+                        node_grid[(i + 1, j + 1, k + 1)],
+                        node_grid[(i,     j + 1, k + 1)]
+                    ]
+                    mesh.add_element(eid, conn, elem_type=elem_type)
+                    eid += 1
+
+    elif elem_type in ["C3D6", "C3D6_WEDGE", "WEDGE6"]:
+        for k in range(nz):
+            for j in range(ny):
+                for i in range(nx):
+                    n1 = node_grid[(i,     j,     k    )]
+                    n2 = node_grid[(i + 1, j,     k    )]
+                    n3 = node_grid[(i + 1, j + 1, k    )]
+                    n4 = node_grid[(i,     j + 1, k    )]
+                    n5 = node_grid[(i,     j,     k + 1)]
+                    n6 = node_grid[(i + 1, j,     k + 1)]
+                    n7 = node_grid[(i + 1, j + 1, k + 1)]
+                    n8 = node_grid[(i,     j + 1, k + 1)]
+
+                    mesh.add_element(eid, [n1, n2, n4, n5, n6, n8], elem_type="C3D6")
+                    eid += 1
+                    mesh.add_element(eid, [n2, n3, n4, n6, n7, n8], elem_type="C3D6")
+                    eid += 1
+
+    elif elem_type in ["C3D4", "C3D4_ANP", "ANP"]:
+        for k in range(nz):
+            for j in range(ny):
+                for i in range(nx):
+                    n1 = node_grid[(i,     j,     k    )]
+                    n2 = node_grid[(i + 1, j,     k    )]
+                    n3 = node_grid[(i + 1, j + 1, k    )]
+                    n4 = node_grid[(i,     j + 1, k    )]
+                    n5 = node_grid[(i,     j,     k + 1)]
+                    n6 = node_grid[(i + 1, j,     k + 1)]
+                    n7 = node_grid[(i + 1, j + 1, k + 1)]
+                    n8 = node_grid[(i,     j + 1, k + 1)]
+
+                    tets = [
+                        [n1, n2, n3, n7],
+                        [n1, n3, n4, n7],
+                        [n1, n4, n8, n7],
+                        [n1, n8, n5, n7],
+                        [n1, n5, n6, n7],
+                        [n1, n6, n2, n7]
+                    ]
+                    for t_conn in tets:
+                        mesh.add_element(eid, t_conn, elem_type=elem_type)
+                        eid += 1
+
+    elif elem_type in ["C3D10", "C3D10M", "C3D10_MODIFIED"]:
+        c_dict = {n_id: np.array([node.x, node.y, node.z]) for n_id, node in mesh.nodes.items()}
+        edge_nodes = {}
+        next_nid = len(mesh.nodes) + 1
+
+        for k in range(nz):
+            for j in range(ny):
+                for i in range(nx):
+                    n1 = node_grid[(i,     j,     k    )]
+                    n2 = node_grid[(i + 1, j,     k    )]
+                    n3 = node_grid[(i + 1, j + 1, k    )]
+                    n4 = node_grid[(i,     j + 1, k    )]
+                    n5 = node_grid[(i,     j,     k + 1)]
+                    n6 = node_grid[(i + 1, j,     k + 1)]
+                    n7 = node_grid[(i + 1, j + 1, k + 1)]
+                    n8 = node_grid[(i,     j + 1, k + 1)]
+
+                    tets = [
+                        [n1, n2, n4, n5],
+                        [n2, n3, n4, n7],
+                        [n2, n5, n6, n7],
+                        [n4, n5, n7, n8],
+                        [n2, n4, n5, n7]
+                    ]
+                    for corners in tets:
+                        c1, c2, c3, c4 = corners
+                        edges = [
+                            (min(c1, c2), max(c1, c2)),
+                            (min(c2, c3), max(c2, c3)),
+                            (min(c3, c1), max(c3, c1)),
+                            (min(c1, c4), max(c1, c4)),
+                            (min(c2, c4), max(c2, c4)),
+                            (min(c3, c4), max(c3, c4)),
+                        ]
+                        mids = []
+                        for ea, eb in edges:
+                            if (ea, eb) not in edge_nodes:
+                                mid_coord = 0.5 * (c_dict[ea] + c_dict[eb])
+                                mesh.add_node(next_nid, mid_coord[0], mid_coord[1], mid_coord[2])
+                                c_dict[next_nid] = mid_coord
+                                if abs(mid_coord[0] - 0.0) < 1e-6:
+                                    root_nodes.append(next_nid)
+                                elif abs(mid_coord[0] - 48.0) < 1e-6:
+                                    tip_nodes.append(next_nid)
+                                edge_nodes[(ea, eb)] = next_nid
+                                next_nid += 1
+                            mids.append(edge_nodes[(ea, eb)])
+
+                        full_conn = [c1, c2, c3, c4, mids[0], mids[1], mids[2], mids[3], mids[4], mids[5]]
+                        mesh.add_element(eid, full_conn, elem_type=elem_type)
+                        eid += 1
+
+    return mesh, root_nodes, tip_nodes
+

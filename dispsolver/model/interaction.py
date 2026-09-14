@@ -20,6 +20,7 @@ choice below.
 from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional, Union, Any, Sequence, Dict
+import warnings
 import numpy as np
 
 
@@ -27,22 +28,68 @@ import numpy as np
 class ContactProperty:
     """Interaction property (*SURFACE INTERACTION in Abaqus).
 
-    Phase 1 only implements normal_behavior="HARD" (zero pressure for
-    positive clearance, penalty-approximated non-penetration for zero/
-    negative clearance) -- see design doc §5. "SOFT_LINEAR"/
-    "SOFT_EXPONENTIAL" are named here as placeholders for a future phase,
-    not implemented (constructing one with those values will not raise,
-    but SurfaceContactConstraint3D only knows how to build a HARD-contact
-    runtime constraint right now -- see ContactPair.build_runtime_constraint).
+    normal_behavior: "HARD" | "SOFT_LINEAR" | "SOFT_EXPONENTIAL" |
+    "SOFT_TABULAR" (dev_log/contact_abaqus_grade_design_20260915.md Part B).
+    Deformable-vs-deformable contact, finite-sliding, and friction remain
+    out of scope (design doc's own Part A/B are both still node-to-
+    analytical-rigid-plane only) -- friction=None means frictionless; a
+    nonzero value is accepted but has no runtime effect (no tangential-
+    plane enforcement path exists in SurfaceContactConstraint3D at all).
 
-    friction=None means frictionless (design doc §6: deferred past Phase 1
-    AND Phase 2). A nonzero friction coefficient here is accepted as a
-    value but has NO runtime effect yet -- there is no tangential-plane
-    enforcement code path in SurfaceContactConstraint3D at all.
+    --- Soft contact: scale-based auto-derivation (design doc sec B.7) ---
+    The PRIMARY way to configure a soft law is `softness_scale` +
+    `allowable_penetration` -- both auto-derive from the SAME material/
+    geometry-based reference stiffness (`k_ref`) hard contact already
+    uses, so a caller never has to type an absolute pressure/stiffness
+    number they have no principled basis for choosing:
+      - `softness_scale` (dimensionless, default 1.0): 1.0 reproduces
+        hard contact's own auto-stiffness EXACTLY; <1.0 proportionally
+        softer, >1.0 proportionally stiffer, at every point on the curve.
+      - `allowable_penetration` (length, default None -> 1% of the
+        contact surface's characteristic element length): how far the
+        surface can penetrate before the reaction approaches hard-
+        contact-like stiffness (SOFT_EXPONENTIAL's ramp length; a slack
+        tolerance for SOFT_LINEAR, which has no independent ramp to
+        control).
+    The absolute fields below (`linear_stiffness`, `exponential_c0`,
+    `exponential_p0`, `tabular_overclosure`/`tabular_pressure`) remain
+    available as an explicit opt-out override for a caller who already
+    knows the number they want -- setting any of them takes precedence
+    over `softness_scale`/`allowable_penetration` for that law (a warning
+    is issued if both are set non-default at once, matching this
+    project's "explicit warning over silent precedence" convention).
+
+    --- Penalty hardening (design doc Part A) ---
+    `penalty_form="NONLINEAR"` switches HARD contact from a single linear
+    penalty slope to Abaqus's 4-region nonlinear penalty (sec A.2) --
+    small initial stiffness at activation, ramping to a stiff final
+    stiffness only after real penetration builds; this is the concrete,
+    measured fix for the Hertz-benchmark activation-divergence finding
+    in dev_log/hertz_contact_benchmark_20260913.md.
+    `stiffness_scale_factor` (default 1.0) is a final multiplier applied
+    after auto/override resolution, mirroring Abaqus's own
+    `*CONTACT CONTROLS, STIFFNESS SCALE FACTOR`.
     """
     name: str
     normal_behavior: str = "HARD"
     friction: Optional[float] = None
+
+    # --- scale-based auto-derivation, the DEFAULT path (sec B.7) ---
+    softness_scale: float = 1.0
+    allowable_penetration: Optional[float] = None
+
+    # --- explicit absolute opt-out overrides (take precedence over the
+    #     scale knobs above when set) ---
+    linear_stiffness: Optional[float] = None
+    clearance_at_zero_pressure: float = 0.0
+    exponential_c0: Optional[float] = None
+    exponential_p0: Optional[float] = None
+    tabular_overclosure: Optional[Sequence[float]] = None
+    tabular_pressure: Optional[Sequence[float]] = None
+
+    # --- penalty hardening (Part A) ---
+    penalty_form: str = "LINEAR"          # "LINEAR" | "NONLINEAR"
+    stiffness_scale_factor: float = 1.0
 
 
 @dataclass
@@ -136,6 +183,7 @@ class ContactPair:
         model: Any = None,
         penalty_stiffness: Optional[float] = None,
         stabilization_coefficient: float = 0.0,
+        materials: Optional[Dict[int, Any]] = None,
     ) -> Any:
         """Resolve this CAE-level contact definition into a runtime
         SurfaceContactConstraint3D, ready to append to
@@ -164,11 +212,36 @@ class ContactPair:
                 f"ContactPair '{self.name}': master must be an AnalyticalRigidSurface for Phase 1 -- "
                 "deformable-vs-deformable contact is Phase 2 (design doc §9), not implemented."
             )
-        if self.interaction_property.normal_behavior != "HARD":
+
+        prop = self.interaction_property
+        valid_behaviors = ("HARD", "SOFT_LINEAR", "SOFT_EXPONENTIAL", "SOFT_TABULAR")
+        if prop.normal_behavior not in valid_behaviors:
             raise NotImplementedError(
-                f"ContactPair '{self.name}': normal_behavior="
-                f"'{self.interaction_property.normal_behavior}' not implemented -- "
-                "Phase 1 only supports hard contact (design doc §5)."
+                f"ContactPair '{self.name}': normal_behavior='{prop.normal_behavior}' not implemented -- "
+                f"supported values are {valid_behaviors} "
+                "(dev_log/contact_abaqus_grade_design_20260915.md Part B)."
+            )
+        # sec B.4: Abaqus restricts augmented Lagrangian to HARD contact
+        # only ("The augmented Lagrange method ... applies only to hard
+        # pressure-overclosure relationships" -- ctc_contactconstraints_std.txt).
+        if self.constraint_enforcement == "AUGMENTED_LAGRANGE" and prop.normal_behavior != "HARD":
+            raise NotImplementedError(
+                f"ContactPair '{self.name}': augmented Lagrangian enforcement only applies to "
+                f"HARD contact (Abaqus restriction, design doc sec B.4) -- got normal_behavior="
+                f"'{prop.normal_behavior}'. Use constraint_enforcement='PENALTY' for soft laws "
+                "(Abaqus's own direct method is the only enforcement for softened contact)."
+            )
+        if self.constraint_enforcement == "AUGMENTED_LAGRANGE" and prop.penalty_form == "NONLINEAR":
+            raise NotImplementedError(
+                f"ContactPair '{self.name}': augmented Lagrangian with penalty_form='NONLINEAR' "
+                "is not implemented -- the augmented-Lagrangian raw term "
+                "(SurfaceContactConstraint3D's `lam + k_contact*(-gap)`) assumes a single linear "
+                "stiffness. Use penalty_form='LINEAR' (the default) with AUGMENTED_LAGRANGE."
+            )
+        if prop.penalty_form not in ("LINEAR", "NONLINEAR"):
+            raise NotImplementedError(
+                f"ContactPair '{self.name}': penalty_form='{prop.penalty_form}' not implemented -- "
+                "only 'LINEAR' and 'NONLINEAR' (design doc sec A.2) are supported."
             )
 
         slave_node_ids = _resolve_node_ids(self.slave, model=model)
@@ -176,20 +249,121 @@ class ContactPair:
             raise ValueError(f"ContactPair '{self.name}': slave region resolved to zero nodes.")
 
         from dispsolver.constraint3d.surface_contact3d import SurfaceContactConstraint3D
+        from dispsolver.constraint3d.contact_stiffness import (
+            representative_element_stiffness,
+            representative_element_length,
+        )
+        from dispsolver.constraint3d.pressure_overclosure import (
+            HardLaw, NonlinearPenaltyLaw, LinearSoftLaw, ExponentialSoftLaw, TabularSoftLaw,
+        )
 
         coords = mesh.nodes_array() if hasattr(mesh, "nodes_array") else mesh.nodes_array
-        default_k = penalty_stiffness
-        if default_k is None:
-            # Abaqus's own default linear-penalty scaling is "10 times a
-            # representative underlying element stiffness"
-            # (ctc_contactconstraints_std.txt). We don't have a clean
-            # single "representative element stiffness" scalar exposed by
-            # DynamicSolver3D today, so fall back to a large fixed value
-            # documented here rather than silently guessing per-model --
-            # callers with a real material stiffness scale should pass
-            # penalty_stiffness explicitly (see SurfaceContactConstraint3D's
-            # own docstring for how this is used).
-            default_k = 1.0e8
+
+        # sec A.1/B.7.1: the ONE auto-derived reference stiffness `k_ref`,
+        # shared by hard contact's own 10x/1000x defaults, nonlinear
+        # penalty's Ki/Kf, and every soft law's softness_scale resolution
+        # below -- computed once, not per law.
+        k_ref = representative_element_stiffness(mesh, materials, slave_node_ids)
+        if k_ref is None:
+            # Documented last resort (sec A.1): only when the constraint is
+            # built with no mesh/materials context to estimate from at all.
+            k_ref = 1.0e7
+        L_char = representative_element_length(mesh, slave_node_ids)
+        if L_char is None:
+            L_char = 1.0
+        k_default_hard = 10.0 * k_ref
+
+        def _resolve_delta() -> float:
+            return prop.allowable_penetration if prop.allowable_penetration is not None else 0.01 * L_char
+
+        def _warn_if_absolute_and_scale_both_set(scale_default_ok: bool):
+            if not scale_default_ok:
+                warnings.warn(
+                    f"ContactPair '{self.name}': both an absolute pressure-overclosure field and a "
+                    "non-default softness_scale/allowable_penetration were set -- the absolute "
+                    "field takes precedence (design doc sec B.7.5); the scale knobs are ignored "
+                    "for this law."
+                )
+
+        law: Any
+        k_hard_for_augmented = k_ref  # placeholder for NONLINEAR form; overwritten below for LINEAR
+
+        if prop.normal_behavior == "HARD":
+            if penalty_stiffness is not None:
+                k_hard = float(penalty_stiffness)
+            else:
+                k_hard = k_default_hard
+            k_hard *= prop.stiffness_scale_factor
+            if k_hard > 1000.0 * k_ref:
+                # sec A.5: Abaqus's own ceiling past which plain penalty/
+                # augmented-Lagrange enforcement is considered ill-
+                # conditioned enough to need Lagrange multipliers instead.
+                # This codebase has no Lagrange-multiplier contact path --
+                # warn, don't silently proceed or raise (a user may have a
+                # legitimate reason).
+                warnings.warn(
+                    f"ContactPair '{self.name}': resolved penalty stiffness ({k_hard:.4g}) exceeds "
+                    f"1000x the representative element stiffness ({k_ref:.4g}) -- Abaqus's own "
+                    "guidance treats this as the point past which penalty/augmented-Lagrange "
+                    "enforcement becomes ill-conditioned (design doc sec A.5). Consider a "
+                    "smaller stiffness_scale_factor or penalty_stiffness."
+                )
+            k_hard_for_augmented = k_hard
+            if prop.penalty_form == "NONLINEAR":
+                k_i = k_ref * prop.stiffness_scale_factor
+                k_f = 100.0 * k_ref * prop.stiffness_scale_factor
+                e = 0.01 * L_char
+                d = 0.03 * L_char
+                law = NonlinearPenaltyLaw(k_i=k_i, k_f=k_f, e=e, d=d, c0=prop.clearance_at_zero_pressure)
+                k_hard_for_augmented = k_i
+            else:
+                law = HardLaw(k_contact=k_hard, c0=prop.clearance_at_zero_pressure)
+
+        elif prop.normal_behavior == "SOFT_LINEAR":
+            if prop.linear_stiffness is not None:
+                _warn_if_absolute_and_scale_both_set(
+                    prop.softness_scale == 1.0 and prop.allowable_penetration is None
+                )
+                k = float(prop.linear_stiffness)
+            else:
+                k = prop.softness_scale * k_default_hard
+            c0 = prop.allowable_penetration if prop.allowable_penetration is not None else prop.clearance_at_zero_pressure
+            law = LinearSoftLaw(k=k * prop.stiffness_scale_factor, c0=c0)
+
+        elif prop.normal_behavior == "SOFT_EXPONENTIAL":
+            if prop.exponential_c0 is not None and prop.exponential_p0 is not None:
+                _warn_if_absolute_and_scale_both_set(
+                    prop.softness_scale == 1.0 and prop.allowable_penetration is None
+                )
+                c0 = float(prop.exponential_c0)
+                p0 = float(prop.exponential_p0)
+            else:
+                delta = _resolve_delta()
+                K_target = prop.softness_scale * k_default_hard
+                c0 = delta
+                p0 = 0.9 * K_target * delta / np.log(10.0)
+            law = ExponentialSoftLaw(c0=c0, p0=p0 * prop.stiffness_scale_factor)
+
+        else:  # SOFT_TABULAR
+            if prop.tabular_overclosure is not None and prop.tabular_pressure is not None:
+                _warn_if_absolute_and_scale_both_set(
+                    prop.softness_scale == 1.0 and prop.allowable_penetration is None
+                )
+                h_pts = list(prop.tabular_overclosure)
+                p_pts = list(prop.tabular_pressure)
+            else:
+                # sec B.7.4: auto-populate a starting table by sampling the
+                # same exponential curve the SOFT_EXPONENTIAL auto-scale
+                # would produce -- reuses B.7.3's formula rather than
+                # inventing a third independent derivation.
+                delta = _resolve_delta()
+                K_target = prop.softness_scale * k_default_hard
+                c0 = delta
+                p0 = 0.9 * K_target * delta / np.log(10.0)
+                sample_law = ExponentialSoftLaw(c0=c0, p0=p0 * prop.stiffness_scale_factor)
+                h_pts = list(-np.geomspace(c0, 3.0 * delta, 6))
+                p_pts = [sample_law.evaluate(h)[0] for h in h_pts]
+            law = TabularSoftLaw(h_pts=h_pts, p_pts=p_pts)
 
         return SurfaceContactConstraint3D(
             slave_node_ids=slave_node_ids,
@@ -197,9 +371,10 @@ class ContactPair:
             rigid_plane_normal=self.master.unit_normal(),
             nid_to_idx=nid_to_idx,
             coords=coords,
-            penalty_stiffness=float(default_k),
+            penalty_stiffness=float(k_hard_for_augmented),
             strain_free_adjust=self.adjust,
             stabilization_coefficient=float(stabilization_coefficient),
             augmented_lagrange=(self.constraint_enforcement == "AUGMENTED_LAGRANGE"),
+            law=law,
             name=self.name,
         )

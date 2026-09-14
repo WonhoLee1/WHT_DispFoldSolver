@@ -1,0 +1,383 @@
+{
+  "timestamp": "2026-09-15 00:21:26",
+  "twisted_beam_3d": {
+    "C3D8": {
+      "out_of_plane": {
+        "status": "PASS",
+        "load_case": "out_of_plane",
+        "tip_disp": 0.001312903791217862,
+        "target": 0.005424,
+        "ratio": 0.24205453377910438,
+        "error_pct": -75.79454662208957,
+        "iters": 2
+      },
+      "in_plane": {
+        "status": "PASS",
+        "load_case": "in_plane",
+        "tip_disp": 0.0008708124634374668,
+        "target": 0.001754,
+        "ratio": 0.49647232807153185,
+        "error_pct": -50.35276719284681,
+        "iters": 2
+      },
+      "elapsed_s": 1.090912103652954
+    },
+    "C3D8I": {
+      "out_of_plane": {
+        "status": "PASS",
+        "load_case": "out_of_plane",
+        "tip_disp": 0.0003796857781771957,
+        "target": 0.005424,
+        "ratio": 0.07000106529815554,
+        "error_pct": -92.99989347018445,
+        "iters": 2
+      },
+      "in_plane": {
+        "status": "PASS",
+        "load_case": "in_plane",
+        "tip_disp": 0.0004272915936367143,
+        "target": 0.001754,
+        "ratio": 0.24360980252948364,
+        "error_pct": -75.63901974705163,
+        "iters": 2
+      },
+      "elapsed_s": 23.87550377845764
+    },
+    "C3D8_FBAR": {
+      "out_of_plane": {
+        "status": "DIVERGED",
+        "load_case": "out_of_plane",
+        "tip_disp": NaN,
+        "target": 0.005424,
+        "ratio": NaN,
+        "error_pct": NaN,
+        "iters": 2
+      },
+      "in_plane": {
+        "status": "PASS",
+        "load_case": "in_plane",
+        "tip_disp": -5.017765264081934e-06,
+        "target": 0.001754,
+        "ratio": -0.002860755566751388,
+        "error_pct": -100.28607555667514,
+        "iters": 2
+      },
+      "elapsed_s": 0.13512325286865234
+    },
+    "C3D8_CR": {
+      "out_of_plane": {
+        "status": "PASS",
+        "load_case": "out_of_plane",
+        "tip_disp": 0.001312903791217862,
+        "target": 0.005424,
+        "ratio": 0.24205453377910438,
+        "error_pct": -75.79454662208957,
+        "iters": 2
+      },
+      "in_plane": {
+        "status": "PASS",
+        "load_case": "in_plane",
+        "tip_disp": 0.0008708124634374668,
+        "target": 0.001754,
+        "ratio": 0.49647232807153185,
+        "error_pct": -50.35276719284681,
+        "iters": 2
+      },
+      "elapsed_s": 0.027610301971435547
+    },
+    "C3D8H": {
+      "out_of_plane": {
+        "status": "PASS",
+        "load_case": "out_of_plane",
+        "tip_disp": 0.0013129037912212823,
+        "target": 0.005424,
+        "ratio": 0.24205453377973493,
+        "error_pct": -75.7945466220265,
+        "iters": 2
+      },
+      "in_plane": {
+        "status": "PASS",
+        "load_case": "in_plane",
+        "tip_disp": 0.000870812463442,
+        "target": 0.001754,
+        "ratio": 0.49647232807411634,
+        "error_pct": -50.35276719258837,
+        "iters": 2
+      },
+      "elapsed_s": 0.08844399452209473
+    },
+    "C3D8R": {
+      "out_of_plane": {
+        "status": "PASS",
+        "load_case": "out_of_plane",
+        "tip_disp": 0.005491889271681576,
+        "target": 0.005424,
+        "ratio": 1.0125164586433584,
+        "error_pct": 1.2516458643358375,
+        "iters": 2
+      },
+      "in_plane": {
+        "status": "PASS",
+        "load_case": "in_plane",
+        "tip_disp": 0.0017510216167420422,
+        "target": 0.001754,
+        "ratio": 0.9983019479715178,
+        "error_pct": -0.16980520284821665,
+        "iters": 2
+      },
+      "elapsed_s": 16.771198749542236
+    },
+    "C3D4": {
+      "out_of_plane": {
+        "status": "PASS",
+        "load_case": "out_of_plane",
+        "tip_disp": 0.0004095995345100963,
+        "target": 0.005424,
+        "ratio": 0.07551613836838059,
+        "error_pct": -92.44838616316194,
+        "iters": 2
+      },
+      "in_plane": {
+        "status": "PASS",
+        "load_case": "in_plane",
+        "tip_disp": 0.00023158345003198582,
+        "target": 0.001754,
+        "ratio": 0.13203161347319603,
+        "error_pct": -86.79683865268039,
+        "iters": 2
+      },
+      "elapsed_s": 5.817899465560913
+    },
+    "C3D4_ANP": {
+      "out_of_plane": {
+        "status": "PASS",
+        "load_case": "out_of_plane",
+        "tip_disp": 0.000409599534508225,
+        "target": 0.005424,
+        "ratio": 0.07551613836803558,
+        "error_pct": -92.44838616319643,
+        "iters": 2
+      },
+      "in_plane": {
+        "status": "PASS",
+        "load_case": "in_plane",
+        "tip_disp": 0.00023158345003665345,
+        "target": 0.001754,
+        "ratio": 0.13203161347585715,
+        "error_pct": -86.7968386524143,
+        "iters": 2
+      },
+      "elapsed_s": 9.478436708450317
+    },
+    "C3D10": {
+      "out_of_plane": {
+        "status": "PASS",
+        "load_case": "out_of_plane",
+        "tip_disp": 0.00435026888618884,
+        "target": 0.005424,
+        "ratio": 0.8020407238548747,
+        "error_pct": -19.795927614512532,
+        "iters": 2
+      },
+      "in_plane": {
+        "status": "PASS",
+        "load_case": "in_plane",
+        "tip_disp": 0.0014911746563069516,
+        "target": 0.001754,
+        "ratio": 0.8501565885444422,
+        "error_pct": -14.98434114555578,
+        "iters": 2
+      },
+      "elapsed_s": 4.942052125930786
+    },
+    "C3D10M": {
+      "out_of_plane": {
+        "status": "PASS",
+        "load_case": "out_of_plane",
+        "tip_disp": 0.005365819481000456,
+        "target": 0.005424,
+        "ratio": 0.9892735031343023,
+        "error_pct": -1.072649686569771,
+        "iters": 2
+      },
+      "in_plane": {
+        "status": "PASS",
+        "load_case": "in_plane",
+        "tip_disp": 0.0018312422939610598,
+        "target": 0.001754,
+        "ratio": 1.0440377958728961,
+        "error_pct": 4.4037795872896135,
+        "iters": 2
+      },
+      "elapsed_s": 12.517507553100586
+    },
+    "C3D6": {
+      "out_of_plane": {
+        "status": "PASS",
+        "load_case": "out_of_plane",
+        "tip_disp": 0.0013144556476456177,
+        "target": 0.005424,
+        "ratio": 0.24234064300251063,
+        "error_pct": -75.76593569974894,
+        "iters": 2
+      },
+      "in_plane": {
+        "status": "PASS",
+        "load_case": "in_plane",
+        "tip_disp": 0.0004072869303223094,
+        "target": 0.001754,
+        "ratio": 0.23220463530348315,
+        "error_pct": -76.77953646965169,
+        "iters": 2
+      },
+      "elapsed_s": 11.11756944656372
+    }
+  },
+  "cooks_membrane_3d": {
+    "C3D8": {
+      "status": "PASS",
+      "tip_uy": 14.424303120628792,
+      "ref_value": 23.91,
+      "ratio": 0.6032749109422331,
+      "iters": 6
+    },
+    "C3D8I": {
+      "status": "DIVERGED",
+      "tip_uy": NaN,
+      "iters": 7
+    },
+    "C3D8_FBAR": {
+      "status": "DIVERGED",
+      "tip_uy": NaN,
+      "iters": 4
+    },
+    "C3D8_CR": {
+      "status": "PASS",
+      "tip_uy": 14.424303120628792,
+      "ref_value": 23.91,
+      "ratio": 0.6032749109422331,
+      "iters": 6
+    },
+    "C3D8H": {
+      "status": "PASS",
+      "tip_uy": 14.424303107025422,
+      "ref_value": 23.91,
+      "ratio": 0.6032749103732924,
+      "iters": 6
+    },
+    "C3D8R": {
+      "status": "PASS",
+      "tip_uy": 14.426919517572296,
+      "ref_value": 23.91,
+      "ratio": 0.6033843378323838,
+      "iters": 6
+    },
+    "C3D4": {
+      "status": "PASS",
+      "tip_uy": 16.49531867879559,
+      "ref_value": 23.91,
+      "ratio": 0.689892040100192,
+      "iters": 2
+    },
+    "C3D4_ANP": {
+      "status": "PASS",
+      "tip_uy": 16.472964158400373,
+      "ref_value": 23.91,
+      "ratio": 0.688957095708924,
+      "iters": 4
+    },
+    "C3D10": {
+      "status": "PASS",
+      "tip_uy": 25.381194057018785,
+      "ref_value": 23.91,
+      "ratio": 1.0615304917197317,
+      "iters": 2
+    },
+    "C3D10M": {
+      "status": "PASS",
+      "tip_uy": 25.593139917944296,
+      "ref_value": 23.91,
+      "ratio": 1.0703948104535463,
+      "iters": 2
+    },
+    "C3D6": {
+      "status": "PASS",
+      "tip_uy": 22.189842817277675,
+      "ref_value": 23.91,
+      "ratio": 0.9280569977949676,
+      "iters": 2
+    }
+  },
+  "cooks_membrane_2d": {
+    "CPE4": {
+      "status": "PASS",
+      "tip_uy": 13.875612475459945,
+      "ref_value": 23.91,
+      "ratio": 0.5803267451049747,
+      "iters": 6
+    },
+    "CPE4I": {
+      "status": "PASS",
+      "tip_uy": 13.94421800021384,
+      "ref_value": 23.91,
+      "ratio": 0.5831960685994915,
+      "iters": 6
+    },
+    "CPE4R": {
+      "status": "PASS",
+      "tip_uy": 13.749414867049346,
+      "ref_value": 23.91,
+      "ratio": 0.575048718822641,
+      "iters": 6
+    },
+    "CPE4H": {
+      "status": "PASS",
+      "tip_uy": 13.823089476462163,
+      "ref_value": 23.91,
+      "ratio": 0.578130049203771,
+      "iters": 6
+    },
+    "CPE4_FBAR": {
+      "status": "PASS",
+      "tip_uy": 21.570111715743238,
+      "ref_value": 23.91,
+      "ratio": 0.9021376710892195,
+      "iters": 2
+    },
+    "CPE4_CR": {
+      "status": "PASS",
+      "tip_uy": 13.875612475459945,
+      "ref_value": 23.91,
+      "ratio": 0.5803267451049747,
+      "iters": 6
+    },
+    "CPE3": {
+      "status": "PASS",
+      "tip_uy": 15.314515472941368,
+      "ref_value": 23.91,
+      "ratio": 0.6405067115408352,
+      "iters": 2
+    },
+    "CPE6": {
+      "status": "PASS",
+      "tip_uy": 22.233636531400016,
+      "ref_value": 23.91,
+      "ratio": 0.9298886044081981,
+      "iters": 2
+    },
+    "CPE6M": {
+      "status": "PASS",
+      "tip_uy": 14.530909674618469,
+      "ref_value": 23.91,
+      "ratio": 0.6077335706657662,
+      "iters": 8
+    },
+    "CPE8": {
+      "status": "PASS",
+      "tip_uy": 22.380802913130058,
+      "ref_value": 23.91,
+      "ratio": 0.9360436182823111,
+      "iters": 2
+    }
+  }
+}
