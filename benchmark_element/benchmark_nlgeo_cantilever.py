@@ -22,7 +22,7 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Tuple, Any, Optional
 import numpy as np
-from scipy.integrate import quad
+from scipy.integrate import solve_ivp
 from scipy.optimize import brentq
 
 # Ensure repository root is on sys.path
@@ -54,9 +54,18 @@ EI_VAL = E_MOD * I_SECTION
 # ====================================================================
 class BisshoppDruckerElastica:
     """Exact large-deflection cantilever tip-load elastica (1945).
-    
+
     EI*theta'' = -P*cos(theta), theta(0)=0, theta'(L)=0 (moment-free tip).
-    First integral: (EI/2)*theta'^2 = P*(sin(theta_tip) - sin(theta)).
+
+    Solved as a backward IVP (tip -> root) instead of the classical
+    singular quadrature: starting from Y=[theta_tip, 0] at s=L with the
+    negated RHS, theta_tip is root-found so that theta(0)=0. All
+    integrands seen by the ODE solver are smooth -- the old
+    1/sqrt(sin_tip - sin th) quadrature blew up (quad IntegrationWarning)
+    as theta_tip -> pi/2 because the s-substitution desingularization
+    leaves a 1/sqrt(cos(theta_tip)) amplification plus a max(d,1e-30)
+    plateau. Tip slope is physically bounded by pi/2 for a transverse
+    tip load, so the brentq bracket below is exhaustive, not heuristic.
     """
 
     def __init__(self, E: float, I: float, L: float, P: float):
@@ -64,31 +73,33 @@ class BisshoppDruckerElastica:
         self.L = L
         self.P = P
 
-    @staticmethod
-    def _s_integrand(s, theta_tip, weight):
-        th = theta_tip - s * s
-        d = np.sin(theta_tip) - np.sin(th)
-        d = max(d, 1e-30)
-        return weight(th) * 2.0 * s / np.sqrt(d)
+    def _shoot(self, theta_tip: float, p_val: float):
+        """Integrate tip->root; return (theta_at_root, sol)."""
+        c = p_val / self.EI
+
+        def rhs(_s, Y):
+            return [-Y[1], c * np.cos(Y[0])]
+
+        return solve_ivp(
+            rhs, (0.0, self.L), [theta_tip, 0.0],
+            method="DOP853", rtol=1e-13, atol=1e-15, dense_output=True,
+        )
 
     def _residual(self, theta_tip: float, p_val: float) -> float:
-        beta = np.sqrt(2.0 * p_val / self.EI)
-        smax = np.sqrt(theta_tip)
-        val, _ = quad(self._s_integrand, 0.0, smax, args=(theta_tip, lambda th: 1.0), limit=200)
-        return beta * self.L - val
+        sol = self._shoot(theta_tip, p_val)
+        return sol.y[0, -1]
 
     def solve_at_load(self, p_val: float) -> Tuple[float, float, float]:
         if p_val <= 1e-6:
             return 0.0, 0.0, 0.0
         lo, hi = 1e-7, np.pi / 2.0 - 1e-7
-        theta_tip = brentq(self._residual, lo, hi, args=(p_val,), xtol=1e-12, rtol=1e-12)
-        beta = np.sqrt(2.0 * p_val / self.EI)
-        smax = np.sqrt(theta_tip)
-        x_val, _ = quad(self._s_integrand, 0.0, smax, args=(theta_tip, np.cos), limit=200)
-        y_val, _ = quad(self._s_integrand, 0.0, smax, args=(theta_tip, np.sin), limit=200)
-        x_shortening = self.L - (x_val / beta)
-        y_deflection = y_val / beta
-        return theta_tip, x_shortening, y_deflection
+        theta_tip = brentq(self._residual, lo, hi, args=(p_val,), xtol=1e-13, rtol=1e-13)
+        sol = self._shoot(theta_tip, p_val)
+        s = np.linspace(0.0, self.L, 2001)
+        th = sol.sol(s)[0]
+        x_tip = float(np.trapezoid(np.cos(th), s))
+        y_tip = float(np.trapezoid(np.sin(th), s))
+        return theta_tip, self.L - x_tip, y_tip
 
     def compute_curves(self, n_pts: int = 25) -> Dict[str, np.ndarray]:
         p_fractions = np.linspace(0.0, 1.0, n_pts)
