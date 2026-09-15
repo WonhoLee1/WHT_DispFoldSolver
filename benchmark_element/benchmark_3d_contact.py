@@ -181,11 +181,15 @@ def make_hertz_curved_block_mesh(
     return mesh, grid, xs
 
 
-def _solve_with_cutback(solver, set_bc_fn, uz_target, n_steps=40, max_iters=80, min_frac=1.0 / 128.0, augmented=False):
+def _solve_with_cutback(solver, set_bc_fn, uz_target, n_steps=40, max_iters=80, min_frac=1.0 / 128.0, augmented=False,
+                      use_anderson=False, anderson_m=4):
+    import time
     d = uz_target / n_steps
     cur = 0.0
     u_saved = solver.u.copy()
     n_calls = 0
+    total_iters = 0
+    t_wall = 0.0
     while abs(cur - uz_target) > 1e-9 and abs(cur) < abs(uz_target):
         trial = cur + d
         if abs(trial) > abs(uz_target):
@@ -193,10 +197,15 @@ def _solve_with_cutback(solver, set_bc_fn, uz_target, n_steps=40, max_iters=80, 
         set_bc_fn(trial)
         if getattr(solver, "debug_sdi", False):
             print(f"[CUTBACK] attempt trial={trial:.8f} cur={cur:.8f} d={d:.8f}", flush=True)
+        t0 = time.perf_counter()
         if augmented:
             converged, _aug_iters, _iters = solver.solve_step_augmented(dt=1.0, max_iters=max_iters)
         else:
-            converged, _iters = solver.solve_step(dt=1.0, max_iters=max_iters)
+            converged, _iters = solver.solve_step(dt=1.0, max_iters=max_iters,
+                                                  use_anderson_accel=use_anderson,
+                                                  anderson_m=anderson_m)
+        t_wall += time.perf_counter() - t0
+        total_iters += _iters
         n_calls += 1
         if getattr(solver, "debug_sdi", False):
             print(f"[CUTBACK] -> converged={converged} iters={_iters}", flush=True)
@@ -207,8 +216,8 @@ def _solve_with_cutback(solver, set_bc_fn, uz_target, n_steps=40, max_iters=80, 
             solver.u = u_saved.copy()
             d /= 2.0
             if abs(d) < abs(uz_target) * min_frac:
-                return False, cur, n_calls
-    return abs(cur - uz_target) < 1e-6, cur, n_calls
+                return False, cur, n_calls, total_iters, t_wall
+    return abs(cur - uz_target) < 1e-6, cur, n_calls, total_iters, t_wall
 
 
 def run_hertz_contact_benchmark(
@@ -216,7 +225,8 @@ def run_hertz_contact_benchmark(
     nx=60, ny=2, nz=8, uz_target=-0.06, n_steps=40,
     x_fine=None, dx_fine=None, n_coarse=20, max_iters=120, min_frac=1.0 / 1024,
     stabilization_coefficient=0.0, debug_sdi=False, penalty_form="LINEAR",
-    constraint_enforcement="PENALTY",
+    constraint_enforcement="PENALTY", use_anderson=False, anderson_m=4,
+    chatter_stabilization=False, hysteresis_band=0.0, hyst_frac=0.0,
 ):
     """Run the curved-block-vs-rigid-plane FEM contact solve, read off the
     reaction line load, compute the Hertz reference half-width/peak
@@ -273,9 +283,13 @@ def run_hertz_contact_benchmark(
     # MPa fallback default.
     dx_local = float(np.min(np.diff(xs)))
     k_rep = E * dx_local
+    band = hysteresis_band if hysteresis_band > 0.0 else hyst_frac * 0.1 * k_rep
+    stab = chatter_stabilization or (hyst_frac > 0.0)
     contact = pair.build_runtime_constraint(
         mesh, nid_to_idx, penalty_stiffness=0.1 * k_rep,
         stabilization_coefficient=stabilization_coefficient,
+        chatter_stabilization=stab,
+        hysteresis_band=band,
         materials={0: {"E": E, "nu": nu}},
     )
     solver.constraints.append(contact)
@@ -292,10 +306,11 @@ def run_hertz_contact_benchmark(
         for n in top_nodes:
             solver.fixed_dofs[3 * nid_to_idx[n] + 2] = uz
 
-    reached, final_uz, n_calls = _solve_with_cutback(
+    reached, final_uz, n_calls, total_iters, t_wall = _solve_with_cutback(
         solver, set_uz, uz_target=uz_target, n_steps=n_steps,
         max_iters=max_iters, min_frac=min_frac,
         augmented=(constraint_enforcement == "AUGMENTED_LAGRANGE"),
+        use_anderson=use_anderson, anderson_m=anderson_m,
     )
 
     f_contact, _, stats = contact.assemble(solver.u)
@@ -320,6 +335,9 @@ def run_hertz_contact_benchmark(
         "status": "CONVERGED" if reached else "DIVERGED",
         "final_uz": final_uz,
         "n_calls": n_calls,
+        "total_iters": total_iters,
+        "t_wall": t_wall,
+        "use_anderson": use_anderson,
         "P_per_length": P_per_length,
         "n_active": stats["n_active"],
         "n_candidates": stats["n_candidates"],
