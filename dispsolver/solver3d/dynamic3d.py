@@ -117,8 +117,21 @@ class DynamicSolver3D:
         )
 
         self.f_int = None
+        self.last_accept = None
         self._setup_numba_topology()
 
+
+    def _record_acceptance(self, branch: str, f_acc: np.ndarray,
+                           f_ext: np.ndarray, iters: int) -> None:
+        """Read-only calibration probe: true free-DOF residual norm at the
+        accepted state. Never influences acceptance (AGENTS.md section 4.7:
+        the AND-criterion rewrite caused dt-collapse, so thresholds stay
+        untouched -- this only measures what they accept)."""
+        mask = np.ones(self.num_dofs, dtype=bool)
+        if self.fixed_dofs:
+            mask[list(self.fixed_dofs.keys())] = False
+        r = float(np.linalg.norm((f_ext - np.asarray(f_acc))[mask]))
+        self.last_accept = {"branch": branch, "r_norm": r, "iters": iters}
 
     def _solve_linear(self, K_bc, r_bc):
         """Solve K_bc @ du = r_bc, preferring the phase-reuse Pardiso
@@ -284,7 +297,11 @@ class DynamicSolver3D:
                 elif et in ["C3D4_ANP", "ANP"]:
                     k = 9
                 elif et in ["SOLID_SHELL", "C3D8_SS"]:
-                    k = 12
+                    k = 14  # SOLID_SHELL_CR (ANS+EAS + Co-Rotational, promoted for nlgeom)
+                elif et in ["SOLID_SHELL_CR"]:
+                    k = 14  # SOLID_SHELL_CR explicit
+                elif et in ["SOLID_SHELL_LINEAR"]:
+                    k = 12  # SOLID_SHELL small-strain (not recommended for large deflection)
                 else:
                     k = 1 if not is_nearly_incompressible else 3
             else:
@@ -499,6 +516,11 @@ class DynamicSolver3D:
                         f_sub, K_sub, err = assemble_mesh_c3d8r_cr_numba(
                             node_coords_all, sub_conn, u_vec, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls, elem_stress_init=sub_stress_init
                         )
+                    elif k == 14:
+                        from dispsolver.element3d.cr_wrapper_3d import assemble_mesh_solid_shell_cr_numba
+                        f_sub, K_sub, err = assemble_mesh_solid_shell_cr_numba(
+                            node_coords_all, sub_conn, u_vec, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls, elem_stress_init=sub_stress_init
+                        )
                     else:
                         raise ValueError(f"Unknown element kernel index: {k}")
 
@@ -586,6 +608,81 @@ class DynamicSolver3D:
                 active = s if active is None else (active | s)
         return active if active is not None else frozenset()
 
+    def _update_contact_chatter_state(self, u: np.ndarray) -> None:
+        """Active-set CHATTERING stabilization (design doc
+        dev_log/contact_stabilization_precise_design_20260915.md sec3):
+        calls update_gate_state(u) on every constraint that exposes one,
+        mirroring _contact_active_set()'s own style.
+
+        **Timing, corrected from the design doc's original proposal**
+        (measured 2026-09-16: calling this once per raw_iter immediately
+        before `current_active_set = self._contact_active_set(u_k)`, as
+        the design doc's sec3 originally specified, mutates the gate
+        BETWEEN the official residual assembly at the top of the loop and
+        the line-search/Armijo trial assemblies later in the SAME
+        iteration -- those trial assemble() calls then see a DIFFERENT
+        gate than the official residual did, so the "official" r_norm
+        (computed pre-mutation, contact excluded while the gate was still
+        closed) and every trial r_t_norm (computed post-mutation, contact
+        suddenly included) become mutually inconsistent within one
+        iteration; on the plain-penalty single-cube fixture this made
+        every Armijo trial's residual look WORSE than the artificially-low
+        official one, `found_valid` stayed False, and solve_step()
+        reported non-convergence despite the physical configuration being
+        fine). Fixed by calling this at the exact same THREE commit
+        points `update_augmented_multipliers()` already uses (iteration-1
+        fast path, the Anderson-acceleration accepted-trial branch, and
+        post-Armijo) instead of before the SDI check -- i.e. the gate
+        only ever changes once a trial is ACCEPTED for this iteration,
+        so every assemble() call within a single raw_iter (official and
+        every trial) sees the SAME gate value, and `current_active_set`
+        at the top of the NEXT iteration reads whatever the PREVIOUS
+        iteration's commit left behind -- the identical one-iteration-lag
+        convention `self._lam`/AL already has and that already works
+        (SDI reads a value that is stable for one whole iteration, never
+        one that changes mid-iteration)."""
+        for c in self.constraints:
+            if hasattr(c, "update_gate_state"):
+                c.update_gate_state(u)
+
+    def _contact_full_state(self, u: np.ndarray) -> frozenset:
+        """Union of `_contact_active_set(u)` (normal contact, unchanged)
+        and every constraint's `get_friction_state(u)` (Coulomb stick/
+        slip, design doc dev_log/contact_friction_precise_design_
+        20260916.md sec6) -- feeds `solve_step()`'s SDI comparison so a
+        stick<->slip transition is exempted from the normal convergence
+        check the same way a normal-contact activation event already is.
+        Additive: with no constraint exposing `get_friction_state` (the
+        common, friction-disabled case), this degenerates to exactly
+        `_contact_active_set(u)`'s existing return value -- byte-
+        identical old behavior."""
+        normal = self._contact_active_set(u)
+        friction = None
+        for c in self.constraints:
+            if hasattr(c, "get_friction_state"):
+                s = c.get_friction_state(u)
+                friction = s if friction is None else (friction | s)
+        if friction is None:
+            return normal
+        return normal | friction
+
+    def _commit_contact_friction_state(self, u: np.ndarray) -> None:
+        """Advances the Coulomb friction anchor (design doc dev_log/
+        contact_friction_precise_design_20260916.md sec5) for every
+        constraint that exposes `commit_friction_state`. Called ONLY at
+        `solve_step()`'s existing `update_state=True` sites (a converged
+        increment), NEVER at the per-iteration PDASS/chatter-gate commit
+        points `_update_contact_chatter_state`/`update_augmented_
+        multipliers` use -- the anchor is physical slip history, not a
+        numerical device, and advancing it on a trial that later gets
+        rejected (line-search halving, a cutback increment) would
+        permanently corrupt that history with motion that never actually
+        happened (sec5.1 -- the same reasoning this codebase already
+        applies to `elem_sdvs`/`update_state`)."""
+        for c in self.constraints:
+            if hasattr(c, "commit_friction_state"):
+                c.commit_friction_state(u)
+
     def solve_step(
         self,
         dt: float = 1.0,
@@ -671,7 +768,7 @@ class DynamicSolver3D:
             from dispsolver.solver.anderson_acceleration import AndersonAccelerator
             accelerator = AndersonAccelerator(m=anderson_m, beta=anderson_beta)
 
-        prev_active_set = self._contact_active_set(u_k)
+        prev_active_set = self._contact_full_state(u_k)
         equil_iters = 0
         raw_iter = 0
         max_raw_iters = max_iters + max_sdi_iters
@@ -701,7 +798,7 @@ class DynamicSolver3D:
             # own docstring. Bookkeeping happens unconditionally here (not
             # at the bottom of the loop) so it isn't skipped by the
             # iteration-1 `continue` a few lines below.
-            current_active_set = self._contact_active_set(u_k)
+            current_active_set = self._contact_full_state(u_k)
             is_sdi = current_active_set != prev_active_set
             if not is_sdi:
                 equil_iters += 1
@@ -716,7 +813,9 @@ class DynamicSolver3D:
             if iter_count > 1 and not is_sdi and bc_err < 1e-5 and (rel_r < 5e-3 or r_norm < 1e-3):
                 self.u = u_k
                 # Commit state variables (SDV) for the converged increment
-                self.assemble_system(u_k, dt=dt, update_state=True)
+                _, f_acc = self.assemble_system(u_k, dt=dt, update_state=True)
+                self._record_acceptance("residual", f_acc, f_ext, iter_count)
+                self._commit_contact_friction_state(u_k)
                 return True, iter_count
 
             # Solve linear system \Delta u = K^-1 * r
@@ -732,7 +831,9 @@ class DynamicSolver3D:
             bc_err_next = max([abs(target_val - u_next[dof]) for dof, target_val in self.fixed_dofs.items()], default=0.0)
             if iter_count > 1 and not is_sdi and du_norm < 1e-4 and bc_err_next < 1e-5:
                 self.u = u_next
-                self.assemble_system(self.u, dt=dt, update_state=True)
+                _, f_acc = self.assemble_system(self.u, dt=dt, update_state=True)
+                self._record_acceptance("correction", f_acc, f_ext, iter_count)
+                self._commit_contact_friction_state(self.u)
                 return True, iter_count
 
             # On iteration 1 (kinematic Dirichlet application), take full step s=1.0 unless inverted
@@ -746,6 +847,7 @@ class DynamicSolver3D:
                     for c in self.constraints:
                         if getattr(c, "augmented_lagrange", False):
                             c.update_augmented_multipliers(u_k, omega=augment_relaxation)
+                    self._update_contact_chatter_state(u_k)
                     continue
 
             # If Anderson Acceleration is active, attempt accelerated trial step first
@@ -766,6 +868,7 @@ class DynamicSolver3D:
                         for c in self.constraints:
                             if getattr(c, "augmented_lagrange", False):
                                 c.update_augmented_multipliers(u_k, omega=augment_relaxation)
+                        self._update_contact_chatter_state(u_k)
                         continue
 
                 # AA trial rejected by safeguard: pop the unverified record
@@ -806,6 +909,7 @@ class DynamicSolver3D:
             for c in self.constraints:
                 if getattr(c, "augmented_lagrange", False):
                     c.update_augmented_multipliers(u_k, omega=augment_relaxation)
+            self._update_contact_chatter_state(u_k)
 
         # Exhausted the equilibrium-iteration budget (max_iters, counting
         # only non-SDI iterations) or the total raw budget
@@ -820,7 +924,9 @@ class DynamicSolver3D:
         # met AND the active set was stable on that last iteration.
         self.u = u_k
         if not is_sdi and bc_err < 1e-5 and (rel_r < 5e-3 or r_norm < 1e-3):
-            self.assemble_system(u_k, dt=dt, update_state=True)
+            _, f_acc = self.assemble_system(u_k, dt=dt, update_state=True)
+            self._record_acceptance("fallthrough", f_acc, f_ext, raw_iter)
+            self._commit_contact_friction_state(u_k)
             return True, raw_iter
         return False, raw_iter
 
