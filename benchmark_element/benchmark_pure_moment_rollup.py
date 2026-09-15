@@ -230,6 +230,13 @@ def run_rollup_2d(pet_type: str, psa_type: str, n_substeps: int = 25, label: str
     t_start = time.perf_counter()
     total_iters = 0
     max_theta_reached = 0.0
+    rollup_tol = float(os.environ.get("ROLLUP_TOL", "1e-5"))
+    # Incremental internal work (trapezoidal path integral). 1/2*u^T*f is
+    # not the energy under NLGEOM (and clamps to 0 via max(0,.)).
+    u_prev = np.zeros(solver.num_dofs, dtype=np.float64)
+    f_prev = np.zeros(solver.num_dofs, dtype=np.float64)
+    work_int = 0.0
+    tip_Fx_last = tip_Fy_last = tip_cx_last = tip_cy_last = 0.0
 
     hist_theta = [0.0]
     hist_M_root = [0.0]
@@ -250,10 +257,14 @@ def run_rollup_2d(pet_type: str, psa_type: str, n_substeps: int = 25, label: str
             solver.fix_dof(nid, 0, ux_t)
             solver.fix_dof(nid, 1, uy_t)
 
-        conv, iters = solver.solve_step(dt=1.0, max_iters=35)
+        conv, iters = solver.solve_step(dt=1.0, max_iters=35, tol=rollup_tol)
         total_iters += iters
         if conv:
             max_theta_reached = theta_s
+            u_new = solver.u.copy()
+            f_new = np.asarray(solver.f_int).copy()
+            work_int += 0.5 * float(np.dot(f_prev + f_new, u_new - u_prev))
+            u_prev, f_prev = u_new, f_new
             root_rx = solver.compute_section_reactions(root_nodes, center_pt=(0.0, Z_MID))
             tip_x_mean = float(np.mean([mesh.nodes[n].x + solver.u[2 * nid_map[n]] for n in tip_nodes]))
             tip_y_mean = float(np.mean([mesh.nodes[n].y + solver.u[2 * nid_map[n] + 1] for n in tip_nodes]))
@@ -264,8 +275,12 @@ def run_rollup_2d(pet_type: str, psa_type: str, n_substeps: int = 25, label: str
             hist_M_tip.append(float(tip_rx["Mz"]))
             hist_Fx_root.append(float(root_rx["Fx"]))
             hist_Fy_root.append(float(root_rx["Fy"]))
+            tip_Fx_last = float(tip_rx["Fx"])
+            tip_Fy_last = float(tip_rx["Fy"])
+            tip_cx_last = tip_x_mean
+            tip_cy_last = tip_y_mean
 
-            u_str = solver.compute_strain_energy() * 1000.0  # mJ
+            u_str = work_int  # N*mm = mJ (model already in mm/MPa units)
             hist_U_strain.append(float(u_str))
         else:
             print(f"    [2D {pet_type}+{psa_type}] Cutback/Diverged at step {s}/{n_substeps} (theta = {np.degrees(theta_s):.1f} deg)")
@@ -344,6 +359,24 @@ def run_rollup_2d(pet_type: str, psa_type: str, n_substeps: int = 25, label: str
     final_Fy_root = hist_Fy_root[-1]
     final_U_strain = hist_U_strain[-1]
 
+    dx = tip_cx_last - 0.0
+    dy = tip_cy_last - Z_MID
+    transfer = dx * tip_Fy_last - dy * tip_Fx_last
+    denom = abs(final_M_root) if abs(final_M_root) > 1e-12 else 1.0
+    moment_imbalance_pct = abs(final_M_root + final_M_tip + transfer) / denom * 100.0
+    _F = np.asarray(solver.f_int, dtype=np.float64).reshape(-1, 2)
+    _X = np.asarray(
+        [[mesh.nodes[n].x + solver.u[2 * nid_map[n]],
+          mesh.nodes[n].y + solver.u[2 * nid_map[n] + 1]] for n in mesh.nodes],
+        dtype=np.float64)
+    _X[:, 0] -= 0.0
+    _X[:, 1] -= Z_MID
+    _Fsum = _F.sum(axis=0)
+    _Msum = (_X[:, 0] * _F[:, 1] - _X[:, 1] * _F[:, 0]).sum()
+    global_force_pct = float(np.linalg.norm(_Fsum)) * R_THEORY / denom * 100.0
+    global_moment_pct = float(abs(_Msum)) / denom * 100.0
+    balance_ok = bool(global_moment_pct < 5.0 and global_force_pct < 5.0)
+
     save_case_mesh_cache(label, mesh, solver.u, is_2d=True)
 
     return {
@@ -361,6 +394,10 @@ def run_rollup_2d(pet_type: str, psa_type: str, n_substeps: int = 25, label: str
         "final_M_tip": round(final_M_tip, 6),
         "final_Fx_root": round(final_Fx_root, 6),
         "final_Fy_root": round(final_Fy_root, 6),
+        "moment_imbalance_pct": round(float(moment_imbalance_pct), 3),
+        "global_force_pct": round(float(global_force_pct), 3),
+        "global_moment_pct": round(float(global_moment_pct), 3),
+        "balance_ok": balance_ok,
         "final_U_strain_mJ": round(final_U_strain, 4),
         "history_theta": hist_theta,
         "history_M_root": hist_M_root,
@@ -401,6 +438,13 @@ def run_rollup_3d(pet_type: str, psa_type: str, n_substeps: int = 25, label: str
     t_start = time.perf_counter()
     total_iters = 0
     max_theta_reached = 0.0
+    rollup_tol = float(os.environ.get("ROLLUP_TOL", "1e-5"))
+    u_prev = np.zeros(solver.num_dofs, dtype=np.float64)
+    f_prev = np.zeros(solver.num_dofs, dtype=np.float64)
+    work_int = 0.0
+    worst_r_acc = 0.0
+    branch_counts = {}
+    tip_Fx_last = tip_Fz_last = tip_cx_last = tip_cz_last = 0.0
 
     hist_theta = [0.0]
     hist_M_root = [0.0]
@@ -421,10 +465,18 @@ def run_rollup_3d(pet_type: str, psa_type: str, n_substeps: int = 25, label: str
             solver.fix_dof(nid, 0, ux_t)
             solver.fix_dof(nid, 2, uz_t)
 
-        conv, iters = solver.solve_step(dt=1.0, max_iters=35)
+        conv, iters = solver.solve_step(dt=1.0, max_iters=35, tol=rollup_tol)
         total_iters += iters
         if conv:
             max_theta_reached = theta_s
+            u_new = solver.u.copy()
+            f_new = np.asarray(solver.f_int).copy()
+            work_int += 0.5 * float(np.dot(f_prev + f_new, u_new - u_prev))
+            u_prev, f_prev = u_new, f_new
+            acc = solver.last_accept or {}
+            worst_r_acc = max(worst_r_acc, float(acc.get("r_norm", 0.0)))
+            br = acc.get("branch", "?")
+            branch_counts[br] = branch_counts.get(br, 0) + 1
             root_rx = solver.compute_section_reactions(root_nodes, center_pt=(0.0, 0.5 * WIDTH, Z_MID))
             tip_x_mean = float(np.mean([mesh.nodes[n].x + solver.u[3 * nid_map[n]] for n in tip_nodes]))
             tip_z_mean = float(np.mean([mesh.nodes[n].z + solver.u[3 * nid_map[n] + 2] for n in tip_nodes]))
@@ -436,8 +488,15 @@ def run_rollup_3d(pet_type: str, psa_type: str, n_substeps: int = 25, label: str
             hist_M_tip.append(float(tip_rx["My"] / WIDTH))
             hist_Fx_root.append(float(root_rx["Fx"] / WIDTH))
             hist_Fz_root.append(float(root_rx["Fz"] / WIDTH))
+            tip_Fx_last = float(tip_rx["Fx"] / WIDTH)
+            tip_Fz_last = float(tip_rx["Fz"] / WIDTH)
+            tip_cx_last = tip_x_mean
+            tip_cz_last = tip_z_mean
+            tip_Fz_last = float(tip_rx["Fz"] / WIDTH)
+            tip_cx_last = tip_x_mean
+            tip_cz_last = tip_z_mean
 
-            u_str = (solver.compute_strain_energy() / WIDTH) * 1000.0  # mJ per mm width
+            u_str = work_int / WIDTH  # N*mm = mJ per mm width (mm/MPa units)
             hist_U_strain.append(float(u_str))
         else:
             print(f"    [3D {pet_type}+{psa_type}] Cutback/Diverged at step {s}/{n_substeps} (theta = {np.degrees(theta_s):.1f} deg)")
@@ -505,6 +564,28 @@ def run_rollup_3d(pet_type: str, psa_type: str, n_substeps: int = 25, label: str
     final_Fz_root = hist_Fz_root[-1]
     final_U_strain = hist_U_strain[-1]
 
+    dx = tip_cx_last - 0.0
+    dz = tip_cz_last - Z_MID
+    transfer = dz * tip_Fx_last - dx * tip_Fz_last
+    denom = abs(final_M_root) if abs(final_M_root) > 1e-12 else 1.0
+    moment_imbalance_pct = abs(final_M_root + final_M_tip + transfer) / denom * 100.0
+    # Global-field cross-check (all nodes, about root center): section-split
+    # transfer amplifies spurious section forces, this does not.
+    _F = np.asarray(solver.f_int, dtype=np.float64).reshape(-1, 3)
+    _X = np.asarray(
+        [[mesh.nodes[n].x + solver.u[3 * nid_map[n]],
+          mesh.nodes[n].y + solver.u[3 * nid_map[n] + 1],
+          mesh.nodes[n].z + solver.u[3 * nid_map[n] + 2]] for n in mesh.nodes],
+        dtype=np.float64)
+    _X[:, 0] -= 0.0
+    _X[:, 1] -= 0.5 * WIDTH
+    _X[:, 2] -= Z_MID
+    _Fsum = _F.sum(axis=0)
+    _Msum = np.cross(_X, _F).sum(axis=0)
+    global_force_pct = float(np.linalg.norm(_Fsum)) * R_THEORY / denom * 100.0
+    global_moment_pct = float(abs(_Msum[1])) / denom * 100.0
+    balance_ok = bool(global_moment_pct < 5.0 and global_force_pct < 5.0)
+
     save_case_mesh_cache(label, mesh, solver.u, is_2d=False)
 
     return {
@@ -522,6 +603,12 @@ def run_rollup_3d(pet_type: str, psa_type: str, n_substeps: int = 25, label: str
         "final_M_tip": round(final_M_tip, 6),
         "final_Fx_root": round(final_Fx_root, 6),
         "final_Fy_root": round(final_Fz_root, 6),
+        "worst_r_accept_N": float(worst_r_acc),
+        "accept_branches": dict(branch_counts),
+        "moment_imbalance_pct": round(float(moment_imbalance_pct), 3),
+        "global_force_pct": round(float(global_force_pct), 3),
+        "global_moment_pct": round(float(global_moment_pct), 3),
+        "balance_ok": balance_ok,
         "final_U_strain_mJ": round(final_U_strain, 4),
         "history_theta": hist_theta,
         "history_M_root": hist_M_root,
@@ -546,6 +633,10 @@ def run_all_rollups():
 
     results = {"2D": {}, "3D": {}}
 
+    # ROLLUP_SUITE=3D skips the 2D loop (3D-only refresh); ROLLUP_TAG suffixes JSON.
+    suite_filter = os.environ.get("ROLLUP_SUITE", "").strip()
+    tag = os.environ.get("ROLLUP_TAG", "").strip()
+
     # 2D Candidate Suite
     suite_2d = [
         ("2D-CR   (CPE4_CR+CPE4_CR)", "CPE4_CR", "CPE4_CR"),
@@ -556,14 +647,20 @@ def run_all_rollups():
     ]
 
     print(f"\n>>> Running 2D Candidate Roll-Up Suite ({len(suite_2d)} Cases) ...", flush=True)
-    for label, pet_e, psa_e in suite_2d:
-        print(f"\n[2D] {label} ...", flush=True)
-        res = run_rollup_2d(pet_e, psa_e, n_substeps=25, label=label)
-        results["2D"][label] = res
-        print(f"     Max Theta: {res['max_theta_deg']:.1f} deg | Verdict: {res['shape_verdict']} | Circularity RMSE: {res['circularity_rmse_pct']:.3f}% | Mid Slip: {res['shear_slip_mid_um']:.1f} um", flush=True)
-        print(f"     M_root: {res['final_M_root']:.6f} N*mm | M_tip: {res['final_M_tip']:.6f} N*mm | U_strain: {res['final_U_strain_mJ']:.2f} mJ | Fx: {res['final_Fx_root']:.2e} N", flush=True)
-        print(f"     Tip Position: (x={res['final_tip_x']:.2f}, y={res['final_tip_y']:.2f}) mm [Theory: (0.0, {Z_MID + 2*R_THEORY:.2f})]", flush=True)
-        print(f"     Time: {res['t_wall_sec']:.3f} s | Total Iters: {res['total_iters']}", flush=True)
+    if suite_filter == "3D":
+        print("    [SKIP] ROLLUP_SUITE=3D -- 2D suite skipped", flush=True)
+    else:
+        for label, pet_e, psa_e in suite_2d:
+            print(f"\n[2D] {label} ...", flush=True)
+            res = run_rollup_2d(pet_e, psa_e, n_substeps=25, label=label)
+            results["2D"][label] = res
+            print(f"     Max Theta: {res['max_theta_deg']:.1f} deg | Verdict: {res['shape_verdict']} | Circularity RMSE: {res['circularity_rmse_pct']:.3f}% | Mid Slip: {res['shear_slip_mid_um']:.1f} um", flush=True)
+            print(f"     M_root: {res['final_M_root']:.6f} N*mm | M_tip: {res['final_M_tip']:.6f} N*mm | U_strain: {res['final_U_strain_mJ']:.2f} mJ | Fx: {res['final_Fx_root']:.2e} N", flush=True)
+            print(f"     Tip Position: (x={res['final_tip_x']:.2f}, y={res['final_tip_y']:.2f}) mm [Theory: (0.0, {Z_MID + 2*R_THEORY:.2f})]", flush=True)
+            print(f"     Time: {res['t_wall_sec']:.3f} s | Total Iters: {res['total_iters']}", flush=True)
+            print(f"     Section M (diag): {res.get('moment_imbalance_pct', 0.0):.3f}% | Gate: {'OK' if res.get('balance_ok', False) else 'FAIL'}", flush=True)
+            if "global_moment_pct" in res:
+                print(f"     Global F/M: {res['global_force_pct']:.3f}% / {res['global_moment_pct']:.3f}%", flush=True)
 
     # 3D Candidate Suite
     suite_3d = [
@@ -572,7 +669,12 @@ def run_all_rollups():
         ("3D-Opt2-H (C3D8R+C3D8H)",   "C3D8R",   "C3D8H"),
         ("3D-Opt2 (C3D8R+C3D8R)",     "C3D8R",   "C3D8R"),
         ("3D-Base (C3D8+C3D8)",       "C3D8",    "C3D8"),
+        ("3D-SHELL (SS+SS)",          "SOLID_SHELL", "SOLID_SHELL"),
+        ("3D-SHELLOpt (SS+C3D8H)",    "SOLID_SHELL", "C3D8H"),
     ]
+    only = os.environ.get("ROLLUP_ONLY", "").strip()
+    if only:
+        suite_3d = [c for c in suite_3d if only in c[0]]
 
     print(f"\n>>> Running 3D Candidate Roll-Up Suite ({len(suite_3d)} Cases) ...", flush=True)
     for label, pet_e, psa_e in suite_3d:
@@ -583,11 +685,20 @@ def run_all_rollups():
         print(f"     M_root: {res['final_M_root']:.6f} N*mm | M_tip: {res['final_M_tip']:.6f} N*mm | U_strain: {res['final_U_strain_mJ']:.2f} mJ | Fx: {res['final_Fx_root']:.2e} N", flush=True)
         print(f"     Tip Position: (x={res['final_tip_x']:.2f}, y={res['final_tip_y']:.2f}) mm [Theory: (0.0, {Z_MID + 2*R_THEORY:.2f})]", flush=True)
         print(f"     Time: {res['t_wall_sec']:.3f} s | Total Iters: {res['total_iters']}", flush=True)
+        print(f"     Accept branches: {res.get('accept_branches', {})} | Worst true r at accept: {res.get('worst_r_accept_N', 0.0):.3e} N", flush=True)
+        print(f"     Section M (diag): {res.get('moment_imbalance_pct', 0.0):.3f}% | Gate: {'OK' if res.get('balance_ok', False) else 'FAIL'}", flush=True)
+        if "global_moment_pct" in res:
+            print(f"     Global F/M: {res['global_force_pct']:.3f}% / {res['global_moment_pct']:.3f}%", flush=True)
 
+
+    if only and not tag:
+        print(f"\n[NOTE] ROLLUP_ONLY filter active -- skipping results JSON overwrite", flush=True)
+        return results
 
     out_dir = Path(__file__).resolve().parent / "results"
     out_dir.mkdir(exist_ok=True)
-    json_path = out_dir / "benchmark_pure_moment_rollup.json"
+    suffix = f"_{tag}" if tag else ""
+    json_path = out_dir / f"benchmark_pure_moment_rollup{suffix}.json"
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(results, f, indent=2)
     print(f"\n[SUCCESS] Roll-up benchmark completed and saved to {json_path}", flush=True)
