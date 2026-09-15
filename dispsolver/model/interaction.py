@@ -233,6 +233,8 @@ class ContactPair:
         model: Any = None,
         penalty_stiffness: Optional[float] = None,
         stabilization_coefficient: float = 0.0,
+        chatter_stabilization: bool = False,
+        hysteresis_band: float = 0.0,
         materials: Optional[Dict[int, Any]] = None,
     ) -> Any:
         """Resolve this CAE-level contact definition into a runtime
@@ -259,29 +261,29 @@ class ContactPair:
             )
         is_rigid_master = isinstance(self.master, AnalyticalRigidSurface)
         if not is_rigid_master:
-            # Deformable-vs-deformable (design doc sec9 Phase 2), first
-            # cut: HARD+LINEAR penalty only, via DeformableSurfaceContactConstraint3D.
-            # Nonlinear penalty, soft laws, and augmented Lagrangian are
-            # not yet wired for a moving master surface -- the law-
-            # resolution logic below is already generic (built from
-            # `self.master` only at the very end), so extending this is a
-            # smaller follow-on than the initial mechanism, not a rewrite.
-            if self.constraint_enforcement != "PENALTY":
+            # Deformable-vs-deformable (design doc sec9 Phase 2):
+            # nonlinear penalty and soft laws ARE wired (relaxed
+            # 2026-09-16, dev_log/contact_deformable_soft_nonlinear_
+            # 20260916.md) -- DeformableSurfaceContactConstraint3D.assemble()
+            # already routes every non-AL evaluation through the same
+            # generic `self.law.evaluate(penetration) -> (f_mag, k_diag)`
+            # seam SurfaceContactConstraint3D uses (module docstring's own
+            # "HardLaw, NonlinearPenaltyLaw, and the three soft laws all
+            # plug in unchanged" was already accurate; only THIS resolver
+            # was refusing to build one). What remains genuinely
+            # unimplemented is AUGMENTED_LAGRANGE enforcement for a
+            # non-HARD law -- Abaqus's own documented restriction (sec
+            # B.4, checked below, applies uniformly regardless of master
+            # rigidity) already covers that case; no separate check is
+            # needed here.
+            if self.constraint_enforcement != "PENALTY" and self.constraint_enforcement != "AUGMENTED_LAGRANGE":
                 raise NotImplementedError(
                     f"ContactPair '{self.name}': deformable-vs-deformable contact only supports "
-                    f"constraint_enforcement='PENALTY' -- got '{self.constraint_enforcement}' "
-                    "(augmented Lagrangian's Uzawa update is not yet generalized to a moving, "
-                    "shape-function-weighted master stencil)."
+                    f"constraint_enforcement='PENALTY' or 'AUGMENTED_LAGRANGE' -- got "
+                    f"'{self.constraint_enforcement}'."
                 )
 
         prop = self.interaction_property
-        if not is_rigid_master and (prop.normal_behavior != "HARD" or prop.penalty_form != "LINEAR"):
-            raise NotImplementedError(
-                f"ContactPair '{self.name}': deformable-vs-deformable contact only supports "
-                f"normal_behavior='HARD' with penalty_form='LINEAR' for now -- got "
-                f"normal_behavior='{prop.normal_behavior}', penalty_form='{prop.penalty_form}' "
-                "(nonlinear penalty and soft laws are not yet wired for a moving master surface)."
-            )
         valid_behaviors = ("HARD", "SOFT_LINEAR", "SOFT_EXPONENTIAL", "SOFT_TABULAR")
         if prop.normal_behavior not in valid_behaviors:
             raise NotImplementedError(
@@ -449,6 +451,9 @@ class ContactPair:
                 coords=coords,
                 penalty_stiffness=float(k_hard_for_augmented),
                 law=law,
+                augmented_lagrange=(self.constraint_enforcement == "AUGMENTED_LAGRANGE"),
+                chatter_stabilization=bool(chatter_stabilization),
+                hysteresis_band=float(hysteresis_band),
                 name=self.name,
             )
 
@@ -463,5 +468,7 @@ class ContactPair:
             stabilization_coefficient=float(stabilization_coefficient),
             augmented_lagrange=(self.constraint_enforcement == "AUGMENTED_LAGRANGE"),
             law=law,
+            chatter_stabilization=bool(chatter_stabilization),
+            hysteresis_band=float(hysteresis_band),
             name=self.name,
         )
