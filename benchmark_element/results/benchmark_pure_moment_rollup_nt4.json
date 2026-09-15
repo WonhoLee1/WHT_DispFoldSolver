@@ -1965,7 +1965,7 @@
       "shear_slip_mid_um": 209.87,
       "final_tip_x": 0.0,
       "final_tip_y": 25.57,
-      "t_wall_sec": 25.209,
+      "t_wall_sec": 27.09,
       "total_iters": 157,
       "final_M_root": 1.737609,
       "final_M_tip": -1.735586,
@@ -2365,7 +2365,7 @@
       "shear_slip_mid_um": 209.92,
       "final_tip_x": 0.0,
       "final_tip_y": 25.57,
-      "t_wall_sec": 58.672,
+      "t_wall_sec": 47.675,
       "total_iters": 180,
       "final_M_root": 0.230658,
       "final_M_tip": -0.239021,
@@ -2765,7 +2765,7 @@
       "shear_slip_mid_um": 209.86,
       "final_tip_x": 0.0,
       "final_tip_y": 25.57,
-      "t_wall_sec": 49.309,
+      "t_wall_sec": 48.861,
       "total_iters": 179,
       "final_M_root": 0.254352,
       "final_M_tip": -0.25229,
@@ -3165,7 +3165,7 @@
       "shear_slip_mid_um": 209.86,
       "final_tip_x": 0.0,
       "final_tip_y": 25.57,
-      "t_wall_sec": 32.039,
+      "t_wall_sec": 29.452,
       "total_iters": 179,
       "final_M_root": 0.254332,
       "final_M_tip": -0.25227,
@@ -3565,7 +3565,7 @@
       "shear_slip_mid_um": 209.87,
       "final_tip_x": 0.0,
       "final_tip_y": 25.57,
-      "t_wall_sec": 33.656,
+      "t_wall_sec": 27.65,
       "total_iters": 157,
       "final_M_root": 1.737609,
       "final_M_tip": -1.735586,
@@ -3965,7 +3965,7 @@
       "shear_slip_mid_um": 209.92,
       "final_tip_x": 0.0,
       "final_tip_y": 25.57,
-      "t_wall_sec": 66.062,
+      "t_wall_sec": 56.379,
       "total_iters": 180,
       "final_M_root": 0.230635,
       "final_M_tip": -0.23901,
@@ -4365,7 +4365,7 @@
       "shear_slip_mid_um": 209.92,
       "final_tip_x": 0.0,
       "final_tip_y": 25.57,
-      "t_wall_sec": 35.973,
+      "t_wall_sec": 35.87,
       "total_iters": 180,
       "final_M_root": 0.230658,
       "final_M_tip": -0.239021,
@@ -4756,8 +4756,5 @@
         25.569790894703253
       ]
     }
-  },
-  "meta": {
-    "note": "fully refreshed 2026-09-16 (fixed metrics: IVP theory, uy/ux labels, incremental work)"
   }
 }
