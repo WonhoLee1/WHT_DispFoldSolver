@@ -1373,6 +1373,27 @@ elements are skewed" caveat is about C3D8R.
 
 ---
 
+### 4.19 `cache=True` callers can run a stale inlined callee — and a swallowed `elif` looks exactly like it
+
+**2026-09-20.** Two defects stacked into one symptom (new `MAT_J2_DUCTILE_DAMAGE`
+returned near-zero stress with correct SDVs while its own `print` showed the
+right numbers), each invisible without the other:
+
+1. The branch-insert edit dropped the following `elif MAT_HYPER_VISCOELASTIC:`
+   line, folding that whole body into the new branch (it then overwrote S/C —
+   hence right-intermediates/wrong-return). Diff-review rule: a branch insert
+   must show the neighboring `elif` lines unchanged in the diff.
+2. `c3d8_corotational_numba.py`'s mesh wrapper is `@njit(cache=True)` and
+   inlines `material_dispatch_3d`; editing the callee does not reliably
+   invalidate the caller's disk cache, so the old (pre-new-type → `else` →
+   `error_flag=2`) inlining kept running. Touching the caller file
+   re-anchored it. **After editing any `@njit` callee, distrust cached
+   callers**: force recompile (touch the caller) before concluding the callee
+   is at fault — a fresh direct call working while the solver path fails is
+   the signature.
+
+---
+
 ## 5. Where things live
 
 ```
