@@ -195,7 +195,7 @@ def main():
         print(f"2D [{et:<10}]: status={res['status']}, max_gamma={res['max_gamma_reached']:.1f} (300%), avg_iters={np.mean(res['iters']):.1f}")
 
     results_3d = {}
-    elements_3d = ["C3D8_CR", "C3D8I_CR", "C3D8R_CR", "C3D8H_CR"]
+    elements_3d = ["C3D8_CR", "C3D8I_CR", "C3D8R_CR", "C3D8H_CR", "SOLID_SHELL"]
     for et in elements_3d:
         res = run_simple_shear_3d(et)
         results_3d[et] = res

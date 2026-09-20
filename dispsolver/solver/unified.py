@@ -24,6 +24,12 @@ class DynamicSolver:
     based on the spatial dimension and data structure of the input mesh.
     """
 
+    # Class-level constants forwarded from LegacyDynamicSolver (dynamic.py).
+    # Exposed here so code that imports DynamicSolver from the unified API
+    # (dispsolver.solver) can access them without knowing which backend was
+    # selected.
+    RBE2_VMAP_THRESHOLD: int = 16
+
     def __new__(cls, mesh: Any, *args, **kwargs):
         cls_name = mesh.__class__.__name__
         module_name = mesh.__class__.__module__

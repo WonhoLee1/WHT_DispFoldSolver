@@ -122,7 +122,7 @@ def test_config_presets():
     """Verify predefined config presets."""
     teardrop = FoldModelConfig.get_preset("teardrop")
     assert teardrop.geometry.hinge_half_gap == 7.5
-    assert teardrop.drive.dt_max == 0.1
+    assert teardrop.drive.dt_max == 0.01
 
     optistruct = FoldModelConfig.get_preset("optistruct_galpha")
     assert optistruct.solver.integration_mode == "generalized-0.8"

@@ -169,3 +169,60 @@ class TabularSoftLaw:
         p0, p1 = self.p_pts[idx], self.p_pts[idx + 1]
         slope = (p1 - p0) / (h1 - h0)
         return float(p0 + slope * (h - h0)), float(slope)
+
+
+class AdaptivePowerSoftLaw:
+    """Adaptive Power-Law Soft Contact Formulation (*dev_log/adaptive_soft_contact_design_20260918.md).
+
+    Provides C1-smooth, impulse-free transition from pre-contact clearance (-c0) through
+    transition penetration (delta) to target contact stiffness (k_target) with power m >= 1.0.
+
+    Parameters
+    ----------
+    k_target : float
+        Target contact stiffness at and beyond transition depth delta.
+    c0 : float
+        Pre-contact clearance lead distance (contact begins softly at gap = c0, i.e. h = -c0).
+    delta : float
+        Allowable penetration transition depth to reach target stiffness.
+    power : float
+        Power-law exponent (m = 2.0 quadratic parabolic, m = 3.0 cubic).
+    """
+
+    def __init__(
+        self,
+        k_target: float,
+        c0: float = 0.001,
+        delta: float = 0.01,
+        power: float = 2.0,
+    ):
+        if k_target <= 0.0:
+            raise ValueError(f"AdaptivePowerSoftLaw requires k_target > 0, got {k_target}")
+        if c0 < 0.0:
+            raise ValueError(f"AdaptivePowerSoftLaw requires c0 >= 0, got {c0}")
+        if delta <= 0.0:
+            raise ValueError(f"AdaptivePowerSoftLaw requires delta > 0, got {delta}")
+        if power < 1.0:
+            raise ValueError(f"AdaptivePowerSoftLaw requires power >= 1.0, got {power}")
+
+        self.k_target = float(k_target)
+        self.c0 = float(c0)
+        self.delta = float(delta)
+        self.power = float(power)
+        self.span = self.delta + self.c0
+        self.p_ref = (self.k_target * self.span) / self.power
+
+    def evaluate(self, h: float) -> Tuple[float, float]:
+        if h <= -self.c0:
+            return 0.0, 0.0
+
+        if h >= self.delta:
+            p = self.p_ref + self.k_target * (h - self.delta)
+            return float(p), float(self.k_target)
+
+        # Transition zone: -c0 < h < delta
+        xi = (h + self.c0) / self.span
+        p = self.p_ref * (xi ** self.power)
+        dp_dh = self.k_target * (xi ** (self.power - 1.0))
+        return float(p), float(dp_dh)
+

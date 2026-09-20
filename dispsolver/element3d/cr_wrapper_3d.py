@@ -24,6 +24,7 @@ from dispsolver.element3d.c3d8_corotational_numba import compute_element_rotatio
 from dispsolver.element3d.c3d8_eas_numba import compute_c3d8_eas_element_numba
 from dispsolver.element3d.c3d8_hybrid_numba import compute_c3d8_hybrid_element_umat_numba, assemble_mesh_c3d8_hybrid_numba
 from dispsolver.element3d.c3d8r_numba import compute_c3d8r_element_numba
+from dispsolver.element3d.solid_shell_numba import compute_solid_shell_element_numba
 
 
 # ==============================================================================
@@ -88,26 +89,34 @@ def _transform_corotational_system_hex3d(R: np.ndarray, f_local: np.ndarray, K_l
 # Specific Element Compute Kernels (C3D8I_CR, C3D8H_CR, C3D8R_CR)
 # ==============================================================================
 
+from dispsolver.material3d.numba_materials import MAT_CUSTOM_ELASTIC
+
 @njit(fastmath=True)
 def compute_c3d8i_cr_element_numba(coords, u_elem, mat_type, props, sdvs, dt, elem_controls=None, elem_stress_init=None):
     """Compute 3D C3D8I EAS element with Co-rotational kinematics."""
     R, u_loc, _ = _extract_corotational_frame_hex3d(coords, u_elem)
     
     # Constitutive matrix C_mat (isotropic 3D)
-    E = props[0]
-    nu = props[1]
-    if nu > 0.499999:
-        nu = 0.499999
-    lam = (E * nu) / ((1.0 + nu) * (1.0 - 2.0 * nu))
-    mu = E / (2.0 * (1.0 + nu))
-    C_mat = np.array([
-        [lam + 2*mu, lam,        lam,        0,  0,  0],
-        [lam,        lam + 2*mu, lam,        0,  0,  0],
-        [lam,        lam,        lam + 2*mu, 0,  0,  0],
-        [0,          0,          0,          mu, 0,  0],
-        [0,          0,          0,          0,  mu, 0],
-        [0,          0,          0,          0,  0,  mu]
-    ], dtype=np.float64)
+    if mat_type == MAT_CUSTOM_ELASTIC:
+        C_mat = np.zeros((6, 6), dtype=np.float64)
+        for r in range(6):
+            for c in range(6):
+                C_mat[r, c] = props[6 * r + c]
+    else:
+        E = props[0]
+        nu = props[1]
+        if nu > 0.499999:
+            nu = 0.499999
+        lam = (E * nu) / ((1.0 + nu) * (1.0 - 2.0 * nu))
+        mu = E / (2.0 * (1.0 + nu))
+        C_mat = np.array([
+            [lam + 2*mu, lam,        lam,        0,  0,  0],
+            [lam,        lam + 2*mu, lam,        0,  0,  0],
+            [lam,        lam,        lam + 2*mu, 0,  0,  0],
+            [0,          0,          0,          mu, 0,  0],
+            [0,          0,          0,          0,  mu, 0],
+            [0,          0,          0,          0,  0,  mu]
+        ], dtype=np.float64)
 
     K_loc, f_loc, _ = compute_c3d8_eas_element_numba(coords, u_loc, C_mat)
     f_glob, K_glob = _transform_corotational_system_hex3d(R, f_loc, K_loc)
@@ -182,3 +191,95 @@ def assemble_mesh_c3d8r_cr_numba(node_coords, elem_conn, u_global, elem_mat_type
         K_elems[e] = K_e
         err_flags[e] = err
     return f_elems, K_elems, int(np.sum(err_flags))
+
+
+# ==============================================================================
+# SOLID_SHELL_CR: ANS+EAS Solid-Shell + Co-Rotational Large-Deformation Wrapper
+# ==============================================================================
+
+@njit(fastmath=True)
+def compute_solid_shell_cr_element_numba(coords, u_elem, mat_type, props, sdvs, dt, elem_controls=None, elem_stress_init=None):
+    """SOLID_SHELL ANS+EAS element with Co-rotational kinematics for large deflection.
+
+    Extracts rigid body rotation R from deformed element, computes deformational
+    local displacement u_local in the element frame, evaluates the SOLID_SHELL
+    tangent stiffness and internal force in the local frame, then transforms
+    back to the global frame.
+
+    This enables SOLID_SHELL to handle large rotations (geometrically nonlinear)
+    while keeping the local strain computation in small-strain regime.
+
+    Parameters
+    ----------
+    coords : ndarray (8, 3)
+        Reference node coordinates.
+    u_elem : ndarray (24,)
+        Global displacement vector for element nodes.
+    mat_type : int
+        Material type code (99 = MAT_CUSTOM_ELASTIC, 1 = isotropic E/nu).
+    props : ndarray (36,)
+        Material properties (36 values for MAT_CUSTOM_ELASTIC, [E, nu, ...] otherwise).
+    sdvs : ndarray
+        Solution-dependent variables (state variables).
+    dt : float
+        Time step size.
+    elem_controls : ndarray or None
+        Element control parameters.
+    elem_stress_init : ndarray or None
+        Initial stress field.
+
+    Returns
+    -------
+    f_glob : ndarray (24,)
+        Global internal force vector.
+    K_glob : ndarray (24, 24)
+        Global tangent stiffness matrix.
+    err : int
+        Error flag (0 = OK).
+    """
+    # Step 1: Extract co-rotational frame from deformed configuration
+    R, u_loc, _ = _extract_corotational_frame_hex3d(coords, u_elem)
+
+    # Step 2: Evaluate SOLID_SHELL core (ANS+EAS) in the co-rotational local frame
+    ctrl = elem_controls if elem_controls is not None else np.empty(0, dtype=np.float64)
+    stress_init = elem_stress_init if elem_stress_init is not None else np.empty((0, 6), dtype=np.float64)
+
+    K_loc, f_loc, err = compute_solid_shell_element_numba(
+        coords, u_loc, mat_type, props, sdvs, dt, ctrl, stress_init
+    )
+
+    # Step 3: Transform local force/stiffness to global frame via R
+    f_glob, K_glob = _transform_corotational_system_hex3d(R, f_loc, K_loc)
+
+    return f_glob, K_glob, err
+
+
+@njit(parallel=True, fastmath=True)
+def assemble_mesh_solid_shell_cr_numba(node_coords, elem_conn, u_global, elem_mat_types, elem_props, elem_sdvs, dt, elem_controls=None, elem_stress_init=None):
+    """Parallel assembly of SOLID_SHELL_CR (ANS+EAS + Co-Rotational) elements."""
+    n_elems = elem_conn.shape[0]
+    f_elems = np.zeros((n_elems, 24), dtype=np.float64)
+    K_elems = np.zeros((n_elems, 24, 24), dtype=np.float64)
+    err_flags = np.zeros(n_elems, dtype=np.int32)
+
+    for e in prange(n_elems):
+        conn = elem_conn[e]
+        elem_nodes = np.zeros((8, 3), dtype=np.float64)
+        u_elem = np.zeros(24, dtype=np.float64)
+        for i in range(8):
+            nid = conn[i]
+            elem_nodes[i, :] = node_coords[nid, :]
+            u_elem[3*i:3*i+3] = u_global[3*nid:3*nid+3]
+
+        ctrl = elem_controls[e] if elem_controls is not None else np.empty(0, dtype=np.float64)
+        stress_init = elem_stress_init[e] if elem_stress_init is not None else np.empty((0, 6), dtype=np.float64)
+
+        f_e, K_e, err = compute_solid_shell_cr_element_numba(
+            elem_nodes, u_elem, elem_mat_types[e], elem_props[e], elem_sdvs[e], dt, ctrl, stress_init
+        )
+        f_elems[e] = f_e
+        K_elems[e] = K_e
+        err_flags[e] = err
+
+    return f_elems, K_elems, int(np.sum(err_flags))
+

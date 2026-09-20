@@ -298,6 +298,19 @@ class Assembly:
                     gids = [elem_local_to_global[(inst_name, eid)] for eid in resolved_elems if (inst_name, eid) in elem_local_to_global]
                     global_elsets[qual_name] = np.array(sorted([g - 1 for g in gids]), dtype=np.int64)
 
+        # Register bare set names as aliases (e.g. "FIX_X0" -> global_nsets["INST.FIX_X0"])
+        # If bare name doesn't collide or is from the single instance / first occurrence
+        for k, v in list(global_nsets.items()):
+            if "." in k:
+                bare = k.split(".", 1)[1]
+                if bare not in global_nsets:
+                    global_nsets[bare] = v
+        for k, v in list(global_elsets.items()):
+            if "." in k:
+                bare = k.split(".", 1)[1]
+                if bare not in global_elsets:
+                    global_elsets[bare] = v
+
         # 4. Precompute Global CSR/CSC Sparsity Topology (rows_topo, cols_topo)
         n_elems = len(elem_conn_0based)
         if n_elems > 0 and nodes_per_elem > 0:

@@ -18,6 +18,7 @@ class EntityStatus(Enum):
 
 from dispsolver.model.amplitude import Amplitude, TabularAmplitude, SmoothStepAmplitude, UserFunctionAmplitude
 from dispsolver.model.bc import BoundaryCondition, DisplacementBC, VelocityBC, UserFunctionBC
+from dispsolver.model.load import Load, ConcentratedForce, ConcentratedLoad, Pressure, Gravity, BodyForce
 from dispsolver.model.sensor import Sensor, SensorManager, IterationHook, ControlAction
 
 

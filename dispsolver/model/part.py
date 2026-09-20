@@ -90,6 +90,35 @@ class Part:
         """Abaqus-compatible ElementSet factory on Part."""
         return self.create_set(name=name, elements=elements)
 
+    def get_exterior_faces(self, element_set: Optional[str] = None) -> List[Tuple[int, ...]]:
+        """Compute and return exterior face node-ID tuples of this Part.
+        
+        Supports 3D solid elements (C3D8, C3D4, C3D6, C3D10, etc.) and 2D elements.
+        """
+        if self.dim == 3:
+            from dispsolver.contact.contact_surface import auto_detect_exterior_3d
+            surf = auto_detect_exterior_3d(self, element_set_name=element_set)
+            return surf.faces
+        else:
+            from dispsolver.contact.contact_surface import auto_detect_exterior
+            surf = auto_detect_exterior(self, element_set_name=element_set)
+            return surf.edges
+
+    @property
+    def exterior(self) -> Any:
+        """Abaqus-compatible exterior boundary surface of this Part.
+        
+        Can be used directly in ContactStd(includedPairs=[(partA.exterior, partB.exterior)])
+        or ContactPair(main=partA.exterior, secondary=partB.exterior).
+        """
+        if self.dim == 3:
+            from dispsolver.contact.contact_surface import auto_detect_exterior_3d
+            return auto_detect_exterior_3d(self, surface_name=f"{self.name}_EXTERIOR")
+        else:
+            from dispsolver.contact.contact_surface import auto_detect_exterior
+            return auto_detect_exterior(self, surface_name=f"{self.name}_EXTERIOR")
+
+
     def create_set_from_box(
         self,
         name: str,
@@ -664,11 +693,21 @@ class Part:
         self.section_assignments.append(assignment)
         return assignment
 
-    def SectionAssignment(self, region: Union[str, GeneralSet, ElementSet], sectionName: str, offset: float = 0.0) -> SectionAssignment:
+    def SectionAssignment(
+        self,
+        region: Union[str, GeneralSet, ElementSet],
+        sectionName: Optional[str] = None,
+        offset: float = 0.0,
+        **kwargs
+    ) -> SectionAssignment:
         """Abaqus-compatible SectionAssignment method on Part."""
+        sec_name = sectionName if sectionName is not None else kwargs.get("section_name")
+        if sec_name is None:
+            raise ValueError("SectionAssignment requires 'sectionName' or 'section_name'.")
         if region == "ALL" and "ALL" not in self.sets and "ALL" not in self.element_sets:
             self.create_set("ALL", elements=list(self.elements.keys()), nodes=list(self.nodes.keys()))
-        return self.assign_section(region=region, section_name=sectionName, offset=offset)
+        return self.assign_section(region=region, section_name=sec_name, offset=offset)
+
 
     @property
     def num_nodes(self) -> int:

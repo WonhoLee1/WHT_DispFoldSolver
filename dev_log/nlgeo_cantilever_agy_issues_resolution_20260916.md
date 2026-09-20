@@ -116,3 +116,26 @@
 - 중단 작업: Hertz stab 4조합 실험 (STD+STAB 1회 시작 후 중단, 결과 없음).
 - 다음 후보: CPE6M 추적 / AA 실전 추가 / NAFEMS / 커밋 정리.
 - 분리량(6.1e-07→5.6e-06 스케일링)은 이론값과 무관하게 유지 — §3 결론 불변.
+## 16. CPE6M 추적: "180° 도달"은 오수렴 — 요소 무죄, Newton 경로 유죄 (2026-09-16)
+
+- 판정: `2D-CPE6M` 행의 M −0.309(+34%)·U 0.07(−81%)·pair 비대칭(0.309 vs 0.216)·Global M FAIL은 요소 정식화 결함이 아님.
+  `completed_180=True`는 **false accept** — 정확도 랭킹에서 제외하고 r-gated NON-CONVERGED로 표기해야. balance 게이트(FAIL)는 정상 작동.
+- 무죄 증거 3건 (요소 레벨, `scratch/probe_cpe6m_*.py`):
+  - P1 순수굽힘 에너지 CPE6M/CPE6 = 0.31 (연화, 경화 아님 — 롤업 M 과대와 역방향).
+  - P2 강체회전 30°/90° `|f|`~1e-11, 프레임 정확 — 객관성 정상.
+  - Probe3 Tri1/Tri2 프레임 0.0007° 일치, 에너지 0.1% 일치, 중첩회전 0/45/90° 불변 — 단일-edge 프레임 무죄.
+  - Probe4 선형 1° M/θ: CPE6M 0.0561 vs Opt1 0.0616 (−9%, 같은 볼파크).
+- 유죄 증거 (어셈블리 레벨, `scratch/rerun_cpe6m_audit.py`, 25스텝):
+  - M_root 곡선은 ~106°까지 Opt1과 일치(−0.1407 vs −0.1395), 126° 4%↑, 145° 6.6%↑, 180° 34%↑ — 후반 20°에서 초선형 발산.
+  - 스텝 17–18 (136–145°)에서 r_free 90–93N을 받고도 conv·iters 4 (수정량 분기 오수락) — 이후 복귀 없음.
+  - 단, r 크기 자체는 무죄: Opt1도 r 0.3–28N 받으면서 M −0.4% 적중. 차이는 잔류의 구조(저주파 편향 vs 고주파 노이즈).
+- 미해결 (다음 작업): 140° 이탈의 직접 방아쇠 — B-bar checkerboard/HG(커널고정 α=0.05, solver가 elem_controls[2] 미지정) 상호작용 의심이나 미입증.
+  2D solver에는 `_record_acceptance` 없음(§12는 3D 전용) — 2D 이식 + CPE6M 행 r-gated 표기가 선행 과제.
+- 주의: probe2에서 대조군 CPE4I_CR이 회전중첩 굽힘에서 6.8× 비등방으로 나왔으나, Opt1 실전 −0.4%와 모순 → 프로브 아티팩트 의심(EAS+비평형 시험장?), 본건과 무관. 인용 금지.
+## 17. 2D `_record_acceptance` 이식 + r-gate 배선 (2026-09-16)
+
+- `DynamicSolver2D`에 3D 동일 사양 이식: `last_accept={branch, r_norm, iters}`, 3개 수락점(residual/correction/fallthrough) 전부 기록, 판정식 불변 (측정 전용).
+- `run_rollup_2d`에 `worst_r_accept_N`·`accept_branches` 추가 (3D 패리티) + 본 JSON 2D 5행 전체 갱신. M/U 수치 비트동일 — 행위 변경 없음, 측정 추가만.
+- 2D 5행 worst_r: CR 18.2 / Opt2 28.5 / Base 18.8 / CPE6M **93.4** / Opt1 28.6 — 전원 residual 25/25 (correction 분기 아님).
+  worst_r만으로는 분리 약함(Opt1도 28N)이지만 Global M 게이트가 분리 확정: CPE6M 90.4% FAIL vs 나머지 0~1.9% OK.
+- 회귀: `tests/test_2d_elements.py` 25통과, `verification/run_all` 13/14 — bending_2pt FAIL은 stash A/B로 기존 실패 확인(코드경로 무관: verification은 dynamic2d 미사용).

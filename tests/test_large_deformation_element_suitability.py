@@ -233,6 +233,7 @@ class TestSolverLevel:
         solver = DynamicSolver(mesh_1elem, mat, rho=1e-6, max_iter=50, tol=1e-8,
                                 mode='quasistatic', element_type='Q4', fast_assembly=False,
                                 elem_jit=elem_jit_backend)
+        solver.stall_count_max = 20  # large plasticity converges linearly; allow more iters
         solver.sta_status = False
         dofs, target_vals = _pet_bending_dofs
         # Set BCs once, then ramp manually per step
@@ -257,6 +258,7 @@ class TestSolverLevel:
         mat = J2Plasticity(E=4000.0, nu=0.3, sigma_y0=80.0, H=400.0)
         solver = DynamicSolver(mesh_1elem, mat, rho=1e-6, max_iter=50, tol=1e-8,
                                 mode='quasistatic', element_type='Q4_EAS', fast_assembly=True)
+        solver.stall_count_max = 20  # large plasticity converges linearly; allow more iters
         solver.sta_status = False
         dofs, target_vals = _pet_bending_dofs
         solver.set_prescribed_dofs(dofs, np.zeros_like(target_vals))

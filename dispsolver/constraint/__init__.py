@@ -6,6 +6,7 @@ from .contact_jax import PenaltyContactConstraint
 from .spring_hinge import SpringHingeConstraint
 from .surface_tie import SurfaceTieConstraint
 from .surface_tie_unified import SurfaceTie
+from .dual_mortar_contact import DualMortarContactConstraint2D
 from dispsolver.constraint3d.surface_tie3d import SurfaceTieConstraint3D
 
 __all__ = [
@@ -18,4 +19,5 @@ __all__ = [
     "SurfaceTieConstraint",
     "SurfaceTieConstraint3D",
     "SurfaceTie",
+    "DualMortarContactConstraint2D",
 ]

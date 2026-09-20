@@ -22,6 +22,7 @@ from .c3d4_numba import (
 )
 from .c3d4_anp_numba import (
     compute_c3d4_anp_element_matrices,
+    compute_c3d4_anp_element_numba,
     assemble_mesh_c3d4_anp_numba
 )
 from .c3d10_numba import (
@@ -36,6 +37,17 @@ from .c3d10m_numba import (
 from .c3d6_numba import (
     compute_c3d6_element_numba,
     assemble_mesh_c3d6_numba
+)
+
+from .solid_shell_numba import (
+    compute_solid_shell_element_numba,
+    assemble_mesh_solid_shell_numba
+)
+
+from .emcs_kernels3d import (
+    compute_c3d8_emcs_element_numba,
+    assemble_mesh_emcs_3d_numba,
+    _compute_emcs_discrete_stress_3d
 )
 
 from .c3d8_corotational_numba import (
@@ -83,4 +95,10 @@ __all__ = [
     "compute_element_rotation_3d",
     "compute_c3d8_hybrid_element_umat_numba",
     "assemble_mesh_c3d8_hybrid_numba",
+    "compute_solid_shell_element_numba",
+    "assemble_mesh_solid_shell_numba",
+    "compute_c3d8_emcs_element_numba",
+    "assemble_mesh_emcs_3d_numba",
+    "_compute_emcs_discrete_stress_3d",
 ]
+

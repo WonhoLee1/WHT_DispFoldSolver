@@ -236,6 +236,8 @@ def run_rollup_2d(pet_type: str, psa_type: str, n_substeps: int = 25, label: str
     u_prev = np.zeros(solver.num_dofs, dtype=np.float64)
     f_prev = np.zeros(solver.num_dofs, dtype=np.float64)
     work_int = 0.0
+    worst_r_acc = 0.0
+    branch_counts = {}
     tip_Fx_last = tip_Fy_last = tip_cx_last = tip_cy_last = 0.0
 
     hist_theta = [0.0]
@@ -265,6 +267,10 @@ def run_rollup_2d(pet_type: str, psa_type: str, n_substeps: int = 25, label: str
             f_new = np.asarray(solver.f_int).copy()
             work_int += 0.5 * float(np.dot(f_prev + f_new, u_new - u_prev))
             u_prev, f_prev = u_new, f_new
+            acc = solver.last_accept or {}
+            worst_r_acc = max(worst_r_acc, float(acc.get("r_norm", 0.0)))
+            br = acc.get("branch", "?")
+            branch_counts[br] = branch_counts.get(br, 0) + 1
             root_rx = solver.compute_section_reactions(root_nodes, center_pt=(0.0, Z_MID))
             tip_x_mean = float(np.mean([mesh.nodes[n].x + solver.u[2 * nid_map[n]] for n in tip_nodes]))
             tip_y_mean = float(np.mean([mesh.nodes[n].y + solver.u[2 * nid_map[n] + 1] for n in tip_nodes]))
@@ -394,6 +400,8 @@ def run_rollup_2d(pet_type: str, psa_type: str, n_substeps: int = 25, label: str
         "final_M_tip": round(final_M_tip, 6),
         "final_Fx_root": round(final_Fx_root, 6),
         "final_Fy_root": round(final_Fy_root, 6),
+        "worst_r_accept_N": float(worst_r_acc),
+        "accept_branches": dict(branch_counts),
         "moment_imbalance_pct": round(float(moment_imbalance_pct), 3),
         "global_force_pct": round(float(global_force_pct), 3),
         "global_moment_pct": round(float(global_moment_pct), 3),
@@ -658,6 +666,7 @@ def run_all_rollups():
             print(f"     M_root: {res['final_M_root']:.6f} N*mm | M_tip: {res['final_M_tip']:.6f} N*mm | U_strain: {res['final_U_strain_mJ']:.2f} mJ | Fx: {res['final_Fx_root']:.2e} N", flush=True)
             print(f"     Tip Position: (x={res['final_tip_x']:.2f}, y={res['final_tip_y']:.2f}) mm [Theory: (0.0, {Z_MID + 2*R_THEORY:.2f})]", flush=True)
             print(f"     Time: {res['t_wall_sec']:.3f} s | Total Iters: {res['total_iters']}", flush=True)
+            print(f"     Accept branches: {res.get('accept_branches', {})} | Worst true r at accept: {res.get('worst_r_accept_N', 0.0):.3e} N", flush=True)
             print(f"     Section M (diag): {res.get('moment_imbalance_pct', 0.0):.3f}% | Gate: {'OK' if res.get('balance_ok', False) else 'FAIL'}", flush=True)
             if "global_moment_pct" in res:
                 print(f"     Global F/M: {res['global_force_pct']:.3f}% / {res['global_moment_pct']:.3f}%", flush=True)

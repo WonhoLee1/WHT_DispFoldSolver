@@ -27,6 +27,26 @@ from dispsolver.model.load import (
     Gravity,
     BodyForce,
 )
+from dispsolver.model.interaction import (
+    ContactProperty,
+    ContactPair,
+    GeneralContact,
+    ContactStd,
+    SurfaceToSurfaceContactStd,
+    ContactControl,
+    ContactStabilization,
+    HARD,
+    TABULAR,
+    EXPONENTIAL,
+    LINEAR,
+    PENALTY,
+    FRICTIONLESS,
+    AUTOMATIC,
+    DAMPING_COEFFICIENT,
+    CRITICAL_DAMPING_FRACTION,
+    STIFFNESS_RATIO,
+    DEFAULT,
+)
 
 
 class Model:
@@ -41,10 +61,19 @@ class Model:
         self.section_controls: Dict[str, SectionControls] = {}
         self.amplitudes: Dict[str, Amplitude] = {}
         self.constraints: Dict[str, Constraint] = {}
-        
+        self.contact_properties: Dict[str, ContactProperty] = {}
+        self.contact_controls: Dict[str, ContactControl] = {}
+        self.contact_stabilizations: Dict[str, ContactStabilization] = {}
+        self.interactions: Dict[str, Any] = {}
+
+        # Abaqus API parity aliases
+        self.interactionProperties = self.contact_properties
+
         self.initial_step: InitialStep = InitialStep(name="Initial")
         self.steps: Dict[str, Step] = {"Initial": self.initial_step}
         self.root_assembly: Assembly = Assembly(name="rootAssembly", dim=self.dim)
+
+
 
     # ─── FACTORY & REGISTRATION METHODS ────────────────────────────────
 
@@ -492,7 +521,194 @@ class Model:
         self.constraints[str(name)] = mpc
         return mpc
 
+    # ─── INTERACTION & CONTACT FACTORY METHODS ─────────────────────────
+
+    def ContactProperty(
+        self,
+        name: str,
+        normal_behavior: str = "HARD",
+        friction: Optional[float] = None,
+        softness_scale: float = 1.0,
+        allowable_penetration: Optional[float] = None,
+        **kwargs
+    ) -> ContactProperty:
+        """Create and register a ContactProperty (*SURFACE INTERACTION in Abaqus)."""
+        prop = ContactProperty(
+            name=str(name),
+            normal_behavior=str(normal_behavior).upper(),
+            friction=friction,
+            softness_scale=softness_scale,
+            allowable_penetration=allowable_penetration,
+            **kwargs
+        )
+        self.contact_properties[str(name)] = prop
+        return prop
+
+    def ContactControl(
+        self,
+        name: str,
+        stabilize: Optional[Union[str, float]] = "AUTOMATIC",
+        factor: float = 1.0,
+        dampingCoefficient: Optional[float] = None,
+        damping_coefficient: Optional[float] = None,
+        tangentFraction: float = 0.0,
+        tangent_fraction: float = 0.0,
+        rampDownFactor: float = 0.0,
+        ramp_down_factor: float = 0.0,
+        clearance: Optional[float] = None,
+        **kwargs
+    ) -> ContactControl:
+        """Create and register a ContactControl (*CONTACT CONTROLS, STABILIZE in Abaqus)."""
+        ctrl = ContactControl(
+            name=str(name),
+            stabilize=stabilize,
+            factor=factor,
+            dampingCoefficient=dampingCoefficient,
+            damping_coefficient=damping_coefficient,
+            tangentFraction=tangentFraction,
+            tangent_fraction=tangent_fraction,
+            rampDownFactor=rampDownFactor,
+            ramp_down_factor=ramp_down_factor,
+            clearance=clearance,
+            **kwargs
+        )
+        self.contact_controls[str(name)] = ctrl
+        return ctrl
+
+    def ContactStabilization(
+        self,
+        name: str,
+        definition: str = "AUTOMATIC",
+        dampingFactor: float = 1.0,
+        factor: float = 1.0,
+        dampingCoefficient: Optional[float] = None,
+        damping_coefficient: Optional[float] = None,
+        tangentFraction: float = 0.0,
+        tangent_fraction: float = 0.0,
+        rampDownFactor: float = 0.0,
+        ramp_down_factor: float = 0.0,
+        clearance: Optional[float] = None,
+        **kwargs
+    ) -> ContactStabilization:
+        """Create and register a ContactStabilization (*CONTACT STABILIZATION in Abaqus)."""
+        stab = ContactStabilization(
+            name=str(name),
+            definition=definition,
+            dampingFactor=dampingFactor,
+            factor=factor,
+            dampingCoefficient=dampingCoefficient,
+            damping_coefficient=damping_coefficient,
+            tangentFraction=tangentFraction,
+            tangent_fraction=tangent_fraction,
+            rampDownFactor=rampDownFactor,
+            ramp_down_factor=ramp_down_factor,
+            clearance=clearance,
+            **kwargs
+        )
+        self.contact_stabilizations[str(name)] = stab
+        return stab
+
+    def ContactStd(
+        self,
+        name: str,
+        createStepName: str = "Initial",
+        useAllExterior: bool = True,
+        includedPairs: Optional[List[Tuple[Any, Any]]] = None,
+        excludedPairs: Optional[List[Tuple[Any, Any]]] = None,
+        interactionProperty: Optional[Union[str, ContactProperty]] = None,
+        contactControls: Optional[Union[str, ContactControl, ContactStabilization]] = None,
+        contactStabilization: Optional[Union[str, ContactControl, ContactStabilization]] = None,
+        **kwargs
+    ) -> GeneralContact:
+        """Create and register a General Contact interaction (*CONTACT, GENERAL in Abaqus).
+
+        Parameters
+        ----------
+        name : str
+            Interaction name.
+        createStepName : str
+            Step in which this contact is activated (defaults to "Initial").
+        useAllExterior : bool
+            If True, automatically includes all exterior surface faces of the model.
+        includedPairs : Optional[List[Tuple[Any, Any]]]
+            Explicit surface/part pairs to include.
+        excludedPairs : Optional[List[Tuple[Any, Any]]]
+            Explicit surface/part pairs to exclude.
+        interactionProperty : Optional[Union[str, ContactProperty]]
+            Contact property definition.
+        contactControls : Optional[Union[str, ContactControl, ContactStabilization]]
+            Contact controls definition (*CONTACT CONTROLS).
+        contactStabilization : Optional[Union[str, ContactControl, ContactStabilization]]
+            Contact stabilization configuration (*CONTACT STABILIZATION).
+        """
+        prop = interactionProperty
+        if isinstance(prop, str):
+            prop = self.contact_properties.get(prop, None)
+
+        ctrl = contactControls if contactControls is not None else kwargs.get("contact_controls")
+        if ctrl is None:
+            ctrl = contactStabilization if contactStabilization is not None else kwargs.get("contact_stabilization")
+        if isinstance(ctrl, str):
+            if ctrl in self.contact_controls:
+                ctrl = self.contact_controls[ctrl]
+            elif ctrl in self.contact_stabilizations:
+                ctrl = self.contact_stabilizations[ctrl]
+
+        gc = GeneralContact(
+            name=str(name),
+            create_step_name=str(createStepName),
+            use_all_exterior=bool(useAllExterior),
+            included_pairs=includedPairs,
+            excluded_pairs=excludedPairs,
+            interaction_property=prop,
+            contact_controls=ctrl,
+            contact_enforcement=str(kwargs.get("contact_enforcement", kwargs.get("contactEnforcement", "NITSCHE"))).upper(),
+            normal_behavior=str(kwargs.get("normal_behavior", kwargs.get("normalBehavior", "HARD"))).upper(),
+            gamma=float(kwargs.get("gamma", kwargs.get("penalty_stiffness", 1.0e8))),
+            skin=float(kwargs.get("skin", 0.05)),
+        )
+        self.interactions[str(name)] = gc
+        step = self.steps.get(str(createStepName), self.initial_step)
+        step.add_interaction(gc)
+        return gc
+
+    def SurfaceToSurfaceContactStd(
+        self,
+        name: str,
+        createStepName: str = "Initial",
+        main: Any = None,
+        secondary: Any = None,
+        interactionProperty: Optional[Union[str, ContactProperty]] = None,
+        sliding: str = "FINITE",
+        **kwargs
+    ) -> ContactPair:
+        """Create and register a Surface-to-Surface Contact Pair (*CONTACT PAIR in Abaqus)."""
+        prop = interactionProperty
+        if isinstance(prop, str):
+            prop = self.contact_properties.get(prop, None)
+        elif prop is None:
+            prop = ContactProperty(name=f"{name}_Prop", normal_behavior="HARD")
+
+        cp = ContactPair(
+            name=str(name),
+            interaction_property=prop,
+            main=main if main is not None else kwargs.get("master"),
+            secondary=secondary if secondary is not None else kwargs.get("slave"),
+            sliding=str(sliding).upper(),
+            constraint_enforcement=str(kwargs.get("constraint_enforcement", kwargs.get("constraintEnforcement", "PENALTY"))).upper(),
+            adjust=bool(kwargs.get("adjust", True))
+        )
+        self.interactions[str(name)] = cp
+        step = self.steps.get(str(createStepName), self.initial_step)
+        step.add_interaction(cp)
+        return cp
+
+    # Abaqus API parity aliases
+    ContactPair = SurfaceToSurfaceContactStd
+    GeneralContact = ContactStd
+
     # ─── LOAD FACTORY METHODS ──────────────────────────────────────────
+
 
     def ConcentratedForce(
         self,
@@ -672,7 +888,34 @@ class Model:
                             if u3_val is not None:
                                 solver.fix_dof(gid, 2, float(u3_val))
 
+        # 2. Attach model and step constraints & interactions
+        for constraint in sys.constraints:
+            solver.add_constraint(constraint)
+
+        active_steps = [self.initial_step]
+        if step_name is not None and step_name in self.steps:
+            st = self.steps[step_name]
+            if st is not self.initial_step:
+                active_steps.append(st)
+
+        for s in active_steps:
+            for entry in s.interactions.values():
+                if hasattr(entry, "is_active") and entry.is_active():
+                    inter = entry.entity
+                    if hasattr(inter, "build_runtime_constraint"):
+                        existing_names = [getattr(c, "name", "") for c in solver.constraints]
+                        if inter.name not in existing_names:
+                            rc = inter.build_runtime_constraint(
+                                mesh=mesh3d,
+                                nid_to_idx=sys.nid_to_idx,
+                                coords=sys.coords,
+                                model=self,
+                                sys=sys,
+                            )
+                            solver.add_constraint(rc)
+
         # 3. Apply Predefined Fields (Initial Stress/SDV)
+
         if len(sys.predefined_fields) > 0:
             inv_eid = {idx: g for g, idx in sys.elem_local_to_global.items()} if hasattr(sys, 'elem_local_to_global') else {}
             # Fallback if elem_local_to_global is not structured that way, just use idx -> gid

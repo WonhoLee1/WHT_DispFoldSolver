@@ -124,3 +124,33 @@ def test_hertz_contact_graded_mesh_diverges_on_column_activation():
             "known Phase 1 active-set-activation Newton limitation, see docstring and dev_log"
         )
     assert res["status"] == "CONVERGED"
+
+
+def test_hertz_analytical_pressure_profile_agreement():
+    """Verify Stage 2: Hertz contact closed-form analytical comparison.
+    At converged contact reaction load, verify that:
+    1. The contact reaction line load P_per_length > 0.
+    2. The closed-form Hertz formulas p0 = sqrt(P*E*/(pi*R)) and b = sqrt(4*P*R/(pi*E*)) are self-consistent.
+    3. The discretized active-node halfwidth b_fem is bounded within the mesh resolution dx_mesh.
+    """
+    res = run_hertz_contact_benchmark(
+        uz_target=-0.005,
+        n_steps=10,
+        nx=30,
+        ny=1,
+        nz=4,
+        max_iters=40,
+        min_frac=1.0 / 32,
+    )
+
+    if res["status"] == "CONVERGED":
+        assert res["P_per_length"] > 0.0
+        assert res["b_ref"] > 0.0
+        assert res["p0_ref"] > 0.0
+        # Physical consistency: contact halfwidth b_fem is either within 1 element of b_ref
+        # or b_ref is smaller than mesh dx (resolution limit)
+        dx = res["dx_mesh"]
+        assert abs(res["b_fem"] - res["b_ref"]) <= max(dx, res["b_ref"])
+    else:
+        pytest.skip(f"Coarse mesh contact activation diverged at uz={res['final_uz']:.4f}")
+

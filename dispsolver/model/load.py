@@ -34,6 +34,17 @@ class ConcentratedForce(Load):
     cm2: Optional[float] = None
     cm3: Optional[float] = None
     amplitude: Optional[Union[str, Any]] = None
+    f1: Optional[float] = None
+    f2: Optional[float] = None
+    f3: Optional[float] = None
+
+    def __post_init__(self) -> None:
+        if self.f1 is not None and self.cf1 is None:
+            self.cf1 = self.f1
+        if self.f2 is not None and self.cf2 is None:
+            self.cf2 = self.f2
+        if self.f3 is not None and self.cf3 is None:
+            self.cf3 = self.f3
 
     def get_force_vector(self, t: float = 0.0, step_time: float = 0.0, model: Any = None) -> np.ndarray:
         """Get (3,) or (6,) load magnitude vector scaled by amplitude at time t."""
@@ -110,3 +121,7 @@ class BodyForce(Load):
     b2: float = 0.0
     b3: float = 0.0
     amplitude: Optional[Union[str, Any]] = None
+
+
+ConcentratedLoad = ConcentratedForce
+

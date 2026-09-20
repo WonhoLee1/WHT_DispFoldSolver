@@ -228,32 +228,21 @@ def run_3d_cantilever_transverse(elem_type: str, mesh_density: str = "coarse") -
     if "R" in elem_type and hasattr(solver, "elem_controls") and solver.elem_controls is not None:
         solver.elem_controls[:, 0] = 0.5
 
-    n_substeps = 15
-    f_ext = np.zeros(solver.num_dofs, dtype=np.float64)
-    tip_p_per_node = P_TIP / float(len(tip_nodes))
+    # Adaptive load stepping: start from 0, step toward P_TIP
+    # On non-convergence: rollback state, halve the increment, retry (true cutback)
+    min_df_frac = 1.0 / 256.0   # minimum sub-increment fraction of P_TIP
+
     nid_map = mesh.node_id_to_index()
+    tip_p_per_node = P_TIP / float(len(tip_nodes))
 
-    p_hist = [0.0]
-    uz_hist = [0.0]
-    ux_hist = [0.0]
-    cutbacks = 0
+    f_ext_target = np.zeros(solver.num_dofs, dtype=np.float64)
+    for nid in tip_nodes:
+        idx = nid_map[nid]
+        f_ext_target[3 * idx + 2] = tip_p_per_node
 
-    for s in range(1, n_substeps + 1):
-        frac = float(s) / float(n_substeps)
-        ramp = frac * frac * (3.0 - 2.0 * frac)
-        for nid in tip_nodes:
-            idx = nid_map[nid]
-            f_ext[3 * idx + 2] = tip_p_per_node * ramp
-
-        conv, iters = solver.solve_step(dt=1.0, f_ext=f_ext, max_iters=25)
-        if not conv:
-            cutbacks += 1
-
-        tip_uzs = [solver.u[3 * nid_map[nid] + 2] for nid in tip_nodes]
-        tip_uxs = [solver.u[3 * nid_map[nid]] for nid in tip_nodes]
-        p_hist.append(ramp)
-        uz_hist.append(float(np.mean(tip_uzs)))
-        ux_hist.append(float(np.mean(tip_uxs)))
+    # Common Solver Adaptive Load Ramping with State Rollbacks
+    ramp_res = solver.solve_load_ramp(f_ext_target, target_steps=15, max_iters=35)
+    cutbacks = ramp_res["cutbacks"]
 
     nodes_by_x: Dict[float, List[int]] = {}
     for nid, node in mesh.nodes.items():
@@ -272,13 +261,13 @@ def run_3d_cantilever_transverse(elem_type: str, mesh_density: str = "coarse") -
         profile_x.append(float(cur_x))
         profile_z.append(float(cur_z))
 
-    final_uz = uz_hist[-1]
-    final_ux = ux_hist[-1]
+    final_uz = float(np.mean([solver.u[3 * nid_map[nid] + 2] for nid in tip_nodes]))
+    final_ux = float(np.mean([solver.u[3 * nid_map[nid]] for nid in tip_nodes]))
 
     return {
-        "p_history": np.array(p_hist),
-        "uy_history": np.array(uz_hist),
-        "ux_history": np.array(ux_hist),
+        "p_history": ramp_res["p_history"],
+        "uy_history": np.array([final_uz]),
+        "ux_history": np.array([final_ux]),
         "profile_x": np.array(profile_x),
         "profile_y": np.array(profile_z),
         "final_uy": final_uz,

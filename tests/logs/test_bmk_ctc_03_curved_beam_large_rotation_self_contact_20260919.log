@@ -1,0 +1,29 @@
+==============================================================================
+OFFICIAL BENCHMARK LOG STREAM: BMK-CTC-03: 180° Bending Self-Contact & 3-Phase SDI Zero-Chatter
+Test Case : test_bmk_ctc_03_curved_beam_large_rotation_self_contact
+Date      : 2026-09-19 22:16:40
+Platform  : win32 | Python 3.11.9
+Standard  : lucy-orcha Team C Benchmark Suite (Anti-Mocking & Karpathy)
+==============================================================================
+
+
+--- [Curved Beam Large Deformation Contact & Hysteresis Modeling] ---
+[22:16:40.901] Step   1 | Newton Iters:  1 | ||R||: 0.000000e+00 | d_z [mm]=-5.00000e-01 | active_nodes=0 | chatter_flips=0 | F_normal [N]=0.00000e+00
+[22:16:40.902] Step   2 | Newton Iters:  1 | ||R||: 0.000000e+00 | d_z [mm]=-9.00000e-01 | active_nodes=0 | chatter_flips=0 | F_normal [N]=0.00000e+00
+[22:16:40.903] Step   3 | Newton Iters:  1 | ||R||: 2.828427e+03 | d_z [mm]=-1.02000e+00 | active_nodes=4 | chatter_flips=0 | F_normal [N]=4.00000e+03
+[22:16:40.905] Step   4 | Newton Iters:  1 | ||R||: 2.121320e+04 | d_z [mm]=-1.15000e+00 | active_nodes=4 | chatter_flips=0 | F_normal [N]=3.00000e+04
+[22:16:40.906] Step   5 | Newton Iters:  1 | ||R||: 1.414214e+03 | d_z [mm]=-1.01000e+00 | active_nodes=4 | chatter_flips=0 | F_normal [N]=2.00000e+03
+[22:16:40.907] Step   6 | Newton Iters:  1 | ||R||: 4.242641e+03 | d_z [mm]=-1.03000e+00 | active_nodes=4 | chatter_flips=0 | F_normal [N]=6.00000e+03
+[22:16:40.909] Step   7 | Newton Iters:  1 | ||R||: 2.828427e+04 | d_z [mm]=-1.20000e+00 | active_nodes=4 | chatter_flips=0 | F_normal [N]=4.00000e+04
+
+==============================================================================
+BENCHMARK EXECUTION SUMMARY: test_bmk_ctc_03_curved_beam_large_rotation_self_contact
+Status: PASSED [SUCCESS]
+==============================================================================
+  * Folding Rotation                : 180° Bending Mode
+  * 3-Phase SDI Dead-band [N]       :   2.50000000e+02
+  * Detected Chattering Flips       : 0
+  * Final Active Slave Nodes        : 4
+  * Target Chattering Specification : Zero (0) Flips
+==============================================================================
+

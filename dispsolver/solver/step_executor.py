@@ -10,6 +10,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any, Tuple
 import copy
+import os
+import pickle
 import numpy as np
 
 from dispsolver.model.step import Step, EntityStatus, StepStateEntry
@@ -34,6 +36,11 @@ class StateCheckpoint:
         solver.a = self.a.copy()
         if self.elem_sdvs is not None and hasattr(solver, "elem_sdvs"):
             solver.elem_sdvs = self.elem_sdvs.copy()
+
+    @property
+    def time_accumulated(self) -> float:
+        """Alias for t_accum."""
+        return self.t_accum
 
 
 class MultiStepExecutor:
@@ -99,10 +106,11 @@ class MultiStepExecutor:
             print(f"=======================================================", flush=True)
 
         success = self.solver.solve(step=step, sys=self.sys, verbose=self.verbose)
-        
         if success:
-            # Capture step completion checkpoint
-            t_end = getattr(step, "time_period", 1.0)
+            t_parent = 0.0
+            if step.parent_step is not None and step.parent_step.name in self.checkpoints:
+                t_parent = self.checkpoints[step.parent_step.name].t_accum
+            t_end = t_parent + float(getattr(step, "time_period", 1.0))
             ckpt = self.capture_checkpoint(step.name, t_end)
             self.results_by_step[step.name] = {
                 "u": self.solver.u.copy(),
@@ -128,3 +136,18 @@ class MultiStepExecutor:
                     print(f"[-] Branch execution failed at step '{sname}'.", flush=True)
                 return False
         return True
+
+    def run_step_tree(self, save_dir: Optional[str] = None, verbose: Optional[bool] = None) -> Dict[str, Any]:
+        """Execute all steps defined in the model step tree."""
+        if verbose is not None:
+            self.verbose = verbose
+        if save_dir is not None:
+            os.makedirs(save_dir, exist_ok=True)
+        for step_name, step in self.model.steps.items():
+            ok = self.execute_step(step, from_parent_checkpoint=True)
+            if ok and save_dir is not None:
+                p_path = os.path.join(save_dir, f"result_branch_{step_name}.pkl")
+                with open(p_path, "wb") as f:
+                    pickle.dump(self.results_by_step[step_name], f)
+        return self.results_by_step
+

@@ -58,6 +58,39 @@ if HAS_NUMBA:
         return M
 
     @njit(fastmath=True)
+    def _add_geometric_stiffness_3d(
+        K_local: np.ndarray,
+        dN_dX: np.ndarray,
+        dN_dY: np.ndarray,
+        dN_dZ: np.ndarray,
+        stress_voigt: np.ndarray,
+        dV: float
+    ):
+        """Accumulate 3D Geometric Stiffness (Initial Stress Matrix K_sigma) into 24x24 K_local."""
+        sig0, sig1, sig2 = stress_voigt[0], stress_voigt[1], stress_voigt[2]
+        sig3, sig4, sig5 = stress_voigt[3], stress_voigt[4], stress_voigt[5]
+
+        for a in range(8):
+            ga_x = dN_dX[a]
+            ga_y = dN_dY[a]
+            ga_z = dN_dZ[a]
+
+            s_ga_x = sig0 * ga_x + sig3 * ga_y + sig5 * ga_z
+            s_ga_y = sig3 * ga_x + sig1 * ga_y + sig4 * ga_z
+            s_ga_z = sig5 * ga_x + sig4 * ga_y + sig2 * ga_z
+
+            for b in range(8):
+                gb_x = dN_dX[b]
+                gb_y = dN_dY[b]
+                gb_z = dN_dZ[b]
+
+                s_ab = (s_ga_x * gb_x + s_ga_y * gb_y + s_ga_z * gb_z) * dV
+
+                K_local[3 * a + 0, 3 * b + 0] += s_ab
+                K_local[3 * a + 1, 3 * b + 1] += s_ab
+                K_local[3 * a + 2, 3 * b + 2] += s_ab
+
+    @njit(fastmath=True)
     def compute_c3d8_eas_element_numba(coords: np.ndarray, u_elem: np.ndarray, C_mat: np.ndarray):
         """Compute 3D C3D8I EAS element stiffness (24x24) and internal force vector (24)."""
         # Central Jacobian J0 and Transformation Matrix inv(T0).T

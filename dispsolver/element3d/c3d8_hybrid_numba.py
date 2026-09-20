@@ -30,7 +30,18 @@ import numpy as np
 from numba import njit, prange
 
 from dispsolver.material3d.numba_materials import (
-    material_dispatch_3d, MAT_HYPERELASTIC_NEOHOOKEAN, MAT_CUSTOM_ELASTIC, MAT_LINEAR_ELASTIC,
+    material_dispatch_3d,
+    MAT_HYPERELASTIC_NEOHOOKEAN,
+    MAT_HYPERELASTIC_ARRUDA_BOYCE,
+    MAT_HYPERELASTIC_YEOH,
+    MAT_HYPERELASTIC_MOONEY_RIVLIN,
+    MAT_HYPERELASTIC_OGDEN,
+    MAT_HYPERELASTIC_POLYNOMIAL,
+    MAT_HYPERELASTIC_MARLOW,
+    MAT_J2_PLASTICITY_TABULAR,
+    MAT_HYPER_VISCOELASTIC,
+    MAT_CUSTOM_ELASTIC,
+    MAT_LINEAR_ELASTIC,
 )
 
 _GP_GAUSS = np.array([-1.0 / np.sqrt(3.0), 1.0 / np.sqrt(3.0)], dtype=np.float64)
@@ -312,6 +323,55 @@ def compute_c3d8_hybrid_element_umat_numba(
         nu_ = props[1]
         mu = E_ / (2.0 * (1.0 + nu_))
         K = E_ / (3.0 * max(1.0 - 2.0 * nu_, 1e-8))
+    elif mat_type == MAT_HYPERELASTIC_ARRUDA_BOYCE:
+        mu = props[0]
+        K = props[2]
+    elif mat_type == MAT_HYPERELASTIC_YEOH:
+        c10 = props[0]
+        d1 = props[3]
+        mu = 2.0 * c10
+        K = 2.0 / max(d1, 1e-12)
+    elif mat_type == MAT_HYPERELASTIC_MOONEY_RIVLIN:
+        c10 = props[0]
+        c01 = props[1]
+        d1 = props[2]
+        mu = 2.0 * (c10 + c01)
+        K = 2.0 / max(d1, 1e-12)
+    elif mat_type == MAT_HYPERELASTIC_OGDEN:
+        n_terms = int(props[0])
+        d1 = props[1]
+        mu = 0.0
+        for p in range(min(n_terms, 6)):
+            mu += props[2 + 2 * p]
+        K = 2.0 / max(d1, 1e-12)
+    elif mat_type == MAT_HYPERELASTIC_POLYNOMIAL:
+        c10 = props[0]
+        c01 = props[1]
+        d1 = props[5]
+        mu = 2.0 * (c10 + c01)
+        K = 2.0 / max(d1, 1e-12)
+    elif mat_type == MAT_HYPERELASTIC_MARLOW:
+        c10 = props[0]
+        d1 = props[3]
+        mu = 2.0 * c10
+        K = 2.0 / max(d1, 1e-12)
+    elif mat_type == MAT_J2_PLASTICITY_TABULAR:
+        E_ = props[0]
+        nu_ = props[1]
+        mu = E_ / (2.0 * (1.0 + nu_))
+        K = E_ / (3.0 * max(1.0 - 2.0 * nu_, 1e-8))
+    elif mat_type == MAT_HYPER_VISCOELASTIC:
+        base_model = int(props[0])
+        if base_model == MAT_HYPERELASTIC_ARRUDA_BOYCE:
+            mu = props[1]
+            K = props[3]
+        elif base_model == MAT_HYPERELASTIC_YEOH:
+            mu = 2.0 * props[1]
+            d1 = props[5] if len(props) > 5 else 0.01
+            K = 2.0 / max(d1, 1e-12)
+        else:
+            mu = props[1]
+            K = props[2]
     else:
         # Fallback heuristic for material types not yet given an explicit
         # branch here (e.g. neo-Hookean) -- unchanged from before.

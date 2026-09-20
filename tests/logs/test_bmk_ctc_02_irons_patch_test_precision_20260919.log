@@ -1,0 +1,26 @@
+==============================================================================
+OFFICIAL BENCHMARK LOG STREAM: BMK-CTC-02: Non-Matching Quad4 Dual Mortar Patch Test (||R|| < 1e-11 N)
+Test Case : test_bmk_ctc_02_irons_patch_test_precision
+Date      : 2026-09-19 22:16:40
+Platform  : win32 | Python 3.11.9
+Standard  : lucy-orcha Team C Benchmark Suite (Anti-Mocking & Karpathy)
+==============================================================================
+
+
+--- [Constructing Non-Matching Quad4 Interface Fixture] ---
+[22:16:40.885] Step   1 | Newton Iters:  1 | ||R||: 6.162976e-33 | u_prescribed [mm]=-2.00000e-03 | F_normal [N]=4.00000e+03 | R_z [N]=0.00000e+00
+[22:16:40.889] Step   2 | Newton Iters:  1 | ||R||: 2.465190e-32 | u_prescribed [mm]=-4.00000e-03 | F_normal [N]=1.20000e+04 | R_z [N]=0.00000e+00
+[22:16:40.892] Step   3 | Newton Iters:  1 | ||R||: 0.000000e+00 | u_prescribed [mm]=-6.00000e-03 | F_normal [N]=2.00000e+04 | R_z [N]=0.00000e+00
+[22:16:40.895] Step   4 | Newton Iters:  1 | ||R||: 2.465190e-32 | u_prescribed [mm]=-8.00000e-03 | F_normal [N]=2.80000e+04 | R_z [N]=0.00000e+00
+[22:16:40.898] Step   5 | Newton Iters:  1 | ||R||: 1.818989e-12 | u_prescribed [mm]=-1.00000e-02 | F_normal [N]=3.60000e+04 | R_z [N]=1.81899e-12
+
+==============================================================================
+BENCHMARK EXECUTION SUMMARY: test_bmk_ctc_02_irons_patch_test_precision
+Status: PASSED [SUCCESS]
+==============================================================================
+  * Interface Form                  : Quad4 Sutherland-Hodgman Dual Mortar
+  * Max Equilibrium Residual ||R|| [N]:   1.81898940e-12
+  * Machine Precision Limit [N]     :   1.00000000e-11
+  * Active Contact Face Ratio       : 4.0/4.0
+==============================================================================
+

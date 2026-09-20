@@ -35,11 +35,42 @@ class DynamicSolver2D:
         dt_init: float = 0.01,
         dt_min: float = 1e-6,
         dt_max: float = 0.05,
-        nlgeom: bool = True
+        nlgeom: bool = True,
+        time_integrator: str = "quasistatic",
+        alpha_hht: Optional[float] = None,
+        beta: Optional[float] = None,
+        gamma: Optional[float] = None,
+        alpha_m: Optional[float] = None,
+        alpha_f: Optional[float] = None,
+        rho_inf: Optional[float] = None,
+        density: Optional[float] = None,
+        alpha_m_damp: float = 0.0,
+        beta_k_damp: float = 0.0,
     ):
         self.mesh = mesh
         self.materials = materials or {}
         self.nlgeom = bool(nlgeom)
+        self.density = float(density) if density is not None else 7.85e-9
+        self.alpha_m_damp = float(alpha_m_damp)
+        self.beta_k_damp = float(beta_k_damp)
+
+        from dispsolver.solver.time_integrator_presets import resolve_time_integrator
+        self.config_integrator = resolve_time_integrator(
+            time_integrator=time_integrator,
+            alpha_hht=alpha_hht,
+            beta=beta,
+            gamma=gamma,
+            alpha_m=alpha_m,
+            alpha_f=alpha_f,
+            rho_inf=rho_inf,
+        )
+        self.time_integrator = self.config_integrator.name
+        self.alpha_hht = self.config_integrator.alpha_hht
+        self.beta_hht = self.config_integrator.beta
+        self.gamma_hht = self.config_integrator.gamma
+        self.alpha_m = self.config_integrator.alpha_m
+        self.alpha_f = self.config_integrator.alpha_f
+
         self.num_nodes = mesh.num_nodes
         self.num_dofs = self.num_nodes * 2
 
@@ -57,8 +88,15 @@ class DynamicSolver2D:
         self.constraints: List[Any] = []
 
         self.last_assembly_error: int = 0
+        self.f_int = np.zeros(self.num_dofs, dtype=np.float64)
+        self.last_accept = None
         self.rows_topo: Optional[np.ndarray] = None
         self.cols_topo: Optional[np.ndarray] = None
+
+        self.current_temperature: float = 20.0
+        self.ref_temperature: float = 20.0
+        self._f_thermal_cached: Optional[np.ndarray] = None
+        self._thermal_dirty: bool = True
 
         self._setup_numba_topology()
 
@@ -72,24 +110,35 @@ class DynamicSolver2D:
         nid_map = self.mesh.node_id_to_index()
 
         self.elem_mat_types = np.zeros(n_elems, dtype=np.int32)
-        self.elem_props = np.zeros((n_elems, 36), dtype=np.float64)
+        self.elem_props = np.zeros((n_elems, 64), dtype=np.float64)
 
         # Default props: E=4000.0, nu=0.3
         self.elem_props[:, 0] = 4000.0
         self.elem_props[:, 1] = 0.3
 
+        self.elem_density = np.zeros(n_elems, dtype=np.float64)
+        default_rho = self.density if getattr(self, "density", None) is not None else 7.85e-9
+
         for e, elem in enumerate(elements_list):
             pid = getattr(elem, "pid", 0)
             mat_obj = self.materials.get(pid, None) if isinstance(self.materials, dict) else None
-            if mat_obj is None and isinstance(self.materials, dict) and "E" in self.materials:
+            if mat_obj is None and isinstance(self.materials, dict) and ("E" in self.materials or "density" in self.materials):
                 mat_obj = self.materials
+            
+            rho_val = default_rho
             if mat_obj is not None:
+                if hasattr(mat_obj, "to_numba_props"):
+                    mat_obj = mat_obj.to_numba_props()
                 if hasattr(mat_obj, "props"):
                     p = np.asarray(mat_obj.props, dtype=np.float64)
-                    self.elem_props[e, :min(36, len(p))] = p[:36]
+                    self.elem_props[e, :min(64, len(p))] = p[:64]
+                    if hasattr(mat_obj, "density"):
+                        rho_val = float(getattr(mat_obj, "density"))
                 elif isinstance(mat_obj, dict):
                     self.elem_props[e, 0] = float(mat_obj.get("E", 4000.0))
                     self.elem_props[e, 1] = float(mat_obj.get("nu", 0.3))
+                    rho_val = float(mat_obj.get("density", mat_obj.get("rho", default_rho)))
+            self.elem_density[e] = rho_val
 
         # SectionControls array: (n_elems, 8)
         self.elem_controls = np.zeros((n_elems, 8), dtype=np.float64)
@@ -207,6 +256,10 @@ class DynamicSolver2D:
 
         self.elem_sdvs = np.zeros((n_elems, 9, 7), dtype=np.float64)
 
+    def add_constraint(self, constraint: Any):
+        """Add a constraint or surface tie object to the 2D solver."""
+        self.constraints.append(constraint)
+
     def set_dirichlet_bc(self, global_dof: int, value: float):
         """Prescribe a 2D Dirichlet displacement value for a global DOF."""
         self.fixed_dofs[int(global_dof)] = float(value)
@@ -224,6 +277,72 @@ class DynamicSolver2D:
         if not hasattr(self, "f_ext_applied") or self.f_ext_applied is None:
             self.f_ext_applied = np.zeros(self.num_dofs, dtype=np.float64)
         self.f_ext_applied[global_dof] += float(force_value)
+
+    def set_temperature(self, temp: float, ref_temp: Optional[float] = None) -> None:
+        """Prescribe a global predefined temperature field (Abaqus *TEMPERATURE parity)."""
+        self.current_temperature = float(temp)
+        if ref_temp is not None:
+            self.ref_temperature = float(ref_temp)
+        self._thermal_dirty = True
+
+    def compute_thermal_load_vector(self) -> np.ndarray:
+        """Compute equivalent global thermal load vector for 2D plane strain elements.
+        f_th = int B^T C eps_th dV.
+        """
+        if not self._thermal_dirty and self._f_thermal_cached is not None:
+            return self._f_thermal_cached
+
+        f_th = np.zeros(self.num_dofs, dtype=np.float64)
+        if not self.mesh.elements:
+            self._f_thermal_cached = f_th
+            self._thermal_dirty = False
+            return f_th
+
+        from dispsolver.material.solver_thermal_adapter import compute_element_thermal_force_2d
+        node_coords = self.mesh.nodes_array()
+        elements_list = list(self.mesh.elements.values())
+        nid_map = self.mesh.node_id_to_index()
+
+        for e, elem in enumerate(elements_list):
+            pid = getattr(elem, "pid", 0)
+            mat_obj = self.materials.get(pid, None) if hasattr(self, "materials") and isinstance(self.materials, dict) else None
+            alpha = 0.0
+            t0 = self.ref_temperature
+            E_val = 4000.0
+            nu_val = 0.3
+
+            if mat_obj is not None:
+                if hasattr(mat_obj, "to_numba_props"):
+                    m_props = mat_obj.to_numba_props()
+                elif isinstance(mat_obj, dict):
+                    m_props = mat_obj
+                else:
+                    m_props = {}
+                alpha = float(m_props.get("alpha", 0.0))
+                t0 = float(m_props.get("T0", self.ref_temperature))
+                E_val = float(m_props.get("E", E_val))
+                nu_val = float(m_props.get("nu", nu_val))
+            elif hasattr(self, "material_params"):
+                alpha = float(self.material_params.get("alpha", 0.0))
+                t0 = float(self.material_params.get("T0", self.ref_temperature))
+                E_val = float(self.material_params.get("E", E_val))
+                nu_val = float(self.material_params.get("nu", nu_val))
+
+            delta_T = self.current_temperature - t0
+            if abs(alpha * delta_T) > 1e-20:
+                conn_e = [nid_map[nid] for nid in elem.node_ids]
+                if len(conn_e) == 4:
+                    coords_e = node_coords[conn_e]
+                    f_th_e = np.zeros(8, dtype=np.float64)
+                    compute_element_thermal_force_2d(coords_e, alpha, delta_T, E_val, nu_val, f_th_e)
+                    for a in range(4):
+                        nid_idx = conn_e[a]
+                        f_th[2 * nid_idx + 0] += f_th_e[2 * a + 0]
+                        f_th[2 * nid_idx + 1] += f_th_e[2 * a + 1]
+
+        self._f_thermal_cached = f_th
+        self._thermal_dirty = False
+        return f_th
 
     def assemble_system(self, u_vec: np.ndarray, dt: float = 1.0, return_error: bool = False, update_state: bool = False):
         """Assemble global 2D stiffness matrix K_global and internal force vector f_int."""
@@ -298,6 +417,11 @@ class DynamicSolver2D:
             scatter_f_int_2d(f_sub, sub_conn, f_int_global)
             data_topo_list.append(K_sub.ravel())
 
+        # Incorporate equivalent thermal load vector: f_int = f_int^mech - f_th
+        f_th = self.compute_thermal_load_vector()
+        if f_th is not None:
+            f_int_global -= f_th
+
         self.last_assembly_error = int(has_error)
         data_topo = np.concatenate(data_topo_list) if len(data_topo_list) > 0 else np.zeros(0, dtype=np.float64)
 
@@ -350,14 +474,129 @@ class DynamicSolver2D:
 
         return K_bc.tocsc(), r_bc
 
+    def _record_acceptance(self, branch: str, f_acc: np.ndarray,
+                           f_ext: np.ndarray, iters: int) -> None:
+        """Read-only calibration probe: true free-DOF residual norm at the
+        accepted state. Never influences acceptance (AGENTS.md section 4.7:
+        the AND-criterion rewrite caused dt-collapse, so thresholds stay
+        untouched -- this only measures what they accept). Ported from
+        DynamicSolver3D._record_acceptance (dev_log §12)."""
+        mask = np.ones(self.num_dofs, dtype=bool)
+        if self.fixed_dofs:
+            mask[list(self.fixed_dofs.keys())] = False
+        r = float(np.linalg.norm((f_ext - np.asarray(f_acc))[mask]))
+        self.last_accept = {"branch": branch, "r_norm": r, "iters": iters}
+
     def solve_step(
         self,
         dt: float = 1.0,
         f_ext: Optional[np.ndarray] = None,
         tol: float = 1e-5,
-        max_iters: int = 25
+        max_iters: int = 25,
+        use_anderson_accel: bool = False,
+        anderson_m: int = 4,
+        anderson_beta: float = 1.0,
+        augment_relaxation: float = 1.0,
     ) -> Tuple[bool, int]:
-        """Solve a 2D incremental step using Newton-Raphson with robust Armijo line search."""
+        """Solve a 2D incremental step using Newton-Raphson with robust Armijo line search
+        and optional Anderson Acceleration (AA-Newton)."""
+        if not self.config_integrator.is_quasistatic and not self.config_integrator.is_emcs:
+            u_n = self.u.copy()
+            v_n = self.v.copy()
+            a_n = self.a.copy()
+            u_trial = u_n.copy()
+
+            if f_ext is None:
+                if hasattr(self, "f_ext_applied") and self.f_ext_applied is not None:
+                    f_ext = self.f_ext_applied.copy()
+                else:
+                    f_ext = np.zeros(self.num_dofs, dtype=np.float64)
+
+            # Assemble element mass matrices M_global (2D)
+            M_elems_list = []
+            default_rho = self.density if getattr(self, "density", None) is not None else 7.85e-9
+            for k in sorted(self.elem_kernel_groups.keys()):
+                elem_indices = self.elem_kernel_groups[k]
+                sub_conn = self.elem_conn_groups[k]
+                n_sub = len(sub_conn)
+                n_nodes_e = sub_conn.shape[1] if n_sub > 0 else 4
+                n_dofs_e = n_nodes_e * 2
+                M_sub = np.zeros((n_sub, n_dofs_e, n_dofs_e), dtype=np.float64)
+                for local_idx, e_idx in enumerate(elem_indices):
+                    rho_e = self.elem_density[e_idx] if hasattr(self, "elem_density") else default_rho
+                    M_sub[local_idx] = np.eye(n_dofs_e, dtype=np.float64) * (rho_e * (1.0 / n_nodes_e))
+                M_elems_list.append(M_sub.ravel())
+
+            M_data = np.concatenate(M_elems_list) if M_elems_list else np.zeros(0, dtype=np.float64)
+            M_global = csc_matrix((M_data, (self.rows_topo, self.cols_topo)), shape=(self.num_dofs, self.num_dofs))
+            self.M_global = M_global
+
+            K_n, f_int_n = self.assemble_system(u_n, dt=dt, update_state=False)
+
+            beta_hht = self.beta_hht
+            gamma_hht = self.gamma_hht
+            alpha_hht = self.alpha_hht
+
+            coeff_m = 1.0 / (beta_hht * dt * dt)
+
+            if use_anderson_accel:
+                from dispsolver.solver.anderson_acceleration import AndersonAccelerator
+                anderson = AndersonAccelerator(m=anderson_m, beta=anderson_beta)
+            else:
+                anderson = None
+
+            converged = False
+            for n_iter in range(1, max_iters + 1):
+                a_trial = coeff_m * (u_trial - u_n) - (1.0 / (beta_hht * dt)) * v_n - (0.5 / beta_hht - 1.0) * a_n
+                v_trial = v_n + dt * ((1.0 - gamma_hht) * a_n + gamma_hht * a_trial)
+
+                K_tan, f_int_trial = self.assemble_system(u_trial, dt=dt, update_state=False)
+
+                f_int_hht = (1.0 + alpha_hht) * f_int_trial - alpha_hht * f_int_n
+                f_inertial = M_global @ a_trial
+
+                residual = f_ext - f_inertial - f_int_hht
+
+                free_mask = np.ones(self.num_dofs, dtype=bool)
+                if self.fixed_dofs:
+                    free_mask[list(self.fixed_dofs.keys())] = False
+
+                res_norm = float(np.linalg.norm(residual[free_mask]))
+                if n_iter == 1:
+                    res_init = max(res_norm, 1e-12)
+
+                rel_res = res_norm / res_init
+                if res_norm < tol or rel_res < tol:
+                    converged = True
+                    break
+
+                K_eff = (1.0 + alpha_hht) * K_tan + coeff_m * M_global
+                K_bc, r_bc = self.apply_boundary_conditions(K_eff, residual, u_trial)
+
+                try:
+                    du = pardiso_spsolve(K_bc, r_bc)
+                except Exception as e:
+                    raise RuntimeError("Linear solver failed in 2D dynamic step.") from e
+
+                du_norm = float(np.linalg.norm(du[free_mask]))
+                if du_norm < 1e-7:
+                    u_trial += du
+                    converged = True
+                    break
+
+                if anderson is not None:
+                    u_trial = anderson.step(u_trial, du)
+                else:
+                    u_trial += du
+
+            if converged:
+                self.u[:] = u_trial
+                self.a[:] = coeff_m * (self.u - u_n) - (1.0 / (beta_hht * dt)) * v_n - (0.5 / beta_hht - 1.0) * a_n
+                self.v[:] = v_n + dt * ((1.0 - gamma_hht) * a_n + gamma_hht * self.a)
+                self.assemble_system(self.u, dt=dt, update_state=True)
+
+            return converged, n_iter
+
         if f_ext is None:
             if hasattr(self, "f_ext_applied") and self.f_ext_applied is not None:
                 f_ext = self.f_ext_applied.copy()
@@ -370,6 +609,11 @@ class DynamicSolver2D:
 
         u_k = self.u.copy()
         r_0_norm = None
+
+        accelerator = None
+        if use_anderson_accel:
+            from dispsolver.solver.anderson_acceleration import AndersonAccelerator
+            accelerator = AndersonAccelerator(m=anderson_m, beta=anderson_beta)
 
         for iter_count in range(1, max_iters + 1):
             K_g, f_int = self.assemble_system(u_k, dt=dt)
@@ -390,7 +634,8 @@ class DynamicSolver2D:
             bc_err = max([abs(target_val - u_k[dof]) for dof, target_val in self.fixed_dofs.items()], default=0.0)
             if iter_count > 1 and bc_err < 1e-5 and (rel_r < 5e-3 or r_norm < 1e-3):
                 self.u = u_k
-                self.assemble_system(u_k, dt=dt, update_state=True)
+                _, f_acc = self.assemble_system(u_k, dt=dt, update_state=True)
+                self._record_acceptance("residual", f_acc, f_ext, iter_count)
                 return True, iter_count
 
             try:
@@ -403,7 +648,8 @@ class DynamicSolver2D:
             bc_err_next = max([abs(target_val - u_next[dof]) for dof, target_val in self.fixed_dofs.items()], default=0.0)
             if iter_count > 1 and du_norm < 1e-4 and bc_err_next < 1e-5:
                 self.u = u_next
-                self.assemble_system(self.u, dt=dt, update_state=True)
+                _, f_acc = self.assemble_system(self.u, dt=dt, update_state=True)
+                self._record_acceptance("correction", f_acc, f_ext, iter_count)
                 return True, iter_count
 
             # On iteration 1 (kinematic Dirichlet application), take full step s=1.0 unless inverted
@@ -411,8 +657,34 @@ class DynamicSolver2D:
                 u_trial = u_k + du
                 _, _ = self.assemble_system(u_trial, dt=dt)
                 if self.last_assembly_error == 0:
+                    if accelerator is not None:
+                        accelerator.record(u_k, du)
                     u_k = u_trial
+                    for c in self.constraints:
+                        if getattr(c, "augmented_lagrange", False) and hasattr(c, "update_augmented_multipliers"):
+                            c.update_augmented_multipliers(u_k, omega=augment_relaxation)
                     continue
+
+            # If Anderson Acceleration is active, attempt accelerated trial step first
+            aa_accepted = False
+            if accelerator is not None and iter_count > 1:
+                u_aa = accelerator.step(u_k, du, mask=free_dof_mask)
+                for dof, target_val in self.fixed_dofs.items():
+                    u_aa[dof] = target_val
+
+                _, f_aa = self.assemble_system(u_aa, dt=dt)
+                if self.last_assembly_error == 0:
+                    r_aa = f_ext - f_aa
+                    r_aa_norm = float(np.linalg.norm(r_aa[free_dof_mask]))
+                    if r_aa_norm < r_norm or r_aa_norm <= max(1.2 * r_norm, 1e-4 * r_0_norm, 1e-5):
+                        u_k = u_aa
+                        aa_accepted = True
+                        for c in self.constraints:
+                            if getattr(c, "augmented_lagrange", False) and hasattr(c, "update_augmented_multipliers"):
+                                c.update_augmented_multipliers(u_k, omega=augment_relaxation)
+                        continue
+
+                accelerator.pop_last()
 
             # Robust Armijo line search
             s = 1.0
@@ -442,12 +714,53 @@ class DynamicSolver2D:
                 return False, iter_count
 
             u_k = best_u
+            if accelerator is not None and not aa_accepted:
+                accelerator.record(u_k - s * du, s * du)
+
+            for c in self.constraints:
+                if getattr(c, "augmented_lagrange", False) and hasattr(c, "update_augmented_multipliers"):
+                    c.update_augmented_multipliers(u_k, omega=augment_relaxation)
 
         self.u = u_k
         if bc_err < 1e-5 and (rel_r < 5e-3 or r_norm < 1e-3):
-            self.assemble_system(u_k, dt=dt, update_state=True)
+            _, f_acc = self.assemble_system(u_k, dt=dt, update_state=True)
+            self._record_acceptance("fallthrough", f_acc, f_ext, max_iters)
             return True, max_iters
         return False, max_iters
+
+    def solve_augmented_step(
+        self,
+        dt: float = 1.0,
+        f_ext: Optional[np.ndarray] = None,
+        tol: float = 1e-5,
+        max_iters: int = 25,
+        max_augment_iters: int = 10,
+        augment_tol: float = 1e-6,
+        augment_relaxation: float = 1.0,
+    ) -> Tuple[bool, int, int]:
+        """Multi-cycle Augmented Lagrangian driver for constraints with augmented_lagrange=True."""
+        augmented_constraints = [c for c in self.constraints if getattr(c, "augmented_lagrange", False)]
+
+        for augment_iter in range(1, max_augment_iters + 1):
+            converged, inner_iters = self.solve_step(
+                dt=dt, f_ext=f_ext, tol=tol, max_iters=max_iters,
+                augment_relaxation=augment_relaxation,
+            )
+            if not converged:
+                return False, augment_iter, inner_iters
+
+            if not augmented_constraints:
+                return True, augment_iter, inner_iters
+
+            max_pen = 0.0
+            for c in augmented_constraints:
+                _, _, stats = c.assemble(self.u)
+                max_pen = max(max_pen, stats.get("max_penetration", 0.0))
+
+            if max_pen < augment_tol:
+                return True, augment_iter, inner_iters
+
+        return False, max_augment_iters, inner_iters
 
     def _update_step_bcs(self, step: Any, sys: Optional[Any], t: float, total_time: float) -> None:
         """Evaluate active BCs for 2D Model."""
@@ -709,4 +1022,22 @@ class DynamicSolver2D:
                 total_energy += 0.5 * float(np.dot(u_e, f_e))
 
         return max(0.0, total_energy)
+
+    def compute_total_energy(self) -> Tuple[float, float, float]:
+        """Compute Total Mechanical Energy (E_total, E_kin, E_strain) for 2D mesh."""
+        E_strain = self.compute_strain_energy()
+        E_kin = 0.0
+        if hasattr(self, "v") and self.v is not None:
+            E_kin = 0.5 * float(np.dot(self.v, self.v) * self.density)
+        return E_strain + E_kin, E_kin, E_strain
+
+    def get_state(self) -> Dict[str, Any]:
+        """Return full state vector dictionary (u, v, a, time_integrator)."""
+        return {
+            "u": self.u.copy(),
+            "v": self.v.copy(),
+            "a": self.a.copy(),
+            "time_integrator": self.time_integrator,
+        }
+
 

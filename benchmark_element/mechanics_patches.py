@@ -74,7 +74,7 @@ def make_distorted_patch_mesh(
                 nid += 1
 
     eid = 1
-    if elem_type in ["C3D8", "C3D8I", "C3D8_FBAR", "C3D8_CR", "C3D8H", "C3D8R"]:
+    if elem_type in ["C3D8", "C3D8I", "C3D8_FBAR", "C3D8_CR", "C3D8H", "C3D8R", "SOLID_SHELL", "C3D8_SS"]:
         # 8 Hexahedral elements
         for k in range(2):
             for j in range(2):
@@ -271,7 +271,8 @@ def make_cantilever_beam_mesh(
                 nid += 1
 
     eid = 1
-    if elem_type in ["C3D8", "C3D8I", "C3D8_FBAR", "C3D8_CR", "C3D8H", "C3D8R"]:
+    if elem_type in ["C3D8", "C3D8I", "C3D8_FBAR", "C3D8_CR", "C3D8H", "C3D8R", "SOLID_SHELL", "C3D8_SS",
+                     "C3D8I_CR", "C3D8R_CR", "C3D8H_CR"]:
         for k in range(nz):
             for j in range(ny):
                 for i in range(nx):

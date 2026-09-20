@@ -177,7 +177,7 @@ def main():
     print("Combined Triaxial Normal + Shear Loading: sigma_ij = -1000.0 psi")
     print("==========================================================================")
     
-    test_elements = ["C3D8", "C3D8I", "C3D8R", "C3D8H", "C3D8_CR"]
+    test_elements = ["C3D8", "C3D8I", "C3D8R", "C3D8H", "C3D8_CR", "SOLID_SHELL"]
     for etype in test_elements:
         run_test_for_element(etype)
 

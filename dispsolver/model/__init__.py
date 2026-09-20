@@ -34,9 +34,38 @@ from dispsolver.model.load import (
     Gravity,
     BodyForce,
 )
+from dispsolver.model.amplitude import Amplitude
 from dispsolver.model.model import Model
+from dispsolver.model.interaction import (
+    ContactProperty,
+    ContactPair,
+    GeneralContact,
+    ContactStd,
+    SurfaceToSurfaceContactStd,
+    ContactControl,
+    ContactStabilization,
+    HARD,
+    TABULAR,
+    EXPONENTIAL,
+    LINEAR,
+    PENALTY,
+    FRICTIONLESS,
+    AUTOMATIC,
+    DAMPING_COEFFICIENT,
+    CRITICAL_DAMPING_FRACTION,
+    STIFFNESS_RATIO,
+    DEFAULT,
+    NITSCHE,
+    DUAL_MORTAR,
+    AUGMENTED_LAGRANGE,
+    ADAPTIVE,
+    ADAPTIVE_SOFT,
+    POWER_LAW,
+)
 
 __all__ = [
+
+
     "Transform3D",
     "NodeSet",
     "ElementSet",
@@ -72,5 +101,32 @@ __all__ = [
     "Pressure",
     "Gravity",
     "BodyForce",
+    "ContactProperty",
+    "ContactPair",
+    "GeneralContact",
+    "ContactStd",
+    "SurfaceToSurfaceContactStd",
+    "ContactControl",
+    "ContactStabilization",
+    "HARD",
+    "TABULAR",
+    "EXPONENTIAL",
+    "LINEAR",
+    "PENALTY",
+    "FRICTIONLESS",
+    "AUTOMATIC",
+    "DAMPING_COEFFICIENT",
+    "CRITICAL_DAMPING_FRACTION",
+    "STIFFNESS_RATIO",
+    "DEFAULT",
+    "NITSCHE",
+    "DUAL_MORTAR",
+    "AUGMENTED_LAGRANGE",
+    "ADAPTIVE",
+    "ADAPTIVE_SOFT",
+    "POWER_LAW",
     "Model",
 ]
+
+
+

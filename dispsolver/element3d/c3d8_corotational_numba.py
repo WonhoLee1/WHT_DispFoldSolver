@@ -183,6 +183,45 @@ def compute_element_rotation_3d(coords_ref: np.ndarray, coords_curr: np.ndarray)
     return R_elem
 
 
+@njit(fastmath=True)
+def _add_geometric_stiffness_3d(
+    K_local: np.ndarray,
+    dN_dX: np.ndarray,
+    dN_dY: np.ndarray,
+    dN_dZ: np.ndarray,
+    stress_voigt: np.ndarray,
+    dV: float
+):
+    """Accumulate 3D Geometric Stiffness (Initial Stress Matrix K_sigma) into 24x24 K_local.
+    K_sigma_ab = (grad(N_a)^T @ sigma_tensor @ grad(N_b)) * I_3x3 * dV
+    """
+    sig0, sig1, sig2 = stress_voigt[0], stress_voigt[1], stress_voigt[2]
+    sig3, sig4, sig5 = stress_voigt[3], stress_voigt[4], stress_voigt[5]
+
+    for a in range(8):
+        ga_x = dN_dX[a]
+        ga_y = dN_dY[a]
+        ga_z = dN_dZ[a]
+
+        # sigma @ grad(N_a)
+        s_ga_x = sig0 * ga_x + sig3 * ga_y + sig5 * ga_z
+        s_ga_y = sig3 * ga_x + sig1 * ga_y + sig4 * ga_z
+        s_ga_z = sig5 * ga_x + sig4 * ga_y + sig2 * ga_z
+
+        for b in range(8):
+            gb_x = dN_dX[b]
+            gb_y = dN_dY[b]
+            gb_z = dN_dZ[b]
+
+            # s_ab = (grad(N_a)^T @ sigma @ grad(N_b)) * dV
+            s_ab = (s_ga_x * gb_x + s_ga_y * gb_y + s_ga_z * gb_z) * dV
+
+            # Accumulate into 3x3 diagonal submatrix block
+            K_local[3 * a + 0, 3 * b + 0] += s_ab
+            K_local[3 * a + 1, 3 * b + 1] += s_ab
+            K_local[3 * a + 2, 3 * b + 2] += s_ab
+
+
 _EMPTY_CONTROLS = np.empty(0, dtype=np.float64)
 _EMPTY_2D_CONTROLS = np.empty((0, 6), dtype=np.float64)
 
@@ -375,6 +414,7 @@ def compute_c3d8_corotational_element_umat_numba(
                 dV = detJ
                 f_local += (B_bar.T @ stress_voigt) * dV
                 K_local += (B_bar.T @ C_mat @ B_bar) * dV
+                _add_geometric_stiffness_3d(K_local, dN_dX_i, dN_dY_i, dN_dZ_i, stress_voigt, dV)
                 gp_idx += 1
 
     # 5b. Viscous damping (Abaqus SectionControls VISCOUS DAMPING)

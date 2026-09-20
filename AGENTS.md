@@ -1441,3 +1441,13 @@ tests/
 dev_log/                            # dated work logs — check for the most recent status before assuming something is/isn't done
   benchmark_3d_elements_20260913.md # 11 3D elements benchmark matrix + literature catalog
 ```
+
+---
+
+## 6. Release & area analyses — single source is `GEMINI.md` (OpenCode wiring)
+
+Release notes and per-area analyses (constraint / solver / element / contact) are
+maintained ONLY in `GEMINI.md` ("📦 릴리즈 및 영역별 분석 인덱스" section) and the
+`dev_log/area_analysis_*.md` living docs it points to. The user edits `GEMINI.md`
+going forward — do NOT fork that content here. When you need release status or an
+area's verified-vs-open state, read `GEMINI.md`, not this file.

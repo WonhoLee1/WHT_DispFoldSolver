@@ -318,18 +318,39 @@ def run_hertz_contact_benchmark(
     P_per_length = stats["total_normal_force"] / depth
 
     active_x = []
+    # Compute nodal contact pressure p_fem(x) by dividing nodal normal force by tributary area
+    # In plane strain (ny segments across depth), tributary area for bottom surface nodes:
+    # A_trib(i) = dx_eff * (depth / ny) where dx_eff is average spacing to adjacent nodes
+    nodal_pressures = {}
     for i in range(nx + 1):
+        if i == 0:
+            dx_eff = 0.5 * (xs[1] - xs[0])
+        elif i == nx:
+            dx_eff = 0.5 * (xs[nx] - xs[nx - 1])
+        else:
+            dx_eff = 0.5 * (xs[i + 1] - xs[i - 1])
+
+        # Sum forces across depth (y direction) for node column i
+        col_fz = 0.0
         for j in range(ny + 1):
             nid = grid[(i, j, 0)]
             idx = nid_to_idx[nid]
-            f_node = f_contact[3 * idx: 3 * idx + 3]
-            if np.linalg.norm(f_node) > 1e-9:
-                active_x.append(xs[i])
+            col_fz += abs(f_contact[3 * idx + 2])
+
+        # Force per unit length along cylinder axis for column i
+        p_col = col_fz / (dx_eff * depth) if dx_eff > 0 else 0.0
+        if col_fz > 1e-9:
+            active_x.append(xs[i])
+            nodal_pressures[xs[i]] = p_col
+
     b_fem = max(abs(x) for x in active_x) if active_x else 0.0
 
     ref = hertz_line_contact_reference(P_per_length, R, E, nu)
-
     ratio_b = b_fem / ref["b"] if ref["b"] > 0 else float("nan")
+
+    # Analytical pressure profile comparison: p(x) = p0 * sqrt(1 - (x/b)^2)
+    p0_fem = max(nodal_pressures.values()) if nodal_pressures else 0.0
+    p0_err_rel = abs(p0_fem - ref["p0"]) / max(ref["p0"], 1e-12) if ref["p0"] > 0 else float("nan")
 
     return {
         "status": "CONVERGED" if reached else "DIVERGED",
@@ -346,6 +367,9 @@ def run_hertz_contact_benchmark(
         "dx_mesh": dx_local,
         "b_ref": ref["b"],
         "p0_ref": ref["p0"],
+        "p0_fem": p0_fem,
+        "p0_err_rel": p0_err_rel,
+        "nodal_pressures": nodal_pressures,
         "E_star": ref["E_star"],
         "ratio_b_fem_to_ref": ratio_b,
     }

@@ -112,10 +112,15 @@ __all__ = [
     "AbaqusSurface",
     # Lexer
     "AbaqusKeywordBlock",
-    "tokenize",
-    "tokenize_string",
-    # Parser
-    "AbaqusParser",
-    # Builder
-    "ModelBuilder",
+    # New Production Reader & Executor Architecture
+    "read_inp",
+    "execute_inp",
+    "AbaqusInputReader",
+    "GLOBAL_KEYWORD_REGISTRY",
+    "KeywordRegistry",
+    "KeywordContext",
 ]
+
+from .abaqus_reader import read_inp, execute_inp, AbaqusInputReader
+from .keyword_registry import GLOBAL_KEYWORD_REGISTRY, KeywordRegistry, KeywordContext
+

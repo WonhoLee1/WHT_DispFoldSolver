@@ -16,14 +16,15 @@ from __future__ import annotations
 from typing import Tuple
 import numpy as np
 
-from .base3d import SolidElement3D
+from .c3d4_jax import Tetra4Element
 
 
-class Tetra4ANPElement(SolidElement3D):
+class Tetra4ANPElement(Tetra4Element):
     """3D 4-Node Tetrahedron with Bonet & Burton (1998) 2-Pass Average Nodal Pressure (ANP)."""
 
     def __init__(self):
-        super().__init__(elem_type="C3D4_ANP", num_nodes=4, num_quad_points=1)
+        super().__init__()
+        self.elem_type = "C3D4_ANP"
 
     def shape_derivatives_natural(self, xi: np.ndarray = None) -> np.ndarray:
         r"""Natural coordinate derivatives dN / d(xi, eta, zeta) (3, 4)."""

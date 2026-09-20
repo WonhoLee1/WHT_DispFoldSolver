@@ -928,27 +928,26 @@ class DynamicSolver:
         self.t_line_search = 0.0
         self.t_postprocess = 0.0
         self.t_start_wall = time.time()
-        # Named integration preset overrides the individual β/γ/α/static_mode
-        # arguments with a mutually-consistent set (see INTEGRATION_MODES).
-        if mode is not None:
-            if mode in INTEGRATION_MODES:
-                preset = INTEGRATION_MODES[mode]
-            elif mode.startswith("generalized-"):
-                try:
-                    rho_val = float(mode.split("-", 1)[1])
-                    preset = _generalized_alpha(rho_val)
-                except ValueError:
-                    raise ValueError(f"unknown integration mode {mode!r}; invalid float in generalized-<float>")
-            else:
-                raise ValueError(
-                    f"unknown integration mode {mode!r}; "
-                    f"choose from {sorted(INTEGRATION_MODES)}"
-                )
-            beta = preset["beta"]
-            gamma = preset["gamma"]
-            alpha = preset["alpha"]
-            static_mode = preset["static_mode"]
-        self.mode = mode
+        from .time_integrator_presets import resolve_time_integrator
+        # NOTE (2026-09-20): default-valued args must reach resolve as None so
+        # the preset wins (old semantics: a named mode overrode ALL raw args).
+        # Passing constructor defaults through as explicit values vetoed the
+        # preset -- e.g. mode='quasistatic' + default static_mode=False resolved
+        # to transient and diverged the elastica benchmarks. Non-default values
+        # still pass through as manual overrides (presets doc §2).
+        _def = (0.25, 0.5, 0.0)
+        config_int = resolve_time_integrator(
+            time_integrator=mode if mode is not None else ("quasistatic" if static_mode else "transient"),
+            alpha_hht=None if alpha == _def[2] else alpha,
+            beta=None if beta == _def[0] else beta,
+            gamma=None if gamma == _def[1] else gamma,
+            static_mode=None if not static_mode else True,
+        )
+        self.mode = config_int.name
+        self.beta = config_int.beta
+        self.gamma = config_int.gamma
+        self.alpha = config_int.alpha_hht
+        self.static_mode = config_int.is_quasistatic
         self.mesh = mesh
         self.fast_assembly = fast_assembly
         self.section_thickness = section_thickness
@@ -965,19 +964,23 @@ class DynamicSolver:
             self.materials = {0: adapter}
 
         self.rho = float(rho)
-        self.beta = beta
-        self.gamma = gamma
+        # NOTE (2026-09-20): do NOT re-assign self.beta/gamma/static_mode/alpha
+        # from the raw constructor args here -- they would discard the resolved
+        # preset above (lines 939-943). That exact clobber silently turned
+        # mode='quasistatic' into transient (static_mode False) and diverged
+        # the elastica convergence benchmarks. Explicit user values already
+        # reach the config via resolve_time_integrator (None = preset default).
         self.max_iter = max_iter
         self.tol = tol
         self.atol = atol   # absolute displacement-correction floor (P2)
         self.rtol = rtol   # relative residual-force convergence tolerance (P2)
         self.verbose = verbose
         self.max_step = max_step
-        self.static_mode = static_mode
-        self.alpha = alpha
         self.f_int_n = None  # for HHT-α alpha method
         self.last_conv_rate = 1.0  # last Newton conv_rate, for AdaptiveDtController (B6)
-        
+        self.stall_count_max = 8   # stall detection threshold (override for slow-convergence cases)
+
+
         # element_type may be a single string (uniform) or a {pid: str} dict
         # (per-material) so e.g. viscoelastic layers use the Q1P0 hybrid while
         # plastic layers use standard Q4 B-bar.
@@ -2959,7 +2962,7 @@ class DynamicSolver:
                 # manufacture a stall out of missing information.
                 stall_count = 0
             prev_res_ratio = res_ratio
-            if stall_count > 8:
+            if stall_count > self.stall_count_max:
                 if getattr(self, 'verbose', False):
                     print(f"  *** STALL DETECTED: conv_rate={conv_rate:.4f} for {stall_count} iters. Cutting back dt.", flush=True)
                 return self._fail(f"convergence stalled (conv_rate={conv_rate:.4f} for {stall_count} iters)")

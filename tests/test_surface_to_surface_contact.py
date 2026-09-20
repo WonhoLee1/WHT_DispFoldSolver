@@ -214,7 +214,7 @@ def test_full_solve_two_block_augmented_lagrangian_converges():
     # point floor (0/tiny or tiny/0) -- check the CONTRACTION property
     # only while penetration is still resolvably above that floor, and
     # separately require the run to have reached the floor at all.
-    floor = 1e-8
+    floor = 1e-9
     resolvable = [p for p in penetrations if p > floor]
     ratios = [resolvable[i + 1] / resolvable[i] for i in range(len(resolvable) - 1)]
     assert len(resolvable) >= 3, penetrations
@@ -463,3 +463,86 @@ def test_penalty_stiffness_units_differ_from_point_collocation_by_design():
     # magnitude sane) rather than asserting equality this class's own
     # units were never meant to produce.
     assert 0.1 < rel_diff < 10.0, (stats_s2s["total_normal_force"], stats_n2s["total_normal_force"], rel_diff)
+
+
+def test_dual_mortar_clipped_polygon_non_matching_patch_test():
+    """Verify Stage B: Sutherland-Hodgman Polygon Clipping Dual-Mortar contact on non-matching meshes.
+    Coarse master face (2x2 area) interacting with offset fine slave face (1x1 area).
+    Polygon clipping creates exact intersection polygon, computes Wohlmuth dual basis,
+    and assembles consistent contact forces without spurious oscillation.
+    """
+    from dispsolver.constraint3d.dual_mortar_clipping3d import (
+        DualMortarClippedContactConstraint3D,
+        clip_polygon_2d,
+    )
+
+    # 1. Verify 2D clipping unit function
+    # Subject: Master box [-0.5, 1.5] x [-0.5, 1.5]
+    # Clip: Slave box [-1.0, 1.0] x [-1.0, 1.0]
+    # Expected intersection: [-0.5, 1.0] x [-0.5, 1.0] (area = 1.5 * 1.5 = 2.25)
+    subj = [
+        np.array([-0.5, -0.5]),
+        np.array([ 1.5, -0.5]),
+        np.array([ 1.5,  1.5]),
+        np.array([-0.5,  1.5]),
+    ]
+    clip = [
+        np.array([-1.0, -1.0]),
+        np.array([ 1.0, -1.0]),
+        np.array([ 1.0,  1.0]),
+        np.array([-1.0,  1.0]),
+    ]
+    clipped = clip_polygon_2d(subj, clip)
+    assert len(clipped) == 4
+    xs = [p[0] for p in clipped]
+    ys = [p[1] for p in clipped]
+    assert min(xs) >= -0.5 - 1e-9 and max(xs) <= 1.0 + 1e-9
+    assert min(ys) >= -0.5 - 1e-9 and max(ys) <= 1.0 + 1e-9
+
+    # 2. Assemble 3D non-matching dual mortar constraint
+    # Slave: 1 Quad4 face of size 1x1 at z = 0.0
+    # Master: 1 Quad4 face of size 2x2 at z = 0.001, shifted
+    coords = np.array([
+        # Slave nodes 0..3 (1x1 box: [0, 1] x [0, 1])
+        [0.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [1.0, 1.0, 0.0],
+        [0.0, 1.0, 0.0],
+        # Master nodes 4..7 (2x2 box: [-0.5, 1.5] x [-0.5, 1.5])
+        [-0.5, -0.5, 0.001],
+        [ 1.5, -0.5, 0.001],
+        [ 1.5,  1.5, 0.001],
+        [-0.5,  1.5, 0.001],
+    ], dtype=np.float64)
+
+    nid_to_idx = {i + 1: i for i in range(8)}
+    slave_faces = [(1, 2, 3, 4)]
+    master_faces = [(5, 6, 7, 8)]
+
+    c = DualMortarClippedContactConstraint3D(
+        slave_faces=slave_faces,
+        master_faces=master_faces,
+        nid_to_idx=nid_to_idx,
+        coords=coords,
+        penalty_stiffness=1.0e6,
+        position_tolerance=5.0,
+    )
+
+    assert len(c.segments) > 0
+
+    # Impose uniform vertical displacement u_z = -0.005 on master
+    # Overclosure = 0.004 mm across the entire 1x1 slave area
+    u = np.zeros(24, dtype=np.float64)
+    for n in range(4, 8):
+        u[3 * n + 2] = -0.005
+
+    f_contact, (rows, cols, data), stats = c.assemble(u)
+    assert stats["n_active"] > 0
+    assert stats["total_normal_force"] > 0.0
+
+    # Force equilibrium: slave vertical forces sum to -total, master sum to +total
+    f_slave_z = sum(f_contact[3 * i + 2] for i in range(4))
+    f_master_z = sum(f_contact[3 * i + 2] for i in range(4, 8))
+
+    assert abs(f_slave_z + f_master_z) < 1e-10, (f_slave_z, f_master_z)
+

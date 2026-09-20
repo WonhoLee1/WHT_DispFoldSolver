@@ -133,7 +133,7 @@ def run_abaqus_official_patch_test(
 ) -> Dict[str, Any]:
     """Reproduce Step 1 of the REAL Abaqus Verification Manual "Patch test
     for three-dimensional solid elements" (elements tested there include
-    C3D4, C3D6, C3D8, C3D8I, C3D8H, C3D8R, C3D10, C3D10M, ...) -- source
+    ALL_3D_ELEMENTS = ["C3D8", "C3D8I", "C3D8H", "C3D8R", "C3D4", "C3D10", "C3D10M", "C3D4_ANP", "C3D6", "SOLID_SHELL"]-- source
     text archived at benchmark_element/reference_abaqus_docs/3dpatch.txt,
     fetched 2026-09-13 from the user's local Abaqus doc server.
 

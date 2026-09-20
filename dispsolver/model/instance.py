@@ -43,3 +43,15 @@ class Instance:
             
         raw = np.array([self.part.nodes[nid] for nid in nids], dtype=np.float64)
         return self.transform.apply(raw)
+
+    def get_exterior_faces(self) -> List[Tuple[int, ...]]:
+        """Exterior face node-ID tuples of this instance's part."""
+        return self.part.get_exterior_faces()
+
+    @property
+    def exterior(self) -> Any:
+        """Exterior boundary surface of this instance."""
+        surf = self.part.exterior
+        surf.instance_name = self.name
+        return surf
+

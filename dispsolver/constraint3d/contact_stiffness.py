@@ -71,6 +71,8 @@ def representative_element_stiffness(
     -- callers should fall back to a documented last-resort constant in
     that case, not silently produce 0 or NaN.
     """
+    if not hasattr(mesh, "elements") or not mesh.elements:
+        return None
     slave_set = set(slave_node_ids)
     k_values = []
     for elem in mesh.elements.values():
@@ -95,6 +97,8 @@ def representative_element_length(mesh: Any, slave_node_ids) -> Optional[float]:
     when the caller leaves it at None. Returns None under the same
     condition representative_element_stiffness does (no element found
     touching any slave node)."""
+    if not hasattr(mesh, "elements") or not mesh.elements:
+        return None
     slave_set = set(slave_node_ids)
     lengths = []
     for elem in mesh.elements.values():

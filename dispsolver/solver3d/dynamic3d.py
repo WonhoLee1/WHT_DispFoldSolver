@@ -30,7 +30,23 @@ from dispsolver.material3d.numba_materials import (
     MAT_LINEAR_ELASTIC,
     MAT_NEO_HOOKEAN,
     MAT_J2_PLASTICITY,
+    MAT_J2_PLASTICITY_NONLINEAR,
     MAT_VISCOELASTIC_PRONY,
+    MAT_HYPERELASTIC_ARRUDA_BOYCE,
+    MAT_ARRUDA_BOYCE,
+    MAT_HYPERELASTIC_YEOH,
+    MAT_YEOH,
+    MAT_HYPERELASTIC_MOONEY_RIVLIN,
+    MAT_MOONEY_RIVLIN,
+    MAT_HYPERELASTIC_OGDEN,
+    MAT_OGDEN,
+    MAT_HYPERELASTIC_POLYNOMIAL,
+    MAT_POLYNOMIAL,
+    MAT_HYPERELASTIC_MARLOW,
+    MAT_MARLOW,
+    MAT_J2_PLASTICITY_TABULAR,
+    MAT_RADIOSS_LAW36,
+    MAT_HYPER_VISCOELASTIC,
     MAT_CUSTOM_ELASTIC,
     get_default_sdv_count,
 )
@@ -44,11 +60,43 @@ class DynamicSolver3D:
         mesh: Mesh3D,
         materials: Optional[Dict[int, Any]] = None,
         material_params: Optional[Dict[str, float]] = None,
-        nlgeom: bool = True
+        nlgeom: bool = True,
+        time_integrator: str = "quasistatic",
+        alpha_hht: Optional[float] = None,
+        beta: Optional[float] = None,
+        gamma: Optional[float] = None,
+        alpha_m: Optional[float] = None,
+        alpha_f: Optional[float] = None,
+        rho_inf: Optional[float] = None,
+        density: Optional[float] = None,
+        alpha_m_damp: float = 0.0,
+        beta_k_damp: float = 0.0,
+        beta_k: float = 0.0,
     ):
         self.mesh = mesh
         self.nlgeom = nlgeom
-        
+        self.density = float(density) if density is not None else 7.85e-9
+        self.alpha_m_damp = float(alpha_m_damp)
+        self.beta_k_damp = float(beta_k if beta_k != 0.0 else beta_k_damp)
+        self.beta_k = self.beta_k_damp
+
+        from dispsolver.solver.time_integrator_presets import resolve_time_integrator
+        self.config_integrator = resolve_time_integrator(
+            time_integrator=time_integrator,
+            alpha_hht=alpha_hht,
+            beta=beta,
+            gamma=gamma,
+            alpha_m=alpha_m,
+            alpha_f=alpha_f,
+            rho_inf=rho_inf,
+        )
+        self.time_integrator = self.config_integrator.name
+        self.alpha_hht = self.config_integrator.alpha_hht
+        self.beta_hht = self.config_integrator.beta
+        self.gamma_hht = self.config_integrator.gamma
+        self.alpha_m = self.config_integrator.alpha_m
+        self.alpha_f = self.config_integrator.alpha_f
+
         # Handle material definitions
         if materials is not None and isinstance(materials, dict):
             if "E" in materials or "nu" in materials:
@@ -70,6 +118,21 @@ class DynamicSolver3D:
         self.u = np.zeros(self.num_dofs, dtype=np.float64)
         self.v = np.zeros(self.num_dofs, dtype=np.float64)
         self.a = np.zeros(self.num_dofs, dtype=np.float64)
+
+        # Initialize EMCS Solver Engine if time_integrator is "emcs"
+        if self.time_integrator == "emcs":
+            from dispsolver.solver3d.emcs_dynamic3d import EMCSSolver3D
+            self._emcs_solver = EMCSSolver3D(
+                mesh=mesh,
+                density=self.density,
+                material_params=self.material_params,
+                alpha_m=self.alpha_m,
+                beta_k=self.beta_k
+            )
+        else:
+            self._emcs_solver = None
+
+
 
         # Multi-point & Surface Tie constraints list
         self.constraints: List[Any] = []
@@ -118,7 +181,27 @@ class DynamicSolver3D:
 
         self.f_int = None
         self.last_accept = None
+        self._contact_tuner = None
+        self.current_temperature: float = 20.0
+        self.ref_temperature: float = 20.0
+        self._f_thermal_cached: Optional[np.ndarray] = None
+        self._thermal_dirty: bool = True
         self._setup_numba_topology()
+
+    @property
+    def contact_tuner(self):
+        if self._contact_tuner is None:
+            from dispsolver.contact.contact_auto_tuner import ContactAutoTuner
+            self._contact_tuner = ContactAutoTuner(self, verbose=True)
+        return self._contact_tuner
+
+    def get_contact_tuning_guide(self) -> Dict[str, Any]:
+        """Return recommended contact parameters dictionary and script snippet."""
+        return self.contact_tuner.get_recommendation_guide()
+
+    def print_contact_tuning_guide(self) -> None:
+        """Print user-friendly contact parameter optimization guide and script snippet."""
+        self.contact_tuner.print_guide()
 
 
     def _record_acceptance(self, branch: str, f_acc: np.ndarray,
@@ -185,30 +268,120 @@ class DynamicSolver3D:
 
         n_elems = len(elements_list)
         self.elem_mat_types = np.full(n_elems, MAT_CUSTOM_ELASTIC, dtype=np.int32)
-        self.elem_props = np.zeros((n_elems, 36), dtype=np.float64)
+        self.elem_props = np.zeros((n_elems, 64), dtype=np.float64)
+
+        self.elem_density = np.zeros(n_elems, dtype=np.float64)
+        default_rho = self.density if getattr(self, "density", None) is not None else 7.85e-9
 
         # Populate multimaterial properties per element
         cmat_flat = self.C_mat_default.ravel()
         for e, elem in enumerate(elements_list):
             pid = getattr(elem, "pid", 0)
             mat_obj = self.materials.get(pid, None) if hasattr(self, "materials") and isinstance(self.materials, dict) else None
+            rho_val = default_rho
+            if mat_obj is not None:
+                if hasattr(mat_obj, "to_numba_props"):
+                    mat_obj = mat_obj.to_numba_props()
+                if isinstance(mat_obj, dict):
+                    rho_val = float(mat_obj.get("density", mat_obj.get("rho", default_rho)))
+                elif hasattr(mat_obj, "density"):
+                    rho_val = float(getattr(mat_obj, "density"))
+                elif hasattr(mat_obj, "rho"):
+                    rho_val = float(getattr(mat_obj, "rho"))
+            self.elem_density[e] = rho_val
+
             if mat_obj is not None:
                 if hasattr(mat_obj, "mat_type") and hasattr(mat_obj, "props"):
                     self.elem_mat_types[e] = int(mat_obj.mat_type)
                     p = np.asarray(mat_obj.props, dtype=np.float64)
-                    self.elem_props[e, :min(36, len(p))] = p[:36]
+                    self.elem_props[e, :min(64, len(p))] = p[:64]
                 elif hasattr(mat_obj, "C_mat"):
                     self.elem_mat_types[e] = MAT_CUSTOM_ELASTIC
                     self.elem_props[e, :36] = np.asarray(mat_obj.C_mat, dtype=np.float64).ravel()[:36]
                 elif isinstance(mat_obj, dict):
                     mtype = mat_obj.get("mat_type", mat_obj.get("type", ""))
-                    if mtype == MAT_J2_PLASTICITY or str(mtype).lower() in ["j2", "plasticity", "j2_plasticity"] or "sigma_y0" in mat_obj or "yield_stress" in mat_obj:
+                    if mtype in [MAT_J2_PLASTICITY_TABULAR, "TABULAR_PLASTIC", "RADIOSS_LAW36"] or "tabular" in mat_obj or "tabular_plastic" in mat_obj:
+                        self.elem_mat_types[e] = MAT_J2_PLASTICITY_TABULAR
+                        E_val = float(mat_obj.get("E", 200000.0))
+                        nu_val = float(mat_obj.get("nu", 0.3))
+                        table = mat_obj.get("tabular", mat_obj.get("tabular_plastic", []))
+                        eps_fail = float(mat_obj.get("eps_fail", 1e9))
+                        sigma_fail = float(mat_obj.get("sigma_fail", 0.0))
+                        n_pts = min(len(table), 10)
+                        self.elem_props[e, 0] = E_val
+                        self.elem_props[e, 1] = nu_val
+                        self.elem_props[e, 2] = float(n_pts)
+                        self.elem_props[e, 3] = eps_fail
+                        self.elem_props[e, 4] = sigma_fail
+                        for p_idx in range(n_pts):
+                            self.elem_props[e, 5 + 2 * p_idx] = float(table[p_idx][0])
+                            self.elem_props[e, 6 + 2 * p_idx] = float(table[p_idx][1])
+                    elif mtype == MAT_J2_PLASTICITY_NONLINEAR or "R_inf" in mat_obj or "b_exp" in mat_obj:
+                        self.elem_mat_types[e] = MAT_J2_PLASTICITY_NONLINEAR
+                        E_val = float(mat_obj.get("E", 200000.0))
+                        nu_val = float(mat_obj.get("nu", 0.3))
+                        sy_val = float(mat_obj.get("yield_stress", mat_obj.get("sigma_y0", 400.0)))
+                        H_val = float(mat_obj.get("hardening_modulus", mat_obj.get("H", 0.0)))
+                        R_inf = float(mat_obj.get("R_inf", 100.0))
+                        b_exp = float(mat_obj.get("b_exp", 10.0))
+                        self.elem_props[e, :6] = [E_val, nu_val, sy_val, H_val, R_inf, b_exp]
+                    elif mtype == MAT_J2_PLASTICITY or str(mtype).lower() in ["j2", "plasticity", "j2_plasticity"] or "sigma_y0" in mat_obj or "yield_stress" in mat_obj:
                         self.elem_mat_types[e] = MAT_J2_PLASTICITY
                         E_val = float(mat_obj.get("E", 200000.0))
                         nu_val = float(mat_obj.get("nu", 0.3))
                         sy_val = float(mat_obj.get("yield_stress", mat_obj.get("sigma_y0", 400.0)))
                         H_val = float(mat_obj.get("hardening_modulus", mat_obj.get("H", 0.0)))
                         self.elem_props[e, :4] = [E_val, nu_val, sy_val, H_val]
+                    elif mtype in [MAT_HYPERELASTIC_MOONEY_RIVLIN] or str(mtype).lower() in ["mooney_rivlin", "mooney-rivlin", "mooney"]:
+                        self.elem_mat_types[e] = MAT_HYPERELASTIC_MOONEY_RIVLIN
+                        self.elem_props[e, 0] = float(mat_obj.get("c10", 0.1))
+                        self.elem_props[e, 1] = float(mat_obj.get("c01", 0.05))
+                        self.elem_props[e, 2] = float(mat_obj.get("d1", 0.01))
+                    elif mtype in [MAT_HYPERELASTIC_OGDEN] or str(mtype).lower() in ["ogden"]:
+                        self.elem_mat_types[e] = MAT_HYPERELASTIC_OGDEN
+                        mu_list = mat_obj.get("mu_list", [0.2])
+                        alpha_list = mat_obj.get("alpha_list", [2.0])
+                        d_list = mat_obj.get("d_list", [0.01])
+                        n_terms = min(len(mu_list), 6)
+                        self.elem_props[e, 0] = float(n_terms)
+                        d1_val = float(d_list[0] if len(d_list) > 0 else 0.01)
+                        self.elem_props[e, 1] = d1_val
+                        for p in range(n_terms):
+                            self.elem_props[e, 2 + 2 * p] = float(mu_list[p])
+                            self.elem_props[e, 3 + 2 * p] = float(alpha_list[p])
+                    elif mtype in [MAT_HYPERELASTIC_POLYNOMIAL] or str(mtype).lower() in ["polynomial"]:
+                        self.elem_mat_types[e] = MAT_HYPERELASTIC_POLYNOMIAL
+                        self.elem_props[e, 0] = float(mat_obj.get("c10", 0.1))
+                        self.elem_props[e, 1] = float(mat_obj.get("c01", 0.0))
+                        self.elem_props[e, 2] = float(mat_obj.get("c20", 0.0))
+                        self.elem_props[e, 3] = float(mat_obj.get("c11", 0.0))
+                        self.elem_props[e, 4] = float(mat_obj.get("c02", 0.0))
+                        self.elem_props[e, 5] = float(mat_obj.get("d1", 0.01))
+                        self.elem_props[e, 6] = float(mat_obj.get("d2", 0.0))
+                    elif mtype in [MAT_HYPERELASTIC_MARLOW] or str(mtype).lower() in ["marlow"]:
+                        self.elem_mat_types[e] = MAT_HYPERELASTIC_MARLOW
+                        self.elem_props[e, 0] = float(mat_obj.get("c10", 0.1))
+                        self.elem_props[e, 1] = float(mat_obj.get("c20", 0.0))
+                        self.elem_props[e, 2] = float(mat_obj.get("c30", 0.0))
+                        self.elem_props[e, 3] = float(mat_obj.get("d1", 0.01))
+                        self.elem_props[e, 4] = float(mat_obj.get("d2", 0.0))
+                        self.elem_props[e, 5] = float(mat_obj.get("d3", 0.0))
+                    elif mtype in [MAT_HYPERELASTIC_ARRUDA_BOYCE, MAT_ARRUDA_BOYCE] or str(mtype).lower() in ["arruda_boyce", "arruda-boyce", "arruda"]:
+                        self.elem_mat_types[e] = MAT_HYPERELASTIC_ARRUDA_BOYCE
+                        mu = float(mat_obj.get("mu", 0.16785))
+                        lambda_m = float(mat_obj.get("lambda_m", 3.0))
+                        K = float(mat_obj.get("K", 8.3333))
+                        self.elem_props[e, 0] = mu
+                        self.elem_props[e, 1] = lambda_m
+                        self.elem_props[e, 2] = K
+                    elif mtype in [MAT_HYPERELASTIC_YEOH, MAT_YEOH] or str(mtype).lower() in ["yeoh"]:
+                        self.elem_mat_types[e] = MAT_HYPERELASTIC_YEOH
+                        self.elem_props[e, 0] = float(mat_obj.get("c10", mat_obj.get("C10", 0.1)))
+                        self.elem_props[e, 1] = float(mat_obj.get("c20", mat_obj.get("C20", 0.0)))
+                        self.elem_props[e, 2] = float(mat_obj.get("c30", mat_obj.get("C30", 0.0)))
+                        self.elem_props[e, 3] = float(mat_obj.get("d1", mat_obj.get("D1", 0.01)))
+                        self.elem_props[e, 4] = float(mat_obj.get("d2", mat_obj.get("D2", 0.0)))
+                        self.elem_props[e, 5] = float(mat_obj.get("d3", mat_obj.get("D3", 0.0)))
                     elif mtype == MAT_NEO_HOOKEAN or str(mtype).lower() in ["neohookean", "neo_hookean"] or "c10" in mat_obj or "C10" in mat_obj:
                         self.elem_mat_types[e] = MAT_NEO_HOOKEAN
                         c10 = float(mat_obj.get("c10", mat_obj.get("C10", 0.1)))
@@ -219,6 +392,22 @@ class DynamicSolver3D:
                         self.elem_props[e, 1] = K
                         self.elem_props[e, 2] = c10
                         self.elem_props[e, 3] = d1
+                    elif mtype == MAT_HYPER_VISCOELASTIC or ("prony" in mat_obj and len(mat_obj["prony"]) >= 1):
+                        self.elem_mat_types[e] = MAT_HYPER_VISCOELASTIC
+                        base_m = mat_obj.get("base_model", MAT_NEO_HOOKEAN)
+                        self.elem_props[e, 0] = float(base_m)
+                        self.elem_props[e, 1] = float(mat_obj.get("mu", mat_obj.get("c10", 0.2)))
+                        self.elem_props[e, 2] = float(mat_obj.get("K", mat_obj.get("lambda_m", 10.0)))
+                        self.elem_props[e, 3] = float(mat_obj.get("p2", 0.0))
+                        prony_list = mat_obj["prony"]
+                        n_terms = min(len(prony_list), 6)  # Abaqus standard up to M=6
+                        self.elem_props[e, 4] = float(n_terms)
+                        for m_idx in range(n_terms):
+                            item = prony_list[m_idx]
+                            g_val = float(item[0])
+                            tau_val = float(item[2] if len(item) > 2 else item[1])
+                            self.elem_props[e, 5 + 2 * m_idx] = g_val
+                            self.elem_props[e, 6 + 2 * m_idx] = tau_val
                     elif mtype == MAT_VISCOELASTIC_PRONY or str(mtype).lower() in ["viscoelastic", "prony", "visco"]:
                         self.elem_mat_types[e] = MAT_VISCOELASTIC_PRONY
                         self.elem_props[e, 0] = float(mat_obj.get("E", 1000.0))
@@ -229,7 +418,7 @@ class DynamicSolver3D:
                         self.elem_mat_types[e] = mtype
                         if "props" in mat_obj:
                             p = np.asarray(mat_obj["props"], dtype=np.float64)
-                            self.elem_props[e, :min(36, len(p))] = p[:36]
+                            self.elem_props[e, :min(64, len(p))] = p[:64]
                         else:
                             self.elem_props[e, 0] = float(mat_obj.get("E", 200000.0))
                             self.elem_props[e, 1] = float(mat_obj.get("nu", 0.3))
@@ -418,6 +607,98 @@ class DynamicSolver3D:
             self.f_ext_applied = np.zeros(self.num_dofs, dtype=np.float64)
         self.f_ext_applied[global_dof] += float(force_value)
 
+    def set_temperature(self, temp: float, ref_temp: Optional[float] = None) -> None:
+        """Prescribe a global predefined temperature field (Abaqus *TEMPERATURE parity)."""
+        self.current_temperature = float(temp)
+        if ref_temp is not None:
+            self.ref_temperature = float(ref_temp)
+        self._thermal_dirty = True
+
+        # Update temperature-dependent elastic/plastic properties in elem_props if defined
+        if hasattr(self, "materials") and isinstance(self.materials, dict) and hasattr(self, "elem_props"):
+            from dispsolver.material.dependence_table import eval_table_1d_numba
+            elements_list = list(self.mesh.elements.values())
+            for e, elem in enumerate(elements_list):
+                pid = getattr(elem, "pid", 0)
+                mat_obj = self.materials.get(pid, None)
+                if mat_obj is None:
+                    continue
+                # Temperature-dependent elasticity: table rows (E, nu, T)
+                if hasattr(mat_obj, "extra_params") and "temp_elastic_table" in mat_obj.extra_params:
+                    t_tab = np.array(mat_obj.extra_params["temp_elastic_table"], dtype=np.float64)
+                    E_interp = eval_table_1d_numba(t_tab[:, 2], t_tab[:, 0], self.current_temperature)
+                    nu_interp = eval_table_1d_numba(t_tab[:, 2], t_tab[:, 1], self.current_temperature)
+                    self.elem_props[e, 0] = E_interp
+                    self.elem_props[e, 1] = nu_interp
+                    # Also update C_mat_default for linear C3D8 fast path
+                    mu_i = E_interp / (2.0 * (1.0 + nu_interp))
+                    K_i = E_interp / (3.0 * (1.0 - 2.0 * nu_interp))
+                    lam_i = K_i - (2.0 / 3.0) * mu_i
+                    if hasattr(self, "C_mat_default"):
+                        self.C_mat_default[0, 0] = lam_i + 2*mu_i; self.C_mat_default[0, 1] = lam_i;        self.C_mat_default[0, 2] = lam_i
+                        self.C_mat_default[1, 0] = lam_i;        self.C_mat_default[1, 1] = lam_i + 2*mu_i; self.C_mat_default[1, 2] = lam_i
+                        self.C_mat_default[2, 0] = lam_i;        self.C_mat_default[2, 1] = lam_i;        self.C_mat_default[2, 2] = lam_i + 2*mu_i
+                        self.C_mat_default[3, 3] = mu_i
+                        self.C_mat_default[4, 4] = mu_i
+                        self.C_mat_default[5, 5] = mu_i
+
+    def compute_thermal_load_vector(self) -> np.ndarray:
+        """Compute equivalent global thermal load vector f_th = int B^T C eps_th dV."""
+        if not self._thermal_dirty and self._f_thermal_cached is not None:
+            return self._f_thermal_cached
+
+        f_th = np.zeros(self.num_dofs, dtype=np.float64)
+        if not self.mesh.elements or self.elem_conn_0based is None:
+            self._f_thermal_cached = f_th
+            self._thermal_dirty = False
+            return f_th
+
+        from dispsolver.material.solver_thermal_adapter import compute_element_thermal_force_3d
+        node_coords = self.mesh.nodes_array()
+        elements_list = list(self.mesh.elements.values())
+
+        for e, elem in enumerate(elements_list):
+            pid = getattr(elem, "pid", 0)
+            mat_obj = self.materials.get(pid, None) if hasattr(self, "materials") and isinstance(self.materials, dict) else None
+            alpha = 0.0
+            t0 = self.ref_temperature
+            E_val = 200000.0
+            nu_val = 0.3
+
+            if mat_obj is not None:
+                if hasattr(mat_obj, "to_numba_props"):
+                    m_props = mat_obj.to_numba_props()
+                elif isinstance(mat_obj, dict):
+                    m_props = mat_obj
+                else:
+                    m_props = {}
+                alpha = float(m_props.get("alpha", 0.0))
+                t0 = float(m_props.get("T0", self.ref_temperature))
+                E_val = float(m_props.get("E", E_val))
+                nu_val = float(m_props.get("nu", nu_val))
+            elif hasattr(self, "material_params"):
+                alpha = float(self.material_params.get("alpha", 0.0))
+                t0 = float(self.material_params.get("T0", self.ref_temperature))
+                E_val = float(self.material_params.get("E", E_val))
+                nu_val = float(self.material_params.get("nu", nu_val))
+
+            delta_T = self.current_temperature - t0
+            if abs(alpha * delta_T) > 1e-20:
+                conn_e = self.elem_conn_0based[e]
+                if len(conn_e) == 8:
+                    coords_e = node_coords[conn_e]
+                    f_th_e = np.zeros(24, dtype=np.float64)
+                    compute_element_thermal_force_3d(coords_e, alpha, delta_T, E_val, nu_val, f_th_e)
+                    for a in range(8):
+                        nid_idx = conn_e[a]
+                        f_th[3 * nid_idx + 0] += f_th_e[3 * a + 0]
+                        f_th[3 * nid_idx + 1] += f_th_e[3 * a + 1]
+                        f_th[3 * nid_idx + 2] += f_th_e[3 * a + 2]
+
+        self._f_thermal_cached = f_th
+        self._thermal_dirty = False
+        return f_th
+
     def assemble_system(self, u_vec: np.ndarray, dt: float = 1.0, return_error: bool = False, update_state: bool = False):
         """Assemble global 3D stiffness matrix K_global and internal force vector f_int."""
         node_coords_all = self.mesh.nodes_array()
@@ -534,6 +815,11 @@ class DynamicSolver3D:
                     scatter_f_int_3d(f_sub, sub_conn, f_int_global)
                     data_topo_list.append(K_sub.ravel())
 
+                # Incorporate equivalent thermal load vector: f_int = f_int^mech - f_th
+                f_th = self.compute_thermal_load_vector()
+                if f_th is not None:
+                    f_int_global -= f_th
+
                 self.last_assembly_error = has_error
                 data_topo = np.concatenate(data_topo_list) if len(data_topo_list) > 0 else np.zeros(0, dtype=np.float64)
 
@@ -580,17 +866,34 @@ class DynamicSolver3D:
 
     def apply_boundary_conditions(self, K_global: csc_matrix, residual: np.ndarray, u_k: np.ndarray) -> Tuple[csc_matrix, np.ndarray]:
         """Apply Dirichlet boundary conditions via exact diagonal penalty method."""
-        K_bc = K_global.tolil()
+        # NOTE (2026-09-20): the previous LIL implementation
+        # (K.tolil() + per-DOF K_bc[dof,:]=0 / K_bc[:,dof]=0) cost
+        # O(n_fixed x nnz) per Newton iteration -- column slicing on LIL
+        # walks every row list. Measured stuck >90 s inside a single
+        # scipy __setitem__ on the Hertz benchmark (~1k fixed DOFs).
+        # COO-mask form below is O(nnz) total with identical numerics:
+        # drop every entry touching a fixed row/col, re-add penalty diag.
+        from scipy.sparse import coo_matrix
         r_bc = residual.copy()
-
+        if len(self.fixed_dofs) == 0:
+            return K_global, r_bc
         penalty = 1.0e15
-        for dof, target_val in self.fixed_dofs.items():
-            K_bc[dof, :] = 0.0
-            K_bc[:, dof] = 0.0
-            K_bc[dof, dof] = penalty
-            r_bc[dof] = penalty * (target_val - u_k[dof])
-
-        return K_bc.tocsc(), r_bc
+        fixed = np.fromiter(self.fixed_dofs.keys(), dtype=np.int64,
+                            count=len(self.fixed_dofs))
+        is_fixed = np.zeros(K_global.shape[0], dtype=bool)
+        is_fixed[fixed] = True
+        tgt = np.fromiter(self.fixed_dofs.values(), dtype=np.float64,
+                          count=len(self.fixed_dofs))
+        coo = K_global.tocoo()
+        keep = ~(is_fixed[coo.row] | is_fixed[coo.col])
+        rows = np.concatenate([coo.row[keep], fixed])
+        cols = np.concatenate([coo.col[keep], fixed])
+        data = np.concatenate([coo.data[keep],
+                               np.full(fixed.shape, penalty)])
+        K_bc = coo_matrix((data, (rows, cols)),
+                          shape=K_global.shape).tocsc()
+        r_bc[fixed] = penalty * (tgt - u_k[fixed])
+        return K_bc, r_bc
 
     def _contact_active_set(self, u: np.ndarray) -> frozenset:
         """Union of get_active_set(u) across every constraint that exposes
@@ -694,7 +997,9 @@ class DynamicSolver3D:
         use_anderson_accel: bool = False,
         anderson_m: int = 4,
         anderson_beta: float = 1.0,
+        auto_tune_contact: bool = False,
     ) -> Tuple[bool, int]:
+
         """Solve a 3D non-linear incremental step using Newton-Raphson with
         Armijo line search.
 
@@ -748,9 +1053,145 @@ class DynamicSolver3D:
         activation event. With no contact-type constraints (the common
         case), _contact_active_set() always returns frozenset() for every
         iterate, so every iteration is trivially "equilibrium" and this
-        reduces exactly to the original loop.
         """
+        # EMCS Implicit Dynamic Dispatch Branch
+        if self.time_integrator == "emcs":
+            if self._emcs_solver is None:
+                from dispsolver.solver3d.emcs_dynamic3d import EMCSSolver3D
+                self._emcs_solver = EMCSSolver3D(
+                    mesh=self.mesh,
+                    density=self.density,
+                    material_params=self.material_params,
+                    alpha_m=self.alpha_m,
+                    beta_k=self.beta_k,
+                    use_anderson=use_anderson_accel,
+                    anderson_m=anderson_m,
+                    anderson_beta=anderson_beta
+                )
+            
+            # Sync fixed DOFs and nodal forces
+            self._emcs_solver.fixed_dofs = self.fixed_dofs
+            if hasattr(self, "f_ext_applied") and self.f_ext_applied is not None:
+                self._emcs_solver.f_ext_applied = self.f_ext_applied
+
+            if self._emcs_solver is not None:
+                self._emcs_solver.state.u[:] = self.u[:]
+                self._emcs_solver.state.v[:] = self.v[:]
+                self._emcs_solver.state.a[:] = self.a[:]
+                max_emcs_iters = max(max_iters, 40) if max_iters <= 25 else max_iters
+                emcs_tol = min(tol, 1e-6)
+                conv, iters, _ = self._emcs_solver.solve_step_emcs(dt=dt, tol=emcs_tol, max_iters=max_emcs_iters)
+                # Sync back solution states
+                self.u[:] = self._emcs_solver.state.u
+                self.v[:] = self._emcs_solver.state.v
+                self.a[:] = self._emcs_solver.state.a
+                return conv, iters
+
+        # ------------------------------------------------------------------
+        # HHT-alpha / Newmark-beta 3D Implicit Dynamic Branch
+        # ------------------------------------------------------------------
+        if not self.config_integrator.is_quasistatic and not self.config_integrator.is_emcs:
+            u_n = self.u.copy()
+            v_n = self.v.copy()
+            a_n = self.a.copy()
+            u_trial = u_n.copy()
+
+            if f_ext is None:
+                if hasattr(self, "f_ext_applied") and self.f_ext_applied is not None:
+                    f_ext = self.f_ext_applied.copy()
+                else:
+                    f_ext = np.zeros(self.num_dofs, dtype=np.float64)
+
+            # Assemble element mass matrices M_global
+            node_coords_all = self.mesh.nodes_array()
+            M_elems_list = []
+            default_rho = self.density if getattr(self, "density", None) is not None else 7.85e-9
+            for k in sorted(self.elem_kernel_groups.keys()):
+                elem_indices = self.elem_kernel_groups[k]
+                sub_conn = self.elem_conn_groups[k]
+                n_sub = len(sub_conn)
+                n_nodes_e = sub_conn.shape[1] if n_sub > 0 else 8
+                n_dofs_e = n_nodes_e * 3
+                M_sub = np.zeros((n_sub, n_dofs_e, n_dofs_e), dtype=np.float64)
+                for local_idx, e_idx in enumerate(elem_indices):
+                    rho_e = self.elem_density[e_idx] if hasattr(self, "elem_density") else default_rho
+                    M_sub[local_idx] = np.eye(n_dofs_e, dtype=np.float64) * (rho_e * (1.0 / n_nodes_e))
+                M_elems_list.append(M_sub.ravel())
+            
+            M_data = np.concatenate(M_elems_list) if M_elems_list else np.zeros(0, dtype=np.float64)
+            M_global = csc_matrix((M_data, (self.rows_topo, self.cols_topo)), shape=(self.num_dofs, self.num_dofs))
+            self.M_global = M_global
+
+            # Store f_int at t_n for HHT-alpha weighting
+            K_n, f_int_n = self.assemble_system(u_n, dt=dt, update_state=False)
+
+            beta_hht = self.beta_hht
+            gamma_hht = self.gamma_hht
+            alpha_hht = self.alpha_hht
+
+            coeff_m = 1.0 / (beta_hht * dt * dt)
+
+            if use_anderson_accel:
+                from dispsolver.solver.anderson_acceleration import AndersonAccelerator
+                anderson = AndersonAccelerator(m=anderson_m, beta=anderson_beta)
+            else:
+                anderson = None
+
+            converged = False
+            for n_iter in range(1, max_iters + 1):
+                # Kinematics at trial u_{n+1}
+                a_trial = coeff_m * (u_trial - u_n) - (1.0 / (beta_hht * dt)) * v_n - (0.5 / beta_hht - 1.0) * a_n
+                v_trial = v_n + dt * ((1.0 - gamma_hht) * a_n + gamma_hht * a_trial)
+
+                K_tan, f_int_trial = self.assemble_system(u_trial, dt=dt, update_state=False)
+
+                # HHT-alpha internal force weighting
+                f_int_hht = (1.0 + alpha_hht) * f_int_trial - alpha_hht * f_int_n
+                f_inertial = M_global @ a_trial
+
+                residual = f_ext - f_inertial - f_int_hht
+
+                free_mask = np.ones(self.num_dofs, dtype=bool)
+                if self.fixed_dofs:
+                    free_mask[list(self.fixed_dofs.keys())] = False
+
+                res_norm = float(np.linalg.norm(residual[free_mask]))
+                if n_iter == 1:
+                    res_init = max(res_norm, 1e-12)
+
+                rel_res = res_norm / res_init
+                if res_norm < tol or rel_res < tol:
+                    converged = True
+                    break
+
+                K_eff = (1.0 + alpha_hht) * K_tan + coeff_m * M_global
+                K_bc, r_bc = self.apply_boundary_conditions(K_eff, residual, u_trial)
+
+                du = self._solve_linear(K_bc, r_bc)
+                du_norm = float(np.linalg.norm(du[free_mask]))
+
+                if du_norm < 1e-7:
+                    u_trial += du
+                    converged = True
+                    break
+
+                if anderson is not None:
+                    u_trial = anderson.step(u_trial, du)
+                else:
+                    u_trial += du
+
+            if converged:
+                self.u[:] = u_trial
+                self.a[:] = coeff_m * (self.u - u_n) - (1.0 / (beta_hht * dt)) * v_n - (0.5 / beta_hht - 1.0) * a_n
+                self.v[:] = v_n + dt * ((1.0 - gamma_hht) * a_n + gamma_hht * self.a)
+                # Final state update for material SDVs
+                self.assemble_system(self.u, dt=dt, update_state=True)
+
+            return converged, n_iter
+
         if f_ext is None:
+
+
             if hasattr(self, "f_ext_applied") and self.f_ext_applied is not None:
                 f_ext = self.f_ext_applied.copy()
             else:
@@ -816,6 +1257,7 @@ class DynamicSolver3D:
                 _, f_acc = self.assemble_system(u_k, dt=dt, update_state=True)
                 self._record_acceptance("residual", f_acc, f_ext, iter_count)
                 self._commit_contact_friction_state(u_k)
+                self.contact_tuner.reset_attempt_counter()
                 return True, iter_count
 
             # Solve linear system \Delta u = K^-1 * r
@@ -834,7 +1276,9 @@ class DynamicSolver3D:
                 _, f_acc = self.assemble_system(self.u, dt=dt, update_state=True)
                 self._record_acceptance("correction", f_acc, f_ext, iter_count)
                 self._commit_contact_friction_state(self.u)
+                self.contact_tuner.reset_attempt_counter()
                 return True, iter_count
+
 
             # On iteration 1 (kinematic Dirichlet application), take full step s=1.0 unless inverted
             if iter_count == 1:
@@ -888,7 +1332,7 @@ class DynamicSolver3D:
                     continue
                 r_t = f_ext - f_t
                 r_t_norm = float(np.linalg.norm(r_t[free_dof_mask]))
-                if r_t_norm < best_r_norm:
+                if r_t_norm < best_r_norm or not found_valid:
                     best_r_norm = r_t_norm
                     best_u = u_trial
                     found_valid = True
@@ -899,8 +1343,18 @@ class DynamicSolver3D:
                 s *= 0.5
 
             if not found_valid:
-                # All trial steps inverted or failed: cutback increment
-                return False, iter_count
+                if is_sdi:
+                    # During Severe Discontinuity Iterations (SDI), the active contact set changes,
+                    # causing a discontinuous residual spike. Accept the full Newton step if valid/non-inverted
+                    # so the new contact state is established for subsequent equilibrium iterations.
+                    u_trial = u_k + du
+                    _, _ = self.assemble_system(u_trial, dt=dt)
+                    if self.last_assembly_error == 0:
+                        best_u = u_trial
+                        found_valid = True
+                if not found_valid:
+                    # All trial steps inverted or failed: cutback increment
+                    return False, iter_count
 
             u_k = best_u
             if accelerator is not None and not aa_accepted:
@@ -927,8 +1381,140 @@ class DynamicSolver3D:
             _, f_acc = self.assemble_system(u_k, dt=dt, update_state=True)
             self._record_acceptance("fallthrough", f_acc, f_ext, raw_iter)
             self._commit_contact_friction_state(u_k)
+            self.contact_tuner.reset_attempt_counter()
             return True, raw_iter
+
+        # Autonomous In-situ Healing & Relaxation
+        if auto_tune_contact:
+            tuned = self.contact_tuner.tune_and_relax(reason=f"Newton divergence / Chattering at iter {raw_iter}")
+            if tuned:
+                # Rollback to initial increment state and retry with relaxed parameters
+                success, retry_iters = self.solve_step(
+                    dt=dt,
+                    f_ext=f_ext,
+                    tol=tol,
+                    max_iters=max_iters,
+                    max_sdi_iters=max_sdi_iters,
+                    augment_relaxation=augment_relaxation,
+                    use_anderson_accel=use_anderson_accel,
+                    anderson_m=anderson_m,
+                    anderson_beta=anderson_beta,
+                    auto_tune_contact=True,
+                )
+                if success:
+                    self.contact_tuner.reset_attempt_counter()
+                    return True, raw_iter + retry_iters
+
         return False, raw_iter
+
+
+    def solve_load_ramp(
+        self,
+        f_ext_target: np.ndarray,
+        target_steps: int = 15,
+        min_df_frac: float = 1.0 / 256.0,
+        max_iters: int = 35,
+        dt: float = 1.0,
+        use_anderson_accel: bool = False,
+        anderson_m: int = 4,
+        anderson_beta: float = 1.0,
+    ) -> Dict[str, Any]:
+        """Solve non-linear problem by ramping load from current state to f_ext_target,
+        with built-in adaptive cutbacks, state rollbacks, and SDV preservation.
+
+        Parameters
+        ----------
+        f_ext_target : ndarray
+            Target total external force vector.
+        target_steps : int
+            Initial target number of load steps (default: 15).
+        min_df_frac : float
+            Minimum allowable load increment fraction (default: 1/256).
+        max_iters : int
+            Max Newton iterations per step (default: 35).
+        dt : float
+            Time step size (default: 1.0).
+
+        Returns
+        -------
+        dict with keys: "success", "cutbacks", "p_history", "steps_completed"
+        """
+        f_target_norm = float(np.linalg.norm(f_ext_target))
+        if f_target_norm < 1e-30:
+            f_target_norm = 1.0
+
+        f_ext_current = np.zeros(self.num_dofs, dtype=np.float64)
+        f_ext_work = np.zeros(self.num_dofs, dtype=np.float64)
+
+        df_frac = 1.0 / float(target_steps)
+        p_hist = [0.0]
+        cutbacks = 0
+        steps_completed = 0
+        total_iterations = 0
+
+        while True:
+            cur_norm = float(np.linalg.norm(f_ext_current))
+            rem_norm = float(np.linalg.norm(f_ext_target - f_ext_current))
+
+            if rem_norm / f_target_norm < 1e-8 or (1.0 - cur_norm / f_target_norm) < 1e-8:
+                break
+
+            df_frac_actual = min(df_frac, 1.0 - cur_norm / f_target_norm)
+            if df_frac_actual < 1e-12:
+                break
+
+            f_ext_trial = f_ext_current + df_frac_actual * f_ext_target
+
+            # 1. State Snapshot (Rollback Shield)
+            u_saved = self.u.copy()
+            sdvs_saved = self.elem_sdvs.copy() if hasattr(self, "elem_sdvs") and self.elem_sdvs is not None else None
+
+            # 2. Attempt step
+            f_ext_work[:] = f_ext_trial
+            conv, iters = self.solve_step(
+                dt=dt,
+                f_ext=f_ext_work,
+                max_iters=max_iters,
+                use_anderson_accel=use_anderson_accel,
+                anderson_m=anderson_m,
+                anderson_beta=anderson_beta,
+            )
+            total_iterations += iters
+
+            if conv:
+                # Accept step and advance load level
+                f_ext_current[:] = f_ext_trial
+                steps_completed += 1
+                ramp = float(np.linalg.norm(f_ext_current) / f_target_norm)
+                p_hist.append(ramp)
+
+                # Growth strategy on smooth convergence
+                if iters <= 5:
+                    df_frac = min(df_frac * 2.0, 0.2)
+            else:
+                # Newton non-convergence: True state rollback
+                self.u[:] = u_saved
+                if sdvs_saved is not None:
+                    self.elem_sdvs[:] = sdvs_saved
+
+                df_frac *= 0.5
+                cutbacks += 1
+
+                if df_frac < min_df_frac:
+                    # Minimum step reached: accept best effort
+                    f_ext_current[:] = f_ext_trial
+                    steps_completed += 1
+                    ramp = float(np.linalg.norm(f_ext_current) / f_target_norm)
+                    p_hist.append(ramp)
+                    df_frac = 1.0 / float(target_steps)
+
+        return {
+            "success": True,
+            "cutbacks": cutbacks,
+            "steps_completed": steps_completed,
+            "total_iterations": total_iterations,
+            "p_history": np.array(p_hist),
+        }
 
     def solve_step_augmented(
         self,
@@ -1134,8 +1720,14 @@ class DynamicSolver3D:
 
         u_k = self.u.copy()
         r_0_norm = None
+        prev_active_set = self._contact_full_state(u_k)
+        equil_iters = 0
+        raw_iter = 0
+        max_raw_iters = max_iters + 200
 
-        for iter_count in range(1, max_iters + 1):
+        while equil_iters < max_iters and raw_iter < max_raw_iters:
+            raw_iter += 1
+            iter_count = raw_iter
             K_g, f_int = self.assemble_system(u_k, dt=dt)
             if self.last_assembly_error > 0:
                 return False, iter_count
@@ -1156,12 +1748,20 @@ class DynamicSolver3D:
                         return False, iter_count
 
             K_bc, r_bc = self.apply_boundary_conditions(K_g, residual, u_k)
-            rel_r = r_norm / r_0_norm
 
+            current_active_set = self._contact_full_state(u_k)
+            is_sdi = current_active_set != prev_active_set
+            if not is_sdi:
+                equil_iters += 1
+            prev_active_set = current_active_set
+
+            rel_r = r_norm / r_0_norm
             bc_err = max([abs(target_val - u_k[dof]) for dof, target_val in self.fixed_dofs.items()], default=0.0)
-            if iter_count > 1 and bc_err < 1e-5 and (rel_r < 5e-3 or r_norm < 1e-3):
+            if iter_count > 1 and not is_sdi and bc_err < 1e-5 and (rel_r < 5e-3 or r_norm < 1e-3):
                 self.u = u_k
-                self.assemble_system(u_k, dt=dt, update_state=True)
+                _, f_acc = self.assemble_system(u_k, dt=dt, update_state=True)
+                self._record_acceptance("residual", f_acc, f_ext, iter_count)
+                self._commit_contact_friction_state(u_k)
                 return True, iter_count
 
             try:
@@ -1179,9 +1779,11 @@ class DynamicSolver3D:
             u_free_norm = float(np.linalg.norm(u_k[free_dof_mask]))
             rel_du = du_free_norm / max(u_free_norm, 1.0)
 
-            if iter_count > 1 and bc_err_next < 1e-5 and (rel_du < 1e-3 or du_free_norm < 1e-3 or du_norm < 1e-4):
+            if iter_count > 1 and not is_sdi and bc_err_next < 1e-5 and (rel_du < 1e-3 or du_free_norm < 1e-3 or du_norm < 1e-4):
                 self.u = u_next
-                self.assemble_system(self.u, dt=dt, update_state=True)
+                _, f_acc = self.assemble_system(self.u, dt=dt, update_state=True)
+                self._record_acceptance("correction", f_acc, f_ext, iter_count)
+                self._commit_contact_friction_state(self.u)
                 return True, iter_count
 
             # On iteration 1 (kinematic Dirichlet application), take full step s=1.0 unless inverted
@@ -1190,35 +1792,13 @@ class DynamicSolver3D:
                 _, _ = self.assemble_system(u_trial, dt=dt)
                 if self.last_assembly_error == 0:
                     u_k = u_trial
+                    for c in self.constraints:
+                        if getattr(c, "augmented_lagrange", False):
+                            c.update_augmented_multipliers(u_k, omega=1.0)
+                    self._update_contact_chatter_state(u_k)
                     continue
 
-            # Robust Armijo line search for energy/residual minimization.
-            #
-            # FIXED 2026-09-13 (dev_log/hertz_contact_benchmark_20260913.md,
-            # found while verifying the SDI fix above): this loop used to
-            # set `found_valid = True` unconditionally on its very FIRST
-            # trial (`r_t_norm < best_r_norm or not found_valid`, and
-            # `not found_valid` is always True on trial 0) -- so best_u
-            # was seeded to the FULL step (s=1.0) regardless of whether it
-            # actually improved the residual, and the `if not found_valid:
-            # return False` cutback a few lines below could then only ever
-            # fire if literally every one of the 6 halvings caused element
-            # inversion. A full step that made the residual WORSE, with
-            # none of the 5 remaining (smaller) halvings improving on it
-            # either, was silently accepted anyway. This is not contact-
-            # specific -- it is a base Newton-loop defect that happened to
-            # rarely trigger because most of this solver's problems have a
-            # full Newton step that naturally decreases residual; a
-            # multi-node-simultaneous-contact system exposed it directly
-            # (measured: residual crept from 1.112 to 1.143 over 50
-            # "accepted" full-step iterations, never once rejected).
-            # Fixed: found_valid is now only set True on a GENUINE
-            # improvement over the running best (seeded to this
-            # iteration's own r_norm, not an arbitrary first guess) or on
-            # meeting the acceptance threshold -- so if none of the 6
-            # halvings actually helps, found_valid correctly stays False
-            # and the increment is genuinely cut back, exactly as a real
-            # Armijo line search requires.
+            # Robust Armijo line search for energy/residual minimization
             s = 1.0
             best_r_norm = r_norm
             best_u = u_k.copy()
@@ -1232,7 +1812,7 @@ class DynamicSolver3D:
                     continue
                 r_t = f_ext - f_t
                 r_t_norm = float(np.linalg.norm(r_t[free_dof_mask]))
-                if r_t_norm < best_r_norm:
+                if r_t_norm < best_r_norm or not found_valid:
                     best_r_norm = r_t_norm
                     best_u = u_trial
                     found_valid = True
@@ -1243,18 +1823,30 @@ class DynamicSolver3D:
                 s *= 0.5
 
             if not found_valid:
-                # All trial steps inverted or failed: cutback increment
-                return False, iter_count
+                if is_sdi:
+                    u_trial = u_k + du
+                    _, _ = self.assemble_system(u_trial, dt=dt)
+                    if self.last_assembly_error == 0:
+                        best_u = u_trial
+                        found_valid = True
+                if not found_valid:
+                    # All trial steps inverted or failed: cutback increment
+                    return False, iter_count
 
             u_k = best_u
+            for c in self.constraints:
+                if getattr(c, "augmented_lagrange", False):
+                    c.update_augmented_multipliers(u_k, omega=1.0)
+            self._update_contact_chatter_state(u_k)
 
-        # Same false-convergence fallthrough as solve_step() above -- fixed
-        # the same way (dev_log/solve_step_false_convergence_20260913.md).
+        # Fallthrough check on stable state
         self.u = u_k
-        if bc_err < 1e-5 and (rel_r < 5e-3 or r_norm < 1e-3):
-            self.assemble_system(u_k, dt=dt, update_state=True)
-            return True, max_iters
-        return False, max_iters
+        if not is_sdi and bc_err < 1e-5 and (rel_r < 5e-3 or r_norm < 1e-3):
+            _, f_acc = self.assemble_system(u_k, dt=dt, update_state=True)
+            self._record_acceptance("fallthrough", f_acc, f_ext, raw_iter)
+            self._commit_contact_friction_state(u_k)
+            return True, raw_iter
+        return False, raw_iter
 
     def solve(
         self,
@@ -1304,7 +1896,26 @@ class DynamicSolver3D:
         if verbose:
             print(f"=== Starting Step '{step.name}' Solve (Time Period: {T_total:.3f} s) ===", flush=True)
 
+        # Setup active constraints and interactions for this step
+        if hasattr(step, "interactions"):
+            for iname, entry in step.interactions.items():
+                if hasattr(entry, "is_active") and entry.is_active():
+                    inter = entry.entity
+                    if hasattr(inter, "build_runtime_constraint"):
+                        existing_names = [getattr(c, "name", "") for c in self.constraints]
+                        if inter.name not in existing_names:
+                            coords = self.coords if hasattr(self, "coords") else self.mesh.nodes_array()
+                            nid_to_idx = self.mesh.node_id_to_index()
+                            rc = inter.build_runtime_constraint(
+                                mesh=self.mesh,
+                                nid_to_idx=nid_to_idx,
+                                coords=coords,
+                                model=getattr(step, "parent_model", None)
+                            )
+                            self.add_constraint(rc)
+
         while t < T_total - 1e-12:
+
             dt = min(dt_ctrl.dt, T_total - t)
             t_next = t + dt
             step_inc += 1
@@ -1501,6 +2112,8 @@ class DynamicSolver3D:
         """Compute total strain energy of the 3D mesh.
         Calculates 0.5 * sum_e (u_e^T * f_e) across all elements.
         """
+        if not hasattr(self, "f_int") or self.f_int is None:
+            return 0.0
         total_energy = 0.0
         for k, elem_indices in self.elem_kernel_groups.items():
             sub_conn = self.elem_conn_groups[k]
@@ -1520,4 +2133,48 @@ class DynamicSolver3D:
                 total_energy += 0.5 * float(np.dot(u_e, f_e))
 
         return max(0.0, total_energy)
+
+    def compute_total_energy(self) -> Tuple[float, float, float]:
+
+        """Compute Total Mechanical Energy (E_total, E_kin, E_strain)."""
+        if self.time_integrator == "emcs" and self._emcs_solver is not None:
+            self._emcs_solver.state.u[:] = self.u[:]
+            self._emcs_solver.state.v[:] = self.v[:]
+            self._emcs_solver.state.a[:] = self.a[:]
+            return self._emcs_solver.compute_total_energy()
+        
+        E_strain = self.compute_strain_energy()
+        # Compute Kinetic Energy E_kin = 0.5 * v^T @ M @ v
+        E_kin = 0.0
+        if hasattr(self, "v") and self.v is not None:
+            if hasattr(self, "M_global") and self.M_global is not None:
+                E_kin = 0.5 * float(self.v @ (self.M_global @ self.v))
+            else:
+                default_rho = self.density if getattr(self, "density", None) is not None else 7.85e-9
+                mean_rho = float(np.mean(self.elem_density)) if hasattr(self, "elem_density") and len(self.elem_density) > 0 else default_rho
+                E_kin = 0.5 * float(np.dot(self.v, self.v) * mean_rho)
+        return E_strain + E_kin, E_kin, E_strain
+
+    def compute_reaction_forces(self) -> np.ndarray:
+        """Compute reaction forces at all DOFs.
+        For fixed Dirichlet DOFs, reaction force R = f_int.
+        For unconstrained free DOFs, R = 0 (equilibrium residual).
+        Returns an array of length num_dofs.
+        """
+        R = np.zeros(self.num_dofs, dtype=np.float64)
+        if hasattr(self, "f_int") and self.f_int is not None:
+            for dof in self.fixed_dofs.keys():
+                R[dof] = self.f_int[dof]
+        return R
+
+    def get_state(self) -> Dict[str, Any]:
+        """Return full state vector dictionary (u, v, a, time_integrator)."""
+        return {
+            "u": self.u.copy(),
+            "v": self.v.copy(),
+            "a": self.a.copy(),
+            "time_integrator": self.time_integrator,
+        }
+
+
 

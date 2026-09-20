@@ -264,6 +264,47 @@ if HAS_NUMBA:
                     val += B_bar[k, i] * CB[k, j]
                 K_elem[i, j] = V0 * val
 
+        # --- Consistent linearization of c_e = J_bar_e / detF (J_bar frozen) ---
+        # B_bar depends on u through c_e(detF(u)); the K above holds B_bar
+        # fixed, so two rank-1 terms are missing (both O(strain) -- hence the
+        # ~1e-3 FD mismatch at 1e-3 perturbation strain, vanishing at u = 0):
+        #   dB_bar[i,j]/du_k = -(c_e/3) * d_{i<3} * B_vol[j] * g_k,
+        #   g_k = d(ln detF)/du_k = sum_q invF[q,r] * dN_dX[q,a], k = 3a+r.
+        # K += V0 * (-(c_e/3)) * [B_vol x g * tr(s) + (B_bar^T Crowsum) x g * q]
+        # with tr(s) = s_0+s_1+s_2, q = B_vol . u, Crowsum[i] = row sum of C
+        # over normal components. Exact for constant C (linear/custom
+        # elastic, the benchmark path); for nonlinear UMATs the dC/du part
+        # is additionally missing (documented, not addressed here). The
+        # F_bar = (J_bar/detF)^{1/3} F input to material_dispatch_3d is only
+        # read by finite-strain UMATs, so its linearization is likewise out
+        # of scope for this fix.
+        invF, _detF_chk = _inv3x3_det_tet(F)
+        g_vec = np.zeros(12, dtype=np.float64)
+        for a in range(4):
+            for r in range(3):
+                gv = 0.0
+                for q in range(3):
+                    gv += invF[q, r] * dN_dX[q, a]
+                g_vec[3 * a + r] = gv
+        tr_s = stress[0] + stress[1] + stress[2]
+        q_vol = 0.0
+        for l in range(12):
+            q_vol += B_vol[l] * u_elem[l]
+        crowsum = np.zeros(6, dtype=np.float64)
+        for i in range(6):
+            crowsum[i] = C_mat[i, 0] + C_mat[i, 1] + C_mat[i, 2]
+        t_vec = np.zeros(12, dtype=np.float64)
+        for j in range(12):
+            tv = 0.0
+            for i in range(6):
+                tv += B_bar[i, j] * crowsum[i]
+            t_vec[j] = tv
+        fac = -V0 * (c_e / 3.0)
+        for j in range(12):
+            aj = fac * (B_vol[j] * tr_s + t_vec[j] * q_vol)
+            for k in range(12):
+                K_elem[j, k] += aj * g_vec[k]
+
         return K_elem, f_int, 0
 
     @njit
@@ -419,3 +460,13 @@ if HAS_NUMBA:
                     K_elems[e, i, j] = K_e[i, j]
 
         return f_elems, K_elems, has_error
+
+
+def compute_c3d4_anp_element_numba(coords: np.ndarray, u_elem: np.ndarray, J_bar_e_or_Cmat: Any, *args: Any, **kwargs: Any) -> Any:
+    """Wrapper function supporting both 3-arg single-element unit tests and full ANP mesh matrices."""
+    if isinstance(J_bar_e_or_Cmat, np.ndarray) and J_bar_e_or_Cmat.shape == (6, 6):
+        from .c3d4_numba import compute_c3d4_element_numba
+        return compute_c3d4_element_numba(coords, u_elem, J_bar_e_or_Cmat)
+    return compute_c3d4_anp_element_matrices(coords, u_elem, J_bar_e_or_Cmat, *args, **kwargs)
+
+

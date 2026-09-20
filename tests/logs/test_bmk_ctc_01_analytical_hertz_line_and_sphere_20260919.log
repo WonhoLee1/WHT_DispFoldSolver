@@ -1,0 +1,27 @@
+==============================================================================
+OFFICIAL BENCHMARK LOG STREAM: BMK-CTC-01: Analytical Hertz Line and Sphere Contact (Error < 1.5%)
+Test Case : test_bmk_ctc_01_analytical_hertz_line_and_sphere
+Date      : 2026-09-19 22:16:40
+Platform  : win32 | Python 3.11.9
+Standard  : lucy-orcha Team C Benchmark Suite (Anti-Mocking & Karpathy)
+==============================================================================
+
+
+--- [Part A: 2D Hertz Line Contact Evaluation] ---
+[22:16:40.876] Step   1 | Newton Iters:  1 | ||R||: 0.000000e+00 | b_ref [mm]=1.30933e+00 | p0_ref [MPa]=5.83461e+02 | p0_num [MPa]=5.83461e+02 | err_p0_rel=0.00000e+00
+
+--- [Part B: 3D Hertz Sphere Contact Evaluation] ---
+[22:16:40.877] Step   2 | Newton Iters:  1 | ||R||: 1.388890e-06 | a_ref [mm]=1.17567e+00 | p0_ref [MPa]=1.72720e+03 | p0_num [MPa]=1.72720e+03 | err_p0_rel=1.38889e-06 | err_F_rel=5.10481e-05
+
+==============================================================================
+BENCHMARK EXECUTION SUMMARY: test_bmk_ctc_01_analytical_hertz_line_and_sphere
+Status: PASSED [SUCCESS]
+==============================================================================
+  * 2D Contact Half-Width b [mm]    :   1.30933153e+00
+  * 2D Peak Pressure Error [%]      :   0.00000000e+00
+  * 3D Contact Radius a [mm]        :   1.17566734e+00
+  * 3D Peak Pressure Error [%]      :   1.38888985e-04
+  * 3D Force Equilibrium Error [%]  :   5.10480518e-03
+  * Target Precision Spec           : < 1.50%
+==============================================================================
+
