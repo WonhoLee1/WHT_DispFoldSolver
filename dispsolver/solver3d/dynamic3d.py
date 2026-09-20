@@ -46,6 +46,7 @@ from dispsolver.material3d.numba_materials import (
     MAT_MARLOW,
     MAT_J2_PLASTICITY_TABULAR,
     MAT_RADIOSS_LAW36,
+    MAT_J2_DUCTILE_DAMAGE,
     MAT_HYPER_VISCOELASTIC,
     MAT_CUSTOM_ELASTIC,
     get_default_sdv_count,
@@ -184,6 +185,7 @@ class DynamicSolver3D:
         self._contact_tuner = None
         self.current_temperature: float = 20.0
         self.ref_temperature: float = 20.0
+        self.current_field: float = 0.0
         self._f_thermal_cached: Optional[np.ndarray] = None
         self._thermal_dirty: bool = True
         self._setup_numba_topology()
@@ -288,6 +290,12 @@ class DynamicSolver3D:
                     rho_val = float(getattr(mat_obj, "density"))
                 elif hasattr(mat_obj, "rho"):
                     rho_val = float(getattr(mat_obj, "rho"))
+            # Zero/negative density is never valid dynamics mass; Material's
+            # default density is 0.0, which must not override the solver-level
+            # default (previously zeroed M_global and reduced dynamics to
+            # quasistatics with garbage velocities -- FD-verified 2026-09-20).
+            if rho_val <= 0.0:
+                rho_val = default_rho
             self.elem_density[e] = rho_val
 
             if mat_obj is not None:
@@ -316,6 +324,21 @@ class DynamicSolver3D:
                         for p_idx in range(n_pts):
                             self.elem_props[e, 5 + 2 * p_idx] = float(table[p_idx][0])
                             self.elem_props[e, 6 + 2 * p_idx] = float(table[p_idx][1])
+                    elif mtype == MAT_J2_DUCTILE_DAMAGE or "damage_init_type" in mat_obj:
+                        self.elem_mat_types[e] = MAT_J2_DUCTILE_DAMAGE
+                        dp = list(mat_obj.get("damage_init_p", [0.05, 0, 0, 0, 0]))
+                        self.elem_props[e, :13] = [
+                            float(mat_obj.get("E", 200000.0)),
+                            float(mat_obj.get("nu", 0.3)),
+                            float(mat_obj.get("yield_stress", 250.0)),
+                            float(mat_obj.get("hardening_modulus", 0.0)),
+                            float(mat_obj.get("damage_init_type", 0)),
+                            float(dp[0]), float(dp[1]), float(dp[2]),
+                            float(dp[3]), float(dp[4]),
+                            float(mat_obj.get("damage_Gf", 1.0)),
+                            float(mat_obj.get("damage_L", 1.0)),
+                            float(mat_obj.get("damage_evol", 0)),
+                        ]
                     elif mtype == MAT_J2_PLASTICITY_NONLINEAR or "R_inf" in mat_obj or "b_exp" in mat_obj:
                         self.elem_mat_types[e] = MAT_J2_PLASTICITY_NONLINEAR
                         E_val = float(mat_obj.get("E", 200000.0))
@@ -607,6 +630,17 @@ class DynamicSolver3D:
             self.f_ext_applied = np.zeros(self.num_dofs, dtype=np.float64)
         self.f_ext_applied[global_dof] += float(force_value)
 
+    def set_rayleigh_damping(self, alpha: float = 0.0, beta: float = 0.0) -> None:
+        """Set Rayleigh damping C = alpha*M + beta*K for implicit dynamics.
+
+        Applies to the HHT/Newmark branch (EMCS carries its own alpha_m /
+        beta_k). alpha = beta = 0 disables damping and restores the
+        bit-identical undamped path.
+        """
+        self.alpha_m_damp = float(alpha)
+        self.beta_k_damp = float(beta)
+        self.beta_k = self.beta_k_damp
+
     def set_temperature(self, temp: float, ref_temp: Optional[float] = None) -> None:
         """Prescribe a global predefined temperature field (Abaqus *TEMPERATURE parity)."""
         self.current_temperature = float(temp)
@@ -631,6 +665,37 @@ class DynamicSolver3D:
                     self.elem_props[e, 0] = E_interp
                     self.elem_props[e, 1] = nu_interp
                     # Also update C_mat_default for linear C3D8 fast path
+                    mu_i = E_interp / (2.0 * (1.0 + nu_interp))
+                    K_i = E_interp / (3.0 * (1.0 - 2.0 * nu_interp))
+                    lam_i = K_i - (2.0 / 3.0) * mu_i
+                    if hasattr(self, "C_mat_default"):
+                        self.C_mat_default[0, 0] = lam_i + 2*mu_i; self.C_mat_default[0, 1] = lam_i;        self.C_mat_default[0, 2] = lam_i
+                        self.C_mat_default[1, 0] = lam_i;        self.C_mat_default[1, 1] = lam_i + 2*mu_i; self.C_mat_default[1, 2] = lam_i
+                        self.C_mat_default[2, 0] = lam_i;        self.C_mat_default[2, 1] = lam_i;        self.C_mat_default[2, 2] = lam_i + 2*mu_i
+                        self.C_mat_default[3, 3] = mu_i
+                        self.C_mat_default[4, 4] = mu_i
+                        self.C_mat_default[5, 5] = mu_i
+
+    def set_field_variable(self, f: float) -> None:
+        """Prescribe a global predefined field variable FV1 (Abaqus *FIELD parity)."""
+        self.current_field = float(f)
+
+        # Update field-dependent elastic properties in elem_props if defined.
+        # Table rows are (E, nu, F); mirrors the temperature block above.
+        if hasattr(self, "materials") and isinstance(self.materials, dict) and hasattr(self, "elem_props"):
+            from dispsolver.material.dependence_table import eval_table_1d_numba
+            elements_list = list(self.mesh.elements.values())
+            for e, elem in enumerate(elements_list):
+                pid = getattr(elem, "pid", 0)
+                mat_obj = self.materials.get(pid, None)
+                if mat_obj is None:
+                    continue
+                if hasattr(mat_obj, "extra_params") and "field_elastic_table" in mat_obj.extra_params:
+                    f_tab = np.array(mat_obj.extra_params["field_elastic_table"], dtype=np.float64)
+                    E_interp = eval_table_1d_numba(f_tab[:, 2], f_tab[:, 0], self.current_field)
+                    nu_interp = eval_table_1d_numba(f_tab[:, 2], f_tab[:, 1], self.current_field)
+                    self.elem_props[e, 0] = E_interp
+                    self.elem_props[e, 1] = nu_interp
                     mu_i = E_interp / (2.0 * (1.0 + nu_interp))
                     K_i = E_interp / (3.0 * (1.0 - 2.0 * nu_interp))
                     lam_i = K_i - (2.0 / 3.0) * mu_i
@@ -1131,6 +1196,16 @@ class DynamicSolver3D:
 
             coeff_m = 1.0 / (beta_hht * dt * dt)
 
+            # Rayleigh damping C = alpha*M + beta*K (HHT branch; EMCS has its
+            # own alpha_m/beta_k path). Zero coefficients skip everything so
+            # the undamped path stays bit-identical.
+            ray_a = float(getattr(self, "alpha_m_damp", 0.0))
+            ray_b = float(getattr(self, "beta_k_damp", 0.0))
+            ray_on = (ray_a != 0.0) or (ray_b != 0.0)
+            if ray_on:
+                f_damp_n = ray_a * (M_global @ v_n) + ray_b * (K_n @ v_n)
+            coeff_v = gamma_hht / (beta_hht * dt)
+
             if use_anderson_accel:
                 from dispsolver.solver.anderson_acceleration import AndersonAccelerator
                 anderson = AndersonAccelerator(m=anderson_m, beta=anderson_beta)
@@ -1148,8 +1223,12 @@ class DynamicSolver3D:
                 # HHT-alpha internal force weighting
                 f_int_hht = (1.0 + alpha_hht) * f_int_trial - alpha_hht * f_int_n
                 f_inertial = M_global @ a_trial
-
-                residual = f_ext - f_inertial - f_int_hht
+                if ray_on:
+                    f_damp_trial = ray_a * (M_global @ v_trial) + ray_b * (K_tan @ v_trial)
+                    f_damp_hht = (1.0 + alpha_hht) * f_damp_trial - alpha_hht * f_damp_n
+                    residual = f_ext - f_inertial - f_int_hht - f_damp_hht
+                else:
+                    residual = f_ext - f_inertial - f_int_hht
 
                 free_mask = np.ones(self.num_dofs, dtype=bool)
                 if self.fixed_dofs:
@@ -1164,7 +1243,11 @@ class DynamicSolver3D:
                     converged = True
                     break
 
-                K_eff = (1.0 + alpha_hht) * K_tan + coeff_m * M_global
+                # Effective stiffness: d(res)/du with dv/du = gamma/(beta*dt).
+                # Damping folds in as k*alpha*M + k*beta*K (k = coeff_v);
+                # ray_on=False reduces exactly to the undamped expression.
+                k_damp = coeff_v if ray_on else 0.0
+                K_eff = ((1.0 + alpha_hht) + k_damp * ray_b) * K_tan + (coeff_m + k_damp * ray_a) * M_global
                 K_bc, r_bc = self.apply_boundary_conditions(K_eff, residual, u_trial)
 
                 du = self._solve_linear(K_bc, r_bc)

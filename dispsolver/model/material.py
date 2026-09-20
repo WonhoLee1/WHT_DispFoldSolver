@@ -43,11 +43,22 @@ class Material:
             "zero": float(zero),
         }
 
-    def Elastic(self, table: Any = None, E: Optional[float] = None, nu: Optional[float] = None) -> None:
+    def Elastic(self, table: Any = None, E: Optional[float] = None, nu: Optional[float] = None,
+                field_table: Any = None) -> None:
         """Abaqus-style Elastic property definition (supports table tuple or E, nu keywords).
-        
+
         If table rows have 3 columns: ((E, nu, temp), ...), temperature dependence is activated.
+        If field_table rows are given as ((E, nu, F), ...), field-variable (FV1) dependence
+        (*ELASTIC, DEPENDENCIES=1) is activated instead. Temperature and field tables are
+        mutually exclusive per call; pass at most one of table / field_table.
         """
+        if field_table is not None:
+            rows = list(field_table)
+            self.elastic = (float(rows[0][0]), float(rows[0][1]))
+            self.extra_params["field_elastic_table"] = [
+                (float(row[0]), float(row[1]), float(row[2])) for row in rows
+            ]
+            return
         if E is not None and nu is not None:
             self.elastic = (float(E), float(nu))
         elif isinstance(table, (list, tuple)) and len(table) > 0:
@@ -60,11 +71,22 @@ class Material:
             else:
                 self.elastic = (float(table[0]), float(table[1]))
 
-    def Plastic(self, table: Any, hardening: str = "ISOTROPIC") -> None:
+    def Plastic(self, table: Any, hardening: str = "ISOTROPIC", field_table: Any = None) -> None:
         """Abaqus-style Plastic property definition.
-        
+
         If table rows have 3 columns: ((yield, strain, temp), ...), temperature dependence is activated.
+        If field_table rows are given as ((yield, strain, F), ...), field-variable (FV1)
+        dependence (*PLASTIC, DEPENDENCIES=1) is activated instead.
         """
+        if field_table is not None:
+            rows = list(field_table)
+            self.plastic = [(float(row[0]), float(row[1])) for row in rows]
+            self.extra_params["field_plastic_table"] = [
+                (float(row[0]), float(row[1]), float(row[2])) for row in rows
+            ]
+            self.mat_type = "TABULAR_PLASTIC"
+            self.extra_params["tabular_plastic"] = self.plastic
+            return
         if len(table) > 0 and isinstance(table[0], (list, tuple)) and len(table[0]) >= 3:
             self.plastic = [(float(row[0]), float(row[1])) for row in table]
             self.extra_params["temp_plastic_table"] = [
@@ -79,6 +101,46 @@ class Material:
                 self.extra_params["tabular_plastic"] = self.plastic
             elif hardening.upper() in ["KINEMATIC", "COMBINED"]:
                 self.extra_params["hardening_type"] = hardening.upper()
+
+    def DamageInitiation(self, type: str = "DUCTILE", table: Any = None, **kwargs) -> None:
+        """Abaqus-style damage initiation (*DAMAGE INITIATION).
+
+        type "DUCTILE": table=((eD,),) const, ((eta0, e0), (eta1, e1)) 2-pt triax.
+        type "JOHNSON_COOK": table=((D1, D2, D3, D4, D5),), quasi-static
+        isothermal only (D4/D5 must be 0 -- dispatcher carries no rate/T).
+        """
+        t = type.upper()
+        if t == "DUCTILE":
+            rows = [tuple(float(v) for v in r) if isinstance(r, (list, tuple)) else (float(r),)
+                    for r in table]
+            if len(rows[0]) == 1:
+                self.extra_params["damage_init"] = {"type": 0, "p": [rows[0][0], 0, 0, 0, 0]}
+            else:
+                self.extra_params["damage_init"] = {
+                    "type": 1, "p": [rows[0][0], rows[0][1], rows[1][0], rows[1][1], 0]}
+        elif t in ["JOHNSON_COOK", "JOHNSON-COOK", "JC"]:
+            row = table[0] if isinstance(table[0], (list, tuple)) else table
+            self.extra_params["damage_init"] = {
+                "type": 2, "p": [float(v) for v in row[:5]]}
+        else:
+            raise ValueError("DamageInitiation type must be DUCTILE or JOHNSON_COOK")
+
+    def DamageEvolution(self, type: str = "ENERGY_LINEAR", Gf: float = 1.0,
+                        L: float = 1.0) -> None:
+        """Abaqus-style damage evolution (*DAMAGE EVOLUTION, TYPE=ENERGY).
+
+        type "ENERGY_LINEAR": D = u_bar/u_f. "ENERGY_EXPONENTIAL":
+        D = 1-exp(-3*u_bar/u_f), u_f = 2*G_f/sigma_f. L = characteristic
+        element length (mesh objectivity).
+        """
+        t = type.upper()
+        if t == "ENERGY_LINEAR":
+            evol = 0
+        elif t == "ENERGY_EXPONENTIAL":
+            evol = 1
+        else:
+            raise ValueError("DamageEvolution type must be ENERGY_LINEAR or ENERGY_EXPONENTIAL")
+        self.extra_params["damage_evol"] = {"type": evol, "Gf": float(Gf), "L": float(L)}
 
     def RateDependent(self, type: str = "POWER_LAW", table: Any = None, **kwargs) -> None:
         """Abaqus-standard *RATE DEPENDENT property definition.
@@ -276,14 +338,33 @@ class Material:
         self.mat_type = "BERGSTROM_BOYCE"
 
     def Creep(self, law: str = "STRAIN", table: Any = None, **kwargs) -> None:
-        """Abaqus standard *CREEP property definition (Norton / Bailey-Norton).
-        
-        table format: ((A, n, m),)
-        A: Creep multiplier (>= 0)
-        n: Stress exponent (> 0)
-        m: Time exponent (-1.0 < m <= 0.0, default 0.0)
+        """Abaqus standard *CREEP property definition.
+
+        - "STRAIN"/power law, table ((A, n, m),).
+        - "HYPERB"/hyperbolic-sine, table ((A, B, n, m),).
+        - "ANAND"/Anand viscoplasticity,
+          table ((s0, QR, A, xi, m, h0, shat, nn, a),) with QR = Q/R in Kelvin.
         """
         law_upper = law.upper()
+        if law_upper == "HYPERB":
+            row = table[0] if isinstance(table[0], (list, tuple)) else table
+            self.extra_params["creep"] = {
+                "law": law_upper,
+                "A": float(row[0]),
+                "B": float(row[1]),
+                "n": float(row[2]),
+                "m": float(row[3]) if len(row) > 3 else 0.0,
+            }
+            self.mat_type = "CREEP"
+            return
+        if law_upper == "ANAND":
+            row = table[0] if isinstance(table[0], (list, tuple)) else table
+            keys = ("s0", "QR", "A", "xi", "m", "h0", "shat", "nn", "a")
+            self.extra_params["creep"] = {"law": law_upper}
+            self.extra_params["creep"].update(
+                {k: float(v) for k, v in zip(keys, row)})
+            self.mat_type = "CREEP"
+            return
         A_val, n_val, m_val = 1e-12, 1.0, 0.0
         if table is not None and len(table) > 0:
             row = table[0] if isinstance(table[0], (list, tuple)) else table
@@ -433,6 +514,32 @@ class Material:
             E_val = 1.0
         if nu_val is None:
             nu_val = 0.3
+
+        if "damage_init" in self.extra_params or "damage_evol" in self.extra_params:
+            from dispsolver.material3d.numba_materials import MAT_J2_DUCTILE_DAMAGE
+            if "damage_init" not in self.extra_params or "damage_evol" not in self.extra_params:
+                raise ValueError("DamageInitiation and DamageEvolution must be given together")
+            tab = self.extra_params.get("tabular_plastic", self.plastic)
+            if not tab:
+                raise ValueError("Damage needs a Plastic base (linear hardening used)")
+            sy0 = float(tab[0][0])
+            if len(tab) > 1 and (tab[1][1] - tab[0][1]) > 1e-12:
+                Hm = float((tab[1][0] - tab[0][0]) / (tab[1][1] - tab[0][1]))
+            else:
+                Hm = float(self.extra_params.get("hardening_modulus", 0.0))
+            di = self.extra_params["damage_init"]
+            de = self.extra_params["damage_evol"]
+            props["mat_type"] = MAT_J2_DUCTILE_DAMAGE
+            props["E"] = float(E_val)
+            props["nu"] = float(nu_val)
+            props["yield_stress"] = sy0
+            props["hardening_modulus"] = Hm
+            props["damage_init_type"] = int(di["type"])
+            props["damage_init_p"] = [float(v) for v in di["p"]]
+            props["damage_Gf"] = float(de["Gf"])
+            props["damage_L"] = float(de["L"])
+            props["damage_evol"] = int(de["type"])
+            return props
         
         if upper_type in ["ELASTIC", "LINEAR_ELASTIC"]:
             props["E"] = float(E_val)
