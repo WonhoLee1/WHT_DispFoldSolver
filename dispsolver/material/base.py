@@ -36,17 +36,16 @@ import jax.numpy as jnp
 Params = Dict[str, jnp.ndarray]
 
 
-def _F_to_C_flat(F_2d: jnp.ndarray) -> jnp.ndarray:
+def _F_to_C_flat(F_2d: jnp.ndarray, f33: float = 1.0) -> jnp.ndarray:
     """Embed 2D F into 3D and extract 6 independent components of C.
 
-    Plane strain: F_33 = 1, F_13 = F_23 = F_31 = F_32 = 0
-
-    Returns
-    -------
-    C_flat : (6,) — [C_11, C_22, C_33, C_12, C_13, C_23]
+    Plane strain: F_13 = F_23 = F_31 = F_32 = 0. F_33 = f33 (default 1.0);
+    the thermal-split adapter passes f33 = 1/theta for the mechanical
+    out-of-plane stretch.
     """
     F = jnp.eye(3, dtype=F_2d.dtype)
     F = F.at[:2, :2].set(F_2d)
+    F = F.at[2, 2].set(f33)
     C = F.T @ F  # (3, 3) symmetric
     return jnp.array([
         C[0, 0], C[1, 1], C[2, 2],
@@ -82,10 +81,12 @@ def _symmetrize_grad(dW_dC_flat: jnp.ndarray) -> jnp.ndarray:
         ∂W/∂C_ij (i≠j) contributes to both S_ij and S_ji.
 
     For the conversion to full tensor, off-diagonal components
-    need a factor of 1/2 because δC_12 varies both C_12 and C_21.
+    need NO extra factor: dW/dx (x = stored C_12) already equals the
+    tensor component S_12, because x varies both C_12 and C_21.
 
-    S_12 = 2 * ∂W/∂C_12 (where C_12 is the stored off-diagonal)
+    S_12 = ∂W/∂x (where x is the stored off-diagonal)
     """
+
     S_full = jnp.zeros((3, 3), dtype=dW_dC_flat.dtype)
     # Diagonal
     S_full = S_full.at[0, 0].set(dW_dC_flat[0])
@@ -132,22 +133,34 @@ class MaterialModel(ABC):
         C_flat = _F_to_C_flat(F_2d)
         return self._strain_energy_from_C_flat(C_flat, params)
 
-    def pk2_voigt(self, F_2d: jnp.ndarray, params: Params) -> jnp.ndarray:
+    def pk2_voigt(self, F_2d: jnp.ndarray, params: Params, f33: float = 1.0) -> jnp.ndarray:
         """2nd P-K stress in plane strain Voigt: [S_11, S_22, S_12].
 
-        S = 2 * ∂W/∂C (stress conjugate to Green-Lagrange strain E)
+        S = 2 * ∂W/∂C (stress conjugate to Green-Lagrange strain E).
+        NOTE (2026-09-20): the shear entry carries NO factor 2. jax.grad
+        w.r.t. the stored C_12 already sums both symmetric slots
+        (dW/dx = dW/dC12 + dW/dC21), so true S_12 = dW/dx, while the
+        diagonals need the 2x. The old code doubled S_12 (and C[2,2]);
+        it went unnoticed because every existing shear probe used
+        diagonal F (S_12 == 0). Verified against the analytic NumPy
+        NeoHookean path and tensor FD.
+        """
+        C_flat = _F_to_C_flat(F_2d, f33)
+        dW_dC = jax.grad(self._strain_energy_from_C_flat)(C_flat, params)
+        S_6 = 2.0 * dW_dC
+        # Plane strain Voigt: [S_11, S_22, S_12]; shear is 1x (see NOTE).
+        return jnp.array([S_6[0], S_6[1], S_6[3] * 0.5])
+
+    def pk2_tensor(self, F_2d: jnp.ndarray, params: Params) -> jnp.ndarray:
+        """Full symmetric 3×3 2nd P-K stress tensor.
+
+        NOTE: diagonal takes 2*dW/dC, shear takes 1*dW/dx (see pk2_voigt).
         """
         C_flat = _F_to_C_flat(F_2d)
         dW_dC = jax.grad(self._strain_energy_from_C_flat)(C_flat, params)
-        S_6 = 2.0 * dW_dC
-        # Plane strain Voigt: [S_11, S_22, S_12]
-        return jnp.array([S_6[0], S_6[1], S_6[3]])
-
-    def pk2_tensor(self, F_2d: jnp.ndarray, params: Params) -> jnp.ndarray:
-        """Full symmetric 3×3 2nd P-K stress tensor."""
-        C_flat = _F_to_C_flat(F_2d)
-        dW_dC = jax.grad(self._strain_energy_from_C_flat)(C_flat, params)
-        return _symmetrize_grad(2.0 * dW_dC)
+        S_voigt6 = jnp.array([2.0 * dW_dC[0], 2.0 * dW_dC[1], 2.0 * dW_dC[2],
+                              dW_dC[3], dW_dC[4], dW_dC[5]])
+        return _symmetrize_grad(S_voigt6)
 
     def pk1_tensor(self, F_2d: jnp.ndarray, params: Params) -> jnp.ndarray:
         """1st P-K stress tensor P = F @ S."""
@@ -156,7 +169,7 @@ class MaterialModel(ABC):
         F = F.at[:2, :2].set(F_2d)
         return F @ S
 
-    def tangent_voigt(self, F_2d: jnp.ndarray, params: Params) -> jnp.ndarray:
+    def tangent_voigt(self, F_2d: jnp.ndarray, params: Params, f33: float = 1.0) -> jnp.ndarray:
         """Material tangent in plane strain Voigt (3×3).
 
         C_voigt[i, j] = ∂S_voigt[i] / ∂E_voigt[j]
@@ -178,7 +191,7 @@ class MaterialModel(ABC):
         C_voigt[i, j] = 4 * H[unique_i, unique_j] * scale_j
         where H = ∂²W/∂C² (6×6 Hessian), and scale_j = dC_j/dE_voigt[j]
         """
-        C_flat = _F_to_C_flat(F_2d)
+        C_flat = _F_to_C_flat(F_2d, f33)
         # Hessian: ∂²W/∂Cₐ ∂C_b  for a,b in [0..5]
         H = jax.hessian(self._strain_energy_from_C_flat)(C_flat, params)  # (6, 6)
 
@@ -193,9 +206,9 @@ class MaterialModel(ABC):
         # C_voigt[1,0] = 4 * H[1,0] * 2
         # C_voigt[1,1] = 4 * H[1,1] * 2
         # C_voigt[1,2] = 4 * H[1,3] * 1
-        # C_voigt[2,0] = 4 * H[3,0] * 2
-        # C_voigt[2,1] = 4 * H[3,1] * 2
-        # C_voigt[2,2] = 4 * H[3,3] * 1
+        # C_voigt[2,0] = 2 * H[3,0] * 2 -> 2.0 * H[3,0] (S_12 is 1x, dC_11/dE_11 = 2)
+        # C_voigt[2,1] = 2 * H[3,1]      (same)
+        # C_voigt[2,2] = 1 * H[3,3] * 1 -> 1.0 * H[3,3] (both 1x)
 
         C_voigt = C_voigt.at[0, 0].set(4.0 * H[0, 0])
         C_voigt = C_voigt.at[0, 1].set(4.0 * H[0, 1])
@@ -205,7 +218,7 @@ class MaterialModel(ABC):
         C_voigt = C_voigt.at[1, 2].set(2.0 * H[1, 3])
         C_voigt = C_voigt.at[2, 0].set(2.0 * H[3, 0])
         C_voigt = C_voigt.at[2, 1].set(2.0 * H[3, 1])
-        C_voigt = C_voigt.at[2, 2].set(2.0 * H[3, 3])
+        C_voigt = C_voigt.at[2, 2].set(1.0 * H[3, 3])
 
         return C_voigt
 
