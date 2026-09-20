@@ -1,0 +1,43 @@
+*heading
+ CONCRETE DAMAGED PLASTICITY (C3D8R)
+ Standard to Standard Import
+** Continuation analysis. Old job: cdp_c3d8r_ss_s2
+*preprint, model=yes
+*import,step=1,state=yes,update=no
+ eall
+*nset, nset=nback
+ 1,2,3,4
+*nset, nset=nside
+ 1,4,5,8
+*nset, nset=nbase
+ 1,2,5,6
+*nset, nset=ndisp
+ 5,6,7,8
+*nset, nset=ndisp2
+ 2,3,6,7
+*nset, nset=ntop
+ 3,4,7,8
+*nset, nset=nout
+ 5,
+*boundary
+ nback,3,3
+ nside,1,1
+ nbase,2,2
+*restart,write
+*step, nlgeom, unsymm=yes
+*static
+ 0.05,1.0,,0.05
+*boundary
+ ntop,2,2,-0.005
+*el print, elset=eall
+ PEEQ, PEEQT
+ DAMAGET, DAMAGEC, SDEG
+*output, field, variable=preselect
+*element output, elset=eall
+ PEEQ, PEEQT, DAMAGET, DAMAGEC, SDEG
+*output, history, variable=preselect
+*element output, elset=eall
+ S, PE, LE, PEEQ, PEEQT, DAMAGET, DAMAGEC, SDEG
+*end step
+
+

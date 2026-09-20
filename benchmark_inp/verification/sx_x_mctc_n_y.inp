@@ -1,0 +1,30 @@
+*HEADING
+Import of MCTC S2X: input for X
+*IMPORT, UPDATE=NO, STATE=YES, STEP=1
+C3D_1
+*IMPORT ELSET
+C3D_1
+*IMPORT NSET
+QA_TEST_ALLNODES,nx0,ny0,nz0,nx1,nz1
+**
+*amplitude, name=amp-2, smooth=.01
+ 0.0,1.0,1.,-1.0
+**
+*STEP
+*dynamic,explicit
+ ,1.
+*boundary
+nx0,1,1
+ny0,2,2
+nz0,3,3
+*BOUNDARY,amp=amp-2
+nz1,3,3,0.1
+*output,field,num=5
+*node output
+ u
+*element output,ELSET=C3D_1
+s,peeq,peeqt
+*output,history
+*element output,ELSET=C3D_1
+peeq,peeqt,pener
+*END STEP

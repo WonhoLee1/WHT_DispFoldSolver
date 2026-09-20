@@ -1,0 +1,103 @@
+*HEADING
+*PREPRINT, MODEL=YES
+*PART,NAME=PART1
+  *NODE, NSET=NALL
+   1,   0.0,  0.0, 0.0
+   2,   1.0,  0.0, 0.0
+   3,   1.0,  1.0, 0.0
+   4,   0.0,  1.0, 0.0
+   5,   0.0,  0.0, 1.0
+   6,   1.0,  0.0, 1.0
+   7,   1.0,  1.0, 1.0
+   8,   0.0,  1.0, 1.0
+ *ELEMENT,TYPE=C3D8r,ELSET=EALL
+  1, 1,2,3,4,5,6,7,8
+ *NSET,NSET=NBOT
+  1,2,3,4
+ *NSET,NSET=NFIX1
+  1,4,5,8
+ *NSET,NSET=NFIX2
+  1,2,5,6
+ *NSET,NSET=NFIX3
+  1,2,3,4
+ *NSET,NSET=NTOP
+  5,6,7,8
+ *NSET,NSET=NMOVE1
+  2,3,6,7
+*END PART
+*ASSEMBLY,NAME=A1
+ *INSTANCE,NAME=iValanisLandel,PART=PART1
+  4.0, 4.0, 0.0
+   *SOLID SECTION, ELSET=EALL, MATERIAL=mValanisLandel
+    1.0
+ *END INSTANCE
+ **
+ ** Assembly sets
+ **
+ *Nset,NSet=NFIX1
+ iValanisLandel.NFIX1
+ *Nset,NSet=NFIX2
+  iValanisLandel.NFIX2
+ *Nset,NSet=NFIX3
+   iValanisLandel.NFIX3
+ *Nset,NSet=NMOVE1
+   iValanisLandel.NMOVE1
+ *Elset,Elset=EALL
+   iValanisLandel.EALL
+ *Nset,NSet=NALL
+ iValanisLandel.NALL
+*END ASSEMBLY
+** ................................ MATERIAL
+**
+** MATERIAL DEFINITION
+*MATERIAL,NAME=mValanisLandel
+*Density
+ 1e-06,
+*HYPERELASTIC, VALANIS-LANDEL
+** 
+*UNIAXIAL TEST DATA
+-5.0,     -800.E-03,  809.893E-03,  0.0
+ 0.,             0.0,       0.0,     0.0
+ 5.0,        1.0,     -243.548E-03, 0.0
+-10.0,     -800.E-03,  809.893E-03,  50.0
+ 0.,             0.0,       0.0,      50.0
+ 10.0,        1.0,     -243.548E-03, 50.0
+-20.0,     -800.E-03,  809.893E-03,  100.0
+ 0.,             0.0,       0.0,      100.0
+ 20.0,        1.0,     -243.548E-03, 100.0
+*VISCOELASTIC, NONLINEAR, NETWORKID=1, LAW=POWERLAW
+  10.0, 1.0, 0.0 
+*NETWORK STIFFNESS, N=1
+ 0.5,    0.0
+ 0.75,  50.0
+ 0.95, 100.0
+** end of material definition
+*BOUNDARY
+ NFIX1, 1,1
+ NFIX2, 2,2
+ NFIX3, 3,3
+*INITIAL CONDITIONS, TYPE=TEMPERATURE
+ NALL, 50.0
+**
+** ... STEP 1: Apply displacement
+**
+*STEP, NLGEOM=YES
+ STEP 1 -- Apply displacement
+*DYNAMIC, EXPLICIT
+** ................................ stepTime
+ ,1.0
+*BOUNDARY, type=velocity
+** ................................ displ
+ NMOVE1, 1,1, 1.0
+** ................................ OUTPUT
+*OUTPUT, FIELD, FREQ=10
+*ELEMENT OUTPUT
+ LE,NE,E,S,EVOL
+*NODE OUTPUT
+ U
+*OUTPUT, HISTORY
+*NODE OUTPUT, NSET=NMOVE1
+ U,
+*ELEMENT OUTPUT,ELSET=EALL
+ LE11,CEEQ,MISES
+*END STEP

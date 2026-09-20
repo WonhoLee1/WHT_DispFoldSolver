@@ -1,0 +1,47 @@
+*HEADING
+CLAY PLASTICITY, SHEAR TEST, CPE4R
+*NODE,NSET=ALLN1
+11,0.,0.
+12,1.,0.
+13,1.,1.
+14,0.,1.
+*ELEMENT,TYPE=CPE4R,ELSET=qa_test_1
+11,11,12,13,14
+*ORIENTATION,NAME=RECT
+ 1.0, 0.0, 0.0, 0.0, 1.0, 0.0
+ 1, 0.
+*SOLID SECTION,ELSET=qa_test_1,MATERIAL=ALLE,orient=rect
+*MATERIAL,NAME=ALLE
+*density
+1.
+*ELASTIC,TYPE=ENGINEERING CONSTANTS
+200000.,342000.,342000.,.32,.32,.32,89900.,89900.
+129545.5
+*clay plasticity, hardening=tab
+,1.,0.
+*clay hardening,type=compression
+6000.,0.
+*clay hardening,type=tension
+-6000.,0.
+*POTENTIAL
+1.2,1.,1.,.71,.71,.99
+*BOUNDARY
+11,PINNED
+12,PINNED
+13,2
+14,2
+*amplitude, name=amp-1
+ 0.,0.,20.,1.
+*STEP,nlgeom=no
+*dynamic,explicit
+,20.
+*BOUNDARY,amplitude=amp-1
+13,1,,.1
+14,1,,.1
+*output,field
+*element output
+s,e,pe
+*output,history,freq=1
+*element output, elset=qa_test_1
+s12,e12
+*END STEP

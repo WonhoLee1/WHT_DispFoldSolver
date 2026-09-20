@@ -1,0 +1,122 @@
+*heading
+ ANISOTROPIC HYPERELASTIC, kaliske
+ Simple shear, displacement control
+*preprint, model=yes
+*node,nset=all
+ 11,
+ 12,1.
+ 13,1.,1.,
+ 14,0.,1.,
+ 15,0.,0.,1.
+ 16,1.,0.,1.
+ 17,1.,1.,1.
+ 18,0.,1.,1.
+*nset,nset=face11
+ 11,12,13,14
+*nset,nset=face12
+ 15,16,17,18
+*nset,nset=face13
+ 11,12,15,16
+*nset,nset=face14
+ 12,13,16,17
+*nset,nset=face15
+ 13,14,17,18
+*nset,nset=face16
+ 14,11,18,15
+*nset, nset=ndisp1
+ 12
+*element,type=c3d8,elset=c3d
+ 1,11,12,13,14,15,16,17,18
+*elset,elset=solid
+ c3d
+*elset,elset=eall
+ solid
+*elset, elset = QA_TEST
+ eall,
+*nset, nset=QA_TEST
+17
+**
+*orientation,name=ori-1,local directions=2
+ 1.0,0.0,0.0,0.0,1.0,0.0
+ 3,0.0
+ 0.643055,0.76582,0.0
+ 0.643055,-0.76582,0.0
+**
+*solid section,elset=solid,material=kaliske,orientation=ori-1
+ 1.0,
+**
+*parameter
+ density=1.0e3
+d= 1.e-11
+a1= 0.4e9
+a2= 0.0
+a3= 0.0
+b1= 0.2e9
+b2= 0.0
+b3= 0.0
+c2= 0.0
+c3= 1.0e9
+c4= 0.0
+c5= 0.0
+c6= 0.0
+d2= 0.3e9
+d3= 0.0
+d4= 0.0
+d5= 0.0
+d6= 0.0
+e2= 0.5e9
+e3= 0.0
+e4= 0.0
+e5= 0.0
+e6= 0.0
+f2= 0.0
+f3= 1.0e9
+f4= 0.0
+f5= 0.0
+f6= 0.0
+g2= 0.7e8
+g3= 0.0
+g4= 0.0
+g5= 0.0
+g6= 0.0
+**
+*material,name=kaliske
+*density
+ <density>
+*anisotropic hyperelastic,definition=kaliske,local directions=2
+ <a1>,<a2>,<a3>,<b1>,<b2>,<b3>,<c2>,<c3>,
+ <c4>,<c5>,<c6>,<d2>,<d3>,<d4>,<d5>,<d6>,
+ <e2>,<e3>,<e4>,<e5>,<e6>,<f2>,<f3>,<f4>,
+ <f5>,<f6>,<g2>,<g3>,<g4>,<g5>,<g6>,<d>
+ 
+*nset, nset=ndisp
+ ndisp1
+*boundary,type=velocity
+ face13,1,2
+ face15,2,2
+ face11,3,3
+**
+**
+*step,nlgeom=yes
+ simple shear
+*static
+ 0.1,1.0,,0.1
+*boundary
+ face15,1,1,0.2
+*output,field, variable=preselect
+*element output, elset=eall
+ s, le
+*node out, nset=all
+ u, rf
+*output,field, number=2
+*element output, elset=QA_TEST
+ s,
+*node output, nset=QA_TEST
+ u,
+*output, history, variable=preselect
+*element output, elset=eall
+ s11, le11, le22, le33, ne11, ne22, ener
+*node out, nset=ndisp
+ rf1, u1
+*end step
+

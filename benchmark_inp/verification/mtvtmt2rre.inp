@@ -1,0 +1,60 @@
+*HEADING
+: Two-layer viscoplasticity, Time Viscous Law, Uniaxial Tension
+: and relaxation, CPS4R
+: CETOL is simply used as a mechanism to limit total number of
+: increments (actual value makes very small difference in results)
+*NODE,NSET=ALLN
+1,0.,0.
+2,1.,0.
+3,1.,1.
+4,0.,1.
+*NSET,NSET=PULL
+3,4
+*ELEMENT,TYPE=CPS4R,ELSET=ALLE
+1,1,2,3,4
+*SOLID SECTION,ELSET=ALLE,MATERIAL=ALLE
+*Distribution Table, name=distTableElastic
+ modulus, ratio
+*Distribution, name=distElastic, table=distTableElastic, location=element
+ , 10.e3, 0.25
+ alle, 20.0E6, 0.3
+*MATERIAL,NAME=ALLE
+*ELASTIC
+ distElastic,
+*PLASTIC
+200.
+*VISCOUS,LAW=TIME
+1.0e-6,1.,0.,0.2,0.
+1.0e-6,1.,0.,0.25,20.
+1.0e-6,1.,0.,0.3,40.
+*BOUNDARY
+1,1,2,
+2,2,2,
+4,1,1,
+*INITIAL CONDITIONS,TYPE=TEMPERATURE
+ALLN,20.
+*STEP, INC=300, AMP=RAMP
+*VISCO, CETOL=1.0e-4
+0.01,2.
+*BOUNDARY
+PULL,2,2,2.e-4
+*EL PRINT
+S,
+E,
+PE,
+*OUTPUT,HISTORY,FREQ=1000
+*ELEMENT OUTPUT,ELSET=ALLE
+S,
+PS,
+VS,
+E,
+EE,
+PE,
+VE,
+VEEQ,
+*OUTPUT,FIELD,FREQUENCY=0
+*END STEP
+*STEP, INC=300, AMP=RAMP
+*VISCO, CETOL=1.0e-4
+0.01,2.
+*END STEP

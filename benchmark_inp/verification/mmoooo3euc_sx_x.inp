@@ -1,0 +1,41 @@
+*HEADING
+Mohr-Coulomb, C3D8 element, Uniaxial Compression
+*IMPORT, UPDATE=NO,STATE=YES,step=1
+ALLE
+*BOUNDARY
+ 1,PINNED
+ 2,2
+ 5,2
+ 6,2
+ 4,1
+ 5,1
+ 8,1
+ 2,3
+ 3,3
+ 4,3
+*STEP
+*dynamic, explicit
+   ,1.0e-6
+*DLOAD
+ 1,P2,5000.
+ 1,P3,5000.
+*output,field
+*node output
+ u
+*element output
+ press,mises,peeq,s
+*output,history
+*element output,elset=alle
+ press,mises,peeq,s
+*END STEP
+*STEP
+*dynamic,explicit
+ ,20.
+*amplitude, name=amp-1
+ 0.0,0.0,20.,1.0
+*BOUNDARY,amplitude=amp-1
+ 7,3,,-.2
+ 5,3,,-.2
+ 6,3,,-.2
+ 8,3,,-.2
+*END STEP

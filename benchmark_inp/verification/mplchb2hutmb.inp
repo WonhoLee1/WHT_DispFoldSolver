@@ -1,0 +1,79 @@
+*heading
+        mises plasticity with combined 
+        isotropic-kinematic hardening
+        with multiple backstresses,
+	sax1 element under uniaxial tension
+	Temperature and Field variable dependence
+*node, nset=nall
+1,1
+2,1,1
+*element,type=sax1,elset=pipe
+1,1,2
+*shell section, elset=pipe, material=steel
+0.1, 
+*material, name=steel
+*elastic
+200.E3,.3
+*plastic, hardening=combined, data type=parameters, dependencies=1,
+ numberbackstress=3
+200., 1.111E4,34.65, 5.555E3,34.65, 5.555E3,0.0, 0., 
+ 0.
+200., 1.111E4,34.65, 5.555E3,34.65, 5.555E3,0.0, 100., 
+ 0.
+200., 1.111E4,34.65, 5.555E3,34.65, 5.555E3,0.0, 100., 
+ 100.
+*cyclic hardening, parameters, dependencies=1
+200., 2000., 0.25, 0., 0.,
+200., 1500., 0.25, 100., 0.,
+200., 1000., 0.25, 100., 100.,
+*boundary
+1,2
+1,6
+*rest,w
+*initial conditions, type=temperature
+nall,0.
+*initial conditions, type=field,variable=1
+nall,0.
+**step 1 tension***
+*step,inc=20
+*static, direct
+1., 1.
+*boundary
+2,2,2,0.04
+*el print
+s, 
+sinv, 
+e, 
+ep, 
+ee, 
+eep, 
+pe, 
+pep, 
+alpha, 
+pener, 
+*node print
+u,rf
+*el file,freq=10
+s, 
+sinv, 
+e, 
+ep, 
+ee, 
+eep, 
+pe, 
+pep, 
+alpha, 
+*end step
+*step,inc=100
+*static,direct
+1.,1.
+*temperature
+nall,100
+*endstep
+*step,inc=100
+*static,direct
+1.,1.
+*field
+nall,100
+*endstep
+

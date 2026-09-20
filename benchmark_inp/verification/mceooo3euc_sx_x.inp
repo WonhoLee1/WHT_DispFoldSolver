@@ -1,0 +1,79 @@
+*heading
+ clay plasticity, uniaxial compression test, cax4r
+ test 9-digit labels
+*IMPORT, UPDATE=NO, STATE=YES, STEP=1
+SOIL
+SOIL1
+SOIL2
+SOIL3
+*restart,write
+*step
+  geostatic initial stress state
+*dynamic,explicit
+ ,1.0e-5
+*boundary
+top,2
+top1,2
+top2,2
+top3,2
+bottom,2
+lhs,1
+*field,variable=1
+soil1,1
+soil2,1
+soil3,1
+*dload
+900000001,p2,1.
+900000100,p2,1.
+900000200,p2,1.
+900000300,p2,1.
+*output,field
+*node output
+ u
+*element output
+ press,mises,peeq,s
+*OUTPUT,HISTORY
+*ELEMENT OUTPUT, ELSET=SOIL
+PE,PEEQ,PRESS,MISES, S
+*OUTPUT,HISTORY
+*ELEMENT OUTPUT, ELSET=SOIL1
+PE,PEEQ,PRESS,MISES, S
+*OUTPUT,HISTORY
+*ELEMENT OUTPUT, ELSET=SOIL2
+PE,PEEQ,PRESS,MISES, S
+*OUTPUT,HISTORY
+*ELEMENT OUTPUT, ELSET=SOIL3
+PE,PEEQ,PRESS,MISES, S
+*end step
+*amplitude, name=amp-1
+ 0.0,0.0,20.0,1.0
+*step
+  uniaxial compression
+*dynamic,explicit
+ ,20.
+*boundary,amplitude=amp-1
+top,2,2,-.5
+*end step
+*step
+  uniaxial compression 1
+*dynamic,explicit
+ ,20.
+*field,variable=1
+soil1,1
+*boundary,amplitude=amp-1
+top1,2,2,-.5
+*end step
+*step
+  uniaxial compression 2
+*dynamic,explicit
+ ,20.
+*boundary,amplitude=amp-1
+top2,2,2,-.5
+*end step
+*step
+  uniaxial compression 3
+*dynamic,explicit
+ ,20.
+*boundary,amplitude=amp-1
+top3,2,2,-.5
+*end step

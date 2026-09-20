@@ -1,0 +1,210 @@
+*HEADING
+CLAY PLASTICITY, UNIAXIAL COMPRESSION AND SHEAR TESTS, C3D8R
+*NODE,NSET=ALLN1
+11,0.,0.,0.
+12,1.,0.,0.
+13,1.,1.,0.
+14,0.,1.,0.
+15,0.,0.,1.
+16,1.,0.,1.
+17,1.,1.,1.
+18,0.,1.,1.
+*NODE,NSET=ALLN2
+21,2.,0.,0.
+22,3.,0.,0.
+23,3.,1.,0.
+24,2.,1.,0.
+25,2.,0.,1.
+26,3.,0.,1.
+27,3.,1.,1.
+28,2.,1.,1.
+*NODE,NSET=ALLN3
+31,4.,0.,0.
+32,5.,0.,0.
+33,5.,1.,0.
+34,4.,1.,0.
+35,4.,0.,1.
+36,5.,0.,1.
+37,5.,1.,1.
+38,4.,1.,1.
+*NODE,NSET=ALLN4
+41,6.,0.,0.
+42,7.,0.,0.
+43,7.,1.,0.
+44,6.,1.,0.
+45,6.,0.,1.
+46,7.,0.,1.
+47,7.,1.,1.
+48,6.,1.,1.
+*NODE,NSET=ALLN5
+51,8.,0.,0.
+52,9.,0.,0.
+53,9.,1.,0.
+54,8.,1.,0.
+55,8.,0.,1.
+56,9.,0.,1.
+57,9.,1.,1.
+58,8.,1.,1.
+*NODE,NSET=ALLN6
+61,10.,0.,0.
+62,11.,0.,0.
+63,11.,1.,0.
+64,10.,1.,0.
+65,10.,0.,1.
+66,11.,0.,1.
+67,11.,1.,1.
+68,10.,1.,1.
+*ELEMENT,TYPE=C3D8R,ELSET=qa_test_1
+11,11,12,13,14,15,16,17,18
+*ELEMENT,TYPE=C3D8R,ELSET=qa_test_2
+21,21,22,23,24,25,26,27,28
+*ELEMENT,TYPE=C3D8R,ELSET=qa_test_3
+31,31,32,33,34,35,36,37,38
+*ELEMENT,TYPE=C3D8R,ELSET=qa_test_4
+41,41,42,43,44,45,46,47,48
+*ELEMENT,TYPE=C3D8R,ELSET=qa_test_5
+51,51,52,53,54,55,56,57,58
+*ELEMENT,TYPE=C3D8R,ELSET=qa_test_6
+61,61,62,63,64,65,66,67,68
+*ORIENTATION,NAME=RECT
+ 1.0, 0.0, 0.0, 0.0, 1.0, 0.0
+ 1, 0.
+*SOLID SECTION,ELSET=qa_test_1,MATERIAL=ALLE,orient=rect
+*SOLID SECTION,ELSET=qa_test_2,MATERIAL=ALLE,orient=rect
+*SOLID SECTION,ELSET=qa_test_3,MATERIAL=ALLE,orient=rect
+*SOLID SECTION,ELSET=qa_test_4,MATERIAL=ALLE,orient=rect
+*SOLID SECTION,ELSET=qa_test_5,MATERIAL=ALLE,orient=rect
+*SOLID SECTION,ELSET=qa_test_6,MATERIAL=ALLE,orient=rect
+*MATERIAL,NAME=ALLE
+*density
+1.
+*ELASTIC,TYPE=ENGINEERING CONSTANTS
+200000.,342000.,342000.,.32,.32,.32,89900.,89900.
+129545.5
+*clay plasticity, hardening=tab
+,1.,0.
+*clay hardening,type=compression
+6000.,0.
+*clay hardening,type=tension
+-6000.,0.
+*POTENTIAL
+1.2,1.,1.,.71,.71,.99
+*BOUNDARY
+11,PINNED
+12,2
+12,3
+13,3
+14,3
+14,1
+15,1
+15,2
+16,2
+18,1
+21,PINNED
+22,2
+22,3
+23,3
+24,3
+24,1
+25,1
+25,2
+26,2
+28,1
+31,PINNED
+32,2
+32,3
+33,3
+34,3
+34,1
+35,1
+35,2
+36,2
+38,1
+41,PINNED
+42,PINNED
+43,PINNED
+44,PINNED
+45,1
+45,3
+46,1
+46,3
+47,1
+47,3
+48,1
+48,3
+51,PINNED
+52,PINNED
+53,PINNED
+54,PINNED
+55,2
+55,3
+56,2
+56,3
+57,2
+57,3
+58,2
+58,3
+61,PINNED
+62,PINNED
+65,PINNED
+66,PINNED
+63,2
+63,3
+64,2
+64,3
+67,2
+67,3
+68,2
+68,3
+*amplitude, name=amp-1
+ 0.,0.,20.,1.
+*STEP,nlgeom=no
+*dynamic,explicit
+,20.
+*BOUNDARY,amplitude=amp-1
+12,1,,-.1
+13,1,,-.1
+16,1,,-.1
+17,1,,-.1
+23,2,,-.1
+24,2,,-.1
+27,2,,-.1
+28,2,,-.1
+37,3,,-.1
+35,3,,-.1
+36,3,,-.1
+38,3,,-.1
+45,2,,.1
+46,2,,.1
+47,2,,.1
+48,2,,.1
+55,1,,.1
+56,1,,.1
+57,1,,.1
+58,1,,.1
+63,1,,.1
+64,1,,.1
+67,1,,.1
+68,1,,.1
+*output,field
+*element output
+s,e,pe
+*output,history,freq=1
+*element output, elset=qa_test_1
+s11,e11
+*output,history,freq=1
+*element output, elset=qa_test_2
+s22,e22
+*output,history,freq=1
+*element output, elset=qa_test_3
+s33,e33
+*output,history,freq=1
+*element output, elset=qa_test_4
+s23,e23
+*output,history,freq=1
+*element output, elset=qa_test_5
+s13,e13
+*output,history,freq=1
+*element output, elset=qa_test_6
+s12,e12
+*END STEP

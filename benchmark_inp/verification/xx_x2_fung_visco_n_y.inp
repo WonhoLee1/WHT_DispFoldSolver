@@ -1,0 +1,73 @@
+*heading
+ ANISOTROPIC HYPERELASTIC,  FUNG form with VISCOELASTICITY and MULLINS EFFECT
+  Uniaxial test, displacement control
+ Explicit->Explicit Import
+*import, update=no, state=yes
+  c3d, cpe, cps, m3d, s4r
+**
+*elset, elset=solid
+ c3d, cpe, cps
+*elset, elset=eall
+ solid, m3d, s4r
+*elset, elset = QA_TEST
+ eall,
+*equation
+ 2,
+ face14,1,1,ndisp1,1,-1
+ 2,
+ face22,1,1,ndisp2,1,-1
+ 2,
+ face32,1,1,ndisp3,1,-1
+ 2,
+ face42,1,1,ndisp4,1,-1
+ 2,
+ face52,1,1,ndisp5,1,-1
+*boundary,type=velocity
+ face11,3
+ face13,2
+ face16,1
+**
+ face21,2
+ face24,1
+**
+ face31,2
+ face34,1
+**
+ face41,2
+ face44,1
+ face41,3
+ face43,3
+**
+ face51,2
+ face54,1
+ face51,3
+ face53,3
+**
+*amplitude,name=bc
+0.0,0.75,0.25,0.0
+**
+*restart, write
+**
+*step
+ uniaxial loading
+*dynamic, explicit
+ ,0.25
+*boundary,amplitude=bc
+ ndisp,1,1,1.0
+*output,field, variable=preselect
+*element output, elset=eall
+ s, le
+*node out, nset=all
+ u, rf
+*output,field, number=2
+*element output, elset=QA_TEST
+ s,
+*node output, nset=QA_TEST
+ u,
+*output, history, variable=preselect
+*element output, elset=eall
+ s11, le11, le22, le33, ne11, ne22, ener
+*node out, nset=ndisp
+ rf1, u1
+*end step
+

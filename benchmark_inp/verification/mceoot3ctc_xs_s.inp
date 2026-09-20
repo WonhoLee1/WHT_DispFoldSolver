@@ -1,0 +1,49 @@
+*HEADING
+CLAY PLASTICITY, TRIAXIAL COMPRESSION TEST, CAX4R
+*IMPORT, UPDATE=NO, STATE=YES, step=1
+SOIL
+*STEP
+*STATIC,DIRECT
+ 1.0e-5,1.0e-5
+*DLOAD
+1,P2,100.
+*EL PRINT
+S, 
+SINV, 
+E, 
+PE, 
+EE, 
+*NODE PRINT
+U, 
+RF, 
+*OUTPUT,FIELD,FREQ=10
+*ELEMENT OUTPUT
+PE,S,E
+*BOUNDARY
+TOP,2
+BOTTOM,2
+LHS,1
+*output,field
+*node output
+ u
+*element output
+ press,mises,peeq,s
+*output,history
+*element output,elset=SOIL
+ press,mises,peeq,s
+*END STEP
+*STEP,INC=20
+  TRIAXIAL COMPRESSION
+*STATIC,DIRECT
+1.,20.
+*BOUNDARY
+TOP,2,2,-.5
+*output,field
+*node output
+ u
+*element output
+ press,mises,peeq,s
+*output,history
+*element output,elset=SOIL
+ press,mises,peeq,s
+*END STEP

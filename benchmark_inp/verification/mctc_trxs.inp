@@ -1,0 +1,62 @@
+*HEADING
+ Mohr-Coulomb Tension cutoff
+ CAX4 element, Triaxial Extension
+*NODE,NSET=ALLN
+ 1, 0., 0.
+ 2, 1., 0.
+ 3, 1., 1.
+ 4, 0., 1.
+*ELEMENT,TYPE=CAX4,ELSET=ALLE
+ 1,1,2,3,4
+*SOLID SECTION,ELSET=ALLE,MATERIAL=ALLE
+*MATERIAL,NAME=ALLE
+*ELASTIC
+ 300.E3,.3
+*MOHR COULOMB
+ 40.,40.
+*MOHR COULOMB HARDENING
+  6.E3, 0.
+  9.E3, 0.02
+ 11.E3, 0.063333
+ 12.E3, 0.11
+ 12.E3, 1.
+*tension cutoff
+6.e2,0.0
+*BOUNDARY
+ 1,PINNED
+ 2,2
+ 4,1
+*INITIAL CONDITIONS,TYPE=STRESS
+ ALLE,-5000.,-5000.,-5000.
+*STEP,INC=1
+*GEOSTATIC
+ 1.,1.
+*DLOAD
+ 1,P2,5000.
+ 1,P3,5000.
+*EL PRINT
+ S, 
+ SINV, 
+ E, 
+ PE, 
+ EE, 
+*NODE PRINT
+ U, 
+ RF, 
+*EL FILE,FREQ=10
+ S,E,PE
+*print,solve=no
+*output,field,op=add
+*element output,elset=alle
+peeqt
+*output,history,op=add
+*element output,elset=alle
+peeq,peeqt,pener
+*END STEP
+*STEP,INC=20
+*STATIC,DIRECT
+ 1.,20.
+*BOUNDARY
+ 3,2,,.2
+ 4,2,,.2
+*END STEP

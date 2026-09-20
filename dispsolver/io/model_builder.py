@@ -277,6 +277,11 @@ class ModelBuilder:
         """Flatten *PART + *ASSEMBLY + *INSTANCE into single flat model.
 
         Flat models (no PART/ASSEMBLY) pass through unchanged.
+
+        LEGACY-FROZEN: the registry reader path (AbaqusInputReader +
+        Assembly.build_solver_system) is canonical for new work. This
+        method stays only for the read_abaqus_input pipeline used by
+        ex12_abaqus_inp_plate_fold.py and check_interlayer_shear.py.
         """
         if not self._abq.parts:
             return  # already flat

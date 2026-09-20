@@ -1,0 +1,83 @@
+*Heading
+ Basic Verification Of Field Dependence Of Conductivity
+ Test Type: Material Verification  [cps4t]
+**
+** See "Thermal Properties"  Of Abaqus/Verification 
+** Manual -- Chapter 2.3.1
+**
+*Node,Nset=Nall
+ 1, 
+ 2,1.
+ 3,3.
+ 4,6.
+ 11, 0., 1.
+ 12, 1., 1.
+ 13, 3., 1.
+ 14, 6., 1.
+*Nset,Nset=Fvnods
+ 2,3,12,13
+*Element,Elset=K1k3,Type=cps4t
+ 1,1,2,12,11
+ 3,3,4,14,13
+*Element,Elset=K2fv,Type=cps4t
+ 2,2,3,13,12
+*Solid Section,Elset=K1k3,Material=Kconst
+ 3., 
+*Solid Section,Elset=K2fv,Material=Kfvdep
+ 3., 
+*Initial Conditions,Type=Temperature
+ Nall,0.
+*Initial Conditions,Type=Field
+ Nall,0.
+*Material,Name=Kconst
+*Elastic
+ 1.0,0.0
+*Expansion
+ 0.0,
+*Conductivity
+ 150., 
+*Density
+ 7850.,
+*Specific Heat
+ 460.,
+*Material,Name=Kfvdep
+*Elastic
+ 1.0,0.0
+*Expansion
+ 0.0,
+*Conductivity,Dep=1
+ 1.,,25.
+ 10.,,50.
+ 100.,,75.
+ 1000,,100.
+*Density
+ 7850.,
+*Specific Heat
+ 460.,
+*Amplitude,Name=Rise
+ 0.,0.,1.,1.
+*Step
+*Coupled Temperature-Displacement,Steady State
+ .25,1.,.25,.25
+*Boundary
+ Nall, 1, 2
+ 1, 11,,1000.
+ 4, 11,,0.
+ 11,11,,1000.
+ 14,11,,0.
+*Field,Variable=1,Amp=Rise
+ Fvnods,100.
+*Node File
+ Nt, 
+*El File, Position=Centroidal
+ Fv,
+*El File, Position=Integration Points
+ Fv,
+*Output, Field
+*Node Output
+ Nt,
+*Element Output, Position=Centroidal
+ Fv,			  
+*Element Output, Position=Integration Points
+ Fv,
+*End Step

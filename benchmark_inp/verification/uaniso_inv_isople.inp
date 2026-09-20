@@ -1,0 +1,96 @@
+*heading
+Implement isotropic hyperelastic behavior through UANISOHYPER_INV
+*****************************************
+**
+** Element types: c3d8h, cpe4h
+** Material     : Incompressible polynomial, N=2
+** Types of test: Plane-strain tension with orientation
+** Results      : s11=6.741e2, s22=1.1685e2, s33=4.058e2, s12=-3.370e2
+**
+*****************************************
+*node, nset=alln
+** for c3d8h - abaqus isotropic hyper elasticity material
+ 1,0,0,0
+ 2,1,0,0
+ 3,1,1,0
+ 4,0,1,0
+ 5,0,0,1
+ 6,1,0,1
+ 7,1,1,1
+ 8,0,1,1
+** for c3d8h - uaniso hyper elasticity material
+11,0,2,0
+12,1,2,0
+13,1,3,0
+14,0,3,0
+15,0,2,1
+16,1,2,1
+17,1,3,1
+18,0,3,1
+** for cpe4h - uaniso hyper elasticity material
+21,0,4
+22,1,4
+23,1,5
+24,0,5
+*nset,nset=z0
+1,2,3,4,11,12,13,14
+*nset,nset=z1
+5,6,7,8,15,16,17,18
+*nset,nset=x0
+1,4,5,8,11,14,15,18,21,24,25,28
+*nset,nset=x1
+2,3,6,7,12,13,16,17,22,23,26,27
+*nset,nset=y0
+1,2,5,6,11,12,15,16,21,22,25,26
+*nset,nset=y1
+3,4,7,8,13,14,17,18,23,24,27,28
+*element,type=c3d8h,elset=e_abq
+1,1,2,3,4,5,6,7,8
+*element,type=c3d8h,elset=e_uaniso3d
+2,11,12,13,14,15,16,17,18
+*element,type=cpe4h,elset=e_uaniso2d
+3,21,22,23,24
+*elset, elset=eall
+1,2,3
+*orientation,name=ori-1,local directions=2
+1,0.5,0,-1,1,0
+3,0
+1,0,0
+1,1,1
+*material,name=UANISO_INVISO_1
+*anisotropic hyperelastic,definition=user,formulation=invariant, local directions=2,type=incompressible,properties=7
+ 100.,50.,10.,20.,30.,0.0,0.0
+*mullins effect
+2.0,0.0,0.1
+*material,name=polyabq
+*hyperelastic, n=2
+ 100.,50.,10.,20.,30.,0.0,0.0
+*mullins effect
+2.0,0.0,0.1
+*solid section, elset=e_abq, material=polyabq,orientation=ori-1
+1.
+*solid section, elset=e_uaniso3d, material=UANISO_INVISO_1,orientation=ori-1
+1.
+*solid section, elset=e_uaniso2d, material=UANISO_INVISO_1,orientation=ori-1
+1.
+*boundary
+ z0,3
+ z1,3
+ y0,2
+ x0,1
+*amplitude,name=amp1
+0.0,0.0, 0.5,1.0, 1.0,0.0
+*step,nlgeom=yes,inc=1000
+*static
+ 0.1,1.,,0.1
+*boundary, amp=amp1
+ x1,1,1,0.5
+*output,field,freq=10
+*element output
+ S,E
+*node output
+ U,RF
+*output,history
+*element output, elset=eall
+ S11,s22,s12,s33,le11,dmener
+*end step

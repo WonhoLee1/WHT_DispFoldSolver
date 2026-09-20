@@ -1,0 +1,46 @@
+*heading
+ Simple eigenvalue analysis of elastic-plastic joint element.
+ A diagonal stiffness is used.  One node is constrained and masses
+ are placed on the other.  This produces 3 independent single-dof 
+ systems with frequencies 3,4,5 rad/time for systems on dof
+ 1,2,6 respectively.
+**
+**
+*node
+1,0,0,0.
+10,0,0,0.
+*element,elset=joint,type=joint2d
+1,10,1
+**
+*element,elset=mass,type=mass
+10,10
+*element,elset=rot,type=rotaryi
+11,10
+**
+*orientation,name=orientation1
+0,1,0,1,0,0
+**
+*epjoint,elset=joint,orientation=orientation1
+*joint elasticity,ndim=2, moduli=gen
+9.,0,16.,0,0,25.
+**
+*mass,elset=mass
+1.,
+*rotary inertia,elset=rot
+0,0,1
+**
+*step
+*frequency, eigensolver=lanczos
+3, , 
+*BOUNDARY
+1,encastre
+10,3,5
+*output,field
+*node output
+u,rf
+*element output,elset=joint
+s,e
+*end step
+**
+**
+

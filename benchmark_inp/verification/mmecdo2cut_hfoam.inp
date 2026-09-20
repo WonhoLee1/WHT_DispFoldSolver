@@ -1,0 +1,70 @@
+*heading
+*node
+1,0.,0.
+2,1.,0.
+3,1.,1.
+4,0.,1.
+*element,type=cps4r,elset=one
+1,1,2,3,4
+*solid section,elset=one,material=low_density_foam
+*MATERIAL,NAME=low_density_foam
+*DENSITY
+ 5.0000e-010,
+*HYPERFOAM, N=3
+-1048.43,0.3025,532.20,0.3958,517.027,0.2135,0.2,0.2,
+0.2
+*MULLINS EFFECT
+1.75,0.3,0.6
+*nset,nset=ndisp
+2
+*equation
+2
+3,1,1,2,1,-1
+*nset,nset=left
+1,4
+*nset,nset=bot
+1,2
+*boundary
+left,1,1,
+bot,2,2,
+*step,nlgeom
+*static
+5.0e-4,1.0e-2,,5.0e-4
+*boundary
+NDISP,1,1,0.5
+*OUTPUT,FIELD, VARIABLE=PRESELECT
+*OUTPUT, HISTORY, VARIABLE=PRESELECT
+*ELEMENT OUTPUT, ELSET=one
+ S11, LE11, NE11, ENER, ELSE
+*NODE OUT, NSET=NDISP
+ RF1
+*ENERGY OUTPUT
+ ALLDMD
+*END STEP
+*STEP,NLGEOM
+ UNLOADING
+*STATIC
+5.0e-4,1.0e-2,,5.0e-4
+*BOUNDARY,OP=NEW
+ left,1,1,
+ bot,2,2,
+ NDISP,1,1,0.
+*END STEP
+*step,nlgeom
+*static
+5.0e-4,1.0e-2,,5.0e-4
+*boundary,OP=NEW
+ left,1,1,
+ bot,2,2,
+ NDISP,1,1,1.0
+*end step
+*STEP,NLGEOM
+ UNLOADING
+*STATIC
+5.0e-4,1.0e-2,,5.0e-4
+*BOUNDARY,OP=NEW
+ left,1,1,
+ bot,2,2,
+ NDISP,1,1,0.
+*END STEP
+

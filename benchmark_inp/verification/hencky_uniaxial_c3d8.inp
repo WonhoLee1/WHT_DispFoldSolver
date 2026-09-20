@@ -1,0 +1,62 @@
+*HEADING
+*PREPRINT,ECHO=YES,HISTORY=YES
+**--------------------------------------------- Part1
+*PART,NAME=PART-1
+  *NODE
+   1,  0.0, 0.0
+   2,  1.0
+   3,  1.0, 1.0
+   4,  0.0, 1.0
+   **
+   5,  0.0, 0.0, 1.0
+   6,  1.0, 0.0, 1.0
+   7,  1.0, 1.0, 1.0
+   8,  0.0, 1.0, 1.0
+  *ELEMENT,TYPE=c3d8
+   1, 1,2,3,4, 5,6,7,8
+  *ELSET,ELSET=EA
+   1,
+  *SOLID SECTION,ELSET=EA,MATERIAL=MATVL
+   1.,
+  *NSET,NSET=fix1
+   1,4,5,8
+  *NSET,NSET=fix2
+   1,2,5,6
+  *NSET,NSET=fix3
+   5,6,7,8
+  *nset, nset=move
+   2,3,6,7
+*END PART
+**--------------------------------------------- Assembly-1
+*ASSEMBLY,NAME=ASSEMBLY-1
+*INSTANCE,NAME=PART-1-1,PART=PART-1
+*END INSTANCE
+*END ASSEMBLY
+**--------------------------------------------- End Assembly
+*MATERIAL,NAME=MATVL
+*Density
+ 1e-09,
+*Hyperelastic, Hencky
+ 20.0, 0.3
+*BOUNDARY
+ ASSEMBLY-1.PART-1-1.fix1, 1,1
+ ASSEMBLY-1.PART-1-1.fix2, 2,2
+ ASSEMBLY-1.PART-1-1.fix3, 3,3
+*STEP, NLGEOM=YES
+ APLLY LOAD
+*STATIC
+ 0.1,1.,,0.1
+*BOUNDARY
+ ASSEMBLY-1.PART-1-1.MOVE, 1,1, 0.1
+*OUTPUT,FIELD,FREQ=10
+*ELEMENT OUTPUT
+ S,
+ E,
+*NODE OUTPUT
+ U,
+*OUTPUT,HISTORY,FREQ=10
+*ELEMENT OUTPUT,ELSET=PART-1-1.EA
+ MISES,EVOL
+*ENERGY OUTPUT
+ ETOTAL,ALLWK,ALLSE
+*END STEP

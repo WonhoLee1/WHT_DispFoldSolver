@@ -1,0 +1,59 @@
+*heading
+        mises plasticity with combined 
+        isotropic-kinematic hardening
+        with multiple backstresses,
+	cpe4r element under uniaxial tension
+        INITIAL CONDITIONS AND ORIENTATION OF PEEQ AND ALPHA VERIFIED
+*part, name=part-1
+*node, nset=nall
+1, 
+2,1
+3,1,1
+4,0,1
+*element,type=cpe4r,elset=alle
+1,1,2,3,4
+*orientation,definition=coordinates,name=rotate
+0.,-1.,0,1,0,0
+*solid section, elset=alle, material=steel,orientation=rotate
+1, 
+*end part
+*assembly, name=assembly-1
+*instance, name=part-1-1, part=part-1
+*end instance
+*end assembly
+*material, name=steel
+*elastic
+200.E3,0
+*density
+ 7.82000e-09,
+*plastic, hardening=combined, data type=parameters, numberbackstress=3
+200., 1.111e4, 34.65, 5.555e3, 34.65, 5.555e3, 0.
+*cyclic hardening, parameters
+200., 2000., 0.25, 0., 0.,
+*boundary
+assembly-1.part-1-1.1,1,2
+assembly-1.part-1-1.4,1,1
+*rest,w
+*initial conditions, type=hardening
+assembly-1.part-1-1.1,1.e-2,,300.
+**step 1 tension***
+*amplitude,name=smoothing_curve,definition=smooth step
+ 0., 0., 10e-3, 1.
+*step,nlgeom=no
+*dynamic,explicit
+ ,10e-3
+*boundary,amplitude=smoothing_curve
+assembly-1.part-1-1.2,1,1,0.04
+assembly-1.part-1-1.3,1,1,0.04
+*output, field
+*element output, elset=assembly-1.part-1-1.alle
+ S, LE, PE, PEEQ, ALPHA
+*node output, nset=assembly-1.part-1-1.nall
+ U, RF
+*output, history, variable=preselect
+*element output, elset=assembly-1.part-1-1.alle
+ S, PE, LE, PEEQ, ALPHA, ALPHAP
+*file output, number interval = 10
+*el file, elset=assembly-1.part-1-1.alle
+ PEEQ, ALPHA, ALPHAP
+*end step

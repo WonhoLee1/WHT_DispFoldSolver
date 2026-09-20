@@ -1,0 +1,51 @@
+*heading
+Visco solid formulation: verification for 3D Plane strain
+Cyclic shear loading
+*node,nset=nall
+1,0.0,0.0,
+2,1.0,0.0,
+3,1.0,1.0,
+4,0.0,1.0,
+5,0.0,0.0,1.0
+6,1.0,0.0,1.0
+7,1.0,1.0,1.0
+8,0.0,1.0,1.0
+*nset,nset=top
+3,4,7,8
+*nset,nset=bot
+1,2,5,6
+*element, type=c3d8rht, elset=e1
+1, 1,2,3,4,5,6,7,8
+*material, name=mat1
+*hyperelastic,ogden,n=3,moduli=instantaneous
+**64.26,1.8, 25.0,-2.0, 18.76,7.0, 2.e-5,,
+64.26,1.8, 25.0,-2.0, 18.76,7.0, ,,
+,
+*viscoelastic,time=prony
+0.72,,17.5
+*density
+ 7800.,
+*inelastic heat fraction
+ 0.8,
+*conductivity
+ 1.e-6,
+*specific heat
+ 10.,
+*amplitude,name=amp1, def=periodic
+1, 0.3, 0.0, 0.0
+0.0, 1.0
+*solid section, mat=mat1, elset=e1
+*boundary
+nall, 2,3
+bot, 1,1
+*step,nlgeom=yes,inc=2000
+*coupled temperature-displacement, cetol=0.1
+0.2,104.7,,0.2
+*boundary,amp=amp1
+top,1,1,2.0
+*output, history
+*element output, elset=e1
+s,cener
+*node output, nset=top
+u,rf,nt
+*end step

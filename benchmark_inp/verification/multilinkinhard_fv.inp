@@ -1,0 +1,77 @@
+*HEADING
+MULTILINEAR KINEMATIC HARDENING MODEL
+*PREPRINT, MODEL=YES
+*NODE,NSET=ALLN1
+11,0.,0.,0.
+12,1.,0.,0.
+13,1.,1.,0.
+14,0.,1.,0.
+15,0.,0.,1.
+16,1.,0.,1.
+17,1.,1.,1.
+18,0.,1.,1.
+*ELEMENT,TYPE=C3D8,ELSET=qa_test_1
+11,11,12,13,14,15,16,17,18
+*SOLID SECTION,ELSET=qa_test_1,MATERIAL=MULTILINKINHARD
+*Material, name=MULTILINKINHARD
+*Expansion
+ 0.0001,
+*Elastic
+200000.,    0.3
+*PLASTIC,HARDENING=MULTILINEAR KINEMATIC,DEP=1
+2000	,0
+3000	,0.25
+5500	,1
+800	,0	,100
+2000	,0.25	,100
+4000	,0.8	,100
+400	,0	,	,200
+800	,0.1	,	,200
+1600	,0.4	,	,200
+200	,0	,100	,200
+500	,0.5	,100	,200
+750	,1	,100	,200
+*Amplitude, name=MechAmp
+0.,0.,1.,1.,2.,0.98,3.,1.5
+*Amplitude, name=TempAmp
+0.,0.,0.25,0.,0.26,1.,1.,1.
+2.,0.
+*Amplitude, name=FvAmp
+0.,0.,0.5,0.,0.6,1.,2.5,1.
+2.6,0.
+*Initial Conditions, type=TEMPERATURE
+AllN1, 0.
+*Initial Conditions, type=FIELD,VARIABLE=1
+AllN1, 0.,0.
+*BOUNDARY
+11,PINNED
+12,2
+15,2
+16,2
+14,1
+15,1
+18,1
+12,3
+13,3
+14,3
+*Step, name=Step-1, nlgeom=NO, inc=2000
+*Static
+0.01, 3., 1e-05, 0.01
+*Boundary, amplitude=MechAmp
+13,2,2,0.5
+14,2,2,0.5
+17,2,2,0.5
+18,2,2,0.5
+*Temperature, amplitude=TempAmp
+AllN1,100.
+*Field, amplitude=FvAmp
+AllN1,200.
+*Output, field
+*Element Output
+E, PE, S
+*Output, history
+*Element Output, elset=qa_test_1
+S22,E22,PE22,FV1,TEMP
+*node output,nset=alln1
+u2
+*End Step

@@ -1,0 +1,48 @@
+*heading
+ test bergstrom-boyce, plane-strain loading
+ strain rate=-0.01/s, material: Chloroprene Rubber (65 pph carbon black)
+*node
+1,
+2,0.013
+3,0.013,0.013,
+4,0.,0.013
+*element,type=cpe4,elset=eall
+1,1,2,3,4
+*solid section,elset=eall,material=hyster
+*material,name=hyster
+*hyperelastic,arruda-boyce,MODULI=LONG TERM
+1.71,2.8284,0.01
+*hysteresis
+4.0,0.03135,5.,-0.9
+*boundary
+1,1,2,
+2,2,2,
+4,1,1,
+*DIAGNOSTICS,NONHYBRID=WARNING
+*step,nlgeom,inc=1000,unsymm=yes
+*static
+1.,50.,,5.
+*boundary
+3,2,2,-0.0051151
+4,2,2,-0.0051151
+*el print
+s, 
+le, 
+*node print
+rf,u
+*OUTPUT,FIELD
+*ELEMENT OUTPUT
+s,le
+*OUTPUT,FIELD
+*NODE OUTPUT
+u,rf
+*end step
+**
+*step,nlgeom,inc=1000,unsymm=yes
+*static
+1.,50.,,5.
+*boundary
+3,2,2,0.
+4,2,2,0.
+*end step
+**

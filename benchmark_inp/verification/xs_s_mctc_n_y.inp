@@ -1,0 +1,27 @@
+*HEADING
+Import of MCTC X2S: input for S
+*IMPORT, UPDATE=NO, STATE=YES, STEP=1
+C3D_1
+*IMPORT ELSET
+C3D_1
+*IMPORT NSET
+QA_TEST_ALLNODES,nx0,ny0,nz0,nx1,nz1
+**
+*STEP,nlgeom=yes,inc=100
+*static
+0.1,1
+*BOUNDARY
+nx0,1,1
+ny0,2,2
+nz0,3,3
+nz1,3,3,-0.1
+*print,solve=no
+*OUTPUT, FIELD,freq=100
+*ELEMENT OUTPUT
+S,PEEQ,PEEQT
+*NODE OUTPUT
+U,
+*OUTPUT,HISTORY
+*element output,elset=c3d_1
+peeq,peeqt,pener
+*END STEP

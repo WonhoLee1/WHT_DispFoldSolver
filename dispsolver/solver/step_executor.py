@@ -54,9 +54,17 @@ class MultiStepExecutor:
         self.solver: Optional[Any] = None
         self.sys: Optional[Any] = None
 
-    def initialize_solver(self) -> Tuple[Any, Any]:
-        """Build global solver system and instantiate DynamicSolver3D."""
-        self.solver, self.sys = self.model.create_solver3d()
+    def initialize_solver(self, solver_factory=None, notices=None) -> Tuple[Any, Any]:
+        """Build global solver system and instantiate the solver.
+
+        solver_factory: zero-argument factory returning (solver, sys).
+        Defaults to model.create_solver (auto-detects 2D vs 3D).
+        notices: optional list receiving solve-side warning strings.
+        """
+        if solver_factory is None:
+            self.solver, self.sys = self.model.create_solver(notices=notices)
+        else:
+            self.solver, self.sys = solver_factory()
         return self.solver, self.sys
 
     def capture_checkpoint(self, step_name: str, t_accum: float) -> StateCheckpoint:

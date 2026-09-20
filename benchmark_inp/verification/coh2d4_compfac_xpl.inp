@@ -1,0 +1,51 @@
+*heading
+*node
+1,0.,0.,0.
+2,1.,0.,0.
+3,1.,1.,0.
+4,0.,1.,0.
+**
+11,2.,0.,0.
+12,3.,0.,0.
+13,3.,1.,0.
+14,2.,1.,0.
+*nset,nset=lower1
+1,2
+*nset,nset=lower2
+11,12
+*nset,nset=upper1
+3,4
+*nset,nset=upper2
+13,14
+*element,type=coh2d4,elset=test
+1,1,2,3,4
+2,11,12,13,14
+*elset,elset=qa_test
+test
+*cohesive section,response=traction separation,thickness=geometry,elset=test,material=mat1
+*material,name=mat1
+*density
+1.
+*elastic, type=traction, compression factor=2.0
+2.e5, 1.e5, 1.e5
+*boundary
+lower1,1,2,
+lower2,1,2,
+*amplitude, name=amp
+0., 0., 1., 1.
+*step
+*dynamic,explicit
+,1.
+*boundary,amplitude=amp
+upper1,2,2,0.5
+upper1,1,1,0.
+upper2,2,2,-0.5
+upper2,1,1,0.
+*output,field
+*element output
+s,e
+*output,history
+*element output,elset=qa_test
+s,e
+*end step
+

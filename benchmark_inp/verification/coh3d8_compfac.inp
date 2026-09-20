@@ -1,0 +1,51 @@
+*heading
+*node
+1,0.,0.,0.
+2,1.,0.,0.
+3,1.,1.,0.
+4,0.,1.,0.
+5,0.,0.,1.
+6,1.,0.,1.
+7,1.,1.,1.
+8,0.,1.,1.
+**
+11,2.,0.,0.
+12,3.,0.,0.
+13,3.,1.,0.
+14,2.,1.,0.
+15,2.,0.,1.
+16,3.,0.,1.
+17,3.,1.,1.
+18,2.,1.,1.
+*nset,nset=lower1
+1,2,3,4
+*nset,nset=lower2
+11,12,13,14
+*nset,nset=upper1
+5,6,7,8
+*nset,nset=upper2
+15,16,17,18
+*element,type=coh3d8,elset=test
+1,1,2,3,4,5,6,7,8
+2,11,12,13,14,15,16,17,18
+*cohesive section,response=traction separation,thickness=geometry,elset=test,material=mat1
+*material,name=mat1
+*elastic, type=traction, compression factor=2.0
+2.e5, 1.e5, 1.e5
+*boundary
+lower1,1,3,
+lower2,1,3,
+*step,nlgeom
+*static
+*boundary
+upper1,3,3,0.5
+upper1,1,2,0.
+upper2,3,3,-0.5
+upper2,1,2,0.
+*output,field
+*element output
+s,e
+*el print
+s,e
+*end step
+

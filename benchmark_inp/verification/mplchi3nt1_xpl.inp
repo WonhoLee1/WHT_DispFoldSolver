@@ -1,0 +1,65 @@
+*heading
+NONLINEAR KINEMATIC HARDENING, M3D4 AND REBAR WITH INITIAL CONDITIONS
+*part, name=part-1
+*node,nset=alln
+ 1,0.,0.,0.
+ 2,1.,0.,0.
+ 3,1.,1.,0.
+ 4,0.,1.,0.
+*element,type=m3d4r,elset=alle
+ 1,1,2,3,4,
+*membrane section,elset=alle,material=alle
+ 0.1,
+*rebar layer
+ reb,0.05,0.2,0,alle,0,1
+*end part
+*assembly, name=assembly-1
+*instance, name=part-1-1, part=part-1
+*end instance
+*end assembly
+*material,name=alle
+*elastic
+ 200.e3,0.3
+*density
+ 7.82000e-09,
+*plastic,hard=combined,data type=parameters
+ 200.,2.222e4, 34.65,
+*cyclic hardening, parameters
+ 200., 2000., 0.25,
+*initial conditions,type=stress
+ assembly-1.part-1-1.1,10.,
+*initial conditions,type=stress,rebar
+ assembly-1.part-1-1.1,,10.,
+*initial conditions,type=hardening
+ assembly-1.part-1-1.1,0.2,20.,
+*initial conditions,type=hardening,rebar
+ assembly-1.part-1-1.1,,0.2,20.,
+*boundary
+ assembly-1.part-1-1.alln,3
+ assembly-1.part-1-1.1,pinned
+ assembly-1.part-1-1.2,2
+ assembly-1.part-1-1.4,1
+*amplitude,name=smoothing_curve,definition=smooth step
+ 0., 0., 10e-3, 1.
+*step,nlgeom=no
+*dynamic,explicit
+ ,10e-3
+*boundary,amplitude=smoothing_curve
+ assembly-1.part-1-1.2,1,,.043528
+ assembly-1.part-1-1.3,1,,.043528
+*output, field
+*element output, elset=assembly-1.part-1-1.alle
+ S, LE, PE, PEEQ, ALPHA
+*element output, rebar
+ S, LE, PE, PEEQ
+*node output, nset=assembly-1.part-1-1.alln
+ U, V, RF
+*output, history, variable=preselect
+*element output, elset=assembly-1.part-1-1.alle
+ S, PE, LE, PEEQ, ALPHA, ALPHAP
+*element output, elset=assembly-1.part-1-1.alle, rebar
+ S, PE, LE, PEEQ, ALPHA
+*file output, number interval = 10
+*el file, elset=assembly-1.part-1-1.alle
+ PEEQ, ALPHA, ALPHAP
+*end step

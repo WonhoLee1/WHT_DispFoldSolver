@@ -1,0 +1,164 @@
+*HEADING
+  - INCOMPRESSIBLE HYPERELASTICITY (MARLOW), UNIAXIAL TENSION
+*PREPRINT,MODEL=YES
+*NODE,NSET=ALL
+1,
+2,1.
+3,1.,1.,
+4,0.,1.,
+5,0.,0.,1.
+6,1.,0.,1.
+7,1.,1.,1.
+8,0.,1.,1.
+*NSET,NSET=FACE1
+1,2,3,4
+*NSET,NSET=FACE2
+5,6,7,8
+*NSET,NSET=FACE3
+1,2,5,6
+*NSET,NSET=FACE4
+2
+*NSET,NSET=FACE42
+3,6,7
+*NSET,NSET=FACE5
+3
+*NSET,NSET=FACE52
+4,7,8
+*NSET,NSET=FACE6
+4,1,8,5
+*EQUATION
+** Since the S11 output is Cauchy or true stress, we need to
+** determine the nominal stress for post-processing.
+** Nodes 3,6,7 are tied to node 2 in dof 1 so that:
+** Nominal stress (dof 1) = RF1 (@ node 2) / Original area
+** (w/c is 1 x 1 = 1)
+2
+FACE42,1,1, 2,1,-1
+*EQUATION
+2
+FACE52,2,1,3,2,-1
+*ELEMENT,TYPE=C3D8RH,ELSET=ONE
+1,1,2,3,4,5,6,7,8
+*SOLID SECTION,ELSET=ONE,MATERIAL=MARLOW
+*MATERIAL,NAME=MARLOW
+*HYPERELASTIC, MARLOW
+*UNIAXIAL TEST DATA
+  0.000000, 0.0
+  0.231494,        3.0E-002
+  0.44856 ,        6.0E-002
+  0.747177,        0.10500     
+   1.13595,        0.17250     
+   1.59760,        0.27375     
+   2.08089,        0.42375     
+   2.47973,        0.57375     
+   3.03767,        0.72375     
+   4.07610,        0.87375     
+   5.99936,        1.02375     
+   9.30106,        1.17375     
+   14.5712,        1.32375     
+   22.5031,        1.47375     
+   33.9013,        1.62375    
+   49.6884,        1.77375     
+   70.9126,        1.92375     
+   98.7549,        2.07375     
+   134.537,        2.22375     
+   179.726,        2.37375     
+   235.948,        2.52375     
+   304.986,        2.67375     
+   388.797,        2.82375     
+   489.510,        2.97375     
+   509.043,        3.00000     
+*MULLINS EFFECT,TEST DATA INPUT
+*UNIAXIAL TEST DATA
+84.1596    , 2.         
+52.2701    , 1.9        
+32.8573    , 1.8        
+21.2217    , 1.7        
+14.1184    , 1.6        
+ 9.629     , 1.5        
+ 6.68741   , 1.4        
+ 4.70457   , 1.3        
+ 3.34586   , 1.2        
+ 2.41153   , 1.1        
+ 1.77447   , 1.         
+ 1.34805   , 900.E-03     
+ 1.06922   , 800.E-03     
+ 889.632E-03,700.E-03     
+ 770.943E-03,600.E-03     
+ 682.284E-03,500.E-03     
+ 598.896E-03,400.E-03     
+ 501.378E-03,300.E-03     
+ 375.081E-03,200.E-03     
+ 209.883E-03,100.E-03     
+ 0., 0.
+*UNIAXIAL TEST DATA
+509.046     ,  3.    
+309.315     ,  2.85  
+190.291     ,  2.7   
+120.689     ,  2.55  
+ 79.0685    ,  2.4   
+ 53.0791    ,  2.25  
+ 36.1182    ,  2.1   
+ 24.644     ,  1.95  
+ 16.7047    ,  1.8   
+ 11.1661    ,  1.65  
+  7.32415   ,  1.5   
+  4.71004   ,  1.35  
+  2.98974   ,  1.2   
+  1.91099   ,  1.05  
+  1.2786    ,  900.E-03
+  934.216E-03, 750.E-03 
+  751.632E-03, 600.E-03     
+  631.26E-03 , 450.E-03     
+  497.431E-03, 300.E-03     
+  297.089E-03, 150.E-03     
+  0., 0.
+*STEP,NLGEOM,INC=20
+UNIAXIAL TENSION
+*STATIC,DIRECT
+1.,20.
+*BOUNDARY,OP=NEW
+FACE1,3
+FACE3,2
+FACE6,1
+FACE4,1,1,2.
+*EL PRINT,F=10
+S, 
+E, 
+*NODE PRINT,F=10
+U,RF
+*OUTPUT,HISTORY
+*NODE OUTPUT,NSET=FACE4
+U,RF
+*ELEMENT OUTPUT,ELSET=ONE
+S,
+DMENER,
+SENER,
+*END STEP
+*STEP,NLGEOM,INC=20
+*STATIC,DIRECT
+1.,20.
+*BOUNDARY,OP=NEW
+FACE1,3
+FACE3,2
+FACE6,1
+FACE4,1,1,0.0
+*END STEP
+*STEP,NLGEOM,INC=20
+*STATIC,DIRECT
+1.,20.
+*BOUNDARY,OP=NEW
+FACE1,3
+FACE3,2
+FACE6,1
+FACE4,1,1,3.
+*END STEP
+*STEP,NLGEOM,INC=20
+*STATIC,DIRECT
+1.,20.
+*BOUNDARY,OP=NEW
+FACE1,3
+FACE3,2
+FACE6,1
+FACE4,1,1,0.0
+*END STEP

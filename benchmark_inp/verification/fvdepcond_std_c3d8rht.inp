@@ -1,0 +1,93 @@
+*Heading
+ Basic Verification Of Field Dependence Of Conductivity
+ Test Type: Material Verification  [c3d8rht]
+**
+** See "Thermal Properties"  Of Abaqus/Verification 
+** Manual -- Chapter 2.3.1
+**
+*Node,Nset=Nall
+      1,           0.,           0.,           3.
+      2,           0.,           1.,           3.
+      3,           0.,           1.,           1.
+      4,           0.,           0.,           1.
+      5,           1.,           1.,           3.
+      6,           1.,           1.,           1.
+      7,           1.,           0.,           1.
+      8,           1.,           0.,           3.
+      9,           0.,           0.,           6.
+     10,           0.,           1.,           6.
+     11,           1.,           0.,           6.
+     12,           1.,           1.,           6.
+     13,           1.,           0.,           0.
+     14,           1.,           1.,           0.
+     15,           0.,           0.,           0.
+     16,           0.,           1.,           0.
+*Nset,Nset=Fvnods
+ 1, 2, 3, 4, 5, 6, 7, 8
+*Nset,Nset=Left
+ 13,14,15,16
+*Nset,Nset=Right
+ 9,10,11,12
+*Element,Elset=K1k3,Type=c3d8rht
+ 1,  3,  4, 15, 16,  6,  7, 13, 14
+ 3,  5,  8, 11, 12,  2,  1,  9, 10
+*Element,Elset=K2fv,Type=c3d8rht
+ 2, 8, 5, 6, 7, 1, 2, 3, 4
+*Solid Section,Elset=K1k3,Material=Kconst
+ 3., 
+*Solid Section,Elset=K2fv,Material=Kfvdep
+ 3., 
+*Initial Conditions,Type=Temperature
+ Nall,0.
+*Initial Conditions,Type=Field
+ Nall,0.
+*Material,Name=Kconst
+*Elastic
+ 1.0,0.0
+*Expansion
+ 0.0,
+*Conductivity
+ 150., 
+*Density
+ 7850.,
+*Specific Heat
+ 460.,
+*Material,Name=Kfvdep
+*Elastic
+ 1.0,0.0
+*Expansion
+ 0.0,
+*Conductivity,Dep=1
+ 1.,,25.
+ 10.,,50.
+ 100.,,75.
+ 1000,,100.
+*Density
+ 7850.,
+*Specific Heat
+ 460.,
+*Amplitude,Name=Rise
+ 0.,0.,1.,1.
+*Step
+*Coupled Temperature-Displacement,Steady State
+ .25,1.,.25,.25
+*Boundary
+ Nall, 1, 3
+ Left,11,11,1000.
+ Right,11,11,0.
+*Field,Variable=1,Amp=Rise
+ Fvnods,100.
+*Node File
+ Nt, 
+*El File, Position=Centroidal
+ Fv,
+*El File, Position=Integration Points
+ Fv,
+*Output, Field
+*Node Output
+ Nt,
+*Element Output, Position=Centroidal
+ Fv,			  
+*Element Output, Position=Integration Points
+ Fv,
+*End Step

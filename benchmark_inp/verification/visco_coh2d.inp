@@ -1,0 +1,109 @@
+*heading
+Test for viscoelasticity with 2D cohesive elements (COH2D4) with
+traction-separation response.
+*preprint, model=yes
+*node, nset=nall
+ 1, 0., 0.
+ 2, 1., 0.
+ 3, 1., 0.1
+ 4, 0., 0.1
+**
+11, 0., 1.
+12, 1., 1.
+13, 1., 1.1
+14, 0., 1.1
+**
+101, 2., 0.
+102, 3., 0.
+103, 3., 0.1
+104, 2., 0.1
+**
+111, 2., 1.
+112, 3., 1.
+113, 3., 1.1
+114, 2., 1.1
+*nset, nset=upper1
+  3,  4
+103,104
+*nset, nset=upper2
+ 13, 14
+113,114
+*nset, nset=lower
+  1,  2
+ 11, 12
+101,102
+111,112
+*element, type=coh2d4, elset=COH1
+  1,1,2,3,4
+*element, type=coh2d4, elset=COH2
+10,11,12,13,14
+*element, type=coh2d4, elset=COH3
+101,101,102,103,104
+*element, type=coh2d4, elset=COH4
+110,111,112,113,114
+*elset, elset=QA_TEST_EALL
+ 1,10,101,110
+*boundary
+lower, 1,2
+*cohesive section, elset=COH1, material=mat1, response=traction separation, thickness=geometry
+*cohesive section, elset=COH2, material=mat1, response=traction separation, thickness=geometry
+*cohesive section, elset=COH3, material=mat2, response=traction separation, thickness=geometry
+*cohesive section, elset=COH4, material=mat2, response=traction separation, thickness=geometry
+**
+*material, name=mat1
+*density
+1.
+*elastic, type=traction, moduli=long term
+2.e6, 1.e6, 1.e6
+*viscoelastic,time=prony
+ 0.6,0.6,0.1
+*trs, definition=wlf
+ 5.25, 0.163277, 269.23
+**
+*material, name=mat2
+*density
+1.
+*elastic, type=coupled, moduli=long term
+2.e6, 1.e6, 1.e6, 5.e5, 5.e5, 2.e5
+*viscoelastic,time=prony
+ 0.6,0.6,0.1
+*trs, definition=wlf
+ 5.25, 0.163277, 269.23
+**
+*initial conditions, type=temperature
+nall, 615.0
+**
+*amplitude, name=disp
+0., 0., 1., .4
+*step, nlgeom=yes
+*dynamic, explicit
+,1.
+*boundary, type=displacement, amplitude=disp
+upper1,2,2,1.
+upper1,1,1,0.
+upper2,2,2,0.
+upper2,1,1,1.
+*temperature
+nall, 615.0
+*output, field, number interval=20
+*element output
+s, le
+*node output
+u,
+*output, history, time interval=0.001
+*element output, elset=qa_test_eall
+s, le, ne
+*energy output, variable=all
+*end step
+*step, nlgeom=yes
+** Relaxation step
+*dynamic, explicit
+,1.
+*boundary, type=velocity
+upper1,2,2,0.
+upper1,1,1,0.
+upper2,2,2,0.
+upper2,1,1,0.
+*temperature
+nall, 615.0
+*end step

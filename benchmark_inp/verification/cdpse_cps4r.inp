@@ -1,0 +1,114 @@
+*heading
+ CONCRETE DAMAGED PLASTICITY: UNIAXIAL CYCLIC TEST (CPS4R)
+*preprint, model=yes
+*part, name=part-1
+*node, nset=nall
+ 1, 0.0, 0.0, 0.0
+ 2, 1.0, 0.0, 0.0
+ 3, 1.0, 1.0, 0.0
+ 4, 0.0, 1.0, 0.0
+*nset,nset=nside
+ 2,3
+*element, type=cps4r, elset=eall
+ 1, 1, 2, 3, 4
+*solid section, elset=eall, material=alle
+*end part
+*assembly, name=assembly-1
+*instance, name=part-1-1, part=part-1
+*end instance
+*end assembly
+*material,name=alle
+*elastic
+ 2.648e+10, 0.167
+*concrete damaged plasticity
+ 15.0,
+*concrete compression hardening
+ 24.019e+6, 0.0000
+ 29.208e+6, 0.0004
+ 31.709e+6, 0.0008
+ 32.358e+6, 0.0012
+ 31.768e+6, 0.0016
+ 30.379e+6, 0.0020
+ 28.507e+6, 0.0024
+ 21.907e+6, 0.0036
+ 14.897e+6, 0.0050
+  2.953e+6, 0.0100
+*concrete compression damage
+ 0.0000, 0.0000
+ 0.1299, 0.0004
+ 0.2429, 0.0008
+ 0.3412, 0.0012
+ 0.4267, 0.0016
+ 0.5012, 0.0020
+ 0.5660, 0.0024
+ 0.7140, 0.0036
+ 0.8243, 0.0050
+ 0.9691, 0.0100
+*concrete tension stiffening
+ 1.780e+6, 0.0000
+ 1.457e+6, 0.0001
+ 1.113e+6, 0.0003
+ 0.960e+6, 0.0004
+ 0.800e+6, 0.0005
+ 0.536e+6, 0.0008
+ 0.359e+6, 0.0010
+ 0.161e+6, 0.0020
+ 0.073e+6, 0.0030
+ 0.040e+6, 0.0050
+*concrete tension damage
+ 0.0000, 0.0000
+ 0.3000, 0.0001
+ 0.5500, 0.0003
+ 0.7000, 0.0004
+ 0.8000, 0.0005
+ 0.9000, 0.0008
+ 0.9300, 0.0010
+ 0.9500, 0.0020
+ 0.9700, 0.0030
+ 0.9900, 0.0050
+*boundary
+ assembly-1.part-1-1.1,pinned
+ assembly-1.part-1-1.2,2
+ assembly-1.part-1-1.4,1
+*step, nlgeom, unsymm=yes
+*static
+ 0.05,1.0,,0.05
+*boundary
+ assembly-1.part-1-1.nside, 1, 1, 0.001
+*el print, elset=assembly-1.part-1-1.eall
+ PEEQ, PEEQT
+ DAMAGET, DAMAGEC, SDEG
+*output, field, variable=preselect
+*element output, elset=assembly-1.part-1-1.eall
+ PEEQ, PEEQT, DAMAGET, DAMAGEC, SDEG
+*output, history, variable=preselect
+*element output, elset=assembly-1.part-1-1.eall
+ S, PE, LE, PEEQ, PEEQT, DAMAGET, DAMAGEC, SDEG
+*end step
+*step, nlgeom, unsymm=yes
+*static
+ 0.05,1.0,,0.05
+*boundary, op=new
+ assembly-1.part-1-1.1,pinned
+ assembly-1.part-1-1.2,2
+ assembly-1.part-1-1.4,1
+*end step
+*step, nlgeom, unsymm=yes
+*static
+ 0.05,1.0,,0.05
+*boundary
+ assembly-1.part-1-1.nside,1,1,-0.005
+*end step
+*step, nlgeom, unsymm=yes
+*static
+ 0.05,1.0,,0.05
+*boundary, op=new
+ assembly-1.part-1-1.1,pinned
+ assembly-1.part-1-1.2,2
+ assembly-1.part-1-1.4,1
+*end step
+
+
+
+
+

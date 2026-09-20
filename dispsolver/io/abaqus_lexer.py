@@ -30,9 +30,13 @@ class AbaqusKeywordBlock:
 
 # Regex patterns
 RE_COMMENT = re.compile(r"^\*\*")            # ** comment line
-RE_KEYWORD = re.compile(r"^\*([\w-]+(?:[ \t]+[\w-]+)?)"  # *KEYWORD, *KEY-WORD, *END STEP
-                        r"(?:,\s*(.*))?", re.IGNORECASE | re.MULTILINE)
-RE_PARAM   = re.compile(r"(\w[\w.]*(?:\s+[\w.]+)*)\s*=\s*([^,]*)")
+RE_KEYWORD = re.compile(r"^\*([\w-]+(?:[ \t]+[\w-]+){0,2})"  # up to 3-word keywords
+                         r"(?:,\s*(.*))?", re.IGNORECASE | re.MULTILINE)
+RE_PARAM   = re.compile(r"(\w[\w.]*(?:\s+[\w.]+)*)\s*=\s*(\"[^\"]*\"|'[^']*'|[^,]*)")
+
+# Blocks whose data rows are free lists/pairs: a trailing comma continues
+# the logical line. Other blocks (e.g. ELEMENT records) are left unmerged.
+_CONTINUATION_KEYWORDS = frozenset({"NSET", "ELSET", "AMPLITUDE"})
 
 
 def _parse_keyword_params(param_text: str) -> dict:
@@ -43,7 +47,7 @@ def _parse_keyword_params(param_text: str) -> dict:
     params = {}
     if not param_text or not param_text.strip():
         return params
-    for part in param_text.split(","):
+    for part in _split_param_segments(param_text):
         part = part.strip()
         if not part:
             continue
@@ -58,6 +62,30 @@ def _parse_keyword_params(param_text: str) -> dict:
             if bare:
                 params[bare.lower()] = "yes"
     return params
+
+
+def _split_param_segments(param_text: str) -> List[str]:
+    """Split a parameter string on commas outside quotes."""
+    segments = []
+    buf: List[str] = []
+    quoted = False
+    quote_char = ""
+    for ch in param_text:
+        if quoted:
+            buf.append(ch)
+            if ch == quote_char:
+                quoted = False
+        elif ch in ("'", '"'):
+            quoted = True
+            quote_char = ch
+            buf.append(ch)
+        elif ch == ",":
+            segments.append("".join(buf))
+            buf = []
+        else:
+            buf.append(ch)
+    segments.append("".join(buf))
+    return segments
 
 
 def _read_file_with_fallback(filepath: str) -> str:
@@ -91,13 +119,13 @@ def tokenize(filepath: str) -> List[AbaqusKeywordBlock]:
     # Normalize line endings
     text = text.replace("\r\n", "\n").replace("\r", "\n")
 
-    # Remove inline comments (everything after ** on any line)
+    # Comment lines start with ** in the first two columns. Inline **
+    # inside data values is preserved.
     lines = text.split("\n")
     cleaned = []
     for line in lines:
-        ci = line.find("**")
-        if ci >= 0:
-            cleaned.append(line[:ci])
+        if line.lstrip().startswith("**"):
+            cleaned.append("")
         else:
             cleaned.append(line)
     text = "\n".join(cleaned)
@@ -145,10 +173,14 @@ def tokenize(filepath: str) -> List[AbaqusKeywordBlock]:
             else:
                 merged_data.append(stripped)
 
+        kw_upper = kw_name.upper()
+        if kw_upper in _CONTINUATION_KEYWORDS:
+            merged_data = _merge_trailing_commas(merged_data)
+
         parsed_params = _parse_keyword_params(kw_params)
 
         block = AbaqusKeywordBlock(
-            keyword=kw_name.upper(),
+            keyword=kw_upper,
             params=parsed_params,
             data_lines=merged_data,
             line_number=text[:start_pos].count("\n") + 1
@@ -156,6 +188,26 @@ def tokenize(filepath: str) -> List[AbaqusKeywordBlock]:
         blocks.append(block)
 
     return blocks
+
+
+def _merge_trailing_commas(data_lines: List[str]) -> List[str]:
+    """Join logical lines split by trailing commas (NSET/ELSET/AMPLITUDE)."""
+    merged: List[str] = []
+    buf = ""
+    for dl in data_lines:
+        if not dl.strip():
+            continue
+        if buf:
+            buf = buf + " " + dl.strip()
+        else:
+            buf = dl.strip()
+        if buf.rstrip().endswith(","):
+            continue
+        merged.append(buf)
+        buf = ""
+    if buf:
+        merged.append(buf)
+    return merged
 
 
 def tokenize_string(text: str, source_name: str = "<string>") -> List[AbaqusKeywordBlock]:

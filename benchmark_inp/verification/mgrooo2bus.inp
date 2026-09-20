@@ -1,0 +1,54 @@
+*HEADING
+: confined compression, foce control, 2d, cax4
+*NODE
+ 1, 0. , 0.
+ 2, 1. , 0.
+ 3, 1. , 1.
+ 4, 0. , 1.
+*ELEMENT,TYPE=CAX4,ELSET=ONE
+    1,    1, 2, 3, 4
+*BOUNDARY
+ 1 , 1,2, 0.
+ 2 , 1,2, 0.
+ 3 , 1,1, 0.
+ 4 , 1,1, 0.
+*NSET,NSET=TOP
+ 3 , 4
+*NSET,NSET=SIDE
+ 3 , 2
+*SOLID SECTION,MATERIAL=BLOCK,ELSET=ONE
+*MATERIAL,NAME=BLOCK
+*elastic
+300.,0.3
+*plastic
+ 1.0000000, 0.000
+ 1.7411011, 0.050
+ 2.7276924, 0.500
+ 2.9950454, 0.800
+*porous metal plasticity, relative density=0.95
+**q1 , q2 , q3
+1. , 1. , 1.
+*STEP,INC=400,NLGEOM
+*STATIC
+ .01 , 1. , , .01
+*DLOAD
+1,p3, 20.
+*EL PRINT, FREQUENCY=5
+S, 
+E, 
+PE, 
+VVF,VVFG
+*NODE PRINT,FREQUENCY=5
+U, 
+RF, 
+*OUTPUT,FIELD,FREQ=10
+*ELEMENT OUTPUT
+S,
+PE,
+E,
+VVF,VVFG
+*OUTPUT,FIELD,FREQ=10
+*NODE OUTPUT
+U,
+RF,
+*END STEP

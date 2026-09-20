@@ -1,0 +1,35 @@
+*HEADING
+ Test import capability with FeFp: Standard to Explicit
+ Element: CPS4R + orientation
+ Material: marlow + plasticity + mullins 
+ Results imported from: sx_s_fefp2d_biori.inp
+**
+*IMPORT,STEP=1,inc=20,UPDATE=no,STATE=YES
+ solid
+**
+*amplitude,name=ne3
+ 0.0, 0.0, 0.25, 1.0, 0.5, 1.2, 1., 0.0
+**------------------------
+*STEP
+*dynamic,explicit
+ ,1., 
+*BOUNDARY
+ x0,1
+ y0,2
+*boundary, amplitude=ne3
+ x1,1,1,0.4
+ y1,2,2,0.2
+*output,field
+*node output
+u
+RF
+*element output
+S
+PEEQ
+E
+*output,history,time interval=0.01
+*element output,elset=solid
+ s11,
+ s22,
+ LE11
+*END STEP

@@ -1,0 +1,100 @@
+*heading
+ ANISOTROPIC HYPERELASTIC, holzapfel-ogden
+ Plane stress, tension, load control
+*preprint, model=yes
+*node,nset=all
+ 11,
+ 12,1.
+ 13,1.,1.,
+ 14,0.,1.,
+ 15,0.,0.,1.
+ 16,1.,0.,1.
+ 17,1.,1.,1.
+ 18,0.,1.,1.
+  1,2.,0.,
+  2,3.,0.,
+  3,3.,1.,
+  4,2.,1.,
+ 21,4.,0.,
+ 22,5.,0.,
+ 23,5.,1.,
+ 24,4.,1.,
+ 31,6.,0.,
+ 32,7.,0.,
+ 33,7.,1.,
+ 34,6.,1.,
+*nset,nset=nz0
+ 11,12,13,14, 21,22,23,24, 31,32,33,34
+*nset,nset=ny0
+ 11,12,15,16, 1,2, 21,22, 31,32
+*nset,nset=nx1
+ 12,13,16,17
+*nset,nset=nx1ps
+ 2,3, 22,23, 32,33
+*nset,nset=nx0
+ 11,14,15,18, 1,4, 21,24, 31,34
+*nset,nset=nrot
+21,22,23,24
+*nset, nset=nout_u
+3, 23, 33
+*nset, nset=nout_rf
+2, 22, 32
+*element,type=c3d8rh,elset=e_c3d8rh
+ 1,11,12,13,14,15,16,17,18
+*element,type=cps4,elset=e_cps4
+ 2, 1,2,3,4
+*element,type=s4r,elset=e_s4r
+ 3, 21,22,23,24
+*element,type=m3d4r,elset=e_m3d4r
+ 4, 31,32,33,34
+*elset,elset=eall
+1,2,3,4
+*orientation,name=ori-1,local directions=2
+ 1.0,0.0,0.0,0.0,1.0,0.0
+ 3,0.0
+ 0.643055,0.76582,0.0
+ 0.643055,-0.76582,0.0
+*solid section,elset=e_c3d8rh,material=holzapfel-ogden,orientation=ori-1
+ 1.0,
+*solid section,elset=e_cps4,material=holzapfel-ogden,orientation=ori-1
+ 1.0,
+*shell section,elset=e_s4r,material=holzapfel-ogden,orientation=ori-1
+ 1.0,
+*membrane section,elset=e_m3d4r,material=holzapfel-ogden,orientation=ori-1
+ 1.0,
+*material,name=holzapfel-ogden
+*Damping, alpha=320.
+*density
+ 1.06e-09,
+*anisotropic hyperelastic,definition=holzapfel-ogden, local directions=2
+**   a,       b,      af,      bf,      as,      bs,     afs,     bfs
+ 0.00099993,  3.143938, 0.004696677,  12.33052484,   0.002673816,  9.057685378,      9.0234e-7,  0.000670602
+**   D
+  0.0
+*amplitude, name=amp1, def=smooth
+0.0,0.0, 1.0,1.0
+*step,nlgeom=yes
+ tension
+*static
+ 0.05,1.0,,0.05
+*boundary
+ nx0,1,1
+ ny0,2,2
+ nz0,3,3
+nrot,4,6
+*cload, amp=amp1
+ nx1,1,55.6e-3
+ nx1ps,1,111.2
+*output,field,freq=5
+*element output, elset=eall
+ s, le
+*node out, nset=all
+ u, rf
+*output, history
+*element output, elset=eall
+s11,le11
+*node out, nset=nout_rf
+rf1
+*node out, nset=nout_u
+u1
+*end step

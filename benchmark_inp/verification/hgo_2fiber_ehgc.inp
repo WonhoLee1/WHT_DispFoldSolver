@@ -1,0 +1,102 @@
+*heading
+ ANISOTROPIC HYPERELASTIC, HOLZAPFEL
+ Simple shear, enhanced hourglass control
+ theoretical result: S12 = 1091-1101
+*preprint, model=yes
+*node,nset=all
+ 11,
+ 12,1.
+ 13,1.,1.,
+ 14,0.,1.,
+ 15,0.,0.,1.
+ 16,1.,0.,1.
+ 17,1.,1.,1.
+ 18,0.,1.,1.
+  1,2.,0.,
+  2,3.,0.,
+  3,3.,1.,
+  4,2.,1.,
+  5,2.,0.,1.
+  6,3.,0.,1.
+  7,3.,1.,1.
+  8,2.,1.,1.
+ 21,4.,0.,
+ 22,5.,0.,
+ 23,5.,1.,
+ 24,4.,1.,
+*nset,nset=nz0
+ 11,12,13,14, 1,2,3,4
+*nset,nset=nz1
+ 15,16,17,18, 5,6,7,8
+*nset,nset=ny0
+ 11,12,15,16, 1,2,5,6, 21,22
+*nset,nset=nx1
+ 12,13,16,17
+*nset,nset=ny1
+ 13,14,17,18, 3,4,7,8
+*nset,nset=ny1ple
+ 23,24
+*nset,nset=nx0
+ 14,11,18,15
+*nset, nset=ndisp
+ 12, 2, 22
+*element,type=c3d8,elset=e_c3d8
+ 1,11,12,13,14,15,16,17,18
+*element,type=c3d8r,elset=e_c3d8r
+ 2, 1,2,3,4,5,6,7,8
+*element,type=cpe4r,elset=e_cpe4r
+ 3, 21,22,23,24
+*elset,elset=eall
+1,2,3
+*orientation,name=ori-1,local directions=2
+ 1.0,0.0,0.0,0.0,1.0,0.0
+ 3,0.0
+ 0.643055,0.76582,0.0
+ 0.643055,-0.76582,0.0
+*solid section,elset=e_c3d8,material=holzapfel,orientation=ori-1
+ 1.0,
+*solid section,elset=e_c3d8r,material=holzapfel,orientation=ori-1
+ 1.0,
+*solid section,elset=e_cpe4r,material=holzapfel,orientation=ori-1
+ 1.0,
+*section control, name=hgctrl, hourglass=stiffness
+
+*parameter
+ density=5.0e-4
+ C10=7.64
+ D=1.e-6
+ K1=996.6
+ K2=524.6
+ Kappa=0.226
+*material,name=holzapfel
+*density
+ <density>
+*anisotropic hyperelastic,definition=HOLZAPFEL-GASSER-OGDEN, local directions=2
+ <C10>, <D>, <K1>, <K2>, <Kappa>
+*step,nlgeom=yes
+ simple shear
+*static
+ 0.05,1.0,,0.05
+*boundary
+ ny0,1,2
+ ny1,2,2
+ ny1ple,2,2
+ nz0,3,3
+***cload
+** ny1,1,278.0
+** ny1ple,1,556.0
+*boundary
+ ny1,1,1,0.2
+ ny1ple,1,1,0.2
+*output,field,freq=5
+*element output, elset=eall
+ s, le
+*node out, nset=all
+ u, rf
+*output, history
+*element output, elset=eall
+s11,s22,s33,s12,le12
+*node out, nset=ndisp
+ rf1, rf2, rf3
+*end step
+

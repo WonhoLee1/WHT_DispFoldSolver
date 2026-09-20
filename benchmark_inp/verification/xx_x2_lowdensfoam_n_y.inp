@@ -1,0 +1,80 @@
+*heading
+ LOW DENSITY FOAM
+ Uniaxial test, displacement control
+ Explicit->Explicit Import
+*import, update=no, state=yes
+solid1,solid1t,solid1e, solid2,solid2t,solid2e
+**
+***elset, elset=solid1
+** c3d1, cpe1, truss1
+***elset, elset=solid2
+** c3d2, cpe2, truss2
+*elset, elset=eall
+solid1,solid1t,solid1e, solid2,solid2t,solid2e
+*elset, elset = QA_TEST
+eall,
+*nset, nset=QA_TEST
+17,22,32
+117,122,132
+**
+*equation
+ 2,
+ face14,1,1,ndisp1,1,-1
+ 2,
+ face114,1,1,ndisp101,1,-1
+ 2,
+ face22,1,1,ndisp2,1,-1
+ 2,
+ face122,1,1,ndisp102,1,-1
+*nset, nset=ndisp
+ ndisp1, ndisp2, ndisp4
+ ndisp101, ndisp102, ndisp104
+*boundary,type=velocity
+ face11,3
+ face13,2
+ face16,1
+**
+ face111,3
+ face113,2
+ face116,1
+**
+ face21,2
+ face24,1
+**
+ face121,2
+ face124,1
+**
+ ntruss1,2,3
+ nfix1,1
+**
+ ntruss2,2,3
+ nfix2,1
+**
+*amplitude,name=bc
+0.0,0.8,0.025,0.0
+**
+*restart, write
+**
+*step
+ uniaxial loading
+*dynamic, explicit
+ ,0.025
+*boundary,amplitude=bc
+ ndisp,1,1,-1
+*output,field, variable=preselect
+*element output, elset=eall
+ s, le
+*node out, nset=all
+ u, rf
+*output,field, number=2
+*element output, elset=QA_TEST
+ s,
+*node output, nset=QA_TEST
+ u,
+*output, history, variable=preselect
+*element output, elset=eall
+ s11, le11, le22, ne11, ne22, ener
+*node out, nset=ndisp
+ rf1
+*end step
+

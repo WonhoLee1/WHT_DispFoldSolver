@@ -1,0 +1,205 @@
+*heading
+ ANISOTROPIC HYPERELASTIC, HOLZAPFEL with VISCOELASTICITY and MULLINS EFFECT
+ Uniaxial test, displacement control
+*preprint, model=yes
+*node,nset=all
+ 11,
+ 12,1.
+ 13,1.,1.,
+ 14,0.,1.,
+ 15,0.,0.,1.
+ 16,1.,0.,1.
+ 17,1.,1.,1.
+ 18,0.,1.,1.
+*nset,nset=face11
+ 11,12,13,14
+*nset,nset=face12
+ 15,16,17,18
+*nset,nset=face13
+ 11,12,15,16
+*nset,nset=face14
+ 13,16,17
+*nset,nset=face15
+ 13,14,17,18
+*nset,nset=face16
+ 14,11,18,15
+*nset, nset=ndisp1
+ 12
+*element,type=c3d8r,elset=c3d
+ 1,11,12,13,14,15,16,17,18
+**
+*node,nset=all
+ 21,0.,2.,
+ 22,1.,2.,
+ 23,1.,3.,
+ 24,0.,3.,
+*nset,nset=face21
+ 21,22
+*nset,nset=face22
+ 23
+*nset,nset=face23
+ 23,24
+*nset,nset=face24
+ 21,24
+*nset, nset=ndisp2
+ 22
+*element,type=cpe4r,elset=cpe
+ 2,21,22,23,24
+**
+*node,nset=all
+ 31,0.,4.,
+ 32,1.,4.,
+ 33,1.,5.,
+ 34,0.,5.,
+*nset,nset=face31
+ 31,32
+*nset,nset=face32
+ 33
+*nset,nset=face33
+ 33,34
+*nset,nset=face34
+ 31,34
+*nset, nset=ndisp3
+ 32
+*element,type=cps4r,elset=cps
+ 3,31,32,33,34
+**
+*node,nset=all
+ 41,0.,6.,
+ 42,1.,6.,
+ 43,1.,7.,
+ 44,0.,7.,
+*nset,nset=face41
+ 41,42
+*nset,nset=face42
+ 43
+*nset,nset=face43
+ 43,44
+*nset,nset=face44
+ 41,44
+*nset, nset=ndisp4
+ 42
+*element,type=m3d4r,elset=m3d
+ 4,41,42,43,44
+**
+*node,nset=all
+ 51,0.,8.,
+ 52,1.,8.,
+ 53,1.,9.,
+ 54,0.,9.,
+*nset,nset=face51
+ 51,52
+*nset,nset=face52
+ 53
+*nset,nset=face53
+ 53,54
+*nset,nset=face54
+ 51,54
+*nset, nset=ndisp5
+ 52
+*nset, nset=QA_TEST
+17,22,32,42,52
+*element,type=s4r,elset=s4r
+ 5,51,52,53,54
+**
+*elset, elset=solid
+ c3d, cpe, cps
+*elset, elset=eall
+ solid, m3d, s4r
+*elset, elset = QA_TEST
+eall,
+**
+*orientation,name=ori-1,local directions=2
+ 1.0,0.0,0.0,0.0,1.0,0.0
+ 3,0.0
+ 0.643055,0.76582,0.0
+ 0.643055,-0.76582,0.0
+**
+*solid section,elset=c3d,material=holzapfel,orientation=ori-1
+ 1.0,
+*solid section,elset=cpe,material=holzapfel,orientation=ori-1
+ 1.0,
+*solid section,elset=cps,material=holzapfel,orientation=ori-1
+ 1.0,
+*membrane section,elset=m3d,material=holzapfel,orientation=ori-1
+ 1.0,
+*shell section,elset=s4r,material=holzapfel,orientation=ori-1
+ 1.0,
+**
+*parameter
+ density=5.0e-4
+ C10=7.64
+ D=1.e-6
+ K1=996.6
+ K2=524.6
+ Kappa=0.226
+*material,name=holzapfel
+*density
+ <density>
+*anisotropic hyperelastic,definition=HOLZAPFEL-GASSER-OGDEN, local directions=2
+ <C10>, <D>, <K1>, <K2>, <Kappa>
+*mullins effect
+ 2.0,,0.2
+*viscoelastic, time=prony
+ 0.2,,0.05
+*equation
+ 2,
+ face14,1,1,ndisp1,1,-1
+ 2,
+ face22,1,1,ndisp2,1,-1
+ 2,
+ face32,1,1,ndisp3,1,-1
+ 2,
+ face42,1,1,ndisp4,1,-1
+ 2,
+ face52,1,1,ndisp5,1,-1
+*nset, nset=ndisp
+ ndisp1, ndisp2, ndisp3, ndisp4, ndisp5
+*boundary,type=velocity
+ face11,3
+ face13,2
+ face16,1
+**
+ face21,2
+ face24,1
+**
+ face31,2
+ face34,1
+**
+ face41,2
+ face44,1
+ face41,3
+ face43,3
+**
+ face51,2
+ face54,1
+ face51,3
+ face53,3
+**
+*amplitude,name=bc
+0.0,0.0,0.25,0.75,0.5,0.0,0.75,1.0,
+1.0,0.0
+**
+*step
+ uniaxial loading
+*dynamic, explicit
+ ,1.0
+*boundary,amplitude=bc
+ ndisp,1,1,0.3
+*output,field, variable=preselect
+*element output, elset=eall
+ s, le
+*node out, nset=all
+ u, rf
+*output,field, number=2
+*element output, elset=QA_TEST
+ s,
+*node output, nset=QA_TEST
+ u,
+*output, history, variable=preselect
+*element output, elset=eall
+ s11, le11, le22, le33, ne11, ne22, ener
+*node out, nset=ndisp
+ rf1, u1
+*end step
+

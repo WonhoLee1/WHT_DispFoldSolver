@@ -32,6 +32,11 @@ class KeywordSpec:
     valid_contexts: Set[KeywordContext] = field(default_factory=lambda: {KeywordContext.GLOBAL})
     aliases: List[str] = field(default_factory=list)
     description: str = ""
+    products: str = ""          # Abaqus products offering this keyword (e.g. "Standard")
+    keyword_type: str = ""      # "Model data" / "History data" / "Model or history data"
+    level: str = ""             # Abaqus level (e.g. "Part, Assembly, Step")
+    support: str = "FULL"       # FULL / PARTIAL / STUB (parse-store, unconnected) / IGNORED
+    slug: str = ""              # SIMACAEKEYRefMap simakey-r-*.htm tracker
 
 
 class KeywordRegistry:

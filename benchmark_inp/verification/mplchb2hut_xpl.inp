@@ -1,0 +1,84 @@
+*heading
+	sax1 element under uniaxial tension
+	Temperature and Field variable dependence
+*part, name=part-1
+*node, nset=nall
+1,1
+2,1,1
+*element,type=sax1,elset=alle
+1,1,2
+*shell section, elset=alle, material=steel
+0.1, 
+*end part
+*assembly, name=assembly-1
+*instance, name=part-1-1, part=part-1
+*end instance
+*end assembly
+*material, name=steel
+*elastic
+200.E3,.3
+*density
+ 7.82000e-09,
+*plastic, hardening=combined, data type=parameters, dependencies=1
+200., 2.222e4, 34.65, 0., 0.,
+200., 2.222e4, 34.65, 100., 0.,
+200., 2.222e4, 34.65, 100., 100.,
+*cyclic hardening, parameters, dependencies=1
+200., 2000., 0.25, 0., 0.,
+200., 1500., 0.25, 100., 0.,
+200., 1000., 0.25, 100., 100.,
+*boundary
+assembly-1.part-1-1.1,2
+assembly-1.part-1-1.1,6
+*rest,w
+*initial conditions, type=temperature
+assembly-1.part-1-1.nall,0.
+*initial conditions, type=field,variable=1
+assembly-1.part-1-1.nall,0.
+**step 1 tension***
+*amplitude,name=smoothing_curve,definition=smooth step
+ 0., 0., 10e-3, 1.
+*step,nlgeom=no
+*dynamic,explicit
+ ,10e-3
+*boundary,amplitude=smoothing_curve
+assembly-1.part-1-1.2,2,2,0.04
+*elset, elset=qa_test_alle
+assembly-1.part-1-1.alle
+*nset, nset=qa_test_nall
+assembly-1.part-1-1.nall
+*output, field
+*element output, elset=assembly-1.part-1-1.alle
+ S, LE, PE, PEEQ, ALPHA, FV
+*node output, nset=assembly-1.part-1-1.nall
+ U, V, RF
+*output, field, num=2
+*element output, elset=qa_test_alle
+ S, LE, PE, PEEQ, ALPHA, FV
+*node output, nset=qa_test_nall
+ U
+*output, history, variable=preselect
+*element output, elset=assembly-1.part-1-1.alle
+ S, PE, LE, PEEQ, ALPHA, ALPHAP, FV
+*output, history, timeint=0.001
+*element output, elset=qa_test_alle
+ S, PE, LE, PEEQ, ALPHA, ALPHAP, FV
+*file output, number interval = 10
+*el file, elset=assembly-1.part-1-1.alle
+ PEEQ, ALPHA, ALPHAP
+*end step
+*step
+*dynamic,explicit
+ ,10e-3
+*temperature,amplitude=smoothing_curve
+assembly-1.part-1-1.nall,100
+*endstep
+*step
+*dynamic,explicit
+ ,10e-3
+***field,amplitude=smoothing_curve
+**assembly-1.part-1-1.nall,100
+*field,amplitude=smoothing_curve, variable=1, user
+assembly-1.part-1-1.nall,
+*endstep
+

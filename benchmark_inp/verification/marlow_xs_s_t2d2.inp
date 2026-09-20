@@ -1,0 +1,26 @@
+*HEADING
+ Test import capability:
+ MARLOW HYPERELASTIC TEST with T2D2. 
+ Transfer from Explict to Standard 
+ Results imported from: marlow_sx_x_t2d2.inp
+**
+*IMPORT,STEP=3,INT=2,UPDATE=NO,STATE=YES
+ ONE
+*RESTART,WRITE,FREQ=100
+**
+*STEP,NLGEOM,INC=50
+*STATIC 
+ 0.1, 1.0
+*BOUNDARY
+ NFIX,1,2
+ 2,1,1,3.0
+ 2,2,2,0.0
+*PRINT,FREQ=1
+*EL PRINT,FREQ=10
+ S,
+ NE,
+*NODE PRINT,FREQ=10
+ U,
+ COORD,
+ RF,
+*END STEP

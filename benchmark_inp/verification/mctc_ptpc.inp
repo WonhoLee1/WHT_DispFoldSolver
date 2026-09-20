@@ -1,0 +1,72 @@
+*HEADING
+Hydrostatic tension with Mohr-Coulomb tension cutoff
+*NODE, NSET=QA_TEST_ALLNODES
+11,2.0,0.,0.
+12,3.0,0.,0.
+13,3.0,1.,0.
+14,2.0,1.,0.
+15,2.0,0.,1.
+16,3.0,0.,1.
+17,3.0,1.,1.
+18,2.0,1.,1.
+**
+*nset,nset=nx0
+11,14,15,18, 
+*NSET,NSET=nx1
+12,13,16,17
+*nset,nset=ny0
+11,12,15,16
+*nset,nset=ny1
+13,14,17,18
+*NSET,NSET=nz0
+11,12,13,14
+*NSET,NSET=nz1
+15,16,17,18
+*ELEMENT,TYPE=C3D8R,ELSET=C3D_1
+2, 11,12,13,14,15,16,17,18
+*SOLID SECTION,ELSET=C3D_1,MATERIAL=M1
+*MATERIAL,NAME=M1
+*DENSITY
+1000. 
+*ELASTIC
+2.E7,0.3
+*mohr coulomb
+30.,20.
+*mohr coulomb HARDENING
+1.E3,0.0
+1.E3,1.0
+*tension cutoff
+1.e3,0.
+1.e3,1.
+**
+*boundary
+nx0,1,1
+ny0,2,2
+nz0,3,3
+*STEP,nlgeom=yes,inc=100
+*static
+0.1,1
+*print,solve=no
+*BOUNDARY
+nx1,1,1,0.1
+ny1,2,2,0.1
+nz1,3,3,0.1
+**
+*OUTPUT, FIELD,freq=100
+*ELEMENT OUTPUT
+S,PEEQ,PEEQT
+*NODE OUTPUT
+U,
+*OUTPUT,HISTORY
+*element output,elset=c3d_1
+peeq,peeqt,pener
+*END STEP
+*STEP,nlgeom=yes,inc=100
+*static
+0.1,1
+*BOUNDARY
+nx1,1,1,-0.1
+ny1,2,2,-0.1
+nz1,3,3,-0.1
+*END STEP
+

@@ -1,0 +1,41 @@
+*heading
+ CONCRETE DAMAGED PLASTICITY: UNIAXIAL TEST (CPS4R)
+Import: Standard -> Explicit -> Standard
+** Continuation analysis. Old job: cdpu_cps4r_sx_x
+*import,step=2,state=yes,update=no
+  eall
+*preprint, model=yes
+*boundary
+ 1,pinned
+ 2,2
+ 4,1
+*step, nlgeom, unsymm=yes
+*static
+ 0.05,1.0,,0.05
+*boundary
+ nside, 1, 1, -0.005
+*el print, elset= eall
+ PEEQ, PEEQT
+ DAMAGET, DAMAGEC, SDEG
+*output, field, variable=preselect
+*element output, elset= eall
+ PEEQ, PEEQT, DAMAGET, DAMAGEC, SDEG
+*output, history, variable=preselect
+*element output, elset= eall
+ S, PE, LE, PEEQ, PEEQT, DAMAGET, DAMAGEC, SDEG
+*restart,write
+*end step
+*step, nlgeom, unsymm=yes
+*static
+ 0.05,1.0,,0.05
+*boundary, op=new
+ 1,pinned
+ 2,2
+ 4,1
+*end step
+
+
+
+
+
+

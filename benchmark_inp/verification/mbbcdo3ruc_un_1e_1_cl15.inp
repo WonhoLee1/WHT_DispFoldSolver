@@ -1,0 +1,118 @@
+*heading
+ test Bergstrom-Boyce elastomeric hysteresis model.
+ uniaxial cyclic loading with relaxation segments of 30s.
+ strain rate=-.1/s, material: Chloroprene Rubber (15 pph carbon black)
+*node
+1,0.,0.
+2,1.4e-2,0.
+3,1.4e-2,1.3e-2
+4,0.,1.3e-2
+*nset,nset=top
+3,4
+*nset,nset=bot
+1,2
+*element,type=cax4,elset=eall
+1,1,2,3,4
+*solid section,elset=eall,material=hyster
+*material,name=hyster
+*hyperelastic,arruda-boyce,MODULI=LONG TERM
+0.6,2.8284,0.01
+*hysteresis
+1.6,.9526,4.,-1.0
+*boundary
+bot,2,2,0.
+**
+**STEP 1
+**load up to strain of -0.26
+*DIAGNOSTICS,NONHYBRID=WARNING
+*step,nlgeom,inc=100,unsymm=yes
+*static
+.26,2.6
+*boundary
+top,2,2,-2.976e-3
+*el print
+s, 
+le, 
+*node print,f=5
+rf,u
+*OUTPUT,FIELD
+*ELEMENT OUTPUT
+s,le
+*OUTPUT,FIELD
+*NODE OUTPUT
+u,rf
+*end step
+**
+**STEP 2
+**relax
+*step,nlgeom,inc=100,unsymm=yes
+*static
+3.,30.
+*end step
+**
+**STEP 3
+**load up to strain of -0.54
+*step,nlgeom,inc=100,unsymm=yes
+*static
+.28,2.8,
+*boundary
+top,2,2,-5.424e-3
+*end step
+**
+**STEP 4
+**relax
+*step,nlgeom,inc=100,unsymm=yes
+*static
+3.,30.
+*end step
+**
+**STEP 5
+**load up to strain of -0.72
+*step,nlgeom,inc=100,unsymm=yes
+*static
+.18,1.8
+*boundary
+top,2,2,-6.672e-3
+*end step
+**
+**STEP 6
+**unload to strain of -0.54
+*step,nlgeom,inc=100,unsymm=yes
+*static
+.18,1.8
+*boundary
+top,2,2,-5.424e-3
+*end step
+**
+**STEP 7
+**relax
+*step,nlgeom,inc=100,unsymm=yes
+*static
+3.,30.
+*end step
+**
+**STEP 8
+**unload to strain of -0.26
+*step,nlgeom,inc=100,unsymm=yes
+*static
+.28,2.8,
+*boundary
+top,2,2,-2.976e-3
+*end step
+**
+**STEP 9
+**relax
+*step,nlgeom,inc=100,unsymm=yes
+*static
+3.,30.
+*end step
+**
+**STEP 10
+**unload to strain of 0.0
+*step,nlgeom,inc=100,unsymm=yes
+*static
+.26,2.6
+*boundary
+top,2,2,0.0
+*end step
+**

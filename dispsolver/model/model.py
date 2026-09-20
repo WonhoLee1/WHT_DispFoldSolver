@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 from typing import Dict, Optional, Any, Union
+import warnings
 import numpy as np
 
 from dispsolver.model.part import Part
@@ -263,6 +264,9 @@ class Model:
         u1: Optional[float] = None,
         u2: Optional[float] = None,
         u3: Optional[float] = None,
+        ur1: Optional[float] = None,
+        ur2: Optional[float] = None,
+        ur3: Optional[float] = None,
         amplitude: Optional[Union[str, Amplitude]] = None
     ) -> DisplacementBC:
         """Create and assign a DisplacementBC to a Step."""
@@ -273,6 +277,9 @@ class Model:
             u1=u1,
             u2=u2,
             u3=u3,
+            ur1=ur1,
+            ur2=ur2,
+            ur3=ur3,
             amplitude=amp_name
         )
         step = self.steps.get(str(createStepName), self.initial_step)
@@ -834,7 +841,7 @@ class Model:
         """Flatten root assembly into global solver structures."""
         return self.root_assembly.build_solver_system(self)
 
-    def create_solver(self, step_name: Optional[str] = None):
+    def create_solver(self, step_name: Optional[str] = None, notices: Optional[list] = None):
         """Create and configure a production DynamicSolver instance, auto-detecting 2D vs 3D."""
         sys = self.build_solver_system()
         is_3d = False
@@ -851,11 +858,40 @@ class Model:
                     break
 
         if is_3d:
-            return self.create_solver3d(step_name=step_name)
+            return self.create_solver3d(step_name=step_name, notices=notices)
         else:
-            return self.create_solver2d(step_name=step_name)
+            return self.create_solver2d(step_name=step_name, notices=notices)
 
-    def create_solver3d(self, step_name: Optional[str] = None):
+    def _note(self, notices, msg):
+        warnings.warn(msg)
+        if notices is not None:
+            notices.append(msg)
+
+    def _resolve_step_overlay_nset(self, sys, st, region, notices=None):
+        """Resolve a step-overlay NSET name to solver node indices.
+
+        Same value convention as sys.global_nsets. Only unambiguous
+        single-instance models resolve; multi-instance decks need
+        instance-qualified names (P2). Returns None when not resolvable.
+        """
+        ids = st.step_nsets.get(region)
+        if not ids:
+            return None
+        inst_names = {k[0] for k in sys.node_local_to_global.keys()}
+        if len(inst_names) != 1:
+            self._note(notices, f"Step-overlay NSET {region}: multi-instance resolve needs qualified names")
+            return None
+        inst = next(iter(inst_names))
+        gids = []
+        for nid in ids:
+            g = sys.node_local_to_global.get((inst, nid))
+            if g is None or g not in sys.nid_to_idx:
+                self._note(notices, f"Step-overlay NSET {region}: node {nid} not in instance {inst}")
+                return None
+            gids.append(sys.nid_to_idx[g])
+        return sorted(gids)
+
+    def create_solver3d(self, step_name: Optional[str] = None, notices: Optional[list] = None):
         """Create and configure a production DynamicSolver3D instance from this Model."""
         from dispsolver.solver3d.dynamic3d import DynamicSolver3D
         sys = self.build_solver_system()
@@ -875,18 +911,25 @@ class Model:
                     bc = entry.entity
                     if bc.region in sys.global_nsets:
                         global_node_indices = sys.global_nsets[bc.region]
-                        inv_nid = {idx: g for g, idx in sys.nid_to_idx.items()}
-                        for node_idx in global_node_indices:
-                            gid = inv_nid[node_idx]
-                            u1_val = getattr(bc, "u1", None)
-                            u2_val = getattr(bc, "u2", None)
-                            u3_val = getattr(bc, "u3", None)
-                            if u1_val is not None:
-                                solver.fix_dof(gid, 0, float(u1_val))
-                            if u2_val is not None:
-                                solver.fix_dof(gid, 1, float(u2_val))
-                            if u3_val is not None:
-                                solver.fix_dof(gid, 2, float(u3_val))
+                    elif bc.region in st.step_nsets:
+                        global_node_indices = self._resolve_step_overlay_nset(sys, st, bc.region, notices)
+                        if global_node_indices is None:
+                            continue
+                    else:
+                        self._note(notices, f"BC {bc.name}: region {bc.region} resolved to zero nodes")
+                        continue
+                    inv_nid = {idx: g for g, idx in sys.nid_to_idx.items()}
+                    for node_idx in global_node_indices:
+                        gid = inv_nid[node_idx]
+                        u1_val = getattr(bc, "u1", None)
+                        u2_val = getattr(bc, "u2", None)
+                        u3_val = getattr(bc, "u3", None)
+                        if u1_val is not None:
+                            solver.fix_dof(gid, 0, float(u1_val))
+                        if u2_val is not None:
+                            solver.fix_dof(gid, 1, float(u2_val))
+                        if u3_val is not None:
+                            solver.fix_dof(gid, 2, float(u3_val))
 
         # 2. Attach model and step constraints & interactions
         for constraint in sys.constraints:
@@ -958,7 +1001,7 @@ class Model:
                             
         return solver, sys
 
-    def create_solver2d(self, step_name: Optional[str] = None):
+    def create_solver2d(self, step_name: Optional[str] = None, notices: Optional[list] = None):
         """Create and configure a production DynamicSolver2D instance from this Model."""
         from dispsolver.solver2d.dynamic2d import DynamicSolver2D
         sys = self.build_solver_system()
@@ -974,8 +1017,15 @@ class Model:
                     bc = entry.entity
                     if bc.region in sys.global_nsets:
                         global_node_indices = sys.global_nsets[bc.region]
-                        inv_nid = {idx: g for g, idx in sys.nid_to_idx.items()}
-                        for node_idx in global_node_indices:
+                    elif bc.region in st.step_nsets:
+                        global_node_indices = self._resolve_step_overlay_nset(sys, st, bc.region, notices)
+                        if global_node_indices is None:
+                            continue
+                    else:
+                        self._note(notices, f"BC {bc.name}: region {bc.region} resolved to zero nodes")
+                        continue
+                    inv_nid = {idx: g for g, idx in sys.nid_to_idx.items()}
+                    for node_idx in global_node_indices:
                             gid = inv_nid[node_idx]
                             u1_val = getattr(bc, "u1", None)
                             u2_val = getattr(bc, "u2", None)

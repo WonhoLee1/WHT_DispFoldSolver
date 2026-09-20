@@ -1,0 +1,190 @@
+*Heading
+ Fung model processed through UANISOHYPER_INV
+**  theoretical result: s11 = 34070
+*Preprint, echo=NO, model=NO, history=NO, contact=NO
+*Node
+      1,           1.,           1.,           1.
+      2,           1.,           0.,           1.
+      3,           1.,           1.,           0.
+      4,           1.,           0.,           0.
+      5,           0.,           1.,           1.
+      6,           0.,           0.,           1.
+      7,           0.,           1.,           0.
+      8,           0.,           0.,           0.
+     11,           1.,           1.,           3.
+     12,           1.,           0.,           3.
+     13,           1.,           1.,           2.
+     14,           1.,           0.,           2.
+     15,           0.,           1.,           3.
+     16,           0.,           0.,           3.
+     17,           0.,           1.,           2.
+     18,           0.,           0.,           2.
+     21,           1.,           1.,           5.
+     22,           1.,           0.,           5.
+     23,           1.,           1.,           4.
+     24,           1.,           0.,           4.
+     25,           0.,           1.,           5.
+     26,           0.,           0.,           5.
+     27,           0.,           1.,           4.
+     28,           0.,           0.,           4.
+     31,           1.,           1.,           7.
+     32,           1.,           0.,           7.
+     33,           1.,           1.,           6.
+     34,           1.,           0.,           6.
+     35,           0.,           1.,           7.
+     36,           0.,           0.,           7.
+     37,           0.,           1.,           6.
+     38,           0.,           0.,           6.
+*Element, type=C3D8, elset=einv44
+1, 5, 6, 8, 7, 1, 2, 4, 3
+*Element, type=C3D8, elset=einv45
+2,15,16,18,17,11,12,14,13
+*Element, type=C3D8, elset=efung
+3,25,26,28,27,21,22,24,23
+*Element, type=C3D8, elset=estrain
+4,35,36,38,37,31,32,34,33
+*Elset, elset=alle
+ 1,2,3,4
+*Solid Section, elset=einv44, material=uaniso_funginv44,orientation=ori-1
+1.
+*Solid Section, elset=einv45, material=uaniso_funginv45,orientation=ori-1
+1.
+*Solid Section, elset=efung, material=fung,orientation=ori-1
+1.
+*Solid Section, elset=estrain, material=uaniso_strain,orientation=ori-1
+1.
+*Nset, nset=y0, generate
+ 2,  8,  2
+12, 18,  2
+22, 28,  2
+32, 38,  2
+*Nset, nset=x0, generate
+ 5,  8,  1
+15, 18,  1
+25, 28,  1
+35, 38,  1
+*Nset, nset=z0
+ 3, 4, 7, 8,13,14,17,18,23,24,27,28,33,34,37,38
+*Nset, nset=x1, generate
+ 1,  4,  1
+11, 14,  1
+21, 24,  1
+31, 34,  1
+*Nset, nset=z1
+ 1, 2, 5, 6,11,12,15,16,21,22,25,26,31,32,35,36
+*Nset, nset=y1, generate
+ 1,  7,  2
+11, 17,  2
+21, 27,  2
+31, 37,  2
+** 
+** MATERIALS
+** 
+*orientation,name=ori-1,local directions=3
+ 1.0,0.0,0.0,0.0,1.0,0.0
+ 3,0.0
+ 1,0,0
+ 0,1,0
+ 0,0,1
+**
+*parameter
+ zero = 0.0
+**
+ c = 26.95e3
+ d = 1.e-8
+ b1 = 0.9925
+ b2 = 0.4180
+ b3 = 0.0089
+ b4 = 0.0749
+ b5 = 0.0295
+ b6 = 0.0193
+ b7 = 5.0000
+ b8 = b7
+ b9 = b7
+**
+ b1111 = b1
+ b1122 = b4
+ b2222 = b2
+ b1133 = b5
+ b2233 = b6
+ b3333 = b3
+ b1212 = b7
+ b1313 = b8
+ b2323 = b9
+**
+ b1112 = zero
+ b2212 = zero
+ b3312 = zero
+ b1113 = zero
+ b2213 = zero
+ b3313 = zero
+ b1213 = zero
+ b1123 = zero
+ b2223 = zero
+ b3323 = zero
+ b1223 = zero
+ b1323 = zero
+** 
+ density=1.0e-2
+*********************************
+*material,name=uaniso_funginv44
+*density
+ <density>
+*anisotropic hyperelastic,definition=user,formulation=invariant, local directions=3,type=compressible,properties=23
+ <b1111>,<b1122>,<b2222>,<b1133>,<b2233>,<b3333>,<b1112>,<b2212>,
+ <b3312>,<b1212>,<b1113>,<b2213>,<b3313>,<b1213>,<b1313>,<b1123>,
+ <b2223>,<b3323>,<b1223>,<b1323>,<b2323>,<c>,<d>
+*****************
+*material,name=uaniso_funginv45
+*density
+ <density>
+*anisotropic hyperelastic,definition=user,formulation=invariant, local directions=3,type=compressible,properties=23
+ <b1111>,<b1122>,<b2222>,<b1133>,<b2233>,<b3333>,<b1112>,<b2212>,
+ <b3312>,<b1212>,<b1113>,<b2213>,<b3313>,<b1213>,<b1313>,<b1123>,
+ <b2223>,<b3323>,<b1223>,<b1323>,<b2323>,<c>,<d>
+*****************
+*material,name=fung
+*density
+ <density>
+*anisotropic hyperelastic,definition=fung-ortho
+ <b1111>,<b1122>,<b2222>,<b1133>,<b2233>,<b3333>,<b1212>,<b1313>,
+ <b2323>,<c>,<d>
+*********************************
+*material,name=uaniso_strain
+*density
+ <density>
+*anisotropic hyperelastic,definition=user,formulation=strain,type=compressible,properties=11
+ <b1111>,<b1122>,<b2222>,<b1133>,<b2233>,<b3333>,<b1212>,<b1313>,
+ <b2323>,<c>,<d>
+*********************************
+** 
+** ----------------------------------------------------------------
+** 
+** STEP: Step-1
+** 
+*boundary
+ x0,1
+ y0,2
+ z0,3
+*Step, name=Step-1, nlgeom=YES,INC=1000
+*Static
+0.05, 1., 1e-05, 0.05
+*cload
+ x1,1,6000.
+** 
+** OUTPUT REQUESTS
+** 
+*Restart, write, frequency=0
+** 
+** FIELD OUTPUT: F-Output-1
+** 
+*Output, field
+*element output
+ S,E
+*node output
+ U,RF
+** 
+*output,history
+*element output,elset=alle
+ S
+*End Step

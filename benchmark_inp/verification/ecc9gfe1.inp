@@ -1,0 +1,37 @@
+*HEADING
+Cylindrical element (CCL9) Eigenvalue extraction testing
+*PREPRINT, ECHO=YES, MODEL=YES, HISTORY=YES
+**
+**********************************************************
+** Parameter definition
+**
+*PARAMETER
+INRAD=100.0
+EXRAD=102.0
+HEIGHT=2.0
+MIDHEIGHT=HEIGHT/2
+MID=(INRAD+EXRAD)/2
+**********************************************************
+*NODE, NSET=SECTION
+1, <INRAD>,0,0
+2, <EXRAD>,0,0
+3, <EXRAD>,0,<HEIGHT>
+4, <INRAD>,0,<HEIGHT>
+*NCOPY, CHANGE NUMBER=100, OLD SET=SECTION, NEW SET=REST, SHIFT, MULTIPLE=2
+0,0,0
+0,0,0,0,0,1,0.285
+*NSET, NSET=ALL
+REST, SECTION
+**
+*ELEMENT, TYPE=CCL9, ELSET=EALL
+1, 202,203,204,2,3,4,102,103,104
+*SOLID SECTION,MATERIAL=A1, ELSET=EALL
+*MATERIAL,NAME=A1
+*ELASTIC
+ 3.E6,0.3
+*DENSITY
+7.5E-4, 
+*STEP
+*FREQUENCY, eigensolver=lanczos, SIM=NO
+20, , ,-1.E6 
+*END STEP

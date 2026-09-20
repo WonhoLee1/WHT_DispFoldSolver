@@ -1,0 +1,134 @@
+*heading
+ ANISOTROPIC HYPERELASTIC, kaliske
+ Simple shear (plane strain), displacement control
+*preprint, model=yes
+*node,nset=all
+ 11,
+ 12,1.
+ 13,1.,1.,
+ 14,0.,1.,
+ 15,0.,0.,1.
+ 16,1.,0.,1.
+ 17,1.,1.,1.
+ 18,0.,1.,1.
+  1,2.,0.,
+  2,3.,0.,
+  3,3.,1.,
+  4,2.,1.,
+  5,2.,0.,1.
+  6,3.,0.,1.
+  7,3.,1.,1.
+  8,2.,1.,1.
+ 21,4.,0.,
+ 22,5.,0.,
+ 23,5.,1.,
+ 24,4.,1.,
+*nset,nset=nz0
+ 11,12,13,14, 1,2,3,4
+*nset,nset=nz1
+ 15,16,17,18, 5,6,7,8
+*nset,nset=ny0
+ 11,12,15,16, 1,2,5,6, 21,22
+*nset,nset=nx1
+ 12,13,16,17
+*nset,nset=ny1
+ 13,14,17,18, 3,4,7,8
+*nset,nset=ny1ple
+ 23,24
+*nset,nset=nx0
+ 14,11,18,15
+*nset, nset=ndisp
+ 12, 2, 22
+*element,type=c3d8h,elset=e_c3d8h
+ 1,11,12,13,14,15,16,17,18
+*element,type=c3d8rh,elset=e_c3d8rh
+ 2, 1,2,3,4,5,6,7,8
+*element,type=cpe4rh,elset=e_cpe4rh
+ 3, 21,22,23,24
+*elset,elset=eall
+1,2,3
+*orientation,name=ori-1,local directions=2
+ 1.0,0.0,0.0,0.0,1.0,0.0
+ 3,0.0
+ 0.643055,0.76582,0.0
+ 0.643055,-0.76582,0.0
+*solid section,elset=e_c3d8h,material=kaliske,orientation=ori-1
+ 1.0,
+*solid section,elset=e_c3d8rh,material=kaliske,orientation=ori-1,controls=hgctrl
+ 1.0,
+*solid section,elset=e_cpe4rh,material=kaliske,orientation=ori-1,controls=hgctrl
+ 1.0,
+*section control, name=hgctrl, hourglass=stiffness
+
+*parameter
+ density=1.0e3
+d= 0
+a1= 0.4e9
+a2= 0.0
+a3= 0.0
+b1= 0.2e9
+b2= 0.0
+b3= 0.0
+c2= 0.0
+c3= 1.0e9
+c4= 0.0
+c5= 0.0
+c6= 0.0
+d2= 0.3e9
+d3= 0.0
+d4= 0.0
+d5= 0.0
+d6= 0.0
+e2= 0.5e9
+e3= 0.0
+e4= 0.0
+e5= 0.0
+e6= 0.0
+f2= 0.0
+f3= 1.0e9
+f4= 0.0
+f5= 0.0
+f6= 0.0
+g2= 0.7e8
+g3= 0.0
+g4= 0.0
+g5= 0.0
+g6= 0.0
+**
+*material,name=kaliske
+*density
+ <density>
+*anisotropic hyperelastic,definition=kaliske,local directions=2
+ <a1>,<a2>,<a3>,<b1>,<b2>,<b3>,<c2>,<c3>,
+ <c4>,<c5>,<c6>,<d2>,<d3>,<d4>,<d5>,<d6>,
+ <e2>,<e3>,<e4>,<e5>,<e6>,<f2>,<f3>,<f4>,
+ <f5>,<f6>,<g2>,<g3>,<g4>,<g5>,<g6>,<d>
+ 
+*step,nlgeom=yes
+ simple shear
+*static
+ 0.05,1.0,,0.05
+*boundary
+ ny0,1,2
+ ny1,2,2
+ ny1ple,2,2
+ nz0,3,3
+ nz1,3,3
+*cload
+ ny1,1,278.0e3
+ ny1ple,1,556.0e3
+***boundary
+** ny1,1,1,0.2
+** ny1ple,1,1,0.2
+*output,field,freq=5
+*element output, elset=eall
+ s, le
+*node out, nset=all
+ u, rf
+*output, history
+*element output, elset=eall
+s11,s22,s33,s12,le12
+*node out, nset=ndisp
+ rf1, rf2, rf3
+*end step
+

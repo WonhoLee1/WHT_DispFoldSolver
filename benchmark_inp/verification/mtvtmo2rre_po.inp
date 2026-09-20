@@ -1,0 +1,36 @@
+*HEADING
+This is a test input for testing the postoutput
+*POSTOUTPUT,STEP=1
+1,10
+*OUTPUT,HISTORY
+*ELEMENT OUTPUT,ELSET=ALLE
+S,
+E,
+*OUTPUT,FIELD
+*ELEMENT OUTPUT
+S
+VS
+PS
+E
+VE
+EE
+CE
+PE
+*EL FILE 
+S 
+VS 
+PS 
+E 
+VE 
+EE 
+CE 
+PE
+*EL PRINT 
+S 
+VS 
+PS 
+E 
+VE 
+EE 
+CE
+PE

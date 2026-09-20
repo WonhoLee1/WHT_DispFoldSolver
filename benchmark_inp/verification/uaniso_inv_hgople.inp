@@ -1,0 +1,105 @@
+*heading
+ Implement plane strain tension for HGO model using UANISOHYPER_INV
+*****************************************
+**
+** Element types: c3d8, cpe8r, cpeg4
+** Material     : Compressible HGO model (native and user defined)
+** Types of test: Plane-strain tension/compression with orientation
+** Results      : Tension / Compression
+**           S11:  59.08  /  -46.43
+**           S33: -8.258  /  -55.25
+**
+*****************************************
+*preprint, model=yes
+*node,nset=all
+11,
+12,1.
+13,1.,1.,
+14,0.,1.,
+15,0.,0.,1.
+16,1.,0.,1.
+17,1.,1.,1.
+18,0.,1.,1.
+21,2
+22,3.
+23,3.,1.
+24,2.,1.
+25,2.5,0.
+26,3.0,0.5
+27,2.5,1.0
+28,2.0,0.5
+ 1,4
+ 2,5.
+ 3,5.,1.
+ 4,4.,1.
+ 5,0.,0.
+*nset,nset=nx0
+1,4,11,14,15,18,21,24,28
+*nset,nset=nx1
+2,3,12,13,16,17,22,23,26
+*nset,nset=ny0
+1,2,11,12,15,16,21,22,25
+*nset,nset=nz0
+11,12,13,14
+*nset,nset=nz1
+15,16,17,18
+*element,type=c3d8,elset=e_c3d8
+ 1,11,12,13,14,15,16,17,18
+*element,type=cpe8r,elset=e_cpe8r
+ 2,21,22,23,24,25,26,27,28
+*element,type=cpeg4,elset=e_cpeg4
+ 3,1,2,3,4
+*elset,elset=eall
+1,2,3
+*orientation,name=ori-1,local directions=2
+ 1.0,0.0,0.0,0.0,1.0,0.0
+ 3,0.0
+ 0.643055,0.76582,0.0
+ 0.643055,-0.76582,0.0
+*solid section,elset=e_c3d8,material=hgo,orientation=ori-1
+ 1.0,
+*solid section,elset=e_cpe8r,material=UANISO_HGO_1,orientation=ori-1
+ 1.0,
+*solid section,elset=e_cpeg4,material=UANISO_HGO_1,orientation=ori-1,refnode=5
+ 1.0,
+*parameter
+ density=5.0e-4
+ C10=7.64
+ D=1.e-8
+ K1=996.6
+ K2=524.6
+ Kappa=0.226
+*material,name=UANISO_HGO_1
+*density
+ <density>
+*anisotropic hyperelastic,definition=user,formulation=invariant, local directions=2,type=compressible,properties=5
+ <C10>, <D>, <K1>, <K2>, <Kappa>
+*material,name=hgo
+*density
+ <density>
+*anisotropic hyperelastic,definition=HOLZAPFEL-GASSER-OGDEN,local directions=2
+ <C10>, <D>, <K1>, <K2>, <Kappa>
+*amplitude,name=bc
+0.0,0.0, 0.25,0.5, 0.5,0.0, 0.75,-0.25,
+1.0,0.0
+*step,nlgeom=yes
+ uniaxial loading
+*static
+ 0.05,1.0,,0.05
+*boundary
+nx0,1,1
+ny0,2,2
+5,3,5
+nz0,3,3
+nz1,3,3
+*boundary,amp=bc
+nx1,1,1,0.4
+*output,field, variable=preselect, freq=5
+*node out, nset=all
+ u, rf
+*output, history
+*element output, elset=eall
+ s11, s22, s33, s12, le11, le22, le33, le12
+*node out, nset=nx1
+ rf1, u1
+*end step

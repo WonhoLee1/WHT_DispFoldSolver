@@ -1,0 +1,39 @@
+*heading
+Import S2S - S2 job
+ Marlow, compressible, uniaxial, orientation
+*preprint, model=yes
+*IMPORT,STEP=1,inc=10,UPDATE=NO,STATE=YES
+ ONE
+*amplitude,name=nominal_strain
+0.0,0.5, 10.,1.0, 30.,0.05
+*STEP,nlgeom=yes
+*static
+1.e-10,1.e-10,,1.e-10
+*BOUNDARY
+FACE1,3
+FACE3,2
+FACE6,1
+*boundary,type=vel
+face4,1,1,0.0
+*END STEP
+*STEP,nlgeom=yes
+*static
+1.,30.,,1.
+*BOUNDARY
+FACE1,3
+FACE3,2
+FACE6,1
+*boundary, amplitude=nominal_strain
+face4,1,1,1.0
+*output,history,freq=1
+*node output,nset=noutu
+u1
+rf1
+*element output,elset=one
+dmener,eldmd
+*output,field
+*node output,nset=one
+u,rf
+*element output,elset=one
+s,le,pe,peeq,ener
+*END STEP

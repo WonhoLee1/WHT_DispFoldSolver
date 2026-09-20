@@ -27,6 +27,7 @@ Element JIT Strategy: Use `--elem_jit jax` for R&D/prototyping (AutoDiff), and s
   - Constraint: [`release_notes_constraint.md`](file:///D:/PythonCodeStudy/WHT_DispFoldSolver/release_notes_constraint.md)
   - Solver: [`release_notes_solver.md`](file:///D:/PythonCodeStudy/WHT_DispFoldSolver/release_notes_solver.md)
   - Element: [`release_notes_element.md`](file:///D:/PythonCodeStudy/WHT_DispFoldSolver/release_notes_element.md)
+  - Keyword (inp 리더·실행기): [`release_notes_keyword.md`](file:///D:/PythonCodeStudy/WHT_DispFoldSolver/release_notes_keyword.md)
 - **영역별 분석 문서** (`dev_log/`, living doc — 실측 기반만 기재, Open 항목이 다음 작업):
   - Material (온도/열팽창/고급소성/초탄성/점탄성): [`area_analysis_material_20260919.md`](file:///D:/PythonCodeStudy/WHT_DispFoldSolver/dev_log/area_analysis_material_20260919.md)
   - Constraint (tie/RBE2/접촉구속): [`area_analysis_constraint_20260919.md`](file:///D:/PythonCodeStudy/WHT_DispFoldSolver/dev_log/area_analysis_constraint_20260919.md)

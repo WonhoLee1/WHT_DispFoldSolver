@@ -1,0 +1,100 @@
+*HEADING
+
+CAP PLASTICITY, HYDROSTATIC COMPRESSION TEST FOLLOWED BY `PURE SHEAR',
+C3D8, DISPLACEMENT CONTROL, TEMPERATURE DEPENDENCE
+*NODE, NSET=BOT
+1,0.,0.,0.
+2,1.,0.,0.
+3,1.,1.,0.
+4,0.,1.,0.
+*NODE, NSET=TOP
+5,0.,0.,1.
+6,1.,0.,1.
+7,1.,1.,1.
+8,0.,1.,1.
+*NSET, NSET=ALLN
+BOT, TOP
+*NSET, NSET=BACK
+1,4,5,8
+*NSET, NSET=FRONT
+2,3,6,7
+*NSET, NSET=LHS
+1,2,5,6
+*NSET, NSET=RHS
+3,4,7,8
+*ELEMENT, TYPE=C3D8, ELSET=EL1
+1,1,2,3,4,5,6,7,8
+*SOLID SECTION, ELSET=EL1, MATERIAL=CAPL
+*MATERIAL,NAME=CAPL
+** The material data is chosen to give G = 5000.0, BULK = 10000.0,
+** first yield in pure shear        at P =   0.0,  S12 = 100.0, 
+** first yield in hydro compression at P = 270.0,  S12 =   0.0,
+** first yield in hydro tension     at P =-300.0,  S12 =   0.0,
+** first yield (P = PA)             at P = 120.0,  S12 = 125.0
+*ELASTIC
+12857.1429, 0.28571429
+*CAP PLASTICITY
+** COHESN, BETA,    BIGR,   EVOLPI,   ALPHA,   BIGK, TEMP
+173.20508, 30.0, 0.61858957, 0.027, 0.69258232, 1.0, 123.0
+*CAP HARDENING
+** PB, EVOLP
+ 213.0, 0.00
+ 222.0, 0.01
+ 242.0, 0.02
+ 282.0, 0.03
+ 362.0, 0.04
+ 522.0, 0.05
+ 842.0, 0.06
+1482.0, 0.07
+2762.0, 0.08
+**
+*INITIAL CONDITIONS, TYPE=TEMPERATURE
+ALLN, 123.0
+**
+*STEP, INC=1, UNSYMM=YES
+Step 1  -  Hydrostatic compression
+*STATIC, DIRECT
+1., 1.0
+*BOUNDARY
+BACK,1
+LHS, 2
+BOT, 3      
+FRONT, 1,1, -0.004
+RHS,   2,2, -0.004
+TOP,   3,3, -0.004
+*EL PRINT, F=999
+S, 
+SINV, 
+E, 
+PE, 
+PEQC, 
+*EL PRINT, POS=NODES, F=999
+PEQC4, 
+*NODE PRINT, F=999
+U, 
+RF   , 
+*OUTPUT,FIELD,FREQ=999
+*ELEMENT OUTPUT
+PE,S,E,PEQC
+*NODE OUTPUT
+U,RF
+*END STEP
+**
+*STEP, INC=10, UNSYMM=YES
+Step 2  -  Add large shear strain
+*STATIC, DIRECT
+1., 10.0
+*BOUNDARY, OP=NEW
+1,   1
+5,   1
+TOP, 3,3, -0.004
+LHS, 2
+BOT, 3
+RHS, 2,2, -0.004
+2,   1,1, -0.004
+6,   1,1, -0.004
+3,   1,1,  0.046
+7,   1,1,  0.046
+4,   1,1,  0.050
+8,   1,1,  0.050
+*END STEP

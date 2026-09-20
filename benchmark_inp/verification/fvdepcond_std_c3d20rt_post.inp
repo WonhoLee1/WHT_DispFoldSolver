@@ -1,0 +1,11 @@
+*post output, step=1
+1,2,3,4
+*output, field
+*node output
+nt,
+*element output, Position=Centroidal
+fv,
+*element output, Position=Integration Points
+fv,
+*element output
+S,

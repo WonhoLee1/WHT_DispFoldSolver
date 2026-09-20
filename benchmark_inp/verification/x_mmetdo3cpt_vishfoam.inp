@@ -1,0 +1,140 @@
+*heading
+*preprint, model=yes
+*node,nset=all
+ 11,
+ 12,1.
+ 13,1.,1.,
+ 14,0.,1.,
+ 15,0.,0.,1.
+ 16,1.,0.,1.
+ 17,1.,1.,1.
+ 18,0.,1.,1.
+*nset,nset=face11
+ 11,12,13,14
+*nset,nset=face12
+ 15,16,17,18
+*nset,nset=face13
+ 11,12,15,16
+*nset,nset=face14
+ 13,16,17
+*nset,nset=face15
+ 13,14,17,18
+*nset,nset=face16
+ 14,11,18,15
+*nset, nset=ndisp1
+ 12
+*nset, nset=ngrp1
+ 11,13,14
+*element,type=c3d8r,elset=c3d
+ 1,11,12,13,14,15,16,17,18
+**
+*elset, elset=eall
+ c3d
+*solid section,elset=eall,material=low_density_foam
+ 1.0,
+*material,name=low_density_foam
+*density
+ 5.0000e-010,
+*hyperfoam, n=3
+-1048.43,0.3025,532.20,0.3958,517.027,0.2135,0.2,0.2,
+0.2
+*mullins effect, test data input
+**1.75,0.3,0.6
+*planar test data
+1.117,0.5
+1.018,0.475
+0.9257,0.45
+0.8401,0.425
+0.7607,0.4
+0.6872,0.375
+0.6191,0.35
+0.5559,0.325
+0.4971,0.3
+0.4424,0.275
+0.3912,0.25
+0.3431,0.225
+0.2979,0.2
+0.2550,0.175
+0.2143,0.15
+0.1754,0.125
+0.1381,0.1
+0.1021,0.075
+0.067184,0.05
+0.033229,0.025
+0.,0.
+*planar test data
+2.278,1.0
+2.007,0.95
+1.763,0.9
+1.546,0.85
+1.355,0.8
+1.188,0.75
+1.043,0.7
+0.9162,0.65
+0.8046,0.6
+0.7055,0.55
+0.6167,0.5
+0.5360,0.45
+0.4619,0.4
+0.3931,0.35
+0.3285,0.3
+0.2675,0.25
+0.2094,0.2
+0.1539,0.15
+0.1006,0.1
+0.049390,0.05
+0.,0.
+*viscoelastic,time=prony
+0.5,0.5,3.e-3
+*equation
+ 2,
+ face14,1,1,ndisp1,1,-1
+*equation
+ 2,
+ ngrp1,3,1,ndisp1,3,-1
+*nset, nset=ndisp
+ ndisp1
+*boundary
+ face12,3
+ ndisp1,3
+ face13,2
+ face16,1
+*step 
+ planar loading
+*dynamic,explicit
+ ,1.0e-2
+*boundary, type=velocity
+ ndisp,1,1,0.5e2
+*output,field
+*element output
+ s, le
+*node out
+ rf, u
+*output, history, variable=preselect
+*element output, elset=eall
+ s11, le11, ne11, ener
+*node out, nset=ndisp
+ rf1,rf3
+*end step
+*step 
+ unloading
+*dynamic,explicit
+ ,1.0e-2
+*boundary, type=velocity 
+ ndisp,1,1,-0.5e2
+*end step
+*step 
+ planar loading
+*dynamic,explicit
+ ,1.0e-2
+*boundary, type=velocity
+ ndisp,1,1,1.0e2
+*end step
+*step 
+ unloading
+*dynamic,explicit
+ ,1.0e-2
+*boundary, type=velocity
+ ndisp,1,1,-1.0e2
+*end step
+

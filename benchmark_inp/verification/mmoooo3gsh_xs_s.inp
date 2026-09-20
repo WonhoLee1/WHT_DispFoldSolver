@@ -1,0 +1,60 @@
+*HEADING
+ Mohr-Coulomb, C3D8 element, Shear Test
+*IMPORT, UPDATE=NO, STATE=YES, step=1
+ALLE
+*BOUNDARY
+ 1,PINNED
+ 2,PINNED
+ 3,PINNED
+ 4,PINNED
+ 5,1
+ 5,3
+ 6,1
+ 6,3
+ 7,1
+ 7,3
+ 8,1
+ 8,3
+*STEP
+*STATIC,DIRECT
+ 1.0e-5,1.0e-5
+*DLOAD
+ 1,P2,5000.
+ 1,P3,5000.
+*output,field
+*node output
+ u
+*element output
+ press,mises,peeq,s
+*output,history
+*element output,elset=alle
+ press,mises,peeq,s
+*END STEP
+*STEP,INC=20
+*STATIC,DIRECT
+ 1.,20.
+*BOUNDARY
+ 7,2,,.5
+ 5,2,,.5
+ 6,2,,.5
+ 8,2,,.5
+*EL PRINT
+ S, 
+ SINV, 
+ E, 
+ PE, 
+ EE, 
+*NODE PRINT
+ U, 
+ RF, 
+*EL FILE,FREQ=10
+ S,E,PE
+*output,field
+*node output
+ u
+*element output
+ press,mises,peeq,s
+*output,history
+*element output,elset=alle
+ press,mises,peeq,s
+*END STEP

@@ -1,0 +1,99 @@
+*heading
+ ANISOTROPIC HYPERELASTIC, holzapfel-ogden
+ Simple shear (plane strain), displacement control
+*preprint, model=yes
+*node,nset=all
+ 11,
+ 12,1.
+ 13,1.,1.,
+ 14,0.,1.,
+ 15,0.,0.,1.
+ 16,1.,0.,1.
+ 17,1.,1.,1.
+ 18,0.,1.,1.
+  1,2.,0.,
+  2,3.,0.,
+  3,3.,1.,
+  4,2.,1.,
+  5,2.,0.,1.
+  6,3.,0.,1.
+  7,3.,1.,1.
+  8,2.,1.,1.
+ 21,4.,0.,
+ 22,5.,0.,
+ 23,5.,1.,
+ 24,4.,1.,
+*nset,nset=nz0
+ 11,12,13,14, 1,2,3,4
+*nset,nset=nz1
+ 15,16,17,18, 5,6,7,8
+*nset,nset=ny0
+ 11,12,15,16, 1,2,5,6, 21,22
+*nset,nset=nx1
+ 12,13,16,17
+*nset,nset=ny1
+ 13,14,17,18, 3,4,7,8
+*nset,nset=ny1ple
+ 23,24
+*nset,nset=nx0
+ 14,11,18,15
+*nset, nset=ndisp
+ 12, 2, 22
+*element,type=c3d8h,elset=e_c3d8h
+ 1,11,12,13,14,15,16,17,18
+*element,type=c3d8rh,elset=e_c3d8rh
+ 2, 1,2,3,4,5,6,7,8
+*element,type=cpe4rh,elset=e_cpe4rh
+ 3, 21,22,23,24
+*elset,elset=eall
+1,2,3
+*orientation,name=ori-1,local directions=2
+ 1.0,0.0,0.0,0.0,1.0,0.0
+ 3,0.0
+ 0.643055,0.76582,0.0
+ 0.643055,-0.76582,0.0
+*solid section,elset=e_c3d8h,material=holzapfel-ogden,orientation=ori-1
+ 1.0,
+*solid section,elset=e_c3d8rh,material=holzapfel-ogden,orientation=ori-1,controls=hgctrl
+ 1.0,
+*solid section,elset=e_cpe4rh,material=holzapfel-ogden,orientation=ori-1,controls=hgctrl
+ 1.0,
+*section control, name=hgctrl, hourglass=stiffness
+
+*material,name=holzapfel-ogden
+*Damping, alpha=320.
+*density
+ 1.06e-09,
+*anisotropic hyperelastic,definition=holzapfel-ogden, local directions=2
+**   a,       b,      af,      bf,      as,      bs,     afs,     bfs
+ 0.00099993,  3.143938, 0.004696677,  12.33052484,   0.002673816,  9.057685378,      9.0234e-7,  0.000670602
+**   D
+  0.0
+*step,nlgeom=yes
+ simple shear
+*static
+ 0.05,1.0,,0.05
+*boundary
+ ny0,1,2
+ ny1,2,2
+ ny1ple,2,2
+ nz0,3,3
+ nz1,3,3
+*cload
+ ny1,1,278.0e-3
+ ny1ple,1,556.0e-3
+***boundary
+** ny1,1,1,0.2
+** ny1ple,1,1,0.2
+*output,field,freq=5
+*element output, elset=eall
+ s, le
+*node out, nset=all
+ u, rf
+*output, history
+*element output, elset=eall
+s11,s22,s33,s12,le12
+*node out, nset=ndisp
+ rf1, rf2, rf3
+*end step
+

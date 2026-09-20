@@ -1,0 +1,58 @@
+*heading
+*node
+1,0.,0.
+2,1.,0.
+*element,type=t3d2,elset=one
+1,1,2
+*solid section,elset=one,material=low_density_foam
+1.
+*material,name=low_density_foam
+*density
+ 5.0000e-010,
+*hyperfoam, n=3
+-1048.43,0.3025,532.20,0.3958,517.027,0.2135,0.2,0.2,
+0.2
+*mullins effect
+1.75,0.3,0.6
+*boundary
+1,1,3,
+*nset,nset=ndisp
+2
+*step
+*dynamic, explicit
+ ,1.0e-2
+*boundary, type=velocity
+ndisp,1,1,0.5e2
+*output,field
+*element output
+ s, le
+*node output
+ rf, u
+*output, history, variable=preselect
+*element output, elset=one
+ s11, le11, ne11, ener
+*node out, nset=ndisp
+ rf1
+*end step
+*step
+ unloading
+*dynamic, explicit
+ ,1.0e-2
+*boundary,type=velocity
+ ndisp,1,1,-0.5e2
+*end step
+*step
+ reloading
+*dynamic, explicit
+ ,1.0e-2
+*boundary,type=velocity
+ ndisp,1,1,1.0e2
+*end step
+*step
+ unloading
+*dynamic, explicit
+ ,1.0e-2
+*boundary,type=velocity
+ ndisp,1,1,-1.0e2
+*end step
+

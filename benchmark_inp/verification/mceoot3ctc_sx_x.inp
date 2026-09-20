@@ -1,0 +1,35 @@
+*heading
+clay plasticity, triaxial compression test, cax4R
+*IMPORT, UPDATE=NO, STATE=YES, STEP=1
+SOIL
+*step
+  geostatic initial stress state
+*dynamic,explicit
+ ,1.0e-5
+*boundary
+top,2
+bottom,2
+lhs,1
+*dload
+1,p2,100.
+*output,field,,FREQ=10
+*element output
+pe,s,e
+*output,field
+*node output
+ u
+*element output
+ press,mises,peeq,s
+*OUTPUT,HISTORY
+*ELEMENT OUTPUT, ELSET=SOIL
+PE,PEEQ,PRESS,MISES, S
+*end step
+*amplitude, name=amp-1
+ 0.0,0.0,20.0,1.0
+*step
+  triaxial compression
+*dynamic,explicit
+ ,20.
+*boundary, amplitude=amp-1
+top,2,2,-.5
+*end step

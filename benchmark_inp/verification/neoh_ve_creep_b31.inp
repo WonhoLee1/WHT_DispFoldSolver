@@ -1,0 +1,102 @@
+*HEADING
+**
+** Creep analysis of a rod. -- B31 elements
+** Verification of *HYPERELASTIC, neo Hooke and *VISCOELASTIC
+** incompressible / compressible
+** 
+*PREPRINT, MODEL=YES
+*NODE,NSET=nsolid
+1, 0.,0.
+2, 1.,0.
+3, 1.,1.
+4, 0.,1.
+5, 0.,0.,1.
+6, 1.,0.,1.
+7, 1.,1.,1.
+8, 0.,1.,1.
+11, 0.,3.
+12, 1.,3.
+13, 1.,4.
+14, 0.,4.
+15, 0.,3.,1.
+16, 1.,3.,1.
+17, 1.,4.,1.
+18, 0.,4.,1.
+*NODE,NSET=nbeam
+21,0.,2.0
+22,1.,2.0
+31,0.,5.0
+32,1.,5.0
+*nset,nset=alln
+nbeam,nsolid
+*nset,nset=nx0
+1,4,5,8
+11,14,15,18
+*nset,nset=ny0
+1,2,5,6
+11,12,15,16
+*nset,nset=nz0
+1,2,3,4
+11,12,13,14
+*nset,nset=nx1
+2,3,6,7
+12,13,16,17
+*nset,nset=nx0b
+21,31
+*nset,nset=nx1b
+22,32
+*ELEMENT,TYPE=B31,ELSET=ebeam
+21, 21,22
+*ELEMENT,TYPE=B31,ELSET=ebeami
+31, 31,32
+*element,type=c3d8RH,elset=esolid
+1, 1,2,3,4,5,6,7,8
+*element,type=c3d8RH,elset=esolidi
+11, 11,12,13,14,15,16,17,18
+*BEAM SECTION, MATERIAL=TEST,SECTION=CIRC,ELSET=ebeam, poisson=0.5
+ 0.564189588
+*BEAM SECTION, MATERIAL=TESTinc,seCTION=CIRC,ELSET=ebeami, poisson=0.5
+ 0.564189588
+*solid section,elset=esolid,material=test
+*solid section,elset=esolidi,material=testinc
+*elset,elset=alle
+ebeam,esolid,ebeami,esolidi
+*MATERIAL, NAME=TEST
+*HYPERELASTIC, NEO HOOKE, MODULI=INSTANTANEOUS
+1, 0.1
+*VISCOELASTIC,TIME=PRONY, FORMULATION=SOLID
+0.5,,0.1
+*MATERIAL, NAME=TESTinc
+*HYPERELASTIC, NEO HOOKE, MODULI=INSTANTANEOUS
+1,
+*VISCOELASTIC,TIME=PRONY, FORMULATION=SOLID
+0.5,,0.1
+**
+**
+*BOUNDARY
+nx0b,1,6
+nx1b,2,6
+nx0, 1,1
+ny0, 2,2
+nz0, 3,3
+*STEP, NLGEOM
+ UNIAXIAL LOADING
+*STATIC
+ 1.E-6,1.0E-6,,1.E-6
+*CLOAD
+nx1b,1,1.0
+nx1 ,1,0.25
+*OUTPUT,FIELD, VARIABLE=PRESELECT
+*OUTPUT, HISTORY, VARIABLE=PRESELECT
+*ELEMENT OUTPUT, ELSET=ALLE
+ S11, LE11, NE11, elcd
+*NODE OUTPUT, NSET=ALLN
+ RF1,U,CF1
+*END STEP
+**
+**
+*STEP, NLGEOM
+ SUSTAIN LOAD
+*VISCO,cetol=0.01
+ 0.1,5.,,0.1
+*END STEP

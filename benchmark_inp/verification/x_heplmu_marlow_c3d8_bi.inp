@@ -1,0 +1,60 @@
+*HEADING
+FeFp: c3d8, biaxial tension
+Marlow model, mullins effect
+*NODE,NSET=one
+1,
+2,1.
+3,1.,1.,
+4,0.,1.,
+5,0.,0.,1.
+6,1.,0.,1.
+7,1.,1.,1.
+8,0.,1.,1.
+*NSET,NSET=FACE1
+1,2,3,4
+*NSET,NSET=FACE2
+5,6,7,8
+*NSET,NSET=FACE3
+1,2,5,6
+*NSET,NSET=FACE4
+2,3,6,7
+*NSET,NSET=FACE5
+3,4,7,8
+*NSET,NSET=FACE6
+4,1,8,5
+*nset,nset=noutu
+6
+*nset,nset=noutf
+1
+*ELEMENT,TYPE=C3D8,ELSET=ONE
+1,1,2,3,4,5,6,7,8
+*SOLID SECTION,ELSET=ONE,MATERIAL=mat-129
+*MATERIAL,NAME=mat-129
+*DENSITY
+1.e-6
+*HYPERELASTIC,marlow,poisson=0.475
+*include, input=heplmu_matprops_bi.inp
+*amplitude,name=nominal_stress
+0.0,0.0, 0.1,2.44444, 0.2,0.0, 0.4,3.959985,
+0.6,0.0, 0.9,6.21102
+*STEP
+*dynamic, explicit
+ ,0.9
+*BOUNDARY
+FACE1,3
+FACE3,2
+FACE6,1
+*cload, amplitude=nominal_stress
+face4,1,0.25
+face2,3,0.25
+*output,history,freq=1
+*node output,nset=noutu
+u1
+*node output,nset=noutf
+rf1
+*output,field
+*node output
+u
+*element output
+s
+*END STEP

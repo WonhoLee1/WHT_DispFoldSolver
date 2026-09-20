@@ -1,0 +1,83 @@
+*HEADING
+ Mohr-Coulomb, Uniaxial compression followed by Uniaxial tension
+ Material 1: hadening on MC and softening on TC
+ Elements tested C3D8R and CAX4R
+*NODE,NSET=ALLN
+  1, 2., 0., 0.
+  2, 3., 0., 0.
+  3, 3., 1., 0.
+  4, 2., 1., 0.
+  5, 2., 0., 1.
+  6, 3., 0., 1.
+  7, 3., 1., 1.
+  8, 2., 1., 1.
+**
+ 21, 0., 0.
+ 22, 1., 0.
+ 23, 1., 1.
+ 24, 0., 1.
+*nset,nset=nx0
+1,4,5,8,21,24
+*nset,nset=ny0
+1,2,5,6,21,22
+*nset,nset=nz0
+1,2,3,4
+*nset,nset=ny1
+3,4,7,8,23,24
+*ELEMENT,TYPE=C3D8r,ELSET=e11
+ 1, 1,2,3,4,5,6,7,8
+*ELEMENT,TYPE=Cax4r,ELSET=e31
+21, 21,22,23,24
+*elset,elset=e1
+e11,e31
+*else,elset=alle
+e1
+*SOLID SECTION,ELSET=e1,MATERIAL=m1
+**
+*parameter
+ sigt = 1000
+ sigs = 0.1*sigt
+ sigc = sqrt(3)*sigt/2
+ sigh = 2.0*sigc
+**
+** M1: hardening MC, softening TC
+**
+*MATERIAL,NAME=m1
+*ELASTIC
+ 300.E3,.3
+*MOHR COULOMB
+ 30.,20.
+*MOHR COULOMB HARDENING
+<sigc>, 0.
+<sigh>, 1.0
+*TENSION CUTOFF
+<sigt>, 0.
+<sigs>, 1.0
+**
+*BOUNDARY
+nx0,1,1
+ny0,2,2
+nz0,3,3
+*STEP,nlgeom=yes,unsymm=yes
+** Load in compression
+** Elements should yield on MC
+*STATIC
+ 1.,20.,,1.
+*BOUNDARY
+ny1,2,2,-0.1
+*print,solve=no
+*output,field,op=add
+*element output,elset=alle
+peeqt
+*output,history,op=add
+*element output,elset=alle
+peeq,peeqt,pener
+*END STEP
+*STEP
+** Load in tension
+** Elements should yield on TC
+*STATIC
+ 1.,40.,,1.
+*BOUNDARY
+ny1,2,2,0.1
+*END STEP

@@ -1,0 +1,50 @@
+*heading
+clay plasticity, true shear test, C3D8
+*IMPORT, UPDATE=NO, STATE=YES, STEP=1
+ALLE
+*boundary
+1,pinned
+2,pinned
+3,pinned
+4,pinned
+5,1
+5,3
+6,1
+6,3
+7,1
+7,3
+8,1
+8,3
+*step, NLGEOM=NO
+*dynamic,explicit
+ ,1.0e-5
+*dload
+1,p1,58.3
+1,p2,58.3
+1,p3,58.3
+1,p4,58.3
+1,p5,58.3
+1,p6,58.3
+*output,field
+*element output
+s,e,pe
+*output,field
+*node output
+ u
+*element output
+ press,mises,peeq,s
+*output,history
+*element output,elset=alle
+ press,mises,peeq,s
+*end step
+*amplitude, name=amp-1
+ 0.0,0.0,20.0,1.0
+*step, NLGEOM=NO
+*dynamic,explicit
+ ,20.
+*boundary, amplitude=amp-1
+7,2,,.5
+5,2,,.5
+6,2,,.5
+8,2,,.5
+*end step

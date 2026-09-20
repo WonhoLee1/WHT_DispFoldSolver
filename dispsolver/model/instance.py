@@ -42,7 +42,15 @@ class Instance:
             nids = list(local_nids)
             
         raw = np.array([self.part.nodes[nid] for nid in nids], dtype=np.float64)
-        return self.transform.apply(raw)
+        dim = raw.shape[1] if raw.size else 3
+        shifted = raw + np.asarray(self.transform.translation[:dim], dtype=np.float64)
+        rot_only = self.transform.copy()
+        rot_only.translation = np.zeros_like(rot_only.translation)
+        if (rot_only.rotation_axis is not None
+                and abs(rot_only.rotation_angle_rad) > 1e-15
+                and float(np.linalg.norm(rot_only.rotation_axis)) < 1e-12):
+            rot_only.rotation_axis = None
+        return rot_only.apply(shifted)
 
     def get_exterior_faces(self) -> List[Tuple[int, ...]]:
         """Exterior face node-ID tuples of this instance's part."""

@@ -1,0 +1,57 @@
+*HEADING
+: Two-layer viscoplasticity, Time Viscous Law, Uniaxial Tension
+: and relaxation, SAX1
+: CETOL is simply used as a mechanism to limit total number of
+: increments (actual value makes very small difference in results)
+*NODE,NSET=ALLN
+1,1.,0.
+2,1.,1.
+*NSET,NSET=PULL
+2
+*ELEMENT,TYPE=SAX1,ELSET=ALLE
+1,1,2
+*SHELL SECTION,ELSET=ALLE,MATERIAL=ALLE
+0.1
+*MATERIAL,NAME=ALLE
+*ELASTIC
+20.0E6, 0.3
+*PLASTIC
+200.
+*VISCOUS,LAW=TIME
+1.0e-6,1.,0.,0.25
+*BOUNDARY
+1,2,2,
+1,6,6,
+*STEP, INC=300, AMP=RAMP
+*VISCO, CETOL=1.0e-4
+0.01,2.
+*BOUNDARY
+PULL,2,2,2.e-4
+*EL FILE,FREQ=5
+S,
+PS,
+VS,
+PE,
+E,
+VE,
+EE,
+*ENERGY FILE,FREQ=5
+*NODE FILE, FREQ=5
+U,RF
+*EL PRINT
+S,
+E,
+PE,
+*RESTART,WRITE
+*OUTPUT,HISTORY
+*ELEMENT OUTPUT,ELSET=ALLE
+S
+E
+ERP
+*OUTPUT,FIELD,VARIABLE=ALL,FREQUENCY=1
+*END STEP
+*STEP, INC=300, AMP=RAMP
+*VISCO, CETOL=1.0e-4
+0.01,2.
+*END STEP
+

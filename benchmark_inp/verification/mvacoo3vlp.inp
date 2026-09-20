@@ -1,0 +1,95 @@
+*HEADING
+ - ARRUDA-BOYCE HYPER-VISCOELASTICITY, VISCO ,LINEAR PERT. STEPS, CPE4H
+*NODE
+1,
+2,10.
+3,10.,5.,
+4,0.,5.,
+*ELEMENT,TYPE=CPE4H,ELSET=ONE
+1,1,2,3,4
+*SOLID SECTION,ELSET=ONE,MATERIAL=ARRUDA
+1., 
+*MATERIAL,NAME=ARRUDA
+*HYPERELASTIC,ARRUDA-BOYCE,MODULI=INSTANTANEOUS
+20., 7.
+*VISCOELASTIC,TIME=PRONY
+0.5,0.,3.
+*AMPLITUDE,NAME=STEP
+0.,1.,10.,1.
+*BOUNDARY
+1,1,2
+2,2,2
+4,1,1
+*STEP,PERT
+** Step 1: Initial linear perturbation
+*STATIC
+*BOUNDARY
+1,1,2
+2,2,2
+4,1,1
+3,1,1,.1
+2,1,1,.1
+*EL PRINT
+S,E
+*END STEP
+*STEP,NLGEOM
+** Step 2: Apply instantaneous uniaxial tensile stretch and allow to relax
+*VISCO
+2.,6.
+*BOUNDARY,AMP=STEP
+3,1,1,2.
+2,1,1,2.
+*EL PRINT,F=10
+S,E
+EE, 
+CE, 
+*END STEP
+*STEP,PERT
+** Step 3: Intermediate linear perturbation
+*STATIC
+*BOUNDARY
+1,1,2
+2,2,2
+4,1,1
+3,1,1,.1
+2,1,1,.1
+*EL PRINT
+S,E
+*END STEP
+*STEP,NLGEOM
+** Step 4: Continue stress relaxation
+*VISCO 
+2.,4.
+*END STEP
+*STEP,PERT
+*STATIC
+** Step 5: Multiple load cases
+*LOAD CASE,name = "uniaxial tension-1"
+*BOUNDARY
+1,1,2
+2,2,2
+4,1,1
+3,1,1,.1
+2,1,1,.1
+*END LOAD CASE
+*LOAD CASE,name = "uniaxial tension-2"
+*BOUNDARY
+1,1,2
+2,2,2
+4,1,1
+3,1,1,.2
+2,1,1,.2
+*END LOAD CASE
+*LOAD CASE,name = "uniaxial tension-3"
+*CLOAD
+3,1,1000
+2,1,1000
+*END LOAD CASE
+*EL PRINT
+S,E
+EE, 
+*OUTPUT,FIELD
+*NODE OUTPUT,VARIABLE=PRESELECT
+*ELEMENT OUTPUT,VARIABLE=PRESELECT
+*END STEP
+

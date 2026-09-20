@@ -1,0 +1,84 @@
+*HEADING
+ Mohr-Coulomb, C3D8 element, Hydrostatic Tension
+*IMPORT, UPDATE=NO, STATE=YES, step=1
+ALLE
+*BOUNDARY
+ 1,PINNED
+ 2,2
+ 5,2
+ 6,2
+ 4,1
+ 5,1
+ 8,1
+ 2,3
+ 3,3
+ 4,3
+*STEP,INC=10, nlgeom=yes
+*STATIC,DIRECT
+ 1.0e-5,1.0e-5
+*BOUNDARY
+ 7,1,3,.08
+ 2,1,,.08
+ 3,1,,.08
+ 6,1,,.08
+ 3,2,,.08
+ 4,2,,.08
+ 8,2,,.08
+ 5,3,,.08
+ 6,3,,.08
+ 8,3,,.08
+*EL PRINT
+ S, 
+ SINV, 
+ E, 
+ PE, 
+ EE, 
+*NODE PRINT
+ U, 
+ RF, 
+*EL FILE,FREQ=10
+ S,E,PE
+*output,field
+*node output
+ u
+*element output
+ press,mises,peeq,s
+*output,history
+*element output,elset=alle
+ press,mises,peeq,s
+** 
+*END STEP
+*STEP,INC=10,nlgeom=yes
+*STATIC,DIRECT
+ 1.,10.
+*BOUNDARY
+ 7,1,3,.08
+ 2,1,,.08
+ 3,1,,.08
+ 6,1,,.08
+ 3,2,,.08
+ 4,2,,.08
+ 8,2,,.08
+ 5,3,,.08
+ 6,3,,.08
+ 8,3,,.08
+*EL PRINT
+ S, 
+ SINV, 
+ E, 
+ PE, 
+ EE, 
+*NODE PRINT
+ U, 
+ RF, 
+*EL FILE,FREQ=10
+ S,E,PE
+*output,field
+*node output
+ u
+*element output
+ press,mises,peeq,s
+*output,history
+*element output,elset=alle
+ press,mises,peeq,s
+*END STEP

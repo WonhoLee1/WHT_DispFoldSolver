@@ -1,0 +1,43 @@
+*heading
+ CONCRETE DAMAGED PLASTICITY: UNIAXIAL TEST (T3D2)
+Import: Standard -> Explicit 
+**requires results from cdpe_t3d2_sx_s
+*import,step=2,state=yes,update=no
+ eall
+*preprint, model=yes
+*boundary
+ 1,pinned
+ 2,2,3
+*amplitude,name=v1
+ 0.0,1.0,1.0,1.0
+*amplitude,name=v2
+ 0.0,-1.0,5.0,-1.0
+*amplitude,name=v3
+ 0.0,1.0,4.0,1.0
+**
+**
+*step
+*dynamic,explicit
+ ,5.0
+*boundary,amplitude=v1,type=velocity
+ 2,1,1,0.001
+*output, field
+*element output, elset=eall
+ S, LE, PE, PEEQ, PEEQT, DAMAGET, DAMAGEC, SDEG
+*node output, nset=nall
+ U, V, RF
+*output, history, variable=preselect
+*element output, elset=eall
+ S,PE,LE,PEEQ,PEEQT, DAMAGET, DAMAGEC, SDEG,
+ ENER, ELEN
+*energy output
+ ALLDMD
+*Restart, Write
+*end step
+**
+**
+**
+
+
+
+

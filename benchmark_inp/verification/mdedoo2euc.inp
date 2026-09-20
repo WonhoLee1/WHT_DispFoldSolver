@@ -1,0 +1,48 @@
+*HEADING
+ Linear elasticity and perfect plasticity;
+ Linear Drucker-Prager with K=1;
+ Uniaxial tension test, cps4 element.
+**
+*NODE,NSET=ALLN
+ 1, 0., 0.
+ 2, 1., 0.
+ 3, 1., 1.
+ 4, 0., 1.
+*ELEMENT,TYPE=CPS4,ELSET=ALLE
+ 1,1,2,3,4
+**
+*SOLID SECTION,ELSET=ALLE,MATERIAL=ALLE
+*MATERIAL,NAME=ALLE
+*ELASTIC
+ 3.E5, 0.3
+*DRUCKER PRAGER
+ 40., 1., 40.
+*DRUCKER PRAGER HARDENING,TYPE=TENSION
+ 4.8E3,0.
+**
+*BOUNDARY
+ 1,PINNED
+ 2,2
+ 4,1
+**
+*STEP,INC=20
+*STATIC,DIRECT
+ 1.,20.
+*BOUNDARY
+ 3,2,,0.2
+ 4,2,,0.2
+**
+*EL PRINT
+ S, 
+ SINV, 
+ E, 
+ PE, 
+ EE, 
+*NODE PRINT
+ U, 
+ RF, 
+*OUTPUT,FIELD,FREQ=10
+*ELEMENT OUTPUT
+S,SINV,E,PE
+**
+*END STEP

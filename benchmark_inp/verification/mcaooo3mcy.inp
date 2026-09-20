@@ -1,0 +1,132 @@
+*HEADING
+
+CAP PLASTICITY, HYDROSTATIC CYCLIC TEST, C3D8, DISPLACEMENT CONTROL
+*NODE, NSET=BOT
+1,0.,0.,0.
+2,1.,0.,0.
+3,1.,1.,0.
+4,0.,1.,0.
+*NODE, NSET=TOP
+5,0.,0.,1.
+6,1.,0.,1.
+7,1.,1.,1.
+8,0.,1.,1.
+*NSET, NSET=ALLN
+BOT, TOP
+*NSET, NSET=BACK
+1,4,5,8
+*NSET, NSET=FRONT
+2,3,6,7
+*NSET, NSET=LHS
+1,2,5,6
+*NSET, NSET=RHS
+3,4,7,8
+*ELEMENT, TYPE=C3D8, ELSET=EL1
+1,1,2,3,4,5,6,7,8
+*Distribution Table, name=distTableElastic
+ modulus, ratio
+*Distribution, name=distElastic, table=distTableElastic, location=element
+ , 200.e3, 0.25
+ EL1, 12857.1429, 0.28571429
+*SOLID SECTION, ELSET=EL1, MATERIAL=CAPL
+*MATERIAL,NAME=CAPL
+** The material data is chosen to give G = 5000.0, BULK = 10000.0,
+** first yield in pure shear        at P =   0.0,  S12 = 100.0, 
+** first yield in hydro compression at P = 270.0,  S12 =   0.0,
+** first yield in hydro tension     at P =-300.0,  S12 =   0.0,
+** first yield (P = PA)             at P = 120.0,  S12 = 125.0
+*ELASTIC
+ distElastic,
+*CAP PLASTICITY
+** COHESN, BETA,    BIGR,   EVOLPI,   ALPHA,   BIGK
+173.20508, 30.0, 0.61858957, 0.027, 0.69258232, 1.0
+*CAP HARDENING
+** PB, EVOLP
+ 213.0, 0.00
+ 222.0, 0.01
+ 242.0, 0.02
+ 282.0, 0.03
+ 362.0, 0.04
+ 522.0, 0.05
+ 842.0, 0.06
+1482.0, 0.07                                              
+2762.0, 0.08
+**
+*STEP, INC=8, UNSYMM=YES
+Step 1: Load to yield in compression
+*STATIC, DIRECT
+1.0, 8.0
+*BOUNDARY
+BACK,1
+LHS, 2
+BOT, 3
+FRONT,1,1, -0.024
+RHS,  2,2, -0.024
+TOP,  3,3, -0.024
+*EL PRINT, F=999
+S, 
+SINV, 
+E, 
+PE, 
+PEQC, 
+*EL PRINT, POS=NODES, F=999
+PEQC4, 
+*NODE PRINT, F=999
+U, 
+RF   , 
+*OUTPUT,FIELD,FREQ=999
+*ELEMENT OUTPUT
+PE,S,E,PEQC
+*NODE OUTPUT
+U,RF
+*END STEP
+**
+*STEP, INC=2, UNSYMM=YES
+Step 2: Unload, still in compression
+*STATIC, DIRECT
+1.0, 2.0
+*BOUNDARY
+FRONT,1,1, -0.018
+RHS,  2,2, -0.018
+TOP,  3,3, -0.018
+*END STEP
+**
+*STEP, INC=4, UNSYMM=YES
+Step 3: Reload in compression
+*STATIC, DIRECT
+1.0, 4.0
+*BOUNDARY
+FRONT,1,1, -0.030
+RHS,  2,2, -0.030
+TOP,  3,3, -0.030
+*END STEP
+**
+*STEP, INC=20, UNSYMM=YES
+Step 4: Unload in compression and load to yield in tension
+*STATIC, DIRECT
+1.0, 20.0
+*BOUNDARY
+FRONT,1,1,  0.024
+RHS,  2,2,  0.024
+TOP,  3,3,  0.024
+*END STEP
+**
+*STEP, INC=20, UNSYMM=YES
+Step 5: Unload in tension and load to yield in compression
+*STATIC, DIRECT
+1.0, 20.0
+*BOUNDARY
+FRONT,1,1, -0.024
+RHS,  2,2, -0.024
+TOP,  3,3, -0.024
+*END STEP
+**
+*STEP, INC=2, UNSYMM=YES
+Step 6: Unload
+*STATIC, DIRECT
+1.0, 2.0
+*BOUNDARY
+FRONT,1,1, -0.018
+RHS,  2,2, -0.018
+TOP,  3,3, -0.018
+*END STEP

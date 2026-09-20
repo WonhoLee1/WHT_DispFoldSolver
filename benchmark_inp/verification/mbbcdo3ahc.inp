@@ -1,0 +1,60 @@
+*HEADING
+ test Bergstrom-Boyce hysteresis model in volumetric compression
+ results should be identical to hyperelastic solution with twice
+ the hyperelastic coefficients of this deck (S = 1.0)
+*NODE,NSET=ALL
+1,
+2,1.
+3,1.,1.,
+4,0.,1.,
+5,0.,0.,1.
+6,1.,0.,1.
+7,1.,1.,1.
+8,0.,1.,1.
+*NSET,NSET=FACE1
+1,2,3,4
+*NSET,NSET=FACE2
+5,6,7,8
+*NSET,NSET=FACE3
+1,2,5,6
+*NSET,NSET=FACE4
+2,3,6,7
+*NSET,NSET=FACE5
+3,4,7,8
+*NSET,NSET=FACE6
+4,1,8,5
+*ELEMENT,TYPE=C3D8,ELSET=ONE
+1,1,2,3,4,5,6,7,8
+*SOLID SECTION,ELSET=ONE,MATERIAL=POLY
+*MATERIAL,NAME=POLY
+*HYPERELASTIC,N=1,MODULI=LONG TERM
+1.5,0.5,10.
+*hysteresis
+1.0,.9516,4.,-1.0
+*STEP,NLGEOM,INC=100,unsymm=yes
+VOLUMETRIC COMPRESSION
+*STATIC
+.25,1.,,.25
+*BOUNDARY,OP=NEW
+FACE1,3
+FACE3,2
+FACE6,1
+**FACE2,3,3,-.2
+**FACE4,1,1,-.2
+**FACE5,2,2,-.2
+*cload
+face2,3,-.031232
+face4,1,-.031232
+face5,2,-.031232
+*EL PRINT,f=100
+S, 
+LE, 
+*NODE PRINT,f=100
+U,RF
+*EL FILE,f=100
+S,LE
+*NODE FILE,f=100
+U,RF
+*END STEP
+
+

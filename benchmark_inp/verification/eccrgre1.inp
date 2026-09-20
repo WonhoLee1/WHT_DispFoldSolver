@@ -1,0 +1,47 @@
+*HEADING
+Cylindrical element testing (CCL24R) Eigenvalue extraction
+*PREPRINT, ECHO=YES, MODEL=YES, HISTORY=YES
+**
+**********************************************************
+** Parameter definition
+**
+*PARAMETER
+INRAD=700.0
+EXRAD=707.0
+HEIGHT=7.0
+MIDHEIGHT=HEIGHT/2
+MID=(INRAD+EXRAD)/2
+***********************************************************
+** Model definition
+**
+*NODE, NSET=SECTION
+1, <INRAD>,0,0
+2, <EXRAD>,0,0
+3, <EXRAD>,0,<HEIGHT>
+4, <INRAD>,0,<HEIGHT>
+5,<MID>,0,0
+6,<EXRAD>,0,<MIDHEIGHT>
+7,<MID>,0,<HEIGHT>
+8,<INRAD>,0,<MIDHEIGHT>
+*NCOPY, CHANGE NUMBER=100, OLD SET=SECTION, NEW SET=REST, SHIFT, MULTIPLE=2
+0,0,0
+0,0,0,0,0,1,0.285
+*NSET, NSET=ALL
+REST,SECTION
+*ELEMENT, TYPE=CCL24R, ELSET=ALL
+2, 201,202,203,204,1,2,3,4,101,102,103,104,205,206,207,208,5,6,7,8,105,106,107,108
+*SOLID SECTION, ELSET=ALL, MATERIAL=MYMAT
+*MATERIAL, NAME=MYMAT
+*ELASTIC
+30E6,0.3
+*DENSITY
+7.5E-4
+************************************************************
+** History data
+**
+*STEP
+*FREQUENCY, eigensolver=lanczos, SIM=NO
+20, , ,-1.E7
+*OUTPUT,FIELD
+*MODAL OUTPUT
+*END STEP

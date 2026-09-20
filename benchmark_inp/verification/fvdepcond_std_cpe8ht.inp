@@ -1,0 +1,96 @@
+*Heading
+ Basic Verification Of Field Dependence Of Conductivity
+ Test Type: Material Verification  [cpe8ht]
+**
+** See "Thermal Properties"  Of Abaqus/Verification 
+** Manual -- Chapter 2.3.1
+**
+*Node,Nset=Nall
+ 1, 
+ 2,1.
+ 3,3.
+ 4,6.
+ 5,0.5
+ 6,2.0
+ 7,4.5
+ 11, 0., 1.
+ 12, 1., 1.
+ 13, 3., 1.
+ 14, 6., 1.
+ 15,0.5, 1.
+ 16,2.0, 1.
+ 17,4.5, 1.
+ 21,0.,0.5
+ 22,1.,0.5
+ 23,3.,0.5
+ 24,6.,0.5
+*Nset,Nset=Fvnods
+ 2,3,6,12,13,16,22,23
+*Nset,Nset=Hfvnods
+ 5,7,15,17
+*Element,Elset=K1k3,Type=cpe8ht
+ 1,1,2,12,11,5,22,15,21
+ 3,3,4,14,13,7,24,17,23
+*Element,Elset=K2fv,Type=cpe8ht
+ 2,2,3,13,12,6,23,16,22
+*Solid Section,Elset=K1k3,Material=Kconst
+ 3., 
+*Solid Section,Elset=K2fv,Material=Kfvdep
+ 3., 
+*Initial Conditions,Type=Temperature
+ Nall,0.
+*Initial Conditions,Type=Field
+ Nall,0.
+*Material,Name=Kconst
+*Elastic
+ 1.0,0.0
+*Expansion
+ 0.0,
+*Conductivity
+ 150., 
+*Density
+ 7850.,
+*Specific Heat
+ 460.,
+*Material,Name=Kfvdep
+*Elastic
+ 1.0,0.0
+*Expansion
+ 0.0,
+*Conductivity,Dep=1
+ 1.,,25.
+ 10.,,50.
+ 100.,,75.
+ 1000,,100.
+*Density
+ 7850.,
+*Specific Heat
+ 460.,
+*Amplitude,Name=Rise
+ 0.,0.,1.,1.
+*Step,Amp=Step
+*Coupled Temperature-Displacement, Steady State
+ .25,1.,.25,.25
+*Boundary
+ 1, 11,,1000.
+ 4, 11,,0.
+ 11,11,,1000.
+ 14,11,,0.
+ Nall,1,2
+*Field,Variable=1,Amp=Rise
+ Fvnods,100.
+ Hfvnods,50.
+*Node File
+ Nt, 
+*El File, Position=Centroidal
+ Fv,
+*El File, Position=Integration Points
+ Fv,
+*Output, Field
+*Node Output
+ Nt,
+*Element Output, Position=Centroidal
+ Fv,			  
+*Element Output, Position=Integration Points
+ Fv,
+*End Step

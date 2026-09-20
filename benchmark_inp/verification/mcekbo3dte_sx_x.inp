@@ -1,0 +1,35 @@
+*HEADING
+CLAY PLASTICITY, BETA=.5 K=.78 TRIAXIAL EXTENSION TEST, CAX4R
+*IMPORT, UPDATE=NO, STATE=YES, STEP=1
+SOIL
+*STEP, nlgeom=no
+  GEOSTATIC INITIAL STRESS STATE
+*dynamic,explicit
+ ,1.0e-5
+*DLOAD
+1,P2,100.
+*OUTPUT,FIELD,FREQ=10
+*ELEMENT OUTPUT
+S,E,PE
+*BOUNDARY
+TOP,2
+BOTTOM,2
+LHS,1
+*output,field
+*node output
+ u
+*element output
+ press,mises,peeq,s
+*OUTPUT,HISTORY
+*ELEMENT OUTPUT, ELSET=SOIL
+PE,PEEQ,PRESS,MISES, S
+*END STEP
+*amplitude, name=amp-1
+ 0.0,0.0,20.0,1.0
+*STEP, nlgeom=no
+  TRIAXIAL EXTENSION
+*dynamic,explicit
+ ,20.
+*BOUNDARY, amplitude=amp-1
+TOP,2,2,.2
+*END STEP

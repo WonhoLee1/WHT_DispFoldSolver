@@ -115,12 +115,15 @@ __all__ = [
     # New Production Reader & Executor Architecture
     "read_inp",
     "execute_inp",
+    "execute_inp_smoke",
     "AbaqusInputReader",
     "GLOBAL_KEYWORD_REGISTRY",
     "KeywordRegistry",
     "KeywordContext",
+    "keyword_modules",
 ]
 
-from .abaqus_reader import read_inp, execute_inp, AbaqusInputReader
+from .abaqus_reader import read_inp, execute_inp, execute_inp_smoke, AbaqusInputReader
 from .keyword_registry import GLOBAL_KEYWORD_REGISTRY, KeywordRegistry, KeywordContext
+from . import keywords as keyword_modules
 

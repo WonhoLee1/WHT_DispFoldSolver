@@ -1,0 +1,50 @@
+*heading
+clay plasticity, hydrostatic compression test, c3d8
+*IMPORT, UPDATE=NO, STATE=YES, STEP=1
+ALLE
+*boundary
+1,pinned
+2,2
+5,2
+6,2
+4,1
+5,1
+8,1
+2,3
+3,3
+4,3
+*step, nlgeom=no
+  geostatic initial stress state
+*dynamic,explicit
+ ,1.0e-5
+*dload
+1,p2,1.
+*output,field,,FREQ=10
+*element output
+pe,s,e
+*output,field
+*node output
+ u
+*element output
+ press,mises,peeq,s
+*OUTPUT,HISTORY
+*ELEMENT OUTPUT, ELSET=ALLE
+PE,PEEQ,PRESS,MISES, S
+*end step
+*amplitude, name=amp-1
+ 0.0,0.0,20.0,1.0
+*step, nlgeom=no
+*dynamic,explicit
+ ,20.
+*boundary,amplitude=amp-1
+7,1,3,-.1
+2,1,,-.1
+3,1,,-.1
+6,1,,-.1
+3,2,,-.1
+4,2,,-.1
+8,2,,-.1
+5,3,,-.1
+6,3,,-.1
+8,3,,-.1
+*end step

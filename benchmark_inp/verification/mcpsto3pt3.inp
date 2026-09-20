@@ -1,0 +1,61 @@
+*HEADING
+HILL CREEP, LAW=STRAIN, UNIAXIAL TENSION CREEP DIRECTION 3, C3D8
+*NODE,NSET=ALLN
+1,0.,0.,0.
+2,1.,0.,0.
+3,1.,1.,0.
+4,0.,1.,0.
+5,0.,0.,10.
+6,1.,0.,10.
+7,1.,1.,10.
+8,0.,1.,10.
+*ELEMENT,TYPE=C3D8,ELSET=SPEC
+1,1,2,3,4,5,6,7,8
+**local orientation matching global system 
+*ORIENTATION,NAME=RECT
+ 1.0, 0.0, 0.0, 0.0, 1.0, 0.0
+ 1, 0.0
+*Distribution Table, name=distTableElastic
+ modulus, ratio
+*Distribution, name=distElastic, table=distTableElastic, location=element
+ , 10.e3, 0.25
+ SPEC, 20.0E6, 0.3
+*SOLID SECTION,ELSET=SPEC,MATERIAL=DATSTR,ORIENT=RECT
+*MATERIAL,NAME=DATSTR
+*ELASTIC
+ distElastic,
+*CREEP,LAW=STRAIN
+2.5E-27,5,-0.2
+*POTENTIAL
+1.5,1.2,1.,1.,1.,1.
+*BOUNDARY
+1,PINNED
+2,2
+5,2
+6,2
+4,1
+5,1
+8,1
+2,3
+3,3
+4,3
+*STEP
+*STATIC
+1.,1.
+*DLOAD
+1,P2,-20000.
+*PRINT,FREQ=10,RESIDUAL=NO
+*EL PRINT,FREQ=10
+S,MISES
+E, 
+CE, 
+*NODE PRINT,FREQ=10
+U,RF
+*OUTPUT,FIELD,FREQ=10
+*ELEMENT OUTPUT
+S,E,CE
+*END STEP
+*STEP,INC=250
+*VISCO,CETOL=5.E-6
+.01,100000.,1.E-3
+*END STEP

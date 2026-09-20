@@ -1,0 +1,47 @@
+*HEADING
+ KINEMATIC HARDENING MISES PLASTICITY USING COMBINED HARDENING
+ WITH MULTIPLE BACKSTRESSES,
+ CYCLIC UNIAXIAL TEST, T3D2
+*part, name=part-1
+*NODE,NSET=ALLN
+1,0.
+2,1.
+*ELEMENT,TYPE=T3D2,ELSET=ALLE
+1,1,2
+*SOLID SECTION,ELSET=ALLE,MATERIAL=ALLE
+1., 
+*end part
+*assembly, name=assembly-1
+*instance, name=part-1-1, part=part-1
+*end instance
+*end assembly
+*MATERIAL,NAME=ALLE
+*ELASTIC
+200.E3,.3
+*density
+ 7.82000e-09,
+*PLASTIC,HARD=COMBINED,DATA TYPE=HALF CYCLE, NUMBERBACKSTRESS=3
+200.,0.
+220.,.0009
+*BOUNDARY
+assembly-1.part-1-1.1,PINNED
+*AMPLITUDE,NAME=CYCLE
+0.,0.,.0025,1.,0.005,0.,0.0075,-1.,
+0.01,0.
+*step,nlgeom=no
+*dynamic,explicit
+ ,10e-3
+*BOUNDARY,AMP=CYCLE
+assembly-1.part-1-1.2,1,,.004
+*output, field
+*element output, elset=assembly-1.part-1-1.alle
+ S, LE, PE, PEEQ, ALPHA
+*node output, nset=assembly-1.part-1-1.alln
+ U, RF
+*output, history, variable=preselect
+*element output, elset=assembly-1.part-1-1.alle
+ S, PE, LE, PEEQ, ALPHA, ALPHAP
+*file output, number interval = 10
+*el file, elset=assembly-1.part-1-1.alle
+ PEEQ, ALPHA, ALPHAP
+*END STEP

@@ -1,0 +1,116 @@
+*HEADING
+
+CAP PLASTICITY, SHEAR TEST, C3D8, BIGK=0.8, TWO PRIMARY ELEMENTS,
+LOAD CONTROL, TWO OVERLOAD SOFT ELEMENTS
+*NODE, NSET=BOT
+1,0.,0.,0.
+2,1.,0.,0.
+3,1.,1.,0.
+4,0.,1.,0.
+11,0.,0.,0.
+12,1.,0.,0.
+13,1.,1.,0.
+14,0.,1.,0.
+*NODE, NSET=TOP
+5,0.,0.,1.
+6,1.,0.,1.
+7,1.,1.,1.
+8,0.,1.,1.
+15,0.,0.,1.
+16,1.,0.,1.
+17,1.,1.,1.
+18,0.,1.,1.
+*NSET, NSET=ALLN
+BOT, TOP
+*NSET, NSET=BACK
+1,4,5,8
+11,14,15,18
+*NSET, NSET=FRONT
+2,3,6,7
+*NSET, NSET=LHS
+1,2,5,6
+11,12,15,16
+*NSET, NSET=RHS
+3,4,7,8
+*ELEMENT, TYPE=C3D8, ELSET=MAIN
+1,1,2,3,4,5,6,7,8
+11,11,12,13,14,15,16,17,18
+*SOLID SECTION, ELSET=MAIN, MATERIAL=CAPL
+*MATERIAL,NAME=CAPL
+** The material data is chosen to give G = 5000.0, BULK = 10000.0,
+** first yield in pure shear        at P =   0.0,  S12 = 100.0, 
+** first yield in hydro compression at P = 270.0,  S12 =   0.0,
+** first yield in hydro tension     at P =-300.0,  S12 =   0.0,
+** first yield (P = PA)             at P = 120.0,  S12 = 125.0
+*ELASTIC
+12857.1429, 0.28571429
+*CAP PLASTICITY
+** COHESN, BETA,    BIGR,   EVOLPI,   ALPHA,   BIGK
+173.20508, 30.0, 0.61858957, 0.027, 0.69258232, 0.8
+*CAP HARDENING
+** PB, EVOLP
+ 213.0, 0.00
+ 222.0, 0.01
+ 242.0, 0.02
+ 282.0, 0.03
+ 362.0, 0.04
+ 522.0, 0.05
+ 842.0, 0.06
+1482.0, 0.07
+2762.0, 0.08
+**
+*ELEMENT, TYPE=C3D8, ELSET=SOFT
+101,1,2,3,4,5,6,7,8     
+111,11,12,13,14,15,16,17,18     
+*SOLID SECTION, ELSET=SOFT, MATERIAL=ELAS
+*MATERIAL,NAME=ELAS
+*ELASTIC
+** G = 50.0, BULK = 100.0,
+128.571429, 0.28571429
+**
+*STEP, INC=2, UNSYMM=YES
+Step 1: Load to incipient yield
+*STATIC, DIRECT
+1., 2.
+*BOUNDARY
+BACK,1
+LHS, 2
+BOT, 3
+*DLOAD            
+ 1, P4, -58.31237
+ 1, P5, -58.31237
+ 1, P2, 116.62474
+11, P4,  46.649902
+11, P5,  46.649902
+11, P2, -93.299804
+*EL PRINT, F=999
+S, 
+SINV, 
+E, 
+PE, 
+PEQC, 
+*EL PRINT, POS=NODES, F=999
+PEQC4, 
+*NODE PRINT, F=999
+U, 
+RF   , 
+*OUTPUT,FIELD,FREQ=999
+*ELEMENT OUTPUT
+S,SINV,E,PE,PEQC
+*OUTPUT,FIELD,FREQ=999
+*NODE OUTPUT
+U,RF
+*END STEP
+**
+*STEP, INC=2, UNSYMM=YES
+Step 2: Load beyond yield
+*STATIC, DIRECT
+1., 2.                                             
+*DLOAD
+ 1, P4, -58.5
+ 1, P5, -58.5
+ 1, P2, 117.0
+11, P4,  47.0
+11, P5,  47.0
+11, P2, -94.0
+*END STEP

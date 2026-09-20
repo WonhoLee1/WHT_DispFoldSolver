@@ -1,0 +1,115 @@
+*Heading
+Mullins Effect, Incompressible Yeoh Model, 2D element
+Cyclic uniaxial tension
+** Job name: mmecoo2cut_yeoh.inp
+**
+** PARTS
+**
+*Part, name=PART-1
+*End Part
+**
+** ASSEMBLY
+**
+*Assembly, name=Assembly
+**  
+*Instance, name=PART-1-1, part=PART-1
+*Node
+      1,           1.,           0.
+      2,           1.,           1.
+*Element, type=SAX1
+1, 1, 2
+*Elset, elset=ONE
+ 1,
+** Region: (Section-1-ONE:ONE)
+*Elset, elset=_I1, internal
+ 1,
+** Section: Section-1-ONE
+*Shell Section, elset=_I1, material=TREL
+0.1, 5
+*End Instance
+*Nset, nset=ALL, instance=PART-1-1
+ 1, 2
+*Nset, nset=BOT, instance=PART-1-1
+ 1,
+*Nset, nset=TOP, instance=PART-1-1
+ 2,
+*End Assembly
+** 
+** MATERIALS
+** 
+*Material, name=TREL
+*Hyperelastic, yeoh
+ 1.326,   -0.326,   0.1319, 0.,       0.,       0.
+*Mullins effect
+1.1,100.0
+** ----------------------------------------------------------------
+** 
+** STEP: Step-1
+** 
+*Step, name=Step-1, nlgeom, inc=20
+UNIAXIAL TENSION
+*Static, direct
+1., 20., 
+** 
+** BOUNDARY CONDITIONS
+** 
+*Boundary
+TOP, 2, 2, 2.
+BOT, 2, 2
+BOT, 6, 6
+** 
+** HISTORY OUTPUT
+** 
+*Output, history, frequency=10
+*Element Output, elset=PART-1-1.ONE
+SENER, S, DMENER
+*Node Output, nset=TOP
+U,RF
+*El Print, freq=999999
+*Node Print, freq=999999
+*End Step
+** ----------------------------------------------------------------
+** 
+** STEP: Step-2
+** 
+*Step, name=Step-2, nlgeom
+*Static, direct
+1., 20., 
+** 
+** BOUNDARY CONDITIONS
+*Boundary, op=NEW
+TOP, 2, 2
+BOT, 2, 2
+BOT, 6, 6
+*End Step
+** ----------------------------------------------------------------
+** 
+** STEP: Step-3
+** 
+*Step, name=Step-3, nlgeom
+*Static, direct
+1., 20., 
+** 
+** BOUNDARY CONDITIONS
+** 
+*Boundary, op=NEW
+TOP, 2, 2, 3.
+BOT, 2, 2
+BOT, 6, 6
+** 
+*End Step
+** ----------------------------------------------------------------
+** 
+** STEP: Step-4
+** 
+*Step, name=Step-4, nlgeom
+*Static, direct
+1., 20., 
+** 
+** BOUNDARY CONDITIONS
+** 
+*Boundary, op=NEW
+TOP, 2, 2
+BOT, 2, 2
+BOT, 6, 6
+*End Step

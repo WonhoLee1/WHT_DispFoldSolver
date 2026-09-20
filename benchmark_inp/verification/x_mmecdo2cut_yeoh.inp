@@ -1,0 +1,115 @@
+*Heading
+Mullins Effect, Compressible Yeoh Model, 2D element
+Cyclic uniaxial tension
+** Job name: x_mmecdo2cut_yeoh.inp
+**
+** PARTS
+**
+*Part, name=PART-1
+*End Part
+**
+** ASSEMBLY
+**
+*Assembly, name=Assembly
+**  
+*Instance, name=PART-1-1, part=PART-1
+*Node
+      1,           1.,           0.
+      2,           1.,           1.
+*Element, type=SAX1
+1, 1, 2
+*Elset, elset=ONE
+ 1,
+** Region: (Section-1-ONE:ONE)
+*Elset, elset=_I1, internal
+ 1,
+** Section: Section-1-ONE
+*Shell Section, elset=_I1, material=TREL
+0.1, 5
+*End Instance
+*Nset, nset=ALL, instance=PART-1-1
+ 1, 2
+*Nset, nset=BOT, instance=PART-1-1
+ 1,
+*Nset, nset=TOP, instance=PART-1-1
+ 2,
+*End Assembly
+** 
+** MATERIALS
+** 
+*Material, name=TREL
+*Hyperelastic, yeoh
+ 1.326,   -0.326,   0.1319, 0.000725,       0.,       0.
+*Mullins effect
+1.1, 100., 0.1
+*Density
+1.
+** ----------------------------------------------------------------
+** 
+** STEP: Step-1
+** 
+*Step, name=Step-1
+UNIAXIAL TENSION
+*Dynamic, Explicit
+, 20.,  
+** 
+** BOUNDARY CONDITIONS
+** 
+*Boundary
+BOT, 2, 2
+BOT, 6, 6
+*Boundary, type=VELOCITY
+TOP, 2, 2, 0.1
+** 
+** OUTPUT REQUESTS
+** 
+** HISTORY OUTPUT
+** 
+*Output, history, time interval=5
+*energy output
+allke, allse
+*Element Output, elset=PART-1-1.ONE
+SENER, S, DMENER 
+*Node Output, nset=TOP
+U,RF
+*End Step
+** ----------------------------------------------------------------
+** 
+** STEP: Step-2
+** 
+*Step, name=Step-2
+*Dynamic, Explicit
+, 20.,  
+** 
+** BOUNDARY CONDITIONS
+**
+*Boundary, type=VELOCITY
+TOP, 2, 2, -0.1
+*End Step
+** ----------------------------------------------------------------
+** 
+** STEP: Step-3
+** 
+*Step, name=Step-3
+*Dynamic, Explicit
+, 20., 
+** 
+** BOUNDARY CONDITIONS
+** 
+*Boundary, type=VELOCITY
+TOP, 2, 2, 0.15
+** 
+*End Step
+** ----------------------------------------------------------------
+** 
+** STEP: Step-4
+** 
+*Step, name=Step-4
+*Dynamic, Explicit
+, 20.,  
+** 
+** BOUNDARY CONDITIONS
+** 
+*Boundary, type=VELOCITY
+TOP, 2, 2, -0.15
+*End Step

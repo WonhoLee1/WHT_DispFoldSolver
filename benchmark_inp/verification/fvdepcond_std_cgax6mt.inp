@@ -1,0 +1,105 @@
+*Heading
+ Basic Verification Of Field Dependence Of Conductivity
+ Test Type: Material Verification  [cgax6mt]
+**
+** See "Thermal Properties"  Of Abaqus/Verification 
+** Manual -- Chapter 2.3.1
+**
+*Node,Nset=Nall
+  1,100.0,0.0 
+  2,101.0,0.0 
+  3,103.0,0.0 
+  4,106.0,0.0 
+  5,100.5,0.0 
+  6,102.0,0.0 
+  7,104.5,0.0 
+ 11,100.0,1.0
+ 12,101.0,1.0
+ 13,103.0,1.0
+ 14,106.0,1.0
+ 15,100.5,1.0
+ 16,102.0,1.0
+ 17,104.5,1.0
+ 21,100.0,0.5
+ 22,101.0,0.5
+ 23,103.0,0.5
+ 24,106.0,0.5
+ 25,100.5,0.5
+ 26,102.0,0.5
+ 27,104.5,0.5
+*Nset,Nset=Fvnods
+ 2,3,6,12,13,16,22,23,26
+*Nset,Nset=Hfvnods
+ 5,7,15,17,25,27
+*Nset,Nset=Left
+ 1,11,21
+*Nset,Nset=Right
+ 4,14,24
+*Element,Elset=K1k3,Type=cgax6mt
+ 1, 1,2,12,5,22,25
+ 2, 12,11,1,15,21,25
+ 5, 3,4,14,7,24,27
+ 6, 14,13,3,17,23,27
+*Element,Elset=K2fv,Type=cgax6mt
+ 3, 2,3,13,6,23,26
+ 4, 13,12,2,16,22,26
+*Solid Section,Elset=K1k3,Material=Kconst
+ 3., 
+*Solid Section,Elset=K2fv,Material=Kfvdep
+ 3., 
+*Initial Conditions,Type=Temperature
+ Nall,0.
+*Initial Conditions,Type=Field
+ Nall,0.
+*Material,Name=Kconst
+*Elastic
+ 1.0,0.0
+*Expansion
+ 0.0,
+*Conductivity
+ 150., 
+*Density
+ 7850.,
+*Specific Heat
+ 460.,
+*Material,Name=Kfvdep
+*Elastic
+ 1.0,0.0
+*Expansion
+ 0.0,
+*Conductivity,Dep=1
+ 1.,,25.
+ 10.,,50.
+ 100.,,75.
+ 1000,,100.
+*Density
+ 7850.,
+*Specific Heat
+ 460.,
+*Amplitude,Name=Rise
+ 0.,0.,1.,1.
+*Step,Amp=Step
+*Coupled Temperature-Displacement, Steady State
+ .25,1.,.25,.25
+*Boundary
+ Left, 11, 11, 1000.
+ Right,11, 11, 0.
+ Nall,1,2
+ Nall,5,5
+*Field,Variable=1,Amp=Rise
+ Fvnods,100.
+ Hfvnods,50.
+*Node File
+ Nt, 
+*El File, Position=Centroidal
+ Fv,
+*El File, Position=Integration Points
+ Fv,
+*Output, Field
+*Node Output
+ Nt,
+*Element Output, Position=Centroidal
+ Fv,			  
+*Element Output, Position=Integration Points
+ Fv,
+*End Step

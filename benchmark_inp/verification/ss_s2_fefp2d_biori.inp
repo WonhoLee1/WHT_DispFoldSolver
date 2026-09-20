@@ -1,0 +1,37 @@
+*HEADING
+ Test import capability with FeFp: Standard to Standard
+ Element: S4R, CPS4R + orientation
+ Material: marlow + plasticity + mullins 
+ Transfer from Standard to Standard
+ Results imported from: ss_s1_fefp2d_biori.inp
+**
+*IMPORT,UPDATE=NO,STATE=YES,inc=15
+ Shell,
+ Solid
+**
+*amplitude,name=ne3
+ 0., 0.6, 0.25, 0.0, 0.5, 0.6, 1.0, 1.0
+**------------------------
+*STEP,nlgeom=yes
+*static
+0.05,1., ,0.05
+*BOUNDARY
+shell-node,3,6
+fix1,1,1
+fix2,2,2
+*boundary, amplitude=ne3
+top, 2, 2, 0.4
+disp,1, 1, 0.2
+*output,field,freq=5
+*node output
+u
+*element output
+S
+PEEQ
+E
+*output,history,freq=1
+*node output,nset=top
+rf
+*node output,nset=top
+u
+*END STEP

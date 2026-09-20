@@ -1,0 +1,37 @@
+*HEADING
+CLAY PLASTICITY, TRIAXIAL EXTENSION TEST, CAX4R
+*IMPORT, UPDATE=NO, STATE=YES, step=1
+SOIL
+*STEP, nlgeom=yes
+*STATIC,DIRECT
+ 1.0e-5,1.0e-5
+*DLOAD
+1,P2,100.
+*output,field
+*node output
+ u
+*element output
+ press,mises,peeq,s
+*output,history
+*element output,elset=soil
+ press,mises,peeq,s
+*BOUNDARY
+TOP,2
+BOTTOM,2
+LHS,1
+*END STEP
+*STEP,INC=20
+  TRIAXIAL EXTENSION
+*STATIC,DIRECT
+1.,20.
+*BOUNDARY
+TOP,2,2,.4
+*output,field
+*node output
+ u
+*element output
+ press,mises,peeq,s
+*output,history
+*element output,elset=soil
+ press,mises,peeq,s
+*END STEP

@@ -1,0 +1,62 @@
+*HEADING
+Import S2S - S1 job
+ Marlow, compressible, uniaxial, orientation
+*restart,write,freq=1
+*preprint,model=yes,history=yes
+*NODE,NSET=one
+1,
+2,1.
+3,1.,1.,
+4,0.,1.,
+5,0.,0.,1.
+6,1.,0.,1.
+7,1.,1.,1.
+8,0.,1.,1.
+*NSET,NSET=FACE1
+1,2,3,4
+*NSET,NSET=FACE2
+5,6,7,8
+*NSET,NSET=FACE3
+1,2,5,6
+*NSET,NSET=FACE4
+2,3,6,7
+*NSET,NSET=FACE5
+3,4,7,8
+*NSET,NSET=FACE6
+4,1,8,5
+*nset,nset=noutu
+6
+*ELEMENT,TYPE=C3D8r,ELSET=ONE
+1,1,2,3,4,5,6,7,8
+*orientation,name=ori1
+1.,1.,1., 0.,0.,1.,
+
+*SOLID SECTION,ELSET=ONE,MATERIAL=mat_mars,ori=ori1
+*MATERIAL,NAME=mat_mars
+*DENSITY
+1.e-6
+*HYPERELASTIC,marlow,poisson=0.475
+*include, input=heplmu_matprops_uni.inp
+*amplitude,name=nominal_strain
+0.0,0.0, 20.,1.0, 40.,0.05
+*STEP,nlgeom=yes,inc=2000
+*static
+1.,40.,,1.
+*BOUNDARY
+FACE1,3
+FACE3,2
+FACE6,1
+*boundary, amplitude=nominal_strain
+face4,1,1,1.0
+*output,history,freq=1
+*node output,nset=noutu
+u1
+rf1
+*element output,elset=one
+dmener,eldmd
+*output,field
+*node output,nset=one
+u,rf
+*element output,elset=one
+s,le,pe,peeq,ener
+*END STEP

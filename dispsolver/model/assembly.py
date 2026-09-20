@@ -193,9 +193,19 @@ class Assembly:
             part = inst.part
             local_nids = sorted(part.nodes.keys())
             
-            # (A) Transform coordinates to world space
+            # (A) Transform coordinates to world space.
+            # Abaqus *INSTANCE order is translation BEFORE rotation:
+            # x' = R(axis, angle) @ (x + t) about the axis point.
+            # Same composition as Instance.get_world_coordinates.
             raw_coords = np.array([part.nodes[nid] for nid in local_nids], dtype=np.float64)
-            world_coords = inst.transform.apply(raw_coords)
+            shifted = raw_coords + np.asarray(inst.transform.translation[:dim], dtype=np.float64)
+            rot_only = inst.transform.copy()
+            rot_only.translation = np.zeros_like(rot_only.translation)
+            if (rot_only.rotation_axis is not None
+                    and abs(rot_only.rotation_angle_rad) > 1e-15
+                    and float(np.linalg.norm(rot_only.rotation_axis)) < 1e-12):
+                rot_only.rotation_axis = None
+            world_coords = rot_only.apply(shifted)
             all_coords_list.append(world_coords)
 
             # (B) Map Node IDs

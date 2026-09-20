@@ -77,6 +77,8 @@ class Step:
         self.loads: Dict[str, StepStateEntry] = {}
         self.interactions: Dict[str, StepStateEntry] = {}
         self.predefined_fields: Dict[str, PredefinedField] = {}
+        self.step_nsets: Dict[str, List[int]] = {}
+        self.step_elsets: Dict[str, List[int]] = {}
         self.sensors: Dict[str, Sensor] = {}
         self.iteration_hooks: Dict[str, IterationHook] = {}
         self.field_output_requests: Dict[str, Any] = {}
