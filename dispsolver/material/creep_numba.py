@@ -176,8 +176,11 @@ def integrate_power_law_creep(
     C[4, 4] = G * beta
     C[5, 5] = G * beta
 
-    # Deviatoric contraction (gamma - beta) * n_dir (x) n_dir
-    factor = 2.0 * G * (gamma - beta)
+    # Deviatoric contraction (gamma - beta) * n_dir (x) n_dir.
+    # Coefficient 4G/3 (not 2G): n_dir = 1.5*s/q has norm^2 = 3/2, so
+    # 2G(gamma-beta) in unit-norm form becomes 4G(gamma-beta)/3 here.
+    # Verified by central FD of sigma vs eps (was 0.21 before fix).
+    factor = (4.0 / 3.0) * G * (gamma - beta)
     # Voigt scaling for shear DOFs in outer product
     n_v = np.zeros(6, dtype=np.float64)
     n_v[0] = n_dir[0]
