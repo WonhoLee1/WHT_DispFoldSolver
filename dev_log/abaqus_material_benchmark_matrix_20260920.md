@@ -98,7 +98,7 @@ htm의 "Input files" 섹션에서 정확한 inp 목록을 추출했고 (`dev_log
 | 13 tempplastic | 2 | ✅ `temp_plastic_mises` parity (2 중 1) |
 | 14 fieldplastic | 2 | ✅ `field_plastic_ef1` parity (temp 경로와 bit-identical) — 2026-09-20 Wave0-B |
 | 15 johnsoncook | 8 | 부분 (동적 1건) |
-| 16 damage | 66 | 부분 (Ductile/JC 개시 + G_f 에너지진전 + 삭제 ✅ 2026-09-20: MAT13, 개시누적/FD접선/end-to-end 파단; `benchmark_damage.py` 4/4 — 개시해석해·면적에너지 객관성 0.13%·삼축·JC식; FLD/FLSD/MK 판재한계는 범위 외) |
+| 16 damage | 66 | 부분 (Ductile/JC 개시 + G_f 에너지진전 + 삭제 ✅ 2026-09-20: MAT13, 개시누적/FD접선/end-to-end 파단; `benchmark_damage.py` 4/4 — 개시해석해·면적에너지 객관성 0.13%·삼축·JC식; JC D4/D5 rate·T승수 ✅ 2026-09-20 fb99656, `test_damage_ductile_jc` 13/13; FLD Keeler-Brazier 출력전용 후처리 ✅ 2026-09-20 228bb39; FLSD/MK는 범위 외) |
 | 17 creep | 57 | 부분→확장 (거듭제곱 + 쌍곡사인 + Anand 2x2 내재적분; 기존 거듭제곱 접선계수 2G→4G/3 수정 — FD 입증) |
 | 18 viscous | 7 | 결번 (대응 테스트 기실패) |
 | 19 concrete | 20 | ✅ CDP 백본+경화테이블 (MAT15, f==0 exact, apex 리턴) |
@@ -134,6 +134,6 @@ htm의 "Input files" 섹션에서 정확한 inp 목록을 추출했고 (`dev_log
 
 ## 다음 순서 (요구서 P-순서 유지)
 
-P0 잔여: annealtemp(✅ b9a9da7) → FIELD plumbing (#6·#14, ✅ Wave0-B) → #22 범위확장(Ogden/Mooney/AB 팽창 ✅ Wave1-E; VdW 코어 없음으로 범위 외).
+P0 잔여: annealtemp(✅ b9a9da7) → FIELD plumbing (#6·#14, ✅ Wave0-B) → #22 범위확장(Ogden/Mooney/AB 팽창 ✅ Wave1-E; VdW Kilian lock-up 코어 ✅ 2026-09-20 fe43f92, `test_van_der_waals` 6/6).
 P1 잔여: Hill·D-P 등 비금속 소성 (수요 시). P2 잔여: Ogden/Mooney 초탄성, Explicit 케이스.
 P3: Neuber/Glinka 후처리 (독립). P4: damage·concrete (별도 제안서).

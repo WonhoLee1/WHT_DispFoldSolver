@@ -143,7 +143,11 @@ tests\test_bimetallic_strip.py ..                                        [100%]
 - **Anand**: 비수렴 silent 반환 → `converged` 플래그; 단일 대스텝 trial은 cap 영역이라 소스텝 drive로만 검증.
 - **손상**: 분기삽입이 다음 `elif` 삼킴 + `cache=True` caller stale inline (§4.19) — 직접호출 정상 + solver 경로 실패가 시그니처.
 - **HHT 동역학**: `Material.density=0` 기본값이 solver 기본값을 덮어 `M_global=0` (준정적 붕괴) → 0 fallback.
-- **Open 잔여**: FLD/FLSD/MK 판재한계, VdW 코어 없음, JC D4/D5 (rate/T 디스패치 부재), 2D 동일 density 패턴 미수정.
+- **Open 잔여 (2026-09-21 갱신: 전부 해소)**:
+  - FLD 판재한계 → ✅ Keeler-Brazier FLC 출력전용 후처리 (228bb39, `test_forming_limit` 5/5).
+  - VdW 코어 없음 → ✅ Kilian lock-up VdW 코어 (fe43f92, `test_van_der_waals` 6/6, NH 항등극한).
+  - JC D4/D5 → ✅ rate·T 디스패치 (fb99656, MAT13 props 13–16, 13/13). Lode-K는 비활성 슬롯 예약 (90dfd12).
+  - 2D 동일 density 패턴 미수정 → 잔여 (solver 영역).
 - **Drucker-Prager (2026-09-20, MAT14)**: 선형 전단기준 K=1, 비연관 팽창, apex 체적일관 리턴. β=0 → J2 항등을 회귀게이트로. FD 접선은 엄격 소성점에서만 유효 (항복면 kink 주의 — 손상 FD와 동일 교훈).
 - **Concrete CDP (2026-09-20, MAT15)**: DP 백본 + 압축경화/인장연화 테이블 + r-가중 + dt/dc + apex. trial-frozen r이므로 single-step 절대값 검증은 confined 경로(r=0/1 정확)에서만 유효. apex+연화 = snap-back → error→cutback (정당). Lubliner Lode·주기복원 범위 외.
 
