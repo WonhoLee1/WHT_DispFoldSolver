@@ -106,6 +106,8 @@ mat_d.DamageEvolution(type="ENERGY_LINEAR", Gf=2.0, L=1.0)
 14. **주파수 점탄성 (2026-09-20)**: Debye $G', G''$ 평가 + WLF 환산주파수 + 복소 $E^*$ (신규 상수 0).
 15. **이방성 초탄성 HGO/GOH (2026-09-20)**: 섬유분산 $\kappa$, 좌굴 off, JAX autodiff 접선.
 16. **연성/JC 손상 (2026-09-20)**: MAT13 — 개시누적 $\omega_D$ + $G_f$ 에너지진전 + 삭제 (SDV 10).
+17. **Drucker-Prager 소성 (2026-09-20)**: 선형 전단기준, K=1, 비연관 팽창 + apex (MAT14, SDV 7). $\beta=0$ → J2 항등.
+18. **Concrete 손상소성 (2026-09-20)**: DP 백본 + 압축경화/인장연화 테이블 + dt/dc + apex (MAT15, SDV 10). Lubliner Lode·주기복원 범위 외.
 
 ---
 
@@ -134,6 +136,8 @@ mat_d.DamageEvolution(type="ENERGY_LINEAR", Gf=2.0, L=1.0)
 | **MAT-ANISO-01** | `test_anisotropic_hyperelastic.py` (5건) | 등방퇴화, κ=1/3, 객관성, FD | 5/5 (2026-09-20) | **PASS** |
 | **MAT-DMG-01** | `test_damage_ductile_jc.py` (10건) | 개시누적, JC퇴화, 무치유, 파단, FD, end-to-end | 10/10 (2026-09-20) | **PASS** |
 | **MAT-DMG-BM** | `benchmark_damage.py` (4건) | 개시해석해, 면적에너지 객관성, 삼축, JC식 | 4/4 (2026-09-20) | **PASS** |
+| **MAT-DP-01** | `test_drucker_prager.py` (9건) | β=0 퇴화, 인장/압축 비대칭 해석식, apex, 팽창부호, FD, end-to-end | 9/9 (2026-09-20) | **PASS** |
+| **MAT-CDP-01** | `test_concrete_dp.py` (11건) | 경화/연화 exact, apex 정수압, 제하탄성 exact, FD, end-to-end | 11/11 (2026-09-20) | **PASS** |
 
 ### 5.1 Abaqus 2026 공인 재료 및 다요소 구조 벤치마크 대조 결과
 - **`temp_elastic_ef1`**: 20℃ 및 100℃ 인장 하중 $F = 200.0208\,\text{N}$, $160.0166\,\text{N}$ (Abaqus 정해 대비 오차 $0.010\%$) **[PASS]**
@@ -174,6 +178,10 @@ mat_d.DamageEvolution(type="ENERGY_LINEAR", Gf=2.0, L=1.0)
 - `dispsolver/model/material.py` — `field_table`/`Creep(HYPERB/ANAND)`/`DamageInitiation`/`DamageEvolution` API (2026-09-20).
 - `benchmark_element/benchmark_field_ef1.py`, `benchmark_damage.py` — FV1 쌍 + 손상 4종 벤치마크 (2026-09-20).
 - `tests/test_hyperelastic_ogden_mooney.py`, `test_field_ef1.py`, `test_expansion_hyper.py`, `test_creep_extended.py`, `test_frequency_viscoelasticity.py`, `test_anisotropic_hyperelastic.py`, `test_damage_ductile_jc.py` (2026-09-20, 도합 50건).
+- `dispsolver/material3d/numba_materials.py` — MAT14 Drucker-Prager 분기 (2026-09-20).
+- `tests/test_drucker_prager.py` (2026-09-20, 9건).
+- `dispsolver/material3d/numba_materials.py` — MAT15 Concrete 손상소성 분기 (2026-09-20).
+- `tests/test_concrete_dp.py` (2026-09-20, 11건).
 
 ---
 
@@ -199,4 +207,7 @@ mat_d.DamageEvolution(type="ENERGY_LINEAR", Gf=2.0, L=1.0)
 - `python benchmark_element/benchmark_damage.py` → **4/4 PASS** (면적에너지 객관성 0.13%).
 - `python benchmark_element/benchmark_abaqus_material_inp.py` → **4/4 PASS** (회귀 확인).
 - `python -m verification.run_all` → **13/14** (bending_2pt FAIL은 stash A/B 기실패, 2026-09-20 재확인: 수정 전후 bit-identical).
+- `pytest tests/test_drucker_prager.py` → **9 passed** (2026-09-20).
+- `pytest tests/test_concrete_dp.py` → **11 passed** (2026-09-20).
+- `pytest tests/test_damage_ductile_jc.py tests/test_3d_mechanics_benchmarks.py` → **25 passed, 4 xfailed** (2026-09-20, MAT14/15 회귀).
 

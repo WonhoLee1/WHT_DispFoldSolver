@@ -48,6 +48,7 @@ from dispsolver.material3d.numba_materials import (
     MAT_RADIOSS_LAW36,
     MAT_J2_DUCTILE_DAMAGE,
     MAT_DRUCKER_PRAGER,
+    MAT_CONCRETE_DP,
     MAT_HYPER_VISCOELASTIC,
     MAT_CUSTOM_ELASTIC,
     get_default_sdv_count,
@@ -354,6 +355,21 @@ class DynamicSolver3D:
                             float(mat_obj.get("beta", 20.0)),
                             float(mat_obj.get("psi", 20.0)),
                         ]
+                    elif mtype == MAT_CONCRETE_DP or "cdp_tables" in mat_obj:
+                        self.elem_mat_types[e] = MAT_CONCRETE_DP
+                        tabs = mat_obj.get("cdp_tables", {})
+                        flat = [float(mat_obj.get("E", 30000.0)),
+                                float(mat_obj.get("nu", 0.2)),
+                                float(mat_obj.get("beta", 20.0)),
+                                float(mat_obj.get("psi", 15.0))]
+                        for key in ("compression", "tension", "dt_table", "dc_table"):
+                            rows = list(tabs.get(key, [(0.0, 0.0)]))[:6]
+                            flat.append(float(len(rows)))
+                            for (a, b) in rows:
+                                flat.append(float(a))
+                                flat.append(float(b))
+                        n = min(len(flat), 64)
+                        self.elem_props[e, :n] = flat[:n]
                     elif mtype == MAT_J2_PLASTICITY_NONLINEAR or "R_inf" in mat_obj or "b_exp" in mat_obj:
                         self.elem_mat_types[e] = MAT_J2_PLASTICITY_NONLINEAR
                         E_val = float(mat_obj.get("E", 200000.0))

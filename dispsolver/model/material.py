@@ -157,6 +157,31 @@ class Material:
             "d0": float(d0), "H": float(H)}
         self.mat_type = "DRUCKER_PRAGER"
 
+    def ConcreteDP(self, beta: float = 20.0, psi: float = 15.0,
+                   compression: Any = None, tension: Any = None,
+                   dt_table: Any = None, dc_table: Any = None) -> None:
+        """Concrete damaged plasticity (DP backbone + tables).
+
+        compression: ((ec, sig), ...) hardening, tension: ((et, sig), ...)
+        softening, dt_table: ((et, dt), ...), dc_table: ((ec, dc), ...).
+        Each table 1..6 points. Lubliner Lode surface and cyclic recovery
+        are not included (documented extensions).
+        """
+        def _rows(tab, name):
+            if tab is None:
+                raise ValueError("ConcreteDP needs " + name)
+            rows = [tuple(float(v) for v in r) for r in tab]
+            if not (1 <= len(rows) <= 6):
+                raise ValueError(name + " needs 1..6 points")
+            return rows
+        self.extra_params["concrete_dp"] = {
+            "beta": float(beta), "psi": float(psi),
+            "compression": _rows(compression, "compression"),
+            "tension": _rows(tension, "tension"),
+            "dt_table": _rows(dt_table, "dt_table"),
+            "dc_table": _rows(dc_table, "dc_table")}
+        self.mat_type = "CONCRETE_DP"
+
     def RateDependent(self, type: str = "POWER_LAW", table: Any = None, **kwargs) -> None:
         """Abaqus-standard *RATE DEPENDENT property definition.
         Supports:
@@ -622,6 +647,17 @@ class Material:
             props["H"] = float(dp.get("H", 0.0))
             props["beta"] = float(dp.get("beta", 20.0))
             props["psi"] = float(dp.get("psi", 20.0))
+
+        elif upper_type in ["CONCRETE_DP", "CONCRETE", "CDP"]:
+            from dispsolver.material3d.numba_materials import MAT_CONCRETE_DP
+            cd = self.extra_params.get("concrete_dp", {})
+            props["mat_type"] = MAT_CONCRETE_DP
+            props["E"] = float(E_val)
+            props["nu"] = float(nu_val)
+            props["beta"] = float(cd.get("beta", 20.0))
+            props["psi"] = float(cd.get("psi", 15.0))
+            props["cdp_tables"] = {k: cd[k] for k in
+                                   ("compression", "tension", "dt_table", "dc_table")}
 
         elif upper_type in ["MOONEY_RIVLIN", "MOONEY-RIVLIN"]:
             props["mat_type"] = MAT_HYPERELASTIC_MOONEY_RIVLIN

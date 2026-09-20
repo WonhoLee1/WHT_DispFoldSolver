@@ -32,6 +32,7 @@ MAT_J2_PLASTICITY_TABULAR = 12
 MAT_RADIOSS_LAW36 = MAT_J2_PLASTICITY_TABULAR
 MAT_J2_DUCTILE_DAMAGE = 13
 MAT_DRUCKER_PRAGER = 14
+MAT_CONCRETE_DP = 15
 MAT_CUSTOM_ELASTIC = 99
 
 @njit(fastmath=True)
@@ -63,6 +64,8 @@ def get_default_sdv_count(mat_type: int) -> int:
         return 10  # ep tensor (6), eq_p (1), omega_D (1), u_bar (1), D (1)
     elif mat_type == MAT_DRUCKER_PRAGER:
         return 7  # ep tensor (6), eq_p (1)
+    elif mat_type == MAT_CONCRETE_DP:
+        return 10  # ep (6), ec_in (1), et_in (1), dt (1), dc (1)
     elif mat_type == MAT_VISCOELASTIC_PRONY:
         return 12  # viscous history tensor h_1 (6) + prev elastic deviatoric stress (6)
     elif mat_type == MAT_HYPER_VISCOELASTIC:
@@ -1529,6 +1532,336 @@ def material_dispatch_3d(
                 for r in range(3):
                     for c in range(3):
                         C_mat[r, c] = kfac
+
+    elif mat_type == MAT_CONCRETE_DP:
+        # Concrete damaged plasticity on a DP backbone (Lee-Fenves spirit):
+        #   f = q + h*tanb - ((1-r)*sigc(ec) + r*sigt(et)), r = tension weight
+        # props: [E,nu,beta,psi, nc,(ec,sig)xnc, nt,(et,sig)xnt,
+        #         ndt,(et,dt)xndt, ndc,(ec,dc)xndc], each count <= 6.
+        # SDV: [0:6] ep, [6] ec_in, [7] et_in, [8] dt, [9] dc.
+        # Lubliner Lode surface and cyclic stiffness recovery are flagged
+        # extensions, not implemented here.
+        E = props[0]
+        nu = props[1]
+        tanb = np.tan(props[2] * np.pi / 180.0)
+        tanpsi = np.tan(props[3] * np.pi / 180.0)
+        mu = E / (2.0 * (1.0 + nu))
+        K = E / (3.0 * (1.0 - 2.0 * nu))
+
+        ep_old = np.zeros(6, dtype=np.float64)
+        ec_old = 0.0
+        et_old = 0.0
+        if len(sdv_prev) >= 10:
+            for i in range(6):
+                ep_old[i] = sdv_prev[i]
+            ec_old = sdv_prev[6]
+            et_old = sdv_prev[7]
+
+        e_trial = E_voigt - ep_old
+        trace_e = e_trial[0] + e_trial[1] + e_trial[2]
+        e_dev = np.zeros(6, dtype=np.float64)
+        e_dev[0] = e_trial[0] - trace_e / 3.0
+        e_dev[1] = e_trial[1] - trace_e / 3.0
+        e_dev[2] = e_trial[2] - trace_e / 3.0
+        e_dev[3] = e_trial[3]
+        e_dev[4] = e_trial[4]
+        e_dev[5] = e_trial[5]
+
+        s_trial = np.zeros(6, dtype=np.float64)
+        s_trial[0] = 2.0 * mu * e_dev[0]
+        s_trial[1] = 2.0 * mu * e_dev[1]
+        s_trial[2] = 2.0 * mu * e_dev[2]
+        s_trial[3] = mu * e_dev[3]
+        s_trial[4] = mu * e_dev[4]
+        s_trial[5] = mu * e_dev[5]
+
+        norm_s = np.sqrt(
+            s_trial[0]**2 + s_trial[1]**2 + s_trial[2]**2 +
+            2.0 * (s_trial[3]**2 + s_trial[4]**2 + s_trial[5]**2)
+        )
+        q_trial = np.sqrt(1.5) * norm_s
+        hydro_tr = K * trace_e
+
+        # Table offsets.
+        nc = int(props[4])
+        b1 = 5
+        nt = int(props[b1 + 2 * nc])
+        b2 = b1 + 2 * nc + 1
+        ndt = int(props[b2 + 2 * nt])
+        b3 = b2 + 2 * nt + 1
+        ndc = int(props[b3 + 2 * ndt])
+        b4 = b3 + 2 * ndt + 1
+        if nc < 1 or nc > 6 or nt < 1 or nt > 6 or ndt < 1 or ndt > 6 or ndc < 1 or ndc > 6:
+            error_flag = 1
+            return S_voigt, C_mat, sdv_new, error_flag
+        if b4 + 2 * ndc > 64:
+            error_flag = 1
+            return S_voigt, C_mat, sdv_new, error_flag
+
+        # Piecewise-linear table lookup with end slopes (clamped values).
+        # Compression hardening (ec,sig).
+        i = 0
+        while i < nc - 1 and ec_old > props[b1 + 2 * (i + 1)]:
+            i += 1
+        if nc == 1:
+            sigc = props[b1 + 1]
+            Hc = 0.0
+        elif i >= nc - 1:
+            e0 = props[b1 + 2 * (nc - 2)]
+            e1 = props[b1 + 2 * (nc - 1)]
+            s0 = props[b1 + 2 * (nc - 2) + 1]
+            s1 = props[b1 + 2 * (nc - 1) + 1]
+            Hc = (s1 - s0) / max(e1 - e0, 1e-300)
+            sigc = s1 + Hc * (ec_old - e1)
+        else:
+            e0 = props[b1 + 2 * i]
+            e1 = props[b1 + 2 * (i + 1)]
+            s0 = props[b1 + 2 * i + 1]
+            s1 = props[b1 + 2 * (i + 1) + 1]
+            Hc = (s1 - s0) / max(e1 - e0, 1e-300)
+            sigc = s0 + Hc * (ec_old - e0)
+        # Tension softening (et,sig).
+        j = 0
+        while j < nt - 1 and et_old > props[b2 + 2 * (j + 1)]:
+            j += 1
+        if nt == 1:
+            sigt = props[b2 + 1]
+            Ht = 0.0
+        elif j >= nt - 1:
+            e0 = props[b2 + 2 * (nt - 2)]
+            e1 = props[b2 + 2 * (nt - 1)]
+            s0 = props[b2 + 2 * (nt - 2) + 1]
+            s1 = props[b2 + 2 * (nt - 1) + 1]
+            Ht = (s1 - s0) / max(e1 - e0, 1e-300)
+            sigt = s1 + Ht * (et_old - e1)
+        else:
+            e0 = props[b2 + 2 * j]
+            e1 = props[b2 + 2 * (j + 1)]
+            s0 = props[b2 + 2 * j + 1]
+            s1 = props[b2 + 2 * (j + 1) + 1]
+            Ht = (s1 - s0) / max(e1 - e0, 1e-300)
+            sigt = s0 + Ht * (et_old - e0)
+
+        # Tension weight from trial principal stresses (frozen for the step).
+        lam1 = s_trial[0] + hydro_tr
+        lam2 = s_trial[1] + hydro_tr
+        lam3 = s_trial[2] + hydro_tr
+        sh = max(s_trial[3] * s_trial[3] + s_trial[4] * s_trial[4] + s_trial[5] * s_trial[5], 0.0)
+        if sh > 0.0:
+            rad = np.sqrt(max((lam1 - lam2) ** 2 + 4.0 * sh, 0.0))
+            pa = 0.5 * (lam1 + lam2 + rad)
+            pb = 0.5 * (lam1 + lam2 - rad)
+            lam1 = pa
+            lam2 = pb
+        pos_sum = 0.0
+        abs_sum = 0.0
+        if lam1 > 0.0:
+            pos_sum += lam1
+        if lam2 > 0.0:
+            pos_sum += lam2
+        if lam3 > 0.0:
+            pos_sum += lam3
+        abs_sum = abs(lam1) + abs(lam2) + abs(lam3)
+        if abs_sum > 1e-300:
+            rw = pos_sum / abs_sum
+        else:
+            rw = 0.5
+
+        sigy = (1.0 - rw) * sigc + rw * sigt
+        Heff = (1.0 - rw) * Hc + rw * Ht
+        f_trial = q_trial + hydro_tr * tanb - sigy
+
+        C_el = np.zeros((6, 6), dtype=np.float64)
+        for r in range(3):
+            for c in range(3):
+                C_el[r, c] = K - (2.0 / 3.0) * mu
+            C_el[r, r] += 2.0 * mu
+        C_el[3, 3] = mu
+        C_el[4, 4] = mu
+        C_el[5, 5] = mu
+
+        if f_trial <= 0.0:
+            dt_old = 0.0
+            dc_old = 0.0
+            if len(sdv_prev) >= 10:
+                dt_old = sdv_prev[8]
+                dc_old = sdv_prev[9]
+            D_old = 1.0 - (1.0 - dt_old) * (1.0 - dc_old)
+            S_voigt = (1.0 - D_old) * s_trial.copy()
+            S_voigt[0] += (1.0 - D_old) * hydro_tr
+            S_voigt[1] += (1.0 - D_old) * hydro_tr
+            S_voigt[2] += (1.0 - D_old) * hydro_tr
+            C_mat = (1.0 - D_old) * C_el.copy()
+        else:
+            D0 = 3.0 * mu + K * tanpsi * tanb + Heff
+            if D0 <= 0.0:
+                error_flag = 1
+                return S_voigt, C_mat, sdv_new, error_flag
+            d_lam = f_trial / D0
+            q_new = q_trial - 3.0 * mu * d_lam
+            n_vec = s_trial / max(norm_s, 1e-12)
+            if q_new < 0.0:
+                # Apex return (cone tip): s_new = 0, hydrostatic stress from
+                # f = 0 with frozen tables/r. Closed form (linear in eq):
+                #   hydro(Deq) = hydro_tr - K*tanpsi*Deq
+                #   sigy(Deq)  = sigy + Heff*Deq
+                #   hydro*tb - sigy = 0  =>  Deq = (hydro_tr*tb - sigy)/denom_a
+                # Volumetric plastic strain follows exactly from hydro_new,
+                # deviatoric plastic strain kills the whole trial deviator.
+                # Requires tanb > 0 (no apex exists for frictionless flow).
+                if tanb <= 0.0:
+                    error_flag = 1
+                    return S_voigt, C_mat, sdv_new, error_flag
+                denom_a = K * tanpsi * tanb + Heff
+                if denom_a <= 0.0:
+                    error_flag = 1
+                    return S_voigt, C_mat, sdv_new, error_flag
+                d_lam = (hydro_tr * tanb - sigy) / denom_a
+                if d_lam < 0.0:
+                    error_flag = 1
+                    return S_voigt, C_mat, sdv_new, error_flag
+                hydro_new = hydro_tr - K * tanpsi * d_lam
+                s_new = np.zeros(6, dtype=np.float64)
+                ratio = 0.0
+                is_apex = True
+                d_et = rw * d_lam
+                d_ec = (1.0 - rw) * d_lam
+                et_new = et_old + d_et
+                ec_new = ec_old + d_ec
+            else:
+                ratio = q_new / max(q_trial, 1e-12)
+                s_new = s_trial * ratio
+                hydro_new = hydro_tr - K * tanpsi * d_lam
+                d_et = rw * d_lam
+                d_ec = (1.0 - rw) * d_lam
+                et_new = et_old + d_et
+                ec_new = ec_old + d_ec
+                is_apex = False
+            # Damage tables at the NEW inelastic strains (backward Euler).
+            jj = 0
+            while jj < ndt - 1 and et_new > props[b3 + 2 * (jj + 1)]:
+                jj += 1
+            if ndt == 1:
+                dt_new = props[b3 + 1]
+                dTt = 0.0
+            elif jj >= ndt - 1:
+                e0 = props[b3 + 2 * (ndt - 2)]
+                e1 = props[b3 + 2 * (ndt - 1)]
+                s0 = props[b3 + 2 * (ndt - 2) + 1]
+                s1 = props[b3 + 2 * (ndt - 1) + 1]
+                dTt = (s1 - s0) / max(e1 - e0, 1e-300)
+                dt_new = s1 + dTt * (et_new - e1)
+            else:
+                e0 = props[b3 + 2 * jj]
+                e1 = props[b3 + 2 * (jj + 1)]
+                s0 = props[b3 + 2 * jj + 1]
+                s1 = props[b3 + 2 * (jj + 1) + 1]
+                dTt = (s1 - s0) / max(e1 - e0, 1e-300)
+                dt_new = s0 + dTt * (et_new - e0)
+            kk = 0
+            while kk < ndc - 1 and ec_new > props[b4 + 2 * (kk + 1)]:
+                kk += 1
+            if ndc == 1:
+                dc_new = props[b4 + 1]
+                dTc = 0.0
+            elif kk >= ndc - 1:
+                e0 = props[b4 + 2 * (ndc - 2)]
+                e1 = props[b4 + 2 * (ndc - 1)]
+                s0 = props[b4 + 2 * (ndc - 2) + 1]
+                s1 = props[b4 + 2 * (ndc - 1) + 1]
+                dTc = (s1 - s0) / max(e1 - e0, 1e-300)
+                dc_new = s1 + dTc * (ec_new - e1)
+            else:
+                e0 = props[b4 + 2 * kk]
+                e1 = props[b4 + 2 * (kk + 1)]
+                s0 = props[b4 + 2 * kk + 1]
+                s1 = props[b4 + 2 * (kk + 1) + 1]
+                dTc = (s1 - s0) / max(e1 - e0, 1e-300)
+                dc_new = s0 + dTc * (ec_new - e0)
+            if dt_new < 0.0:
+                dt_new = 0.0
+            elif dt_new > 0.999:
+                dt_new = 0.999
+            if dc_new < 0.0:
+                dc_new = 0.0
+            elif dc_new > 0.999:
+                dc_new = 0.999
+            D_new = 1.0 - (1.0 - dt_new) * (1.0 - dc_new)
+            S_voigt = (1.0 - D_new) * s_new.copy()
+            S_voigt[0] += (1.0 - D_new) * hydro_new
+            S_voigt[1] += (1.0 - D_new) * hydro_new
+            S_voigt[2] += (1.0 - D_new) * hydro_new
+            if len(sdv_new) >= 10:
+                if is_apex:
+                    # Apex: deviatoric plastic strain kills the whole trial
+                    # deviator; volumetric part follows exactly from hydro_new.
+                    for i in range(6):
+                        sdv_new[i] = ep_old[i] + e_dev[i]
+                    tr_tot = E_voigt[0] + E_voigt[1] + E_voigt[2]
+                    tr_ep_new = tr_tot - hydro_new / max(K, 1e-300)
+                    tr_ep_old = tr_tot - trace_e
+                    for i in range(3):
+                        sdv_new[i] += (tr_ep_new - tr_ep_old) / 3.0
+                else:
+                    flow_fac = d_lam * np.sqrt(1.5)
+                    for i in range(6):
+                        sdv_new[i] = ep_old[i] + flow_fac * n_vec[i]
+                    sdv_new[0] += d_lam * tanpsi / 3.0
+                    sdv_new[1] += d_lam * tanpsi / 3.0
+                    sdv_new[2] += d_lam * tanpsi / 3.0
+                sdv_new[6] = ec_new
+                sdv_new[7] = et_new
+                sdv_new[8] = dt_new
+                sdv_new[9] = dc_new
+            # Consistent tangent: degraded DP structure + damage chain
+            # (frozen r, table end-slopes). Apex: purely volumetric.
+            one3 = np.zeros(6, dtype=np.float64)
+            one3[0] = 1.0
+            one3[1] = 1.0
+            one3[2] = 1.0
+            if is_apex:
+                denom_ax = K * tanpsi * tanb + Heff
+                kfac = K * (1.0 - K * tanpsi * tanb / denom_ax)
+                C_apex = np.zeros((6, 6), dtype=np.float64)
+                for r in range(3):
+                    for c in range(3):
+                        C_apex[r, c] = kfac
+                dDdl_a = (1.0 - dc_new) * dTt * rw + (1.0 - dt_new) * dTc * (1.0 - rw)
+                dDde = dDdl_a * (tanb * K / denom_ax) * one3
+                sig_tilde = np.zeros(6, dtype=np.float64)
+                sig_tilde[0] = hydro_new
+                sig_tilde[1] = hydro_new
+                sig_tilde[2] = hydro_new
+                C_mat = (1.0 - D_new) * C_apex - np.outer(sig_tilde, dDde)
+            else:
+                Q1 = 2.0 * mu * np.sqrt(1.5)
+                Acoef = Q1 / D0
+                Bcoef = tanb * K / D0
+                qq = max(q_trial * q_trial, 1e-24)
+                cn = ((Q1 - 3.0 * mu * Acoef) * q_trial - q_new * Q1) / qq
+                ct = -3.0 * mu * Bcoef / max(q_trial, 1e-12)
+                wrow = cn * n_vec + ct * one3
+                vcol = -K * tanpsi * Acoef * n_vec - K * tanpsi * Bcoef * one3
+                C_dev = np.zeros((6, 6), dtype=np.float64)
+                for r in range(3):
+                    for c in range(3):
+                        C_dev[r, c] = - (2.0 / 3.0) * mu
+                    C_dev[r, r] += 2.0 * mu
+                C_dev[3, 3] = mu
+                C_dev[4, 4] = mu
+                C_dev[5, 5] = mu
+                C_vol = np.zeros((6, 6), dtype=np.float64)
+                for r in range(3):
+                    for c in range(3):
+                        C_vol[r, c] = K
+                C_ep = C_vol + ratio * C_dev + np.outer(s_trial, wrow) + np.outer(one3, vcol)
+                dDdl = (1.0 - dc_new) * dTt * rw + (1.0 - dt_new) * dTc * (1.0 - rw)
+                dDde = dDdl * (Acoef * n_vec + Bcoef * one3)
+                sig_tilde = s_new.copy()
+                sig_tilde[0] += hydro_new
+                sig_tilde[1] += hydro_new
+                sig_tilde[2] += hydro_new
+                C_mat = (1.0 - D_new) * C_ep - np.outer(sig_tilde, dDde)
 
     elif mat_type == MAT_HYPER_VISCOELASTIC:
         # Finite-strain Hyperelastic base + Multi-term Prony series (Simo 1987)

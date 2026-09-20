@@ -28,8 +28,8 @@
 | 16 | damage | ✗ | P4 별도 대공사 |
 | 17 | creep | ✅ | 거듭제곱 크리프 음함수 리턴매핑+일관탄젠트 (`test_creep_power_law` 4) |
 | 18 | viscous | △ | `linear_viscoelastic.py` 존재하나 `test_linear_visco_hybrid` 2 실패 = 베이스라인 기실패(135/10 중) |
-| 19 | concrete | ✗ | 최후순위 |
-| 20 | concretedamaged | ✗ | 최후순위 |
+| 19 | concrete | ✅ | CDP 백본+테이블 (MAT15, `test_concrete_dp` 11) — 2026-09-20 전부 단계 |
+| 20 | concretedamaged | ✅ | dt/dc 스칼라+강성저하 동상 (Lubliner Lode·주기복원은 범위 외) |
 | 21 | damping | ✗ | 동적 solver 영역과 묶음 |
 | 22 | simpleexpansion | ✅ | `thermal_expansion_simple` 구속반력 210.0000N 오차 0.0000% + 자유팽창 3.000μm 정밀일치 |
 | 23 | plasticity-corrections | ✗ | Neuber/Glinka 후처리, 솔버 불필요 — 언제든 소규모 |
@@ -101,8 +101,8 @@ htm의 "Input files" 섹션에서 정확한 inp 목록을 추출했고 (`dev_log
 | 16 damage | 66 | 부분 (Ductile/JC 개시 + G_f 에너지진전 + 삭제 ✅ 2026-09-20: MAT13, 개시누적/FD접선/end-to-end 파단; `benchmark_damage.py` 4/4 — 개시해석해·면적에너지 객관성 0.13%·삼축·JC식; FLD/FLSD/MK 판재한계는 범위 외) |
 | 17 creep | 57 | 부분→확장 (거듭제곱 + 쌍곡사인 + Anand 2x2 내재적분; 기존 거듭제곱 접선계수 2G→4G/3 수정 — FD 입증) |
 | 18 viscous | 7 | 결번 (대응 테스트 기실패) |
-| 19 concrete | 20 | 결번 |
-| 20 concretedamaged | 54 | 결번 |
+| 19 concrete | 20 | ✅ CDP 백본+경화테이블 (MAT15, f==0 exact, apex 리턴) |
+| 20 concretedamaged | 54 | ✅ dt/dc 테이블+강성저하+제하탄성 exact (Lubliner Lode·주기복원 범위 외) |
 | 21 damping | 51 | 부분 (HHT/Newmark Rayleigh αM+βK ✅ 2026-09-20: 모드투영 감쇠율 3% + 에너지단조 + 미사용시 bit-identical; EMCS 기존 경로 유지) |
 | 22 simpleexpansion | 2 | ✅ 등가 parity (구속반력 0.0000%) |
 | 23 plasticity-corrections | 8 | 결번 |
