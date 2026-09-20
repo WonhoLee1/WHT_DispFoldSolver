@@ -30,6 +30,15 @@ from dispsolver.model.step import Step, PredefinedField
 from dispsolver.model.set import GeneralSet, SetScope
 
 
+class _AbortParse(Exception):
+    """Hard parse abort for keywords with no internal landing.
+
+    Unlike ordinary handler errors (warn + continue), this is re-raised
+    by parse_blocks: continuing past e.g. *INCLUDE would silently solve
+    a different model than the deck describes.
+    """
+
+
 def _parse_data_rows(data_lines: List[str], dtype=float) -> List[List[Any]]:
     """Parse comma/whitespace-separated data lines into a table of values."""
     rows = []
@@ -67,6 +76,8 @@ class AbaqusInputReader:
         self.current_instance: Optional[Instance] = None
         self.current_step: Optional[Step] = None
         self.current_material: Optional[Material] = None
+        self.current_interaction: Optional[str] = None
+        self.current_coupling: Optional[Dict[str, Any]] = None
 
         # Flat / Non-assembly tracking
         self.has_assembly: bool = False
@@ -99,6 +110,8 @@ class AbaqusInputReader:
             if spec is not None:
                 try:
                     spec.handler(self, block)
+                except _AbortParse:
+                    raise
                 except Exception as e:
                     msg = f"Error processing keyword *{kw} at line {block.line_number}: {e}"
                     warnings.warn(msg)
