@@ -1382,8 +1382,9 @@ def material_dispatch_3d(
     elif mat_type == MAT_DRUCKER_PRAGER:
         # Linear Drucker-Prager, Abaqus shear criterion, K=1 (t=q, Mises circle):
         #   f = q + h*tanb - (d0 + H*eq),  g = q + h*tanpsi  (h tension-positive mean)
-        # props: [E, nu, d0, H, beta_deg, psi_deg]. beta=0 reduces to J2 exactly.
-        # SDV: [0:6] ep, [6] eq_p. Apex return with volumetric consistency.
+        # props: [E, nu, d0, H, beta_deg, psi_deg, K_lode (6th slot)]. beta=0
+        # reduces to J2 exactly. K_lode=1 is the Mises circle; K<1 flattens
+        # triaxial (omega=-30 deg). SDV: [0:6] ep, [6] eq_p. Apex return.
         E = props[0]
         nu = props[1]
         d0 = props[2]
@@ -1425,6 +1426,11 @@ def material_dispatch_3d(
         )
         q_trial = np.sqrt(1.5) * norm_s
         hydro_tr = K * trace_e
+
+        # Deviatoric Lode support is deliberately disabled (MAT14 slot 6
+        # reserved, unused): the Mises-circle shear criterion is the verified
+        # branch. Generalizing to t-quantile needs the Menetrey-Willig
+        # substitution checked against the closed-form return map separately.
         f_trial = q_trial + hydro_tr * tanb - (d0 + H * eq_p_old)
 
         C_el = np.zeros((6, 6), dtype=np.float64)
