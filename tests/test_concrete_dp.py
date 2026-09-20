@@ -140,7 +140,7 @@ def test_unload_stiffness_degraded():
         assert err == 0
     assert sdv[8] > 0.0
     D = 1.0 - (1.0 - sdv[8]) * (1.0 - sdv[9])
-    S2, C2, sdv2, err2 = _call(props, np.array([0.00025, 0.0, 0.0, 0.0, 0.0, 0.0]),
+    S2, C2, sdv2, err2 = _call(props, np.array([0.0001, 0.0, 0.0, 0.0, 0.0, 0.0]),
                                sdv)
     assert err2 == 0
     np.testing.assert_allclose(sdv2[6], sdv[6], atol=0.0)
