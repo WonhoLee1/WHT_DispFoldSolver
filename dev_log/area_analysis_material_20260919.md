@@ -131,3 +131,17 @@ tests\test_bimetallic_strip.py ..                                        [100%]
 - **[x] P3: 다요소 구조 열-역학 연계 벤치마크 검증**:
   - Timoshenko 바이메탈 스트립 2D/3D (오차 0.11%, 0.21%) 및 14층 디스플레이 열-역학 롤업 검증 완료.
 
+---
+
+## 5. Wave0–3 추가분 기록 (2026-09-20)
+
+- **Ogden 스펙트럴 J13 오류**: `_dw_dl` s1항 가짜 J13 + `_hess_l` l/lb 혼동 → J=0.84에서 응력 5% 오차 (W는 정확). FD 대조로 확정, 재유도 후 Mooney 교차 1e-12.
+- **Coincident 극한**: $(s_a-s_b)/gap \to ds[a,a]-ds[a,b]$ (FD 입증, 기존 `ds[a,a]` 오기).
+- **JAX base 전단 2배**: `pk2_voigt`/`pk2_tensor`/`tangent[2,2]` 일관화 (방향 FD 0.01 → 3.8e-6; 잔여는 전진차분 floor라 중앙차분으로 교체).
+- **FIELD**: temp 경로 미러, bit-identical parity (`benchmark_field_ef1.py` 2/2).
+- **팽창 어댑터**: 면외 $1/\vartheta$ 필수 (무시하면 자유팽창이 잘못된 이유로 무응력), 접선 $1/\vartheta^2$ 체인룰 (오차 0.0201 = $\vartheta^2-1$ 일치로 적발).
+- **Anand**: 비수렴 silent 반환 → `converged` 플래그; 단일 대스텝 trial은 cap 영역이라 소스텝 drive로만 검증.
+- **손상**: 분기삽입이 다음 `elif` 삼킴 + `cache=True` caller stale inline (§4.19) — 직접호출 정상 + solver 경로 실패가 시그니처.
+- **HHT 동역학**: `Material.density=0` 기본값이 solver 기본값을 덮어 `M_global=0` (준정적 붕괴) → 0 fallback.
+- **Open 잔여**: FLD/FLSD/MK 판재한계, VdW 코어 없음, JC D4/D5 (rate/T 디스패치 부재), 2D 동일 density 패턴 미수정.
+
