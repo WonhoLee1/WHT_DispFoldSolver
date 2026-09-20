@@ -121,7 +121,10 @@ class Material:
         elif t in ["JOHNSON_COOK", "JOHNSON-COOK", "JC"]:
             row = table[0] if isinstance(table[0], (list, tuple)) else table
             self.extra_params["damage_init"] = {
-                "type": 2, "p": [float(v) for v in row[:5]]}
+                "type": 2, "p": [float(v) for v in row[:5]],
+                "Troom": float(kwargs.get("Troom", kwargs.get("T_room", 20.0))),
+                "Tmelt": float(kwargs.get("Tmelt", kwargs.get("T_melt", 1000.0))),
+                "eps0": float(kwargs.get("eps0", kwargs.get("eps_dot_0", 1.0)))}
         else:
             raise ValueError("DamageInitiation type must be DUCTILE or JOHNSON_COOK")
 
@@ -141,6 +144,18 @@ class Material:
         else:
             raise ValueError("DamageEvolution type must be ENERGY_LINEAR or ENERGY_EXPONENTIAL")
         self.extra_params["damage_evol"] = {"type": evol, "Gf": float(Gf), "L": float(L)}
+
+    def DruckerPrager(self, beta: float = 20.0, psi: float = 20.0,
+                      d0: float = 100.0, H: float = 0.0) -> None:
+        """Linear Drucker-Prager plasticity (Abaqus *DRUCKER PRAGER, shear criterion).
+
+        beta: friction angle (deg). psi: dilation angle (deg).
+        d0: cohesion, H: linear hardening. beta=0 reduces to J2.
+        """
+        self.extra_params["drucker_prager"] = {
+            "beta": float(beta), "psi": float(psi),
+            "d0": float(d0), "H": float(H)}
+        self.mat_type = "DRUCKER_PRAGER"
 
     def RateDependent(self, type: str = "POWER_LAW", table: Any = None, **kwargs) -> None:
         """Abaqus-standard *RATE DEPENDENT property definition.
@@ -539,6 +554,10 @@ class Material:
             props["damage_Gf"] = float(de["Gf"])
             props["damage_L"] = float(de["L"])
             props["damage_evol"] = int(de["type"])
+            props["damage_T"] = 20.0
+            props["damage_Troom"] = float(di.get("Troom", 20.0))
+            props["damage_Tmelt"] = float(di.get("Tmelt", 1000.0))
+            props["damage_eps0"] = float(di.get("eps0", 1.0))
             return props
         
         if upper_type in ["ELASTIC", "LINEAR_ELASTIC"]:
@@ -592,6 +611,17 @@ class Material:
                 else:
                     props["yield_stress"] = float(sy0) if sy0 is not None else float(self.extra_params.get("yield_stress", 1e9))
                     props["hardening_modulus"] = float(H_mod) if H_mod is not None else float(self.extra_params.get("hardening_modulus", 0.0))
+
+        elif upper_type in ["DRUCKER_PRAGER", "DRUCKER-PRAGER", "DP"]:
+            from dispsolver.material3d.numba_materials import MAT_DRUCKER_PRAGER
+            dp = self.extra_params.get("drucker_prager", {})
+            props["mat_type"] = MAT_DRUCKER_PRAGER
+            props["E"] = float(E_val)
+            props["nu"] = float(nu_val)
+            props["d0"] = float(dp.get("d0", 100.0))
+            props["H"] = float(dp.get("H", 0.0))
+            props["beta"] = float(dp.get("beta", 20.0))
+            props["psi"] = float(dp.get("psi", 20.0))
 
         elif upper_type in ["MOONEY_RIVLIN", "MOONEY-RIVLIN"]:
             props["mat_type"] = MAT_HYPERELASTIC_MOONEY_RIVLIN

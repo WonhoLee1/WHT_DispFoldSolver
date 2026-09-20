@@ -77,11 +77,53 @@ def test_error_flags():
     p[10] = 0.0
     _, _, _, err = _call(p, _uniax(0.004), np.zeros(10))
     assert err == 1
-    p = _props_const()
-    pj = np.array([E, NU, SY0, H, 2, 0.05, 0, 0, 0.5, 0, 10.0, 1.0, 0],
+    # D4/D5 nonzero is supported since the rate/T update (no error).
+    pj = np.array([E, NU, SY0, H, 2, 0.05, 0, 0, 0.5, 0, 10.0, 1.0, 0,
+                   20.0, 20.0, 1000.0, 1.0],
                   dtype=np.float64)
     _, _, _, err = _call(pj, _uniax(0.004), np.zeros(10))
-    assert err == 1
+    assert err == 0
+
+
+def _props_jc_rateT(D4=0.0, D5=0.0):
+    return np.array([E, NU, SY0, H, 2, 0.05, 0.0, 0.0, D4, D5, 10.0, 1.0, 0,
+                     20.0, 20.0, 1000.0, 1.0], dtype=np.float64)
+
+
+def test_jc_rate_ordering():
+    # Faster straining raises eD (D4 > 0): same strain -> less damage.
+    urs = []
+    for dt in (1.0, 0.01):
+        _, _, sdv, _ = _call(_props_jc_rateT(D4=0.5), _uniax(0.004),
+                             np.zeros(10), dt=dt)
+        urs.append(sdv[7])
+    assert urs[0] > urs[1] > 0.0
+
+
+def test_jc_temperature_ordering():
+    # Hotter raises eD (D5 > 0): same strain -> less damage.
+    urs = []
+    for T in (20.0, 500.0):
+        p = _props_jc_rateT(D5=0.5)
+        p[13] = T
+        _, _, sdv, _ = _call(p, _uniax(0.004), np.zeros(10))
+        urs.append(sdv[7])
+    assert urs[0] > urs[1] > 0.0
+
+
+def test_jc_combined_closed_form():
+    # Keep the rate inside the physical branch (rate > eps0) so the D4 log
+    # term stays positive and the closed form holds exactly.
+    D1, D4, D5 = 0.05, 0.5, 0.5
+    p = _props_jc_rateT(D4=D4, D5=D5)
+    p[13] = 500.0
+    dt, e = 1e-4, 0.004
+    _, _, sdv, _ = _call(p, _uniax(e), np.zeros(10), dt=dt)
+    rate = sdv[6] / dt
+    assert rate > 1.0
+    tstar = (500.0 - 20.0) / (1000.0 - 20.0)
+    ref = D1 * (1.0 + D4 * np.log(rate / 1.0)) * (1.0 + D5 * tstar)
+    np.testing.assert_allclose(sdv[7], sdv[6] / ref, rtol=1e-9)
 
 
 def test_no_healing_on_unload():

@@ -47,6 +47,7 @@ from dispsolver.material3d.numba_materials import (
     MAT_J2_PLASTICITY_TABULAR,
     MAT_RADIOSS_LAW36,
     MAT_J2_DUCTILE_DAMAGE,
+    MAT_DRUCKER_PRAGER,
     MAT_HYPER_VISCOELASTIC,
     MAT_CUSTOM_ELASTIC,
     get_default_sdv_count,
@@ -327,7 +328,7 @@ class DynamicSolver3D:
                     elif mtype == MAT_J2_DUCTILE_DAMAGE or "damage_init_type" in mat_obj:
                         self.elem_mat_types[e] = MAT_J2_DUCTILE_DAMAGE
                         dp = list(mat_obj.get("damage_init_p", [0.05, 0, 0, 0, 0]))
-                        self.elem_props[e, :13] = [
+                        self.elem_props[e, :17] = [
                             float(mat_obj.get("E", 200000.0)),
                             float(mat_obj.get("nu", 0.3)),
                             float(mat_obj.get("yield_stress", 250.0)),
@@ -338,6 +339,20 @@ class DynamicSolver3D:
                             float(mat_obj.get("damage_Gf", 1.0)),
                             float(mat_obj.get("damage_L", 1.0)),
                             float(mat_obj.get("damage_evol", 0)),
+                            float(mat_obj.get("damage_T", 20.0)),
+                            float(mat_obj.get("damage_Troom", 20.0)),
+                            float(mat_obj.get("damage_Tmelt", 1000.0)),
+                            float(mat_obj.get("damage_eps0", 1.0)),
+                        ]
+                    elif mtype == MAT_DRUCKER_PRAGER or "d0" in mat_obj and "beta" in mat_obj:
+                        self.elem_mat_types[e] = MAT_DRUCKER_PRAGER
+                        self.elem_props[e, :6] = [
+                            float(mat_obj.get("E", 200000.0)),
+                            float(mat_obj.get("nu", 0.3)),
+                            float(mat_obj.get("d0", 100.0)),
+                            float(mat_obj.get("H", 0.0)),
+                            float(mat_obj.get("beta", 20.0)),
+                            float(mat_obj.get("psi", 20.0)),
                         ]
                     elif mtype == MAT_J2_PLASTICITY_NONLINEAR or "R_inf" in mat_obj or "b_exp" in mat_obj:
                         self.elem_mat_types[e] = MAT_J2_PLASTICITY_NONLINEAR
@@ -647,6 +662,19 @@ class DynamicSolver3D:
         if ref_temp is not None:
             self.ref_temperature = float(ref_temp)
         self._thermal_dirty = True
+
+        # Refresh the solver-maintained temperature slot of damage materials.
+        if hasattr(self, "materials") and isinstance(self.materials, dict) and hasattr(self, "elem_props"):
+            from dispsolver.material3d.numba_materials import MAT_J2_DUCTILE_DAMAGE as _M13
+            elements_list = list(self.mesh.elements.values())
+            for e, elem in enumerate(elements_list):
+                pid = getattr(elem, "pid", 0)
+                mat_obj = self.materials.get(pid, None)
+                if mat_obj is None:
+                    continue
+                mt = self.elem_mat_types[e] if hasattr(self, "elem_mat_types") else -1
+                if int(mt) == int(_M13):
+                    self.elem_props[e, 13] = self.current_temperature
 
         # Update temperature-dependent elastic/plastic properties in elem_props if defined
         if hasattr(self, "materials") and isinstance(self.materials, dict) and hasattr(self, "elem_props"):

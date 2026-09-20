@@ -31,6 +31,7 @@ MAT_MARLOW = MAT_HYPERELASTIC_MARLOW
 MAT_J2_PLASTICITY_TABULAR = 12
 MAT_RADIOSS_LAW36 = MAT_J2_PLASTICITY_TABULAR
 MAT_J2_DUCTILE_DAMAGE = 13
+MAT_DRUCKER_PRAGER = 14
 MAT_CUSTOM_ELASTIC = 99
 
 @njit(fastmath=True)
@@ -60,6 +61,8 @@ def get_default_sdv_count(mat_type: int) -> int:
         return 8  # plastic_strain_tensor (6), eq_plastic_strain (1), is_failed flag (1)
     elif mat_type == MAT_J2_DUCTILE_DAMAGE:
         return 10  # ep tensor (6), eq_p (1), omega_D (1), u_bar (1), D (1)
+    elif mat_type == MAT_DRUCKER_PRAGER:
+        return 7  # ep tensor (6), eq_p (1)
     elif mat_type == MAT_VISCOELASTIC_PRONY:
         return 12  # viscous history tensor h_1 (6) + prev elastic deviatoric stress (6)
     elif mat_type == MAT_HYPER_VISCOELASTIC:
@@ -1194,9 +1197,10 @@ def material_dispatch_3d(
             C_mat = (C_vol + (1.0 - beta0) * C_dev - 2.0 * mu * (beta1 - beta0) * np.outer(n_vec, n_vec)) * soften
 
     elif mat_type == MAT_J2_DUCTILE_DAMAGE:
-        # props: [E, nu, sy0, H, init_type, p0..p4, Gf, L, evol_type]
+        # props: [E, nu, sy0, H, init_type, p0..p4, Gf, L, evol_type,
+        #         T, Troom, Tmelt, eps0 (13..16, solver-maintained temperature)]
         #   init 0 = const eD (p0); init 1 = triax 2-pt (eta0,e0,eta1,e1);
-        #   init 2 = JC D1..D5 (D4/D5 must be 0: no rate/T in dispatcher).
+        #   init 2 = JC (D1..D5 triax part + rate (D4) + temperature (D5) terms).
         #   evol 0 = linear D=u/u_f; evol 1 = exponential D=1-exp(-3u/u_f).
         # SDV: [0:6] ep, [6] eq_p, [7] omega_D, [8] u_bar, [9] D.
         E = props[0]
@@ -1210,9 +1214,12 @@ def material_dispatch_3d(
         if Gf <= 0.0 or Lch <= 0.0 or init_type < 0 or init_type > 2 or evol_type < 0 or evol_type > 1:
             error_flag = 1
             return S_voigt, C_mat, sdv_new, error_flag
-        if init_type == 2 and (props[8] != 0.0 or props[9] != 0.0):
-            error_flag = 1
-            return S_voigt, C_mat, sdv_new, error_flag
+        Temp = props[13] if len(props) > 13 else 20.0
+        Troom = props[14] if len(props) > 14 else 20.0
+        Tmelt = props[15] if len(props) > 15 else 1000.0
+        eps0 = props[16] if len(props) > 16 else 1.0
+        if eps0 <= 0.0:
+            eps0 = 1.0
 
         mu = E / (2.0 * (1.0 + nu))
         K = E / (3.0 * (1.0 - 2.0 * nu))
@@ -1293,7 +1300,22 @@ def material_dispatch_3d(
                 else:
                     eD = props[6] + (props[8] - props[6]) * (eta - props[5]) / max(props[7] - props[5], 1e-300)
             else:
-                eD = props[5] + props[6] * np.exp(props[7] * eta)
+                eD_triax = props[5] + props[6] * np.exp(props[7] * eta)
+                rate = d_gamma / dt if dt > 0.0 else 0.0
+                if rate > 0.0 and props[8] != 0.0:
+                    eD_triax *= 1.0 + props[8] * np.log(max(rate / eps0, 1e-300))
+                if props[9] != 0.0:
+                    tstar = (Temp - Troom) / max(Tmelt - Troom, 1e-300)
+                    if tstar < 0.0:
+                        tstar = 0.0
+                    elif tstar > 1.0:
+                        tstar = 1.0
+                    eD_triax *= 1.0 + props[9] * tstar
+                # D4 log term can flip the sign at rate < eps0; a non-positive
+                # fracture strain is non-physical, so floor it at eD_triax/100.
+                if eD_triax <= 0.0:
+                    eD_triax = max(props[5] + props[6] * np.exp(props[7] * eta), 1e-300) * 0.01
+                eD = eD_triax
             omega_new = omega_old + d_gamma / max(eD, 1e-300)
 
             u_f = 2.0 * Gf / max(sigma_y0, 1e-300)
@@ -1356,6 +1378,151 @@ def material_dispatch_3d(
             sig_tilde[1] += hydro_p
             sig_tilde[2] += hydro_p
             C_mat = soften * ((1.0 - D_new) * C_ep - np.outer(sig_tilde, dDde))
+
+    elif mat_type == MAT_DRUCKER_PRAGER:
+        # Linear Drucker-Prager, Abaqus shear criterion, K=1 (t=q, Mises circle):
+        #   f = q + h*tanb - (d0 + H*eq),  g = q + h*tanpsi  (h tension-positive mean)
+        # props: [E, nu, d0, H, beta_deg, psi_deg]. beta=0 reduces to J2 exactly.
+        # SDV: [0:6] ep, [6] eq_p. Apex return with volumetric consistency.
+        E = props[0]
+        nu = props[1]
+        d0 = props[2]
+        H = props[3]
+        tanb = np.tan(props[4] * np.pi / 180.0)
+        tanpsi = np.tan(props[5] * np.pi / 180.0)
+
+        mu = E / (2.0 * (1.0 + nu))
+        K = E / (3.0 * (1.0 - 2.0 * nu))
+
+        ep_old = np.zeros(6, dtype=np.float64)
+        eq_p_old = 0.0
+        if len(sdv_prev) >= 7:
+            for i in range(6):
+                ep_old[i] = sdv_prev[i]
+            eq_p_old = sdv_prev[6]
+
+        e_trial = E_voigt - ep_old
+        trace_e = e_trial[0] + e_trial[1] + e_trial[2]
+        e_dev = np.zeros(6, dtype=np.float64)
+        e_dev[0] = e_trial[0] - trace_e / 3.0
+        e_dev[1] = e_trial[1] - trace_e / 3.0
+        e_dev[2] = e_trial[2] - trace_e / 3.0
+        e_dev[3] = e_trial[3]
+        e_dev[4] = e_trial[4]
+        e_dev[5] = e_trial[5]
+
+        s_trial = np.zeros(6, dtype=np.float64)
+        s_trial[0] = 2.0 * mu * e_dev[0]
+        s_trial[1] = 2.0 * mu * e_dev[1]
+        s_trial[2] = 2.0 * mu * e_dev[2]
+        s_trial[3] = mu * e_dev[3]
+        s_trial[4] = mu * e_dev[4]
+        s_trial[5] = mu * e_dev[5]
+
+        norm_s = np.sqrt(
+            s_trial[0]**2 + s_trial[1]**2 + s_trial[2]**2 +
+            2.0 * (s_trial[3]**2 + s_trial[4]**2 + s_trial[5]**2)
+        )
+        q_trial = np.sqrt(1.5) * norm_s
+        hydro_tr = K * trace_e
+        f_trial = q_trial + hydro_tr * tanb - (d0 + H * eq_p_old)
+
+        C_el = np.zeros((6, 6), dtype=np.float64)
+        for r in range(3):
+            for c in range(3):
+                C_el[r, c] = K - (2.0 / 3.0) * mu
+            C_el[r, r] += 2.0 * mu
+        C_el[3, 3] = mu
+        C_el[4, 4] = mu
+        C_el[5, 5] = mu
+
+        if f_trial <= 0.0:
+            S_voigt = s_trial.copy()
+            S_voigt[0] += hydro_tr
+            S_voigt[1] += hydro_tr
+            S_voigt[2] += hydro_tr
+            C_mat = C_el.copy()
+        else:
+            D0 = 3.0 * mu + K * tanpsi * tanb + H
+            if D0 <= 0.0:
+                error_flag = 1
+                return S_voigt, C_mat, sdv_new, error_flag
+            d_lam = f_trial / D0
+            q_new = q_trial - 3.0 * mu * d_lam
+            n_vec = s_trial / max(norm_s, 1e-12)
+            if q_new >= 0.0:
+                ratio = q_new / max(q_trial, 1e-12)
+                s_new = s_trial * ratio
+                hydro_new = hydro_tr - K * tanpsi * d_lam
+                eq_p_new = eq_p_old + d_lam
+                S_voigt = s_new.copy()
+                S_voigt[0] += hydro_new
+                S_voigt[1] += hydro_new
+                S_voigt[2] += hydro_new
+                if len(sdv_new) >= 7:
+                    flow_fac = d_lam * np.sqrt(1.5)
+                    for i in range(6):
+                        sdv_new[i] = ep_old[i] + flow_fac * n_vec[i]
+                    sdv_new[0] += d_lam * tanpsi / 3.0
+                    sdv_new[1] += d_lam * tanpsi / 3.0
+                    sdv_new[2] += d_lam * tanpsi / 3.0
+                    sdv_new[6] = eq_p_new
+                # Consistent tangent: J2 radial part + pressure coupling.
+                # dDlam = A*(n.de) + B*tr(de), A=Q1/D0, B=tb*K/D0, Q1=2m*sqrt1.5.
+                Q1 = 2.0 * mu * np.sqrt(1.5)
+                Acoef = Q1 / D0
+                Bcoef = tanb * K / D0
+                qq = max(q_trial * q_trial, 1e-24)
+                cn = ((Q1 - 3.0 * mu * Acoef) * q_trial - q_new * Q1) / qq
+                ct = -3.0 * mu * Bcoef / max(q_trial, 1e-12)
+                one3 = np.zeros(6, dtype=np.float64)
+                one3[0] = 1.0
+                one3[1] = 1.0
+                one3[2] = 1.0
+                wrow = cn * n_vec + ct * one3
+                vcol = -K * tanpsi * Acoef * n_vec - K * tanpsi * Bcoef * one3
+                C_dev = np.zeros((6, 6), dtype=np.float64)
+                for r in range(3):
+                    for c in range(3):
+                        C_dev[r, c] = - (2.0 / 3.0) * mu
+                    C_dev[r, r] += 2.0 * mu
+                C_dev[3, 3] = mu
+                C_dev[4, 4] = mu
+                C_dev[5, 5] = mu
+                C_vol = np.zeros((6, 6), dtype=np.float64)
+                for r in range(3):
+                    for c in range(3):
+                        C_vol[r, c] = K
+                C_mat = C_vol + ratio * C_dev + np.outer(s_trial, wrow) + np.outer(one3, vcol)
+            else:
+                # Apex return (q=0): linear 1D solve for eq, exact volumetric
+                # consistency via ep update, purely volumetric tangent.
+                if tanb <= 0.0:
+                    error_flag = 1
+                    return S_voigt, C_mat, sdv_new, error_flag
+                denom = K * tanpsi * tanb + H
+                if denom <= 0.0:
+                    error_flag = 1
+                    return S_voigt, C_mat, sdv_new, error_flag
+                eq_new = (hydro_tr * tanb - d0 + K * tanpsi * tanb * eq_p_old) / denom
+                hydro_new = (d0 + H * eq_new) / tanb
+                S_voigt = np.zeros(6, dtype=np.float64)
+                S_voigt[0] = hydro_new
+                S_voigt[1] = hydro_new
+                S_voigt[2] = hydro_new
+                if len(sdv_new) >= 7:
+                    dtr = (hydro_tr - hydro_new) / max(K, 1e-300)
+                    for i in range(6):
+                        sdv_new[i] = ep_old[i]
+                    sdv_new[0] += dtr / 3.0
+                    sdv_new[1] += dtr / 3.0
+                    sdv_new[2] += dtr / 3.0
+                    sdv_new[6] = eq_new
+                kfac = K * (1.0 - K * tanpsi * tanb / denom)
+                C_mat = np.zeros((6, 6), dtype=np.float64)
+                for r in range(3):
+                    for c in range(3):
+                        C_mat[r, c] = kfac
 
     elif mat_type == MAT_HYPER_VISCOELASTIC:
         # Finite-strain Hyperelastic base + Multi-term Prony series (Simo 1987)
