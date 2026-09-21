@@ -10,12 +10,13 @@ import warnings
 
 import pytest
 
-from dispsolver.io.abaqus_reader import _AbortParse, _parse_source
+from dispsolver.io.abaqus_reader import _parse_source
 
 OFFICIAL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                             "..", "benchmark_inp", "official")
 
 OK_DECKS = {
+    "anisoplate_s9r5_orient_sect.inp": (4, 1),
     "beamgap.inp": (6, 2),
     "compositeshells_c3d20r.inp": (4, 2),
     "concreteslump_beta30.inp": (4, 1),
@@ -36,9 +37,7 @@ OK_DECKS = {
     "unifcollapspipe_str_elbelem.inp": (2, 1),
 }
 
-ABORT_DECKS = {
-    "anisoplate_s9r5_orient_sect.inp",
-}
+ABORT_DECKS = set()
 
 
 def _read(name, dim=3):
@@ -56,12 +55,6 @@ def test_official_deck_reads(name, counts):
     assert n_nodes == min_nodes, name
     assert n_elems == min_elems, name
     assert len(model.steps) >= 1, name
-
-
-@pytest.mark.parametrize("name", sorted(ABORT_DECKS))
-def test_official_deck_honest_abort(name):
-    with pytest.raises(_AbortParse):
-        _read(name)
 
 
 def test_official_inventory_complete():

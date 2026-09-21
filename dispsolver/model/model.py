@@ -62,6 +62,7 @@ class Model:
         self.sections: Dict[str, Section] = {}
         self.section_controls: Dict[str, SectionControls] = {}
         self.orientations: Dict[str, MaterialOrientation] = {}
+        self.transforms: Dict[str, Dict[str, Any]] = {}
         self.amplitudes: Dict[str, Amplitude] = {}
         self.constraints: Dict[str, Constraint] = {}
         self.contact_properties: Dict[str, ContactProperty] = {}
@@ -123,6 +124,15 @@ class Model:
             if getattr(sec, "orientation_name", None) == str(name) and ori.frame is not None:
                 sec.orientation = np.array(ori.frame, dtype=np.float64)
         return ori
+
+    def Transform(self, name: str, nset: str, transform_type: str = "R",
+                  points: tuple = ()) -> Dict[str, Any]:
+        """Create and register a nodal transform (*TRANSFORM in Abaqus)."""
+        spec = {"name": str(name), "nset": str(nset),
+                "type": str(transform_type).upper(),
+                "points": tuple(tuple(float(v) for v in row) for row in points)}
+        self.transforms[str(name)] = spec
+        return spec
 
     def SectionControls(
         self,

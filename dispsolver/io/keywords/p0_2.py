@@ -276,7 +276,16 @@ def _handle_include(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
 
 @GLOBAL_KEYWORD_REGISTRY.register("TRANSFORM", valid_contexts=set(_ALL_CONTEXTS))
 def _handle_transform(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
-    raise _AbortParse("*TRANSFORM has no internal landing; nodal transforms would be misread")
+    nset = block.params.get("nset", "")
+    ttype = block.params.get("type", "R").upper()
+    rows = _parse_data_rows(block.data_lines, dtype=float)
+    pts = tuple(tuple(r) for r in rows) if rows else ()
+    name = f"TRF_{nset}_{len(reader.model.transforms) + 1}" if nset else f"TRF_{len(reader.model.transforms) + 1}"
+    reader.model.Transform(name, nset=nset, transform_type=ttype, points=pts)
+    msg = (f"*TRANSFORM {name}: parsed and stored; "
+           "solver-frame enforcement not connected")
+    warnings.warn(msg)
+    reader.warnings.append(msg)
 
 
 @GLOBAL_KEYWORD_REGISTRY.register("EQUATION", valid_contexts=set(_ALL_CONTEXTS))

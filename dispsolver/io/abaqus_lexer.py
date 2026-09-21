@@ -102,6 +102,50 @@ def _read_file_with_fallback(filepath: str) -> str:
                 return f.read()
 
 
+def _expand_includes(text: str, base_dir: str, depth: int = 0,
+                     seen: Optional[set] = None) -> str:
+    import os
+    import re
+    if seen is None:
+        seen = set()
+    if depth > 8:
+        return text
+    out_lines: List[str] = []
+    for line in text.split("\n"):
+        m = re.match(r"\s*\*INCLUDE\s*,(.*)$", line, re.IGNORECASE)
+        if not m:
+            out_lines.append(line)
+            continue
+        target = None
+        for part in m.group(1).split(","):
+            if "=" in part:
+                k, v = part.split("=", 1)
+                if k.strip().lower() == "input":
+                    target = v.strip().strip("\"'")
+        if not target:
+            out_lines.append(line)
+            continue
+        full = os.path.normpath(os.path.join(base_dir, target))
+        if full in seen or not os.path.isfile(full):
+            out_lines.append(line)
+            continue
+        try:
+            with open(full, "r", encoding="utf-8") as f:
+                sub = f.read()
+        except (UnicodeDecodeError, OSError):
+            try:
+                with open(full, "r", encoding="latin-1") as f:
+                    sub = f.read()
+            except OSError:
+                out_lines.append(line)
+                continue
+        seen.add(full)
+        sub = sub.replace("\r\n", "\n").replace("\r", "\n")
+        out_lines.append(_expand_includes(sub, os.path.dirname(full),
+                                          depth + 1, seen))
+    return "\n".join(out_lines)
+
+
 def tokenize(filepath: str) -> List[AbaqusKeywordBlock]:
     """Tokenize an Abaqus .inp file into a list of AbaqusKeywordBlock.
 
@@ -115,6 +159,11 @@ def tokenize(filepath: str) -> List[AbaqusKeywordBlock]:
         FileNotFoundError: If the file does not exist.
     """
     text = _read_file_with_fallback(filepath)
+
+    # Expand *INCLUDE file insertions before comment cleaning so
+    # included content goes through the same pipeline.
+    import os as _os
+    text = _expand_includes(text, _os.path.dirname(_os.path.abspath(filepath)))
 
     # Normalize line endings
     text = text.replace("\r\n", "\n").replace("\r", "\n")

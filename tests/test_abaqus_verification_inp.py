@@ -116,12 +116,30 @@ ALLN, 0.5
 
 def test_honest_aborts():
     cases = [
-        (os.path.join(OFFICIAL, "anisoplate_s9r5_orient_sect.inp"), "TRANSFORM"),
+        (os.path.join(VERIF, "heplmu_yeoh_cgax4rh.inp"), "INCLUDE"),
+        (os.path.join(VERIF, "x_heplmu_yeoh_cax4r.inp"), "INCLUDE"),
     ]
     for path, needle in cases:
         with pytest.raises(_AbortParse) as exc:
             _read(path)
         assert needle in str(exc.value), path
+
+
+def test_transform_landing_stored():
+    reader, model = _read(os.path.join(VERIF, "viscocylinder_cpe4i.inp"))
+    assert "TRF_ALL_1" in model.transforms
+    spec = model.transforms["TRF_ALL_1"]
+    assert spec["type"] == "C"
+    assert spec["nset"] == "ALL"
+    assert "TRANSFORM" not in reader.unsupported_keywords
+    assert any("solver-frame enforcement not connected" in w
+               for w in reader.warnings)
+
+
+def test_include_expansion_lands():
+    reader, model = _read(os.path.join(VERIF, "temp_elastic.inp"))
+    assert "INCLUDE" not in reader.unsupported_keywords
+    assert len(model.materials) >= 1
 
 
 def test_orientation_lands_and_wires_section():
