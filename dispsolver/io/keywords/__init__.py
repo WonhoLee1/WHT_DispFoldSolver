@@ -9,6 +9,8 @@ _SUPPORT_OVERRIDES = {
     "KINEMATIC": "STUB",
     "DISTRIBUTING": "STUB",
     "DLOAD": "PARTIAL",
+    "ORIENTATION": "PARTIAL",
+    "EQUATION": "FULL",
 }
 
 for _kw, _sup in _SUPPORT_OVERRIDES.items():

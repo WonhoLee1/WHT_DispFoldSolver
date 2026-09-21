@@ -1,9 +1,28 @@
 """Section definitions for CAE model hierarchy."""
 
 from __future__ import annotations
-from dataclasses import dataclass
-from typing import Optional, Union
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Tuple, Union
 import numpy as np
+
+
+@dataclass
+class MaterialOrientation:
+    """Material orientation definition (*ORIENTATION in Abaqus).
+
+    Stores a named local coordinate frame for anisotropic material
+    directions, referenced by sections via ORIENTATION=name.
+    Rectangular coordinates resolve to a 3x3 direction-cosine frame;
+    cylindrical/spherical and node-defined frames keep raw parameters
+    since their axes vary spatially or resolve late.
+    """
+    name: str
+    system: str = "RECTANGULAR"
+    definition: str = "COORDINATES"
+    frame: Optional[np.ndarray] = None
+    raw_rows: Tuple[Tuple[float, ...], ...] = ()
+    node_ids: Tuple[int, ...] = ()
+    local_directions: int = 1
 
 
 @dataclass
@@ -53,6 +72,7 @@ class SolidSection(Section):
     """Solid continuum section (2D Plane Strain/Stress or 3D Continuum Solid)."""
     thickness: float = 1.0  # Used for 2D plane stress/strain thickness
     orientation: Optional[np.ndarray] = None
+    orientation_name: Optional[str] = None
     controls: Optional[Union[str, SectionControls]] = None
 
 

@@ -99,8 +99,8 @@ model = read_inp("legacy.inp", dim=2, strict=False)
 
 | 덱 출처 | 규모 | 판정 |
 |---|---|---|
-| 공식 fetch 19종 (`benchmark_inp/official/`) | `cook_3d` 최대 101,693절점/85,242요소 | 13종 정상, 6종 명시 중단 |
-| 검증 아카이브 전수 1,859종 (`benchmark_inp/verification/`) | 단일 요소 위주 | 정상 1,377종, 명시 중단 482종, 오류 0건 |
+| 공식 fetch 19종 (`benchmark_inp/official/`) | `cook_3d` 최대 101,693절점/85,242요소 | 18종 정상, 1종 명시 중단(`TRANSFORM`) |
+| 검증 아카이브 전수 1,859종 (`benchmark_inp/verification/`) | 단일 요소 위주 | 정상 1,829종, 명시 중단 30종, 오류 0건 |
 | 재료 검증 26종 페이지 참조분 (중복 포함 1,465건) | 상동 | 정상 944건, 명시 중단 481건, 오류 0건, 누락 0건 |
 | 자생 등가 11종 (`benchmark_inp/*.inp`) | 단위 기하 | 11종 정상 |
 
@@ -146,11 +146,20 @@ model = read_inp("legacy.inp", dim=2, strict=False)
 
 | 키워드 | 중단 규모 (전수 기준) | 착지 설계 | 배치 |
 |---|---|---|---|
-| `ORIENTATION` | 약 163건 | `section.py`의 방향 필드에 기록 후 재료 호출에 전달 | 다음 배치 |
-| `EQUATION` | 약 145건 | 선형 다점 구속 신규 모델 클래스 필요 | 다음 배치 |
-| `TRANSFORM` | 소수 | 절점 변환 저장 슬롯 신설 필요 | 다음 배치 |
-| `INCLUDE` | 16건 | 렉서 단계 파일 삽입과 경로·순환 가드 | 다음 배치 |
-| `INITIAL CONDITIONS` 변형 (`FIELD`, `RATIO`, `HARDENING`, `PLASTIC STRAIN` 등) | 약 80건 | `PredefinedField`형 보관 후 솔버 소비 연결 | 다음 배치 |
+| `TRANSFORM` | 2건 | 절점 변환 저장 슬롯 신설 필요 | 다음 배치 |
+| `INCLUDE` | 28건 | 렉서 단계 파일 삽입과 경로·순환 가드 | 다음 배치 |
+
+2026-09-21 배치에서 구현 완료되어 위 목록에서 제외된 항목:
+`ORIENTATION` 4형식 + 단면 연결(PARTIAL, 재료커널 미연결 경고),
+`EQUATION` 고전형 + 셋 전개 + 페널티 조립(FULL),
+`INITIAL CONDITIONS TYPE=TEMP` 약어 허용,
+`DAMAGE INITIATION/EVOLUTION`, `CONCRETE DAMAGED PLASTICITY` 일가 5종,
+`DRUCKER PRAGER` 2종, `RATE DEPENDENT`, `MULLINS EFFECT`,
+`PLASTIC HARDENING=JOHNSON COOK`, `ELASTIC/PLASTIC DEPENDENCIES` 장 테이블,
+`INITIAL CONDITIONS` 8종(`VELOCITY/FIELD/RATIO/HARDENING/PLASTIC STRAIN/
+DAMAGE INITIATION/RELATIVE DENSITY/SOLUTION`, 보관+미연결 경고).
+같은 배치에서 `HYPERELASTIC` 모델명 전달 버그 수정
+(`type=` → `model=` + `N=` 전달, bare 키워드 대소문자·하이픈 정규화).
 
 원칙은 기존과 같다. 파싱과 보관은 리더에서 처리하고, 실행 연결은
 솔버에 대상이 있을 때만 하며, 없을 경우 미연결로 명시한다.

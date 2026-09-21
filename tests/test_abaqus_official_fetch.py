@@ -17,10 +17,13 @@ OFFICIAL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
 
 OK_DECKS = {
     "beamgap.inp": (6, 2),
+    "compositeshells_c3d20r.inp": (4, 2),
     "concreteslump_beta30.inp": (4, 1),
     "cook_2d.inp": (17328, 12240),
     "cook_3d.inp": (101693, 85242),
+    "elasticsheet_cps8r_biderman.inp": (6, 1),
     "eref3ksg.inp": (15, 2),
+    "hertzcontact_2d_rsurf.inp": (25, 8),
     "neckingtensilebar_cax4r.inp": (10, 1),
     "nlgeocantilever_c3d8_coarse.inp": (9, 2),
     "nlgeocantilever_c3d8i_coarse.inp": (9, 2),
@@ -28,16 +31,13 @@ OK_DECKS = {
     "pipecrushing_cpe4i.inp": (5, 1),
     "radstr_holcyl_cax4r.inp": (441, 400),
     "roofsnapthrough_s4r.inp": (4, 1),
+    "rubberdisk_cax4ih_poly.inp": (6, 1),
+    "thickcompcyl_8el.inp": (4, 2),
     "unifcollapspipe_str_elbelem.inp": (2, 1),
 }
 
 ABORT_DECKS = {
     "anisoplate_s9r5_orient_sect.inp",
-    "compositeshells_c3d20r.inp",
-    "elasticsheet_cps8r_biderman.inp",
-    "hertzcontact_2d_rsurf.inp",
-    "rubberdisk_cax4ih_poly.inp",
-    "thickcompcyl_8el.inp",
 }
 
 

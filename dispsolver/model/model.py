@@ -7,7 +7,7 @@ import numpy as np
 
 from dispsolver.model.part import Part
 from dispsolver.model.material import Material
-from dispsolver.model.section import Section, SolidSection, ShellSection, SectionControls
+from dispsolver.model.section import Section, SolidSection, ShellSection, SectionControls, MaterialOrientation
 from dispsolver.model.assembly import Assembly, FlattenedSolverSystem
 from dispsolver.model.step import Step, InitialStep, PredefinedField
 from dispsolver.model.amplitude import Amplitude, TabularAmplitude, SmoothStepAmplitude, UserFunctionAmplitude
@@ -19,6 +19,7 @@ from dispsolver.model.constraint import (
     Coupling,
     KinematicCoupling,
     DistributingCoupling,
+    EquationConstraint,
     MPC,
 )
 from dispsolver.model.load import (
@@ -60,6 +61,7 @@ class Model:
         self.materials: Dict[str, Material] = {}
         self.sections: Dict[str, Section] = {}
         self.section_controls: Dict[str, SectionControls] = {}
+        self.orientations: Dict[str, MaterialOrientation] = {}
         self.amplitudes: Dict[str, Amplitude] = {}
         self.constraints: Dict[str, Constraint] = {}
         self.contact_properties: Dict[str, ContactProperty] = {}
@@ -91,11 +93,36 @@ class Model:
         self.materials[str(name)] = m
         return m
 
-    def HomogeneousSolidSection(self, name: str, material: str, thickness: float = 1.0) -> SolidSection:
+    def HomogeneousSolidSection(self, name: str, material: str, thickness: float = 1.0,
+                                orientation: Optional[str] = None) -> SolidSection:
         """Create and register a SolidSection in this Model (Abaqus parity)."""
         sec = SolidSection(name=str(name), material_name=str(material), thickness=float(thickness))
+        if orientation is not None:
+            sec.orientation_name = str(orientation)
+            ori = self.orientations.get(str(orientation))
+            if ori is not None and ori.frame is not None:
+                sec.orientation = np.array(ori.frame, dtype=np.float64)
         self.sections[str(name)] = sec
         return sec
+
+    def Orientation(self, name: str, system: str = "RECTANGULAR",
+                    definition: str = "COORDINATES",
+                    frame: Optional[np.ndarray] = None,
+                    raw_rows: tuple = (),
+                    node_ids: tuple = (),
+                    local_directions: int = 1) -> MaterialOrientation:
+        """Create and register a material orientation (*ORIENTATION in Abaqus)."""
+        ori = MaterialOrientation(
+            name=str(name), system=str(system).upper(),
+            definition=str(definition).upper(),
+            frame=np.array(frame, dtype=np.float64) if frame is not None else None,
+            raw_rows=tuple(raw_rows), node_ids=tuple(node_ids),
+            local_directions=int(local_directions))
+        self.orientations[str(name)] = ori
+        for sec in self.sections.values():
+            if getattr(sec, "orientation_name", None) == str(name) and ori.frame is not None:
+                sec.orientation = np.array(ori.frame, dtype=np.float64)
+        return ori
 
     def SectionControls(
         self,
@@ -527,6 +554,23 @@ class Model:
         )
         self.constraints[str(name)] = mpc
         return mpc
+
+    def Equation(
+        self,
+        name: str,
+        terms: Any = None,
+        constant: float = 0.0,
+        penalty_stiffness: float = 1e6,
+    ) -> EquationConstraint:
+        """Create and register a linear equation constraint (*EQUATION in Abaqus)."""
+        eq = EquationConstraint(
+            name=str(name),
+            terms=[(t[0], int(t[1]), float(t[2])) for t in (terms or [])],
+            constant=float(constant),
+            penalty_stiffness=float(penalty_stiffness),
+        )
+        self.constraints[str(name)] = eq
+        return eq
 
     # ─── INTERACTION & CONTACT FACTORY METHODS ─────────────────────────
 

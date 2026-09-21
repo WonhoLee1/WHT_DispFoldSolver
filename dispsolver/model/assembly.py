@@ -352,6 +352,19 @@ class Assembly:
         compiled_constraints: List[Any] = []
         if hasattr(model, "constraints"):
             for cname, constraint in model.constraints.items():
+                bind = getattr(constraint, "bind", None)
+                if callable(bind):
+                    try:
+                        ok = bind(nid_to_idx, global_nsets,
+                                  node_local_to_global, dim)
+                    except Exception:
+                        ok = False
+                    if not ok:
+                        import warnings
+                        warnings.warn(
+                            f"Constraint {cname}: node/dof references unresolvable, "
+                            "dropped from assembly")
+                        continue
                 compiled_constraints.append(constraint)
 
         # 6. Compile Predefined Fields from InitialStep

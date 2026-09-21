@@ -141,6 +141,8 @@ def _handle_mpc(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
 @GLOBAL_KEYWORD_REGISTRY.register("INITIAL CONDITIONS", valid_contexts={KeywordContext.GLOBAL}, aliases=["INITIALCONDITIONS"])
 def _handle_initial_conditions(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     ictype = block.params.get("type", "TEMPERATURE").upper()
+    if ictype == "TEMP":
+        ictype = "TEMPERATURE"
     rows = _parse_data_rows(block.data_lines, dtype=str)
     if ictype == "TEMPERATURE":
         for r in rows:
@@ -154,6 +156,22 @@ def _handle_initial_conditions(reader: AbaqusInputReader, block: AbaqusKeywordBl
                 region = str(r[0])
                 reader.model.PredefinedField(name=f"IC_STRESS_{region}", field_type="STRESS",
                                              region=region, values=tuple(float(x) for x in r[1:]))
+    elif ictype in ("VELOCITY", "FIELD", "RATIO", "HARDENING", "PLASTIC STRAIN",
+                    "DAMAGE INITIATION", "RELATIVE DENSITY", "SOLUTION"):
+        for r in rows:
+            if len(r) >= 2:
+                region = str(r[0])
+                try:
+                    vals = tuple(float(x) for x in r[1:])
+                except ValueError:
+                    continue
+                reader.model.PredefinedField(name=f"IC_{ictype.replace(' ', '_')}_{region}",
+                                             field_type=ictype, region=region,
+                                             values=vals[0] if len(vals) == 1 else vals)
+        msg = (f"*INITIAL CONDITIONS, TYPE={ictype}: parsed and stored; "
+               "solver consumption not connected")
+        warnings.warn(msg)
+        reader.warnings.append(msg)
     else:
         raise _AbortParse(f"*INITIAL CONDITIONS, TYPE={ictype} has no internal landing")
 
@@ -256,11 +274,6 @@ def _handle_include(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     raise _AbortParse("*INCLUDE file insertion is not implemented; split the deck first")
 
 
-@GLOBAL_KEYWORD_REGISTRY.register("ORIENTATION", valid_contexts=set(_ALL_CONTEXTS))
-def _handle_orientation(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
-    raise _AbortParse("*ORIENTATION has no internal landing; local material axes would be misread")
-
-
 @GLOBAL_KEYWORD_REGISTRY.register("TRANSFORM", valid_contexts=set(_ALL_CONTEXTS))
 def _handle_transform(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     raise _AbortParse("*TRANSFORM has no internal landing; nodal transforms would be misread")
@@ -268,7 +281,81 @@ def _handle_transform(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
 
 @GLOBAL_KEYWORD_REGISTRY.register("EQUATION", valid_contexts=set(_ALL_CONTEXTS))
 def _handle_equation(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
-    raise _AbortParse("*EQUATION has no internal landing; linear multi-point constraints would be dropped")
+    rows = _parse_data_rows(block.data_lines, dtype=str)
+    cells: List[str] = []
+    for r in rows:
+        cells.extend([str(c).strip() for c in r if str(c).strip() != ""])
+    if not cells:
+        return
+    try:
+        nterms = int(float(cells[0]))
+    except ValueError:
+        msg = f"*EQUATION at line {block.line_number}: bad term count — skipped"
+        warnings.warn(msg)
+        reader.warnings.append(msg)
+        return
+    triples: List[Tuple[Any, int, float]] = []
+    pos = 1
+    while pos + 2 < len(cells) + 1 and len(triples) < nterms:
+        if pos + 2 >= len(cells):
+            break
+        ref_raw, dof_raw, coeff_raw = cells[pos], cells[pos + 1], cells[pos + 2]
+        pos += 3
+        try:
+            dof = int(float(dof_raw)) - 1
+            coeff = float(coeff_raw)
+        except ValueError:
+            continue
+        if dof < 0 or dof > 5:
+            msg = (f"*EQUATION at line {block.line_number}: dof {dof + 1} out of "
+                   "range 1..6 — equation skipped")
+            warnings.warn(msg)
+            reader.warnings.append(msg)
+            triples = []
+            break
+        if ref_raw.lstrip("-").isdigit():
+            triples.append((int(ref_raw), dof, coeff))
+        else:
+            members = _resolve_equation_nodes(reader, ref_raw)
+            if not members:
+                msg = (f"*EQUATION at line {block.line_number}: set '{ref_raw}' "
+                       "unresolvable — equation skipped")
+                warnings.warn(msg)
+                reader.warnings.append(msg)
+                if "EQUATION" not in reader.unsupported_keywords:
+                    reader.unsupported_keywords.append(f"EQUATION set {ref_raw}")
+                triples = []
+                break
+            for nid in members:
+                triples.append((int(nid), dof, coeff))
+    if not triples:
+        return
+    if len(triples) != nterms:
+        msg = (f"*EQUATION at line {block.line_number}: term count {len(triples)} "
+               f"!= declared {nterms} — kept as parsed")
+        warnings.warn(msg)
+        reader.warnings.append(msg)
+    name = f"EQ_{len(reader.model.constraints) + 1}"
+    reader.model.Equation(name, terms=triples)
+    msg = (f"*EQUATION {name}: {len(triples)} terms parsed; "
+           "penalty assembly connected")
+    warnings.warn(msg)
+    reader.warnings.append(msg)
+
+
+def _resolve_equation_nodes(reader: AbaqusInputReader, ref: str) -> List[int]:
+    """Resolve an EQUATION term reference to part-local node ids."""
+    names = [ref, ref.split(".")[-1]]
+    for part in reader.model.parts.values():
+        for key in names:
+            if key in part.node_sets:
+                return sorted(int(n) for n in part.node_sets[key].node_ids)
+            if key in part.sets:
+                gset = part.sets[key]
+                ids = getattr(gset, "node_ids", None)
+                if ids:
+                    return sorted(int(n) for n in ids)
+    return []
 
 
 

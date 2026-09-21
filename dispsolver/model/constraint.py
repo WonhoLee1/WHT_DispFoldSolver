@@ -146,6 +146,84 @@ class DistributingCoupling(Coupling):
 
 
 @dataclass
+class EquationConstraint(AssemblableConstraint):
+    """Linear equation constraint (*EQUATION in Abaqus).
+
+    Enforces sum(coeff_i * u_dof_i) = constant via penalty method.
+    Terms are stored as part-local (node_id, dof_0based, coeff) triples;
+    global DOF indices resolve at build time through bind(), since the
+    flattened node mapping only exists after assembly.
+    """
+    terms: List[Tuple[int, int, float]] = field(default_factory=list)
+    constant: float = 0.0
+    penalty_stiffness: float = 1e6
+    _dofs: List[int] = field(default_factory=list, repr=False)
+    _coeffs: List[float] = field(default_factory=list, repr=False)
+    _bound: bool = field(default=False, repr=False)
+
+    def bind(self, nid_to_idx, global_nsets, node_local_to_global, dim: int) -> bool:
+        """Resolve part-local node ids to global DOF indices. Returns False when unresolvable."""
+        dofs: List[int] = []
+        coeffs: List[float] = []
+        for ref, dof, coeff in self.terms:
+            if isinstance(ref, str):
+                arr = global_nsets.get(ref)
+                if arr is None:
+                    for key, val in global_nsets.items():
+                        if key.split(".")[-1] == ref:
+                            arr = val
+                            break
+                if arr is None:
+                    return False
+                for idx in [int(i) for i in np.asarray(arr).ravel().tolist()]:
+                    if dof < 0 or dof >= dim:
+                        return False
+                    dofs.append(int(idx) * dim + int(dof))
+                    coeffs.append(float(coeff))
+            else:
+                matches = [g for (inst, nid), g in node_local_to_global.items()
+                           if int(nid) == int(ref)]
+                if len(matches) != 1:
+                    return False
+                gid = matches[0]
+                idx = nid_to_idx.get(gid)
+                if idx is None or dof < 0 or dof >= dim:
+                    return False
+                dofs.append(int(idx) * dim + int(dof))
+                coeffs.append(float(coeff))
+        if not dofs:
+            return False
+        self._dofs = dofs
+        self._coeffs = coeffs
+        self._bound = True
+        return True
+
+    def assemble(self, u_vec: np.ndarray) -> tuple[np.ndarray, tuple[np.ndarray, np.ndarray, np.ndarray], bool]:
+        """Penalty assembly of the linear equation residual."""
+        n_dof = len(u_vec)
+        f_c = np.zeros(n_dof, dtype=np.float64)
+        if not self._bound or not self._dofs:
+            return f_c, (np.zeros(0, dtype=np.int32), np.zeros(0, dtype=np.int32),
+                         np.zeros(0, dtype=np.float64)), False
+        k = float(self.penalty_stiffness)
+        r = float(sum(c * u_vec[d] for d, c in zip(self._dofs, self._coeffs)) - self.constant)
+        for d, c in zip(self._dofs, self._coeffs):
+            f_c[d] += k * r * c
+        n = len(self._dofs)
+        rows = np.zeros(n * n, dtype=np.int32)
+        cols = np.zeros(n * n, dtype=np.int32)
+        data = np.zeros(n * n, dtype=np.float64)
+        pos = 0
+        for i in range(n):
+            for j in range(n):
+                rows[pos] = self._dofs[i]
+                cols[pos] = self._dofs[j]
+                data[pos] = k * self._coeffs[i] * self._coeffs[j]
+                pos += 1
+        return f_c, (rows, cols, data), False
+
+
+@dataclass
 class MPC(Constraint):
     """Multi-Point Constraint (*MPC in Abaqus).
     
