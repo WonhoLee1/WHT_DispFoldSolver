@@ -138,6 +138,13 @@ class DynamicSolver2D:
                     self.elem_props[e, 0] = float(mat_obj.get("E", 4000.0))
                     self.elem_props[e, 1] = float(mat_obj.get("nu", 0.3))
                     rho_val = float(mat_obj.get("density", mat_obj.get("rho", default_rho)))
+            # Zero/negative density is never valid dynamics mass; Material's
+            # default density is 0.0, which must not override the solver-level
+            # default (previously zeroed M_global and reduced dynamics to
+            # quasistatics with garbage velocities -- same class as the 3D
+            # fix in solver3d/dynamic3d.py, ported 2026-09-21).
+            if rho_val <= 0.0:
+                rho_val = default_rho
             self.elem_density[e] = rho_val
 
         # SectionControls array: (n_elems, 8)
