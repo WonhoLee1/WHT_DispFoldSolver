@@ -143,11 +143,11 @@ def export_vtkhdf(
 
     with h5py.File(file_path, "w") as f:
         vtkhdf_group = f.create_group("VTKHDF")
+        vtkhdf_group.attrs["Version"] = np.array([1, 0], dtype=np.int32)
+        vtkhdf_group.attrs["Type"] = "UnstructuredGrid"
+
         vtkhdf_group.create_dataset("Version", data=np.array([1, 0], dtype=np.int32))
-        
-        # VTKHDF Type dataset (ASCII string "UnstructuredGrid")
-        type_str = np.bytes_("UnstructuredGrid")
-        vtkhdf_group.create_dataset("Type", data=type_str)
+        vtkhdf_group.create_dataset("Type", data=np.frombuffer(b"UnstructuredGrid", dtype=np.uint8))
 
         vtkhdf_group.create_dataset("NumberOfPoints", data=np.array([n_nodes], dtype=np.int64))
         vtkhdf_group.create_dataset("NumberOfCells", data=np.array([n_elems], dtype=np.int64))

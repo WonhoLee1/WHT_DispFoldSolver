@@ -40,7 +40,8 @@ def test_export_vtkhdf_2d_mesh():
             assert "VTKHDF" in f
             grp = f["VTKHDF"]
             assert np.array_equal(grp["Version"][:], [1, 0])
-            assert grp["Type"][()].decode("ascii") == "UnstructuredGrid"
+            assert grp.attrs["Type"] == "UnstructuredGrid"
+            assert bytes(grp["Type"][:]).decode("ascii") == "UnstructuredGrid"
             assert grp["NumberOfPoints"][0] == 4
             assert grp["NumberOfCells"][0] == 1
 

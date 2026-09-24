@@ -66,7 +66,7 @@ def print_preflight_summary(reader: AbaqusInputReader, model: Any, dim: int, out
     print(f" Materials         : {list(model.materials.keys())}")
     print(f" Steps Sequence    : {[s for s in model.steps.keys() if s != 'Initial']}")
     print(f" Surface Ties      : {len(model.root_assembly.ties)}")
-    print(f" Contact Pairs     : {len(model.root_assembly.contact_pairs)}")
+    print(f" Contact Pairs     : {len(getattr(model.root_assembly, 'contact_pairs', []))}")
     print(f" Nodal Transforms  : {list(model.transforms.keys())}")
 
     if reader.unsupported_keywords:
@@ -178,28 +178,45 @@ def run_inp_file(
 
     # 5. Field Exports (VTKHDF / VTU)
     exported_files = []
-    if export_format in ("vtkhdf", "both") and solver is not None and hasattr(solver, "u"):
-        vtkhdf_path = os.path.join(out_dir, f"{inp_name}_result.vtkhdf")
+    if solver is not None and hasattr(solver, "u"):
         nodes_arr = sys_obj.coords if sys_obj is not None else solver.mesh.nodes_array()
         elem_conn = sys_obj.elem_conn_0based if sys_obj is not None else solver.mesh.elements_array()
         etype = sys_obj.elem_types[0] if (sys_obj is not None and len(sys_obj.elem_types) > 0) else "CPE4"
-
         stresses = getattr(solver, "elem_stresses", None)
         sdvs = getattr(solver, "elem_sdvs", None)
-        
-        saved_file = export_vtkhdf(
-            file_path=vtkhdf_path,
-            nodes=nodes_arr,
-            elements=elem_conn,
-            u=solver.u,
-            element_type=etype,
-            stresses=stresses,
-            sdvs=sdvs,
-            time_value=1.0,
-        )
-        exported_files.append(saved_file)
-        if verbose:
-            print(f"[Export] Saved VTKHDF binary field data: {saved_file}")
+
+        if export_format in ("vtkhdf", "both", "auto"):
+            vtkhdf_path = os.path.join(out_dir, f"{inp_name}_result.vtkhdf")
+            saved_file = export_vtkhdf(
+                file_path=vtkhdf_path,
+                nodes=nodes_arr,
+                elements=elem_conn,
+                u=solver.u,
+                element_type=etype,
+                stresses=stresses,
+                sdvs=sdvs,
+                time_value=1.0,
+            )
+            exported_files.append(saved_file)
+            if verbose:
+                print(f"[Export] Saved VTKHDF binary field data: {saved_file}")
+
+        if export_format in ("vtu", "both", "auto"):
+            from dispsolver.export.vtu_exporter import export_vtu
+            vtu_path = os.path.join(out_dir, f"{inp_name}_result.vtu")
+            saved_vtu = export_vtu(
+                file_path=vtu_path,
+                nodes=nodes_arr,
+                elements=elem_conn,
+                u=solver.u,
+                element_type=etype,
+                stresses=stresses,
+                sdvs=sdvs,
+                time_value=1.0,
+            )
+            exported_files.append(saved_vtu)
+            if verbose:
+                print(f"[Export] Saved VTK XML (.vtu) field data: {saved_vtu}")
 
     # 6. Save JSON Summary Report
     summary = {
@@ -258,7 +275,7 @@ def main():
             verbose=not args.quiet,
         )
     except Exception as e:
-        print(f"\n❌ Error executing Abaqus .inp deck: {e}", file=sys.stderr)
+        print(f"\n[Error] Failed executing Abaqus .inp deck: {e}", file=sys.stderr)
         sys.exit(1)
 
 

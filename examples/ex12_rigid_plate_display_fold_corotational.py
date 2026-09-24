@@ -338,6 +338,30 @@ def run_rigid_plate_display_fold_corotational():
     )
     print(f"Final deformed shape PNG exported successfully to {png_path}")
 
+    from dispsolver.export.vtkhdf_exporter import export_vtkhdf
+    vtkhdf_path = export_vtkhdf(
+        file_path="output/ex12_final_folding_shape.vtkhdf",
+        nodes=coords,
+        elements=mesh.elements_array(),
+        u=solver.u,
+        element_type="CPE4_CR",
+        stresses=getattr(solver, "elem_stresses", None),
+        time_value=solver.time,
+    )
+    print(f"Final VTKHDF binary field exported successfully to {vtkhdf_path}")
+
+    from dispsolver.export.vtu_exporter import export_vtu
+    vtu_path = export_vtu(
+        file_path="output/ex12_final_folding_shape.vtu",
+        nodes=coords,
+        elements=mesh.elements_array(),
+        u=solver.u,
+        element_type="CPE4_CR",
+        stresses=getattr(solver, "elem_stresses", None),
+        time_value=solver.time,
+    )
+    print(f"Final VTK XML (.vtu) field exported successfully to {vtu_path}")
+
 
 if __name__ == "__main__":
     run_rigid_plate_display_fold_corotational()
