@@ -63,3 +63,5 @@ scratch/*.pkl
 scratch/*.log
 scratch/*.png
 scratch/*.jpg
+
+Kratos/

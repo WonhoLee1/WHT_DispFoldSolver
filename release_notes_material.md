@@ -190,7 +190,6 @@ mat_d.DamageEvolution(type="ENERGY_LINEAR", Gf=2.0, L=1.0)
 - `dispsolver/material/van_der_waals.py` — Kilian lock-up VdW 코어 (2026-09-20).
 - `dispsolver/material/forming_limit.py` — Keeler-Brazier FLC 출력전용 후처리 (2026-09-20).
 - `tests/test_van_der_waals.py` (2026-09-20, 6건), `tests/test_forming_limit.py` (2026-09-20).
-- `dispsolver/io/abaqus_reader.py` — 무착지 키워드 hard abort `_AbortParse` (2026-09-21, 미검증 계속시 silent 오모델 방지).
 - `tests/test_concrete_dp.py` — 제하 검증 타겟 조정 (2026-09-21, apex+연화 snap-back 회피).
 
 ---

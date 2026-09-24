@@ -2,7 +2,7 @@
 
 > **최초 작성일**: 2026-09-19
 > **준수 표준**: Abaqus/Standard Equilibrium Iteration Criteria, Anti-Mocking Protocol
-> **상태**: **PRODUCTION READY (verification 13/14 — bending_2pt 기존 실패 제외 + Rayleigh HHT 4/4, 2026-09-20)**
+> **상태**: **PRODUCTION READY (verification 13/14 — bending_2pt 기존 실패 제외 + Rayleigh HHT 4/4, 2026-09-20; 2026-09-21 reader/CDP/3D 재측정 유지)**
 > **상세**: `dev_log/area_analysis_solver_20260919.md`
 
 ---
@@ -91,6 +91,8 @@ Global M 게이트가 판정. CPE6M은 ~140° 이탈 후 복귀 없음 (§16).
 - `dispsolver/solver3d/dynamic3d.py` — SDI + `_record_acceptance` 원본 (§12)
   - 2026-09-20: HHT 분기 Rayleigh 감쇠 (`set_rayleigh_damping`, 잔차 HHT 가중 + 접선 `dv/du` 선형화, 미사용 bit-identical 가드)
   - 2026-09-20: `elem_density` 0 fallback (M_global=0 붕괴 교정), `set_field_variable` FV1 플러밍, MAT13 props 패킹 + SDV 10
+  - 2026-09-20: MAT14 Drucker-Prager props 패킹 + SDV 7, MAT15 Concrete CDP props 패킹 + SDV 10 (커널 분기와 동일 일자)
+- `dispsolver/io/abaqus_reader.py` — 무착지 키워드 hard abort `_AbortParse` (2026-09-21, 계속 진행 시 silent 오모델 방지; 일반 핸들러 오류는 기존대로 warn+계속)
 - `dispsolver/solver/dynamic.py` — 레거시 2D JAX 솔버 (PARDISO 싱글톤, §4.11)
 - `dispsolver/solver/dt_controller.py` — AdaptiveDtController (target_iters=8)
 - `benchmark_element/benchmark_pure_moment_rollup.py` — worst_r·branches 집계
@@ -103,3 +105,7 @@ Global M 게이트가 판정. CPE6M은 ~140° 이탈 후 복귀 없음 (§16).
 - `pytest tests/test_rayleigh_damping.py` → **4 passed** (bit-identical, α/β 감쇠율 3%, 에너지 단조).
 - `pytest tests/test_3d_mechanics_benchmarks.py tests/test_rayleigh_damping.py` → **19 passed, 4 xfailed**.
 - `python -m verification.run_all -b bending_2pt` (base.py 제외 stash A/B) → 수정 전후 **bit-identical FAIL** (기실패 확정).
+
+## 7.2 독립 재측정 기록 (2026-09-21)
+- `pytest tests/test_concrete_dp.py tests/test_abaqus_reader_and_executor.py` → **15 passed** (reader `_AbortParse` + CDP 제하조정 후).
+- `pytest tests/test_3d_mechanics_benchmarks.py` → **15 passed, 4 xfailed** (MAT15 이후 3D 회귀, xfail 4건은 §5 Open 성격의 기지정 체적잠금 항목).
