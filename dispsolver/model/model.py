@@ -952,10 +952,13 @@ class Model:
         mesh3d = sys.to_mesh3d()
         
         solver = DynamicSolver3D(mesh=mesh3d, materials=sys.materials_by_pid)
-        
+        if getattr(sys, "has_transforms", False) and getattr(sys, "node_transforms", None) is not None:
+            solver.set_nodal_transforms(sys.node_transforms)
+
         # Note: DynamicSolver3D._setup_numba_topology() automatically builds the
         # correct heterogeneous kernel-grouped rows_topo and cols_topo.
         # Overwriting with sys.rows_topo corrupts the sparsity mapping for multi-material meshes.
+
             
         # If a step is provided, apply its boundary conditions
         if step_name is not None and step_name in self.steps:
@@ -1062,8 +1065,11 @@ class Model:
         mesh2d = sys.to_mesh2d()
         
         solver = DynamicSolver2D(mesh=mesh2d, materials=sys.materials_by_pid)
-        
+        if getattr(sys, "has_transforms", False) and getattr(sys, "node_transforms", None) is not None:
+            solver.set_nodal_transforms(sys.node_transforms)
+
         # If a step is provided, apply its boundary conditions
+
         if step_name is not None and step_name in self.steps:
             st = self.steps[step_name]
             for entry in st.boundary_conditions.values():

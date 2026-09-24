@@ -11,7 +11,7 @@ _SUPPORT_OVERRIDES = {
     "DLOAD": "PARTIAL",
     "ORIENTATION": "PARTIAL",
     "EQUATION": "FULL",
-    "TRANSFORM": "PARTIAL",
+    "TRANSFORM": "FULL",
 }
 
 for _kw, _sup in _SUPPORT_OVERRIDES.items():

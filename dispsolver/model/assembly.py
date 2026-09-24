@@ -44,6 +44,10 @@ class FlattenedSolverSystem:
     # 7. Predefined Fields (Initial Conditions)
     predefined_fields: List[Any] = field(default_factory=list)
 
+    # 8. Nodal Coordinate Transformation System (*TRANSFORM in Abaqus)
+    node_transforms: Optional[np.ndarray] = None
+    has_transforms: bool = False
+
     def to_mesh3d(self):
         """Construct a Mesh3D instance for DynamicSolver3D."""
         from dispsolver.mesh3d import Mesh3D
@@ -367,12 +371,12 @@ class Assembly:
                         continue
                 compiled_constraints.append(constraint)
 
-        # 6. Compile Predefined Fields from InitialStep
+        # 7. Compile Predefined Fields from InitialStep
         compiled_predefined_fields = []
         if hasattr(model, "initial_step"):
             compiled_predefined_fields = list(model.initial_step.predefined_fields.values())
 
-        return FlattenedSolverSystem(
+        sys = FlattenedSolverSystem(
             coords=global_coords,
             elem_conn_0based=elem_conn_0based,
             elem_types=all_elem_types,
@@ -391,3 +395,11 @@ class Assembly:
             constraints=compiled_constraints,
             predefined_fields=compiled_predefined_fields
         )
+
+        from dispsolver.model.nodal_transform import build_nodal_transforms
+        node_transforms, has_transforms = build_nodal_transforms(sys, model)
+        sys.node_transforms = node_transforms
+        sys.has_transforms = has_transforms
+        return sys
+
+

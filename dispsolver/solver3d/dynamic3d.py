@@ -190,7 +190,34 @@ class DynamicSolver3D:
         self.current_field: float = 0.0
         self._f_thermal_cached: Optional[np.ndarray] = None
         self._thermal_dirty: bool = True
+        self.node_transforms: Optional[np.ndarray] = None
+        self.has_nodal_transforms: bool = False
         self._setup_numba_topology()
+
+
+    def set_nodal_transforms(self, node_transforms: np.ndarray):
+        """Set nodal rotation matrices (N_nodes, 3, 3) for Abaqus *TRANSFORM."""
+        dim = 3
+        arr = np.asarray(node_transforms, dtype=np.float64)
+        if arr.ndim == 3 and arr.shape[1] == 2:
+            n_nodes = len(arr)
+            R3 = np.zeros((n_nodes, 3, 3), dtype=np.float64)
+            for i in range(n_nodes):
+                R3[i, :2, :2] = arr[i]
+                R3[i, 2, 2] = 1.0
+            self.node_transforms = R3
+        else:
+            self.node_transforms = arr
+        n_nodes = len(self.node_transforms)
+        I_dim = np.eye(dim, dtype=np.float64)
+        self.has_nodal_transforms = any(not np.allclose(self.node_transforms[i], I_dim) for i in range(n_nodes))
+
+    def get_global_displacements(self, u_vec: np.ndarray) -> np.ndarray:
+        """Convert nodal local DOFs u_vec to global physical displacements u_global."""
+        if not self.has_nodal_transforms or self.node_transforms is None:
+            return u_vec.copy()
+        from dispsolver.model.nodal_transform import transform_u_to_global
+        return transform_u_to_global(u_vec, self.node_transforms, dim=3)
 
     @property
     def contact_tuner(self):
@@ -812,6 +839,12 @@ class DynamicSolver3D:
         """Assemble global 3D stiffness matrix K_global and internal force vector f_int."""
         node_coords_all = self.mesh.nodes_array()
 
+        if self.has_nodal_transforms and self.node_transforms is not None:
+            from dispsolver.model.nodal_transform import transform_u_to_global
+            u_eval = transform_u_to_global(u_vec, self.node_transforms, dim=3)
+        else:
+            u_eval = u_vec
+
         if self.rows_topo is not None:
             try:
                 f_int_global = np.zeros(self.num_dofs, dtype=np.float64)
@@ -836,80 +869,80 @@ class DynamicSolver3D:
                     if k == 0:
                         from dispsolver.element3d.c3d8_eas_tl_numba import assemble_mesh_c3d8_eas_tl_numba
                         f_sub, K_sub, err = assemble_mesh_c3d8_eas_tl_numba(
-                            node_coords_all, sub_conn, u_vec, sub_mat, sub_props, sub_sdvs, dt, elem_stress_init=sub_stress_init
+                            node_coords_all, sub_conn, u_eval, sub_mat, sub_props, sub_sdvs, dt, elem_stress_init=sub_stress_init
                         )
                     elif k == 1:
                         from dispsolver.element3d.c3d8_corotational_numba import assemble_mesh_c3d8_corotational_numba
                         f_sub, K_sub, err = assemble_mesh_c3d8_corotational_numba(
-                            node_coords_all, sub_conn, u_vec, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls, elem_stress_init=sub_stress_init
+                            node_coords_all, sub_conn, u_eval, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls, elem_stress_init=sub_stress_init
                         )
                     elif k == 2:
                         from dispsolver.element3d.c3d8_hybrid_numba import assemble_mesh_c3d8_hybrid_numba
                         f_sub, K_sub, err = assemble_mesh_c3d8_hybrid_numba(
-                            node_coords_all, sub_conn, u_vec, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls, elem_stress_init=sub_stress_init
+                            node_coords_all, sub_conn, u_eval, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls, elem_stress_init=sub_stress_init
                         )
                     elif k == 3:
                         from dispsolver.element3d.c3d8_fbar_tl_numba import assemble_mesh_c3d8_fbar_tl_numba
                         f_sub, K_sub, err = assemble_mesh_c3d8_fbar_tl_numba(
-                            node_coords_all, sub_conn, u_vec, sub_mat, sub_props, sub_sdvs, dt, elem_stress_init=sub_stress_init
+                            node_coords_all, sub_conn, u_eval, sub_mat, sub_props, sub_sdvs, dt, elem_stress_init=sub_stress_init
                         )
                     elif k == 4:
                         from dispsolver.element3d.c3d10m_numba import assemble_mesh_c3d10m_numba
                         f_sub, K_sub, err = assemble_mesh_c3d10m_numba(
-                            node_coords_all, sub_conn, u_vec, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls, elem_stress_init=sub_stress_init
+                            node_coords_all, sub_conn, u_eval, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls, elem_stress_init=sub_stress_init
                         )
                     elif k == 5:
                         from dispsolver.element3d.c3d10_numba import assemble_mesh_c3d10_numba
                         f_sub, K_sub = assemble_mesh_c3d10_numba(
-                            node_coords_all, sub_conn, u_vec, self.C_mat_default
+                            node_coords_all, sub_conn, u_eval, self.C_mat_default
                         )
                         err = 0
                     elif k == 6:
                         from dispsolver.element3d.c3d4_numba import assemble_mesh_c3d4_numba
                         f_sub, K_sub = assemble_mesh_c3d4_numba(
-                            node_coords_all, sub_conn, u_vec, self.C_mat_default
+                            node_coords_all, sub_conn, u_eval, self.C_mat_default
                         )
                         err = 0
                     elif k == 7:
                         from dispsolver.element3d.c3d6_numba import assemble_mesh_c3d6_numba
                         f_sub, K_sub, err = assemble_mesh_c3d6_numba(
-                            node_coords_all, sub_conn, u_vec, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls, elem_stress_init=sub_stress_init
+                            node_coords_all, sub_conn, u_eval, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls, elem_stress_init=sub_stress_init
                         )
                     elif k == 8:
                         from dispsolver.element3d.c3d8r_numba import assemble_mesh_c3d8r_numba
                         f_sub, K_sub, err = assemble_mesh_c3d8r_numba(
-                            node_coords_all, sub_conn, u_vec, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls, elem_stress_init=sub_stress_init
+                            node_coords_all, sub_conn, u_eval, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls, elem_stress_init=sub_stress_init
                         )
                     elif k == 9:
                         from dispsolver.element3d.c3d4_anp_numba import assemble_mesh_c3d4_anp_numba
                         f_sub, K_sub, err = assemble_mesh_c3d4_anp_numba(
-                            node_coords_all, sub_conn, u_vec, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls, elem_stress_init=sub_stress_init
+                            node_coords_all, sub_conn, u_eval, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls, elem_stress_init=sub_stress_init
                         )
                     elif k == 10:
                         from dispsolver.element3d.c3d8_numba import assemble_mesh_c3d8_numba
                         f_sub, K_sub = assemble_mesh_c3d8_numba(
-                            node_coords_all, sub_conn, u_vec, self.C_mat_default
+                            node_coords_all, sub_conn, u_eval, self.C_mat_default
                         )
                         err = 0
                     elif k == 11:
                         from dispsolver.element3d.cr_wrapper_3d import assemble_mesh_c3d8i_cr_numba
                         f_sub, K_sub, err = assemble_mesh_c3d8i_cr_numba(
-                            node_coords_all, sub_conn, u_vec, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls, elem_stress_init=sub_stress_init
+                            node_coords_all, sub_conn, u_eval, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls, elem_stress_init=sub_stress_init
                         )
                     elif k == 12:
                         from dispsolver.element3d.solid_shell_numba import assemble_mesh_solid_shell_numba
                         f_sub, K_sub, err = assemble_mesh_solid_shell_numba(
-                            node_coords_all, sub_conn, u_vec, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls, elem_stress_init=sub_stress_init
+                            node_coords_all, sub_conn, u_eval, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls, elem_stress_init=sub_stress_init
                         )
                     elif k == 13:
                         from dispsolver.element3d.cr_wrapper_3d import assemble_mesh_c3d8r_cr_numba
                         f_sub, K_sub, err = assemble_mesh_c3d8r_cr_numba(
-                            node_coords_all, sub_conn, u_vec, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls, elem_stress_init=sub_stress_init
+                            node_coords_all, sub_conn, u_eval, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls, elem_stress_init=sub_stress_init
                         )
                     elif k == 14:
                         from dispsolver.element3d.cr_wrapper_3d import assemble_mesh_solid_shell_cr_numba
                         f_sub, K_sub, err = assemble_mesh_solid_shell_cr_numba(
-                            node_coords_all, sub_conn, u_vec, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls, elem_stress_init=sub_stress_init
+                            node_coords_all, sub_conn, u_eval, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls, elem_stress_init=sub_stress_init
                         )
                     else:
                         raise ValueError(f"Unknown element kernel index: {k}")
@@ -921,12 +954,19 @@ class DynamicSolver3D:
                     if err:
                         has_error = True
 
+                    if self.has_nodal_transforms and self.node_transforms is not None:
+                        from dispsolver.model.nodal_transform import apply_nodal_transforms_to_element_group
+                        apply_nodal_transforms_to_element_group(f_sub, K_sub, sub_conn, self.node_transforms, dim=3)
+
                     scatter_f_int_3d(f_sub, sub_conn, f_int_global)
                     data_topo_list.append(K_sub.ravel())
 
                 # Incorporate equivalent thermal load vector: f_int = f_int^mech - f_th
                 f_th = self.compute_thermal_load_vector()
                 if f_th is not None:
+                    if self.has_nodal_transforms and self.node_transforms is not None:
+                        from dispsolver.model.nodal_transform import transform_u_to_local
+                        f_th = transform_u_to_local(f_th, self.node_transforms, dim=3)
                     f_int_global -= f_th
 
                 self.last_assembly_error = has_error
@@ -949,8 +989,11 @@ class DynamicSolver3D:
 
                 for constraint in self.constraints:
                     if hasattr(constraint, "reproject_deformed"):
-                        constraint.reproject_deformed(u_vec)
-                    f_c, (rows_c, cols_c, data_c), _ = constraint.assemble(u_vec)
+                        constraint.reproject_deformed(u_eval)
+                    f_c, (rows_c, cols_c, data_c), _ = constraint.assemble(u_eval)
+                    if self.has_nodal_transforms and self.node_transforms is not None:
+                        from dispsolver.model.nodal_transform import transform_u_to_local
+                        f_c = transform_u_to_local(f_c, self.node_transforms, dim=3)
                     f_int_global += f_c
                     rows_all.append(np.asarray(rows_c, dtype=np.int32))
                     cols_all.append(np.asarray(cols_c, dtype=np.int32))

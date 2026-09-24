@@ -282,10 +282,7 @@ def _handle_transform(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     pts = tuple(tuple(r) for r in rows) if rows else ()
     name = f"TRF_{nset}_{len(reader.model.transforms) + 1}" if nset else f"TRF_{len(reader.model.transforms) + 1}"
     reader.model.Transform(name, nset=nset, transform_type=ttype, points=pts)
-    msg = (f"*TRANSFORM {name}: parsed and stored; "
-           "solver-frame enforcement not connected")
-    warnings.warn(msg)
-    reader.warnings.append(msg)
+    msg = f"*TRANSFORM {name}: parsed and stored; connected to solver"
 
 
 @GLOBAL_KEYWORD_REGISTRY.register("EQUATION", valid_contexts=set(_ALL_CONTEXTS))

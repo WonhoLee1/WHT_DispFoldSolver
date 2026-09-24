@@ -97,8 +97,32 @@ class DynamicSolver2D:
         self.ref_temperature: float = 20.0
         self._f_thermal_cached: Optional[np.ndarray] = None
         self._thermal_dirty: bool = True
+        self.node_transforms: Optional[np.ndarray] = None
+        self.has_nodal_transforms: bool = False
 
         self._setup_numba_topology()
+
+
+    def set_nodal_transforms(self, node_transforms: np.ndarray):
+        """Set nodal rotation matrices (N_nodes, 2, 2) for Abaqus *TRANSFORM."""
+        dim = 2
+        arr = np.asarray(node_transforms, dtype=np.float64)
+        if arr.ndim == 3 and arr.shape[1] >= 2 and arr.shape[2] >= 2:
+            self.node_transforms = arr[:, :2, :2].copy()
+        else:
+            self.node_transforms = arr
+        n_nodes = len(self.node_transforms)
+        I_dim = np.eye(dim, dtype=np.float64)
+        self.has_nodal_transforms = any(not np.allclose(self.node_transforms[i], I_dim) for i in range(n_nodes))
+
+    def get_global_displacements(self, u_vec: np.ndarray) -> np.ndarray:
+        """Convert nodal local DOFs u_vec to global physical displacements u_global."""
+        if not self.has_nodal_transforms or self.node_transforms is None:
+            return u_vec.copy()
+        from dispsolver.model.nodal_transform import transform_u_to_global
+        return transform_u_to_global(u_vec, self.node_transforms, dim=2)
+
+
 
     def _setup_numba_topology(self):
         """Classify elements into Numba kernel groups and precompute sparse topology."""
@@ -355,6 +379,12 @@ class DynamicSolver2D:
         """Assemble global 2D stiffness matrix K_global and internal force vector f_int."""
         node_coords_all = self.mesh.nodes_array()
 
+        if self.has_nodal_transforms and self.node_transforms is not None:
+            from dispsolver.model.nodal_transform import transform_u_to_global
+            u_eval = transform_u_to_global(u_vec, self.node_transforms, dim=2)
+        else:
+            u_eval = u_vec
+
         f_int_global = np.zeros(self.num_dofs, dtype=np.float64)
         data_topo_list = []
         has_error = False
@@ -369,49 +399,49 @@ class DynamicSolver2D:
 
             if k == 0:
                 from dispsolver.element2d.cpe4_numba import assemble_mesh_cpe4_numba
-                f_sub, K_sub, err = assemble_mesh_cpe4_numba(node_coords_all, sub_conn, u_vec, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls)
+                f_sub, K_sub, err = assemble_mesh_cpe4_numba(node_coords_all, sub_conn, u_eval, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls)
             elif k == 1:
                 from dispsolver.element2d.cpe4i_numba import assemble_mesh_cpe4i_numba
-                f_sub, K_sub, err = assemble_mesh_cpe4i_numba(node_coords_all, sub_conn, u_vec, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls)
+                f_sub, K_sub, err = assemble_mesh_cpe4i_numba(node_coords_all, sub_conn, u_eval, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls)
             elif k == 2:
                 from dispsolver.element2d.cpe4r_numba import assemble_mesh_cpe4r_numba
-                f_sub, K_sub, err = assemble_mesh_cpe4r_numba(node_coords_all, sub_conn, u_vec, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls)
+                f_sub, K_sub, err = assemble_mesh_cpe4r_numba(node_coords_all, sub_conn, u_eval, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls)
             elif k == 3:
                 from dispsolver.element2d.cpe4h_numba import assemble_mesh_cpe4h_numba
-                f_sub, K_sub, err = assemble_mesh_cpe4h_numba(node_coords_all, sub_conn, u_vec, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls)
+                f_sub, K_sub, err = assemble_mesh_cpe4h_numba(node_coords_all, sub_conn, u_eval, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls)
             elif k == 4:
                 from dispsolver.element2d.cpe4_fbar_numba import assemble_mesh_cpe4_fbar_numba
-                f_sub, K_sub, err = assemble_mesh_cpe4_fbar_numba(node_coords_all, sub_conn, u_vec, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls)
+                f_sub, K_sub, err = assemble_mesh_cpe4_fbar_numba(node_coords_all, sub_conn, u_eval, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls)
             elif k == 5:
                 from dispsolver.element2d.cpe4_cr_numba import assemble_mesh_cpe4_cr_numba
-                f_sub, K_sub, err = assemble_mesh_cpe4_cr_numba(node_coords_all, sub_conn, u_vec, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls)
+                f_sub, K_sub, err = assemble_mesh_cpe4_cr_numba(node_coords_all, sub_conn, u_eval, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls)
             elif k == 6:
                 from dispsolver.element2d.cpe3_numba import assemble_mesh_cpe3_numba
-                f_sub, K_sub, err = assemble_mesh_cpe3_numba(node_coords_all, sub_conn, u_vec, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls)
+                f_sub, K_sub, err = assemble_mesh_cpe3_numba(node_coords_all, sub_conn, u_eval, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls)
             elif k == 7:
                 from dispsolver.element2d.cpe6_numba import assemble_mesh_cpe6_numba
-                f_sub, K_sub, err = assemble_mesh_cpe6_numba(node_coords_all, sub_conn, u_vec, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls)
+                f_sub, K_sub, err = assemble_mesh_cpe6_numba(node_coords_all, sub_conn, u_eval, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls)
             elif k == 8:
                 from dispsolver.element2d.cpe6m_numba import assemble_mesh_cpe6m_numba
-                f_sub, K_sub, err = assemble_mesh_cpe6m_numba(node_coords_all, sub_conn, u_vec, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls)
+                f_sub, K_sub, err = assemble_mesh_cpe6m_numba(node_coords_all, sub_conn, u_eval, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls)
             elif k == 9:
                 from dispsolver.element2d.cpe8_numba import assemble_mesh_cpe8_numba
-                f_sub, K_sub, err = assemble_mesh_cpe8_numba(node_coords_all, sub_conn, u_vec, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls)
+                f_sub, K_sub, err = assemble_mesh_cpe8_numba(node_coords_all, sub_conn, u_eval, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls)
             elif k == 10:
                 from dispsolver.element2d.cpe8_numba import assemble_mesh_cpe8r_numba
-                f_sub, K_sub, err = assemble_mesh_cpe8r_numba(node_coords_all, sub_conn, u_vec, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls)
+                f_sub, K_sub, err = assemble_mesh_cpe8r_numba(node_coords_all, sub_conn, u_eval, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls)
             elif k == 11:
                 from dispsolver.element2d.cr_wrapper_2d import assemble_mesh_cpe4i_cr_numba
-                f_sub, K_sub, err = assemble_mesh_cpe4i_cr_numba(node_coords_all, sub_conn, u_vec, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls)
+                f_sub, K_sub, err = assemble_mesh_cpe4i_cr_numba(node_coords_all, sub_conn, u_eval, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls)
             elif k == 12:
                 from dispsolver.element2d.cr_wrapper_2d import assemble_mesh_cpe4h_cr_numba
-                f_sub, K_sub, err = assemble_mesh_cpe4h_cr_numba(node_coords_all, sub_conn, u_vec, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls)
+                f_sub, K_sub, err = assemble_mesh_cpe4h_cr_numba(node_coords_all, sub_conn, u_eval, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls)
             elif k == 13:
                 from dispsolver.element2d.cr_wrapper_2d import assemble_mesh_cpe4r_cr_numba
-                f_sub, K_sub, err = assemble_mesh_cpe4r_cr_numba(node_coords_all, sub_conn, u_vec, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls)
+                f_sub, K_sub, err = assemble_mesh_cpe4r_cr_numba(node_coords_all, sub_conn, u_eval, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls)
             elif k == 14:
                 from dispsolver.element2d.cr_wrapper_2d import assemble_mesh_cpe6m_cr_numba
-                f_sub, K_sub, err = assemble_mesh_cpe6m_cr_numba(node_coords_all, sub_conn, u_vec, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls)
+                f_sub, K_sub, err = assemble_mesh_cpe6m_cr_numba(node_coords_all, sub_conn, u_eval, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls)
             else:
                 raise ValueError(f"Unknown element kernel index: {k}")
 
@@ -421,12 +451,19 @@ class DynamicSolver2D:
             if err:
                 has_error = True
 
+            if self.has_nodal_transforms and self.node_transforms is not None:
+                from dispsolver.model.nodal_transform import apply_nodal_transforms_to_element_group
+                apply_nodal_transforms_to_element_group(f_sub, K_sub, sub_conn, self.node_transforms, dim=2)
+
             scatter_f_int_2d(f_sub, sub_conn, f_int_global)
             data_topo_list.append(K_sub.ravel())
 
         # Incorporate equivalent thermal load vector: f_int = f_int^mech - f_th
         f_th = self.compute_thermal_load_vector()
         if f_th is not None:
+            if self.has_nodal_transforms and self.node_transforms is not None:
+                from dispsolver.model.nodal_transform import transform_u_to_local
+                f_th = transform_u_to_local(f_th, self.node_transforms, dim=2)
             f_int_global -= f_th
 
         self.last_assembly_error = int(has_error)
