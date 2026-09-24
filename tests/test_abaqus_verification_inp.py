@@ -132,8 +132,8 @@ def test_transform_landing_stored():
     assert spec["type"] == "C"
     assert spec["nset"] == "ALL"
     assert "TRANSFORM" not in reader.unsupported_keywords
-    assert any("solver-frame enforcement not connected" in w
-               for w in reader.warnings)
+    assert not any("solver-frame enforcement not connected" in w
+                   for w in reader.warnings)
 
 
 def test_include_expansion_lands():

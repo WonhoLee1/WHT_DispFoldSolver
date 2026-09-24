@@ -146,3 +146,7 @@ http://desktop-whl:4040/English/?show=SIMACAEVERRefMap/simaver-c-gapconductance.
 - 즉, 체계적으로 abaqus input 파일을 읽을 수 있는 reader 개발
 - 내부 데이터이 구조에 abaqus input 의 내용을 담을 수 있고
 - 다음 우리의 기능을 활용할 수 있게 하자.
+
+
+
+Kratos 폴더 내에 보면 agent md 파일과 agent 폴더가 있다. 내용을 보고 이해하자.
