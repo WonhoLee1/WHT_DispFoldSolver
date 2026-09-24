@@ -1,0 +1,3 @@
+"""
+dispsolver.cli package initialization.
+"""
