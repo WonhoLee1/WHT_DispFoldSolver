@@ -8,6 +8,7 @@ and Dirichlet Prescribed Motion Enforcers.
 
 from __future__ import annotations
 from typing import Dict, List, Tuple, Optional, Any
+import warnings
 import numpy as np
 from scipy.sparse import csc_matrix, csr_matrix, coo_matrix
 
@@ -147,6 +148,66 @@ def _integrate_face_pressure_quad4(face_coords: np.ndarray, elem_center: np.ndar
             f_face += np.outer(N, p_mag * dA_vec)
     return f_face
 
+
+
+def _volume_shape_integrals(X: np.ndarray, what: str = "body load") -> np.ndarray:
+    """integral(N_a dV) over one element, a = 0..n-1, by Gauss quadrature on
+    the element's own shape functions (exact for the affine case). Linear
+    hex/tet/wedge only; a quadratic element's consistent body load is not an
+    equal split (corner terms are negative), so it is refused rather than
+    approximated."""
+    n = len(X)
+    if n == 8:
+        g = 1.0 / np.sqrt(3.0)
+        sgn = np.array([[-1, -1, -1], [1, -1, -1], [1, 1, -1], [-1, 1, -1],
+                        [-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1]], dtype=np.float64)
+        w = np.zeros(8)
+        for xi in (-g, g):
+            for eta in (-g, g):
+                for zeta in (-g, g):
+                    p = np.array([xi, eta, zeta])
+                    N = 0.125 * np.prod(1.0 + sgn * p, axis=1)
+                    dN = np.empty((8, 3))
+                    for k in range(3):
+                        o = [j for j in range(3) if j != k]
+                        dN[:, k] = 0.125 * sgn[:, k] * (1.0 + sgn[:, o[0]] * p[o[0]]) * (1.0 + sgn[:, o[1]] * p[o[1]])
+                    w += N * abs(np.linalg.det(X.T @ dN))
+        return w
+    if n == 4:
+        V = abs(np.linalg.det((X[1:] - X[0]).T)) / 6.0
+        return np.full(4, V / 4.0)
+    if n == 6:
+        # 3-point triangle x 2-point line; nodes 0-2 bottom (zeta=-1), 3-5 top
+        tri = [(1 / 6, 1 / 6), (2 / 3, 1 / 6), (1 / 6, 2 / 3)]
+        g = 1.0 / np.sqrt(3.0)
+        w = np.zeros(6)
+        for r, s_ in tri:
+            for z in (-g, g):
+                L = np.array([1.0 - r - s_, r, s_])
+                N = np.concatenate([L * 0.5 * (1 - z), L * 0.5 * (1 + z)])
+                dL = np.array([[-1.0, -1.0], [1.0, 0.0], [0.0, 1.0]])
+                dN = np.zeros((6, 3))
+                dN[:3, :2] = dL * 0.5 * (1 - z); dN[3:, :2] = dL * 0.5 * (1 + z)
+                dN[:3, 2] = -0.5 * L; dN[3:, 2] = 0.5 * L
+                w += N * abs(np.linalg.det(X.T @ dN)) * (1.0 / 6.0)
+        return w
+    raise NotImplementedError(f"{what}: body/gravity load on a {n}-node element is not implemented "
+                              f"(consistent integration exists for 4-, 6- and 8-node solids only)")
+
+
+
+# Abaqus element types accepted by _build_kernel_groups whose kernel does not
+# carry the full formulation the type name promises.
+_ELEMENT_SUBSTITUTIONS = {
+    "C3D8RH": "runs as C3D8R (reduced integration); the hybrid pressure field is not included",
+    "C3D8IH": "runs as C3D8I (incompatible modes); the hybrid pressure field is not included",
+    "C3D20R": "runs as full-integration C3D20; reduced integration is not implemented",
+    "C3D20H": "runs as C3D20; the hybrid pressure field is not included",
+    "C3D20RH": "runs as full-integration C3D20; neither reduced integration nor the hybrid field is included",
+    "C3D10H": "runs as C3D10M (nu > 0.48) or C3D10; the hybrid pressure field is not included",
+    "C3D10MH": "runs as C3D10M; the hybrid pressure field is not included",
+    "C3D4H": "runs as C3D4 with average nodal pressure (ANP), not the Abaqus hybrid formulation",
+}
 
 class DynamicSolver3D:
     """3D Implicit Non-Linear Solver with Above-Abaqus Speed & Convergence Engine."""
@@ -805,6 +866,7 @@ class DynamicSolver3D:
         elements_list = list(self.mesh.elements.values())
         # Classify element kernel groups with Material- & Kinematic-Adaptive NLGEOM Dispatch
         elem_kernel_indices: Dict[int, List[int]] = {}
+        unknown_types: Dict[str, int] = {}
         for idx, elem in enumerate(elements_list):
             et = elem.elem_type.upper()
             if et in ["DCOUP3D", "DCOUP2D", "MASS", "ROTARYI", "SPRING1", "SPRING2", "GAPUNI"]:
@@ -851,7 +913,7 @@ class DynamicSolver3D:
                     k = 14  # SOLID_SHELL_CR explicit
                 elif et in ["SOLID_SHELL_LINEAR"]:
                     k = 12  # SOLID_SHELL small-strain (not recommended for large deflection)
-                elif et in ["S4R", "S4", "S3R", "S3", "M3D4", "M3D4R", "SHELL", "CPE4", "CPS4", "S8R", "S8", "S9R5", "S9", "STRI3", "STRI65"]:
+                elif et in ["S4R", "S4", "S3R", "S3", "M3D4", "M3D4R", "SHELL", "S8R", "S8", "S9R5", "S9", "STRI3", "STRI65"]:
                     if et in ["S3R", "S3", "STRI3", "C3D4"]:
                         k = 6
                     elif self.nlgeom:
@@ -859,18 +921,11 @@ class DynamicSolver3D:
                     else:
                         k = 12 if len(elem.node_ids) == 4 else (10 if len(elem.node_ids) in (8, 9) else 12)
                 else:
-                    if len(elem.node_ids) == 20:
-                        k = 15
-                    elif len(elem.node_ids) in (8, 9):
-                        k = 3 if is_nearly_incompressible else 1
-                    elif len(elem.node_ids) in (3, 4):
-                        k = 9 if is_nearly_incompressible else 6
-                    elif len(elem.node_ids) == 10:
-                        k = 4 if is_nearly_incompressible else 5
-                    elif len(elem.node_ids) == 6:
-                        k = 7
-                    else:
-                        k = 1
+                    # Unknown type names used to be assigned a kernel by node
+                    # count (C3D8T, C3D27, a typo ... all ran as some C3D8).
+                    unknown_types.setdefault(et, 0)
+                    unknown_types[et] += 1
+                    continue
             else:
                 # Small-strain linear geometry
                 if et in ["C3D8I", "C3D8IH", "C3D8_EAS"]:
@@ -905,7 +960,7 @@ class DynamicSolver3D:
                     k = 13
                 elif et in ["SOLID_SHELL", "C3D8_SS"]:
                     k = 12
-                elif et in ["S4R", "S4", "S3R", "S3", "M3D4", "M3D4R", "SHELL", "CPE4", "CPS4", "S8R", "S8", "S9R5", "S9", "STRI3", "STRI65"]:
+                elif et in ["S4R", "S4", "S3R", "S3", "M3D4", "M3D4R", "SHELL", "S8R", "S8", "S9R5", "S9", "STRI3", "STRI65"]:
                     if et in ["S3R", "S3", "STRI3", "C3D4"]:
                         k = 6
                     elif len(elem.node_ids) in (8, 9):
@@ -913,22 +968,27 @@ class DynamicSolver3D:
                     else:
                         k = 12
                 else:
-                    if len(elem.node_ids) == 20:
-                        k = 15
-                    elif len(elem.node_ids) in (8, 9):
-                        k = 10
-                    elif len(elem.node_ids) in (3, 4):
-                        k = 9 if is_nearly_incompressible else 6
-                    elif len(elem.node_ids) == 10:
-                        k = 4 if is_nearly_incompressible else 5
-                    elif len(elem.node_ids) == 6:
-                        k = 7
-                    else:
-                        k = 10
+                    # Unknown type names used to be assigned a kernel by node
+                    # count (C3D8T, C3D27, a typo ... all ran as some C3D8).
+                    unknown_types.setdefault(et, 0)
+                    unknown_types[et] += 1
+                    continue
             group_key = (k, len(elem.node_ids))
             if group_key not in elem_kernel_indices:
                 elem_kernel_indices[group_key] = []
             elem_kernel_indices[group_key].append(idx)
+
+        if unknown_types:
+            raise NotImplementedError(f"element type(s) not implemented in the 3D solver: {unknown_types}")
+        # Abaqus types that run on a kernel lacking part of their formulation
+        # (hybrid pressure field or reduced integration). Report them so the
+        # substitution is visible instead of implied by the type name.
+        subst = {et: _ELEMENT_SUBSTITUTIONS[et] for et in {e.elem_type.upper() for e in elements_list}
+                 if et in _ELEMENT_SUBSTITUTIONS}
+        new = {et: why for et, why in subst.items() if et not in getattr(self, "element_substitutions", {})}
+        self.element_substitutions = subst
+        for et, why in new.items():
+            warnings.warn(f"element type {et}: {why}")
 
         self.elem_kernel_groups = {
             gk: np.array(indices, dtype=np.int64)
@@ -1060,6 +1120,14 @@ class DynamicSolver3D:
 
     def add_constraint(self, constraint: Any):
         """Add a surface tie or MPC constraint to the solver."""
+        # The assembly loop only knows constraints that assemble themselves.
+        # Model-level *TIE / *RIGID BODY / *MPC records have no assemble():
+        # the 2D loop skipped them (bodies silently untied), the 3D loop
+        # crashed with an AttributeError deep in Newton.
+        if not callable(getattr(constraint, "assemble", None)):
+            raise NotImplementedError(
+                f"constraint {getattr(constraint, 'name', '?')!r} of type {type(constraint).__name__} has no "
+                f"solver implementation in this solver (no assemble())")
         self.constraints.append(constraint)
 
     def set_dirichlet_bc(self, global_dof: int, value: float):
@@ -2452,34 +2520,7 @@ class DynamicSolver3D:
         nid_map = self.mesh.node_id_to_index()
 
         for bc_name, bc in active_bcs.items():
-            region_nodes = []
-            if sys is not None and hasattr(sys, "global_nsets") and bc.region in sys.global_nsets:
-                node_indices = sys.global_nsets[bc.region]
-                inv_nid = {idx: g for g, idx in sys.nid_to_idx.items()}
-                region_nodes = [inv_nid[idx] for idx in node_indices]
-            elif bc.region == "ALL":
-                region_nodes = list(self.mesh.nodes.keys())
-            elif str(bc.region).isdigit():
-                loc_id = int(bc.region)
-                if sys is not None and hasattr(sys, "nid_to_idx") and loc_id in sys.nid_to_idx:
-                    region_nodes = [loc_id]
-                elif sys is not None and hasattr(sys, "node_local_to_global"):
-                    for (inst, l_nid), g_nid in sys.node_local_to_global.items():
-                        if l_nid == loc_id:
-                            region_nodes.append(g_nid)
-                            break
-                elif loc_id in self.mesh.nodes:
-                    region_nodes = [loc_id]
-            elif isinstance(bc.region, str) and "." in bc.region:
-                p_parts = bc.region.split(".")
-                inst_part, loc_id_str = p_parts[0], p_parts[1]
-                if loc_id_str.isdigit() and sys is not None and hasattr(sys, "node_local_to_global"):
-                    g_nid = sys.node_local_to_global.get((inst_part, int(loc_id_str)), None)
-                    if g_nid is not None:
-                        region_nodes = [g_nid]
-
-            if not region_nodes:
-                continue
+            region_nodes = self._resolve_region_nodes(bc.region, sys, step, f"BC {bc_name}")
 
             if hasattr(bc, "evaluate_node"):
                 for gid in region_nodes:
@@ -2505,8 +2546,9 @@ class DynamicSolver3D:
                     elif hasattr(bc.amplitude, "evaluate"):
                         amp_obj = bc.amplitude
 
-                    if amp_obj is not None:
-                        amp_val = amp_obj.evaluate(t, step_time=t, total_time=total_time)
+                    if amp_obj is None:
+                        raise ValueError(f"BC {bc_name}: amplitude {bc.amplitude!r} is not defined")
+                    amp_val = amp_obj.evaluate(t, step_time=t, total_time=total_time)
 
                 is_ramp = False
                 ramp_scale = 1.0
@@ -2530,6 +2572,45 @@ class DynamicSolver3D:
                             else:
                                 u_prescribed = target_val * amp_val
                             self.fix_dof(gid, d, u_prescribed)
+
+    def _static_ramp(self, vec: np.ndarray, load: Any, step: Any, t: float) -> np.ndarray:
+        """Abaqus default amplitude: a load without AMPLITUDE= ramps linearly
+        over a STATIC step and is applied at once in a dynamic one."""
+        if getattr(load, "amplitude", None) is None:
+            proc = str(getattr(step, "procedure", "STATIC")).upper()
+            if proc in ("STATIC", "QUASISTATIC"):
+                period = float(getattr(step, "time_period", 1.0))
+                return vec * min(max(t / max(period, 1e-12), 0.0), 1.0)
+        return vec
+
+    def _explicit_density(self, row: int) -> float:
+        """Density the deck gives element `row` (0.0 when its material has no
+        *DENSITY) -- not self.elem_density, which substitutes a default steel
+        density so dynamics always has mass."""
+        elem = list(self.mesh.elements.values())[row]
+        mat = self.materials.get(getattr(elem, "pid", 0)) if isinstance(getattr(self, "materials", None), dict) else None
+        if isinstance(mat, dict):
+            return float(mat.get("density", mat.get("rho", 0.0)) or 0.0)
+        return float(getattr(mat, "density", 0.0) or 0.0)
+
+    def _resolve_region_nodes(self, region: Any, sys: Optional[Any], step: Any, what: str) -> List[int]:
+        """Global node ids of a BC/load region. Raises if the region does not
+        resolve: a BC or load that silently applied to nothing used to be the
+        failure mode here (dispsolver.model.regions)."""
+        if sys is not None and hasattr(sys, "global_nsets"):
+            from dispsolver.model.regions import resolve_node_region, node_ids_of
+            return node_ids_of(sys, resolve_node_region(sys, region, step, what=what))
+        # model-less use (solver built directly from a mesh): mesh sets only
+        if isinstance(region, str) and region.upper() == "ALL":
+            return list(self.mesh.nodes.keys())
+        ns = getattr(self.mesh, "node_sets", {}) or {}
+        for k, v in ns.items():
+            if str(k).upper() == str(region).upper():
+                return list(v.node_ids)
+        if isinstance(region, (int, np.integer)) or (isinstance(region, str) and region.isdigit()):
+            if int(region) in self.mesh.nodes:
+                return [int(region)]
+        raise ValueError(f"{what}: node region {region!r} does not resolve")
 
     def _resolve_surface_faces(self, region: Any, sys: Optional[Any], model: Any):
         """Element-based surface -> [(global element id, 1-based face id)], or
@@ -2573,116 +2654,52 @@ class DynamicSolver3D:
         node_coords_all = self.mesh.nodes_array()
 
         for load_name, load in active_loads.items():
-            if type(load).__name__ == "BodyForce" or hasattr(load, "b1"):
-                b_vec = load.get_force_vector(t=t, step_time=t, model=getattr(step, "parent_model", None))
-                elem_indices = []
-                if sys is not None and hasattr(sys, "global_elsets") and load.region in sys.global_elsets:
-                    elem_indices = sys.global_elsets[load.region]
-                elif hasattr(self.mesh, "element_sets") and load.region in self.mesh.element_sets:
-                    elem_indices = [int(eid) - 1 for eid in self.mesh.element_sets[load.region].element_ids]
-                elif load.region == "ALL" or load.region is None:
-                    elem_indices = range(len(self.elem_conn_0based)) if hasattr(self, "elem_conn_0based") else []
-
-                node_coords_all = self.mesh.nodes_array()
+            is_grav = hasattr(load, "get_acceleration_vector")
+            if is_grav or type(load).__name__ == "BodyForce" or hasattr(load, "b1"):
+                # *DLOAD BX/BY/BZ (force per unit volume) or GRAV (acceleration,
+                # times the element's density): f_a = integral(N_a dV) * b.
+                # GRAV used to be g/8 per node per element over the WHOLE mesh,
+                # with no density and no volume (keyword audit 2026-10-04).
+                model = getattr(step, "parent_model", None)
+                if is_grav:
+                    vec = np.asarray(load.get_acceleration_vector(t=t, step_time=t, model=model), dtype=np.float64)
+                else:
+                    vec = np.asarray(load.get_force_vector(t=t, step_time=t, model=model), dtype=np.float64)
+                vec = self._static_ramp(vec, load, step, t)
+                if sys is not None and hasattr(sys, "global_elsets"):
+                    from dispsolver.model.regions import resolve_elem_region
+                    elem_indices = resolve_elem_region(sys, load.region, what=f"load {load_name}",
+                                                       allow_blank_all=is_grav)
+                elif load.region in (None, "", "ALL"):
+                    elem_indices = np.arange(len(self.elem_conn_0based))
+                else:
+                    raise ValueError(f"load {load_name}: element region {load.region!r} needs the model system")
                 for e_idx in elem_indices:
-                    if hasattr(self, "elem_conn_0based") and e_idx < len(self.elem_conn_0based):
-                        conn_e = self.elem_conn_0based[e_idx]
-                        valid_conn = conn_e[conn_e >= 0]
-                        nv = len(valid_conn)
-                        if nv >= 4:
-                            e_coords = node_coords_all[valid_conn]
-                            if nv == 4:
-                                mat = e_coords[1:4] - e_coords[0]
-                                vol = float(abs(np.linalg.det(mat)) / 6.0)
-                            elif nv == 6:
-                                tets = [(0, 1, 2, 3), (1, 2, 4, 3), (2, 4, 5, 3)]
-                                vol = 0.0
-                                for i0, i1, i2, i3 in tets:
-                                    mat = e_coords[[i1, i2, i3]] - e_coords[i0]
-                                    vol += abs(np.linalg.det(mat)) / 6.0
-                            elif nv >= 8:
-                                c = e_coords[:8]
-                                center = np.mean(c, axis=0)
-                                faces = [
-                                    (0, 1, 2), (0, 2, 3),
-                                    (4, 5, 6), (4, 6, 7),
-                                    (0, 1, 5), (0, 5, 4),
-                                    (1, 2, 6), (1, 6, 5),
-                                    (2, 3, 7), (2, 7, 6),
-                                    (3, 0, 4), (3, 4, 7)
-                                ]
-                                vol = 0.0
-                                for a, b, d in faces:
-                                    mat = np.array([c[a] - center, c[b] - center, c[d] - center])
-                                    vol += abs(np.linalg.det(mat)) / 6.0
-                            else:
-                                vol = float(np.prod(np.maximum(np.ptp(e_coords, axis=0), 1e-6)))
-
-                            f_node = (b_vec * vol) / nv
-                            for n_idx in valid_conn:
-                                f_ext[3 * n_idx + 0] += f_node[0]
-                                f_ext[3 * n_idx + 1] += f_node[1]
-                                f_ext[3 * n_idx + 2] += f_node[2]
+                    conn_e = self.elem_conn_0based[e_idx]
+                    conn_e = conn_e[conn_e >= 0]
+                    w = _volume_shape_integrals(node_coords_all[conn_e], what=f"load {load_name}")
+                    scale = 1.0
+                    if is_grav:
+                        scale = self._explicit_density(int(e_idx))
+                        if scale <= 0.0:
+                            raise ValueError(f"load {load_name}: *DLOAD GRAV on element row {e_idx} whose "
+                                             f"material has no *DENSITY")
+                    for a, n_idx in enumerate(conn_e):
+                        f_ext[3 * n_idx: 3 * n_idx + 3] += (scale * w[a]) * vec[:3]
 
             elif hasattr(load, "get_force_vector"):
-                f_vec = load.get_force_vector(t=t, step_time=t, model=getattr(step, "parent_model", None))
-                
-                # Abaqus default: in STATIC steps without explicit amplitude, loads ramp linearly from 0 to 1
-                if getattr(load, "amplitude", None) is None:
-                    proc = str(getattr(step, "procedure", "STATIC")).upper()
-                    if proc in ("STATIC", "QUASISTATIC"):
-                        step_period = float(getattr(step, "time_period", 1.0))
-                        scale = min(max(t / max(step_period, 1e-12), 0.0), 1.0)
-                        f_vec = f_vec * scale
-
-                region_nodes = []
-                if sys is not None and hasattr(sys, "global_nsets") and load.region in sys.global_nsets:
-                    node_indices = sys.global_nsets[load.region]
-                    inv_nid = {idx: g for g, idx in sys.nid_to_idx.items()}
-                    region_nodes = [inv_nid[idx] for idx in node_indices]
-                elif hasattr(self.mesh, "node_sets") and load.region in self.mesh.node_sets:
-                    region_nodes = self.mesh.node_sets[load.region].node_ids
-                elif load.region == "ALL":
-                    region_nodes = list(self.mesh.nodes.keys())
-                elif isinstance(load.region, (int, np.integer)) or (isinstance(load.region, str) and load.region.isdigit()):
-                    raw_id = int(load.region)
-                    if raw_id in nid_map:
-                        region_nodes = [raw_id]
-                    elif sys is not None and hasattr(sys, "node_local_to_global"):
-                        matches = [g for (inst, nid), g in sys.node_local_to_global.items() if int(nid) == raw_id]
-                        if matches and matches[0] in nid_map:
-                            region_nodes = [matches[0]]
-
-                if region_nodes:
-                    for gid in region_nodes:
-                        if gid in nid_map:
-                            n_idx = nid_map[gid]
-                            f_ext[3 * n_idx + 0] += f_vec[0]
-                            f_ext[3 * n_idx + 1] += f_vec[1]
-                            f_ext[3 * n_idx + 2] += f_vec[2]
-
-            elif hasattr(load, "get_acceleration_vector"):
-                g_vec = load.get_acceleration_vector(t=t, step_time=t, model=getattr(step, "parent_model", None))
-                if hasattr(self, "elem_conn_0based") and self.elem_conn_0based is not None:
-                    for e in range(self.elem_conn_0based.shape[0]):
-                        conn_e = self.elem_conn_0based[e]
-                        f_node = g_vec / 8.0
-                        for n_idx in conn_e:
-                            f_ext[3 * n_idx + 0] += f_node[0]
-                            f_ext[3 * n_idx + 1] += f_node[1]
-                            f_ext[3 * n_idx + 2] += f_node[2]
-
+                f_vec = np.asarray(load.get_force_vector(t=t, step_time=t, model=getattr(step, "parent_model", None)),
+                                   dtype=np.float64)
+                f_vec = self._static_ramp(f_vec, load, step, t)
+                for gid in self._resolve_region_nodes(load.region, sys, step, f"load {load_name}"):
+                    n_idx = nid_map[gid]
+                    f_ext[3 * n_idx: 3 * n_idx + 3] += f_vec[:3]
             elif hasattr(load, "get_magnitude") or hasattr(load, "magnitude") or type(load).__name__ == "Pressure":
+                # get_magnitude already applies the load's own amplitude (object
+                # or name); multiplying by an amplitude object again here used to
+                # apply it twice. No amplitude: Abaqus STATIC default ramp.
                 p_mag = load.get_magnitude(t=t, step_time=t, model=getattr(step, "parent_model", None)) if hasattr(load, "get_magnitude") else float(getattr(load, "magnitude", 0.0))
-                amp_obj = getattr(load, "amplitude", None)
-                if amp_obj is not None and hasattr(amp_obj, "evaluate"):
-                    p_mag *= float(amp_obj.evaluate(t=t, step_time=t, total_time=total_time))
-                elif amp_obj is None and str(getattr(step, "procedure", "STATIC")).upper() in ("STATIC", "QUASISTATIC"):
-                    # Abaqus default for a STATIC step: ramp from 0 to full over
-                    # the step (same rule as the concentrated-load branch above;
-                    # pressure used to be applied in full from the first increment).
-                    step_period = float(getattr(step, "time_period", 1.0))
-                    p_mag *= min(max(t / max(step_period, 1e-12), 0.0), 1.0)
+                p_mag = float(self._static_ramp(np.array([p_mag]), load, step, t)[0])
 
                 surf_faces = self._resolve_surface_faces(load.region, sys, getattr(step, "parent_model", None))
                 if surf_faces is not None:
@@ -2936,6 +2953,8 @@ class DynamicSolver3D:
         t = 0.0
         step_inc = 0
         total_iters = 0
+        # per-solve() counters, read by execute_inp
+        self.last_solve_stats = {"iterations": 0, "increments": 0, "max_increment_iterations": 0}
 
         if not hasattr(self, "history_u") or self.history_u is None:
             self.history_u = []
@@ -3004,6 +3023,10 @@ class DynamicSolver3D:
             )
 
             total_iters += iters
+            if converged:
+                self.last_solve_stats["increments"] += 1
+                self.last_solve_stats["max_increment_iterations"] = max(self.last_solve_stats["max_increment_iterations"], int(iters))
+            self.last_solve_stats["iterations"] = total_iters
             self.increment_log.append({
                 "inc": inc_no, "att": att_no, "n_sdi": int(getattr(self, "_last_n_sdi", 0)),
                 "n_iter": int(iters), "dt": float(dt), "t_step": float(t_next if converged else t),

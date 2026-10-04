@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, List, Tuple, Sequence, Optional, Any, Union
 import numpy as np
+from dispsolver.model.names import CaseInsensitiveDict
 
 from dispsolver.model.part import Part
 from dispsolver.model.instance import Instance
@@ -88,6 +89,9 @@ class FlattenedSolverSystem:
     node_transforms: Optional[np.ndarray] = None
     has_transforms: bool = False
 
+    # bare part-level set names defined by several instances: kind -> {bare: [qualified...]}
+    ambiguous_names: Dict[str, Dict[str, List[str]]] = field(default_factory=dict)
+
     def to_mesh3d(self):
         """Construct a Mesh3D instance for DynamicSolver3D."""
         from dispsolver.mesh3d import Mesh3D
@@ -146,16 +150,21 @@ class FlattenedSolverSystem:
         return mesh
 
 
+# Element families that carry no *SOLID/*SHELL SECTION material.
+_SECTIONLESS_ELEMENT_PREFIXES = ("R2D", "R3D", "RAX", "MASS", "ROTARYI", "SPRING", "DASHPOT",
+                                 "CONN", "DCOUP", "GAP", "ITS", "IRS", "ISL", "JOINT", "RB")
+
+
 class Assembly:
     """Root Assembly managing Part Instances, interactions, and global flattening."""
 
     def __init__(self, name: str = "Assembly", dim: int = 3):
         self.name = str(name)
         self.dim = int(dim)
-        self.instances: Dict[str, Instance] = {}
-        self.node_sets: Dict[str, NodeSet] = {}
-        self.element_sets: Dict[str, ElementSet] = {}
-        self.surfaces: Dict[str, Surface] = {}
+        self.instances: Dict[str, Instance] = CaseInsensitiveDict()
+        self.node_sets: Dict[str, NodeSet] = CaseInsensitiveDict()
+        self.element_sets: Dict[str, ElementSet] = CaseInsensitiveDict()
+        self.surfaces: Dict[str, Surface] = CaseInsensitiveDict()
         self.ties: List[Dict[str, Any]] = []
         self.rigid_bodies: List[Dict[str, Any]] = []
 
@@ -226,6 +235,10 @@ class Assembly:
         all_elem_types: List[str] = []
         all_elem_pids: List[int] = []
 
+        # Decks get Abaqus' rules (every element needs a section, every section
+        # a defined material); programmatic models keep the default material.
+        from_deck = bool(getattr(model, "from_deck", False))
+        missing_section: Dict[str, List[int]] = {}
         # Section -> PID cache to ensure elements sharing section/material share PID
         section_to_pid: Dict[str, int] = {}
         materials_by_pid: Dict[int, Any] = {}
@@ -299,6 +312,9 @@ class Assembly:
                 all_elem_types.append(mapped_etype)
 
                 sec_name = elem_to_section.get(local_eid, "__DEFAULT__")
+                if (sec_name == "__DEFAULT__" and from_deck
+                        and not etype_upper.startswith(_SECTIONLESS_ELEMENT_PREFIXES)):
+                    missing_section.setdefault(inst_name, []).append(local_eid)
                 if sec_name not in section_to_pid:
                     section_to_pid[sec_name] = current_pid
                     current_pid += 1
@@ -307,6 +323,9 @@ class Assembly:
                     sec_obj = model.sections.get(sec_name)
                     mat_name = sec_obj.material_name if sec_obj else "DEFAULT"
                     mat_obj = model.materials.get(mat_name)
+                    if mat_obj is None and sec_obj is not None and from_deck:
+                        raise ValueError(f"section {sec_name!r} refers to material {mat_name!r}, "
+                                         f"which the deck does not define")
                     
                     if mat_obj is not None:
                         # Convert to Numba DOD props if available
@@ -319,6 +338,13 @@ class Assembly:
                     material_names_by_pid[assigned_pid] = mat_name
 
                 all_elem_pids.append(section_to_pid[sec_name])
+
+        if missing_section:
+            # Abaqus rejects elements without a section property; this used to
+            # give them a made-up default material (E=4000, nu=0.3) silently.
+            desc = "; ".join(f"{inst}: {len(ids)} element(s), e.g. {sorted(ids)[:5]}"
+                             for inst, ids in missing_section.items())
+            raise ValueError(f"elements without a section assignment ({desc})")
 
         # 2. Finalize Global Arrays
         global_coords = np.vstack(all_coords_list) if all_coords_list else np.zeros((0, dim), dtype=np.float64)
@@ -334,29 +360,56 @@ class Assembly:
             elem_conn_0based[e_idx, :n_c] = [nid_to_idx[nid] for nid in conn]
 
         # 3. Resolve Qualified Sets (e.g. "INST_NAME.SET_NAME")
-        global_nsets: Dict[str, np.ndarray] = {}
+        global_nsets: Dict[str, np.ndarray] = CaseInsensitiveDict()
         for inst_name, inst in self.instances.items():
             for sname, nset in inst.part.node_sets.items():
                 qual_name = f"{inst_name}.{sname}"
                 gids = [node_local_to_global[(inst_name, nid)] for nid in nset.node_ids if (inst_name, nid) in node_local_to_global]
                 global_nsets[qual_name] = np.array(sorted([nid_to_idx[g] for g in gids]), dtype=np.int64)
 
-        # Assembly-level node sets
-        for sname, nset in self.node_sets.items():
-            gids = [nid for nid in nset.node_ids if nid in nid_to_idx]
-            global_nsets[sname] = np.array(sorted([nid_to_idx[g] for g in gids]), dtype=np.int64)
+        # Assembly-level node sets: labels are instance-local. Deck sets carry
+        # (instance, label) members; a set without an instance is only
+        # meaningful in a single-instance model (Abaqus requires INSTANCE=).
+        def _asm_members(aset, kind):
+            mem = getattr(aset, "members", None)
+            ids = aset.node_ids if kind == "node" else aset.element_ids
+            if mem is None:
+                mem = [(None, int(i)) for i in ids]
+            out = []
+            for inst, lab in mem:
+                if inst is None:
+                    if len(self.instances) != 1:
+                        raise ValueError(f"assembly {kind} set {aset.name!r}: label {lab} without INSTANCE= "
+                                         f"in a model with {len(self.instances)} instances")
+                    inst = next(iter(self.instances))
+                out.append((inst, lab))
+            return out
 
-        global_elsets: Dict[str, np.ndarray] = {}
+        for sname, nset in self.node_sets.items():
+            idx = []
+            for inst, lab in _asm_members(nset, "node"):
+                g = node_local_to_global.get((inst, lab))
+                if g is None:
+                    raise ValueError(f"assembly node set {sname!r}: node {inst}.{lab} does not exist")
+                idx.append(nid_to_idx[g])
+            global_nsets[sname] = np.array(sorted(set(idx)), dtype=np.int64)
+
+        global_elsets: Dict[str, np.ndarray] = CaseInsensitiveDict()
         for inst_name, inst in self.instances.items():
             for sname, elset in inst.part.element_sets.items():
                 qual_name = f"{inst_name}.{sname}"
                 gids = [elem_local_to_global[(inst_name, eid)] for eid in elset.element_ids if (inst_name, eid) in elem_local_to_global]
                 global_elsets[qual_name] = np.array(sorted([g - 1 for g in gids]), dtype=np.int64)
 
-        # Assembly-level element sets
+        # Assembly-level element sets (instance-local labels, as above)
         for sname, elset in self.element_sets.items():
-            gids = [eid for eid in elset.element_ids if eid <= len(elem_conn_0based)]
-            global_elsets[sname] = np.array(sorted([g - 1 for g in gids]), dtype=np.int64)
+            idx = []
+            for inst, lab in _asm_members(elset, "element"):
+                g = elem_local_to_global.get((inst, lab))
+                if g is None:
+                    raise ValueError(f"assembly element set {sname!r}: element {inst}.{lab} does not exist")
+                idx.append(g - 1)
+            global_elsets[sname] = np.array(sorted(set(idx)), dtype=np.int64)
 
         # Also resolve GeneralSets with associative resolution
         for inst_name, inst in self.instances.items():
@@ -394,18 +447,27 @@ class Assembly:
                 if gids:
                     global_nsets[sname] = np.array(sorted([nid_to_idx[g] for g in gids]), dtype=np.int64)
 
-        # Register bare set names as aliases (e.g. "FIX_X0" -> global_nsets["INST.FIX_X0"])
-        # If bare name doesn't collide or is from the single instance / first occurrence
-        for k, v in list(global_nsets.items()):
-            if "." in k:
-                bare = k.split(".", 1)[1]
-                if bare not in global_nsets:
-                    global_nsets[bare] = v
-        for k, v in list(global_elsets.items()):
-            if "." in k:
-                bare = k.split(".", 1)[1]
-                if bare not in global_elsets:
-                    global_elsets[bare] = v
+        # Register a bare part-level set name ("FIX_X0") as an alias of its
+        # instance-qualified name ("INST.FIX_X0") only when exactly one
+        # instance defines it. Abaqus itself requires the qualified name; the
+        # alias is a convenience for single-instance and non-assembly decks.
+        # It used to take the FIRST instance on a collision, silently putting
+        # a BC meant for one part on another; ambiguous names are now recorded
+        # so the region resolver can refuse them with a useful message.
+        ambiguous_names: Dict[str, Dict[str, List[str]]] = {"nset": {}, "elset": {}}
+        for kind, table in (("nset", global_nsets), ("elset", global_elsets)):
+            by_bare: Dict[str, List[str]] = {}
+            for k in list(table.keys()):
+                if "." in k and k.split(".", 1)[0] in self.instances:
+                    by_bare.setdefault(k.split(".", 1)[1].upper(), []).append(k)
+            for bare_u, quals in by_bare.items():
+                bare = quals[0].split(".", 1)[1]
+                if bare in table:
+                    continue  # an assembly-level set of that name wins
+                if len(quals) == 1:
+                    table[bare] = table[quals[0]]
+                else:
+                    ambiguous_names[kind][bare] = sorted(quals)
 
         # 4. Precompute Global CSR/CSC Sparsity Topology (rows_topo, cols_topo)
         n_elems = len(elem_conn_0based)
@@ -431,6 +493,10 @@ class Assembly:
                     except Exception:
                         ok = False
                     if not ok:
+                        if from_deck:
+                            # a deck constraint that silently vanished used to be
+                            # only a warning here
+                            raise ValueError(f"constraint {cname}: node/dof references do not resolve")
                         import warnings
                         warnings.warn(
                             f"Constraint {cname}: node/dof references unresolvable, "
@@ -464,6 +530,7 @@ class Assembly:
         )
 
         from dispsolver.model.nodal_transform import build_nodal_transforms
+        sys.ambiguous_names = ambiguous_names
         node_transforms, has_transforms = build_nodal_transforms(sys, model)
         sys.node_transforms = node_transforms
         sys.has_transforms = has_transforms

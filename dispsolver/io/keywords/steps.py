@@ -72,6 +72,13 @@ def _handle_boundary(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     target_step = reader.current_step if reader.current_step is not None else reader.model.initial_step
     amp = block.params.get("amplitude", None)
     op = block.params.get("op", "MOD").upper()
+    bc_type = block.params.get("type", "DISPLACEMENT").upper()
+    if bc_type != "DISPLACEMENT":
+        # A VELOCITY/ACCELERATION history used to be imposed as a displacement.
+        raise NotImplementedError(f"*BOUNDARY, TYPE={bc_type} is not implemented (displacement only)")
+    if "user" in block.params or "fixed" in block.params:
+        raise NotImplementedError(f"*BOUNDARY parameters {sorted(k for k in block.params if k in ('user', 'fixed'))} "
+                                  f"are not implemented")
     if op == "NEW":
         for bc_name in list(target_step.boundary_conditions.keys()):
             target_step.deactivate_bc(bc_name)
@@ -84,9 +91,11 @@ def _handle_boundary(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
         while len(parts) > 1 and parts[-1] == "":
             parts.pop()
         if len(parts) < 2:
-            continue
+            raise ValueError(f"*BOUNDARY line {line_clean!r}: missing degree of freedom")
         region = str(parts[0])
         type_str = str(parts[1]).strip().upper()
+        if type_str in ("YASYMM", "XASYMM", "ZASYMM"):
+            raise NotImplementedError(f"*BOUNDARY {type_str} is not implemented")
         if type_str == "ENCASTRE":
             first_dof, last_dof, val = 1, 6, 0.0
         elif type_str == "PINNED":
@@ -103,7 +112,9 @@ def _handle_boundary(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
                 last_dof = int(parts[2]) if len(parts) >= 3 and parts[2] != "" else first_dof
                 val = float(parts[3]) if len(parts) >= 4 and parts[3] != "" else 0.0
             except (ValueError, TypeError):
-                continue
+                # used to `continue`, i.e. drop the BC line silently
+                raise ValueError(f"*BOUNDARY line {line_clean!r}: expected 'region, first dof[, last dof"
+                                 f"[, value]]' or a named type (ENCASTRE, PINNED, XSYMM, ...)")
 
         kwargs = {}
         for dof in range(first_dof, last_dof + 1):
@@ -141,10 +152,16 @@ def _handle_cload(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
             reader.current_step.deactivate_load(load_name)
     rows = _parse_data_rows(block.data_lines, dtype=str)
     for r in rows:
+        if len(r) < 3:
+            raise ValueError(f"*CLOAD line {r!r}: expected 'region, dof, magnitude'")
         if len(r) >= 3:
             region = str(r[0])
             dof = int(r[1])
             mag = float(r[2])
+            if dof not in (1, 2, 3):
+                # moments etc. used to be accepted and then dropped
+                raise NotImplementedError(f"*CLOAD {region}: degree of freedom {dof} is not implemented "
+                                          f"(continuum nodes carry dofs 1-3)")
             load_name = f"CLOAD_{region}_DOF{dof}"
             cf_kwargs = {}
             if dof == 1:

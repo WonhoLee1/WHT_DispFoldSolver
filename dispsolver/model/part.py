@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, List, Tuple, Sequence, Optional, Union, Callable
 import numpy as np
+from dispsolver.model.names import CaseInsensitiveDict
 
 from dispsolver.model.set import NodeSet, ElementSet, Surface, ElementFace, SetScope, GeneralSet
 
@@ -27,10 +28,10 @@ class Part:
         # elements: local_eid -> (element_type_str, list_of_local_node_ids)
         self.elements: Dict[int, Tuple[str, List[int]]] = {}
         # sets & surfaces
-        self.sets: Dict[str, GeneralSet] = {}
-        self.node_sets: Dict[str, NodeSet] = {}
-        self.element_sets: Dict[str, ElementSet] = {}
-        self.surfaces: Dict[str, Surface] = {}
+        self.sets: Dict[str, GeneralSet] = CaseInsensitiveDict()
+        self.node_sets: Dict[str, NodeSet] = CaseInsensitiveDict()
+        self.element_sets: Dict[str, ElementSet] = CaseInsensitiveDict()
+        self.surfaces: Dict[str, Surface] = CaseInsensitiveDict()
         # section assignments
         self.section_assignments: List[SectionAssignment] = []
 

@@ -127,19 +127,26 @@ def _handle_nset(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
                         if tok in reader.model.root_assembly.node_sets:
                             nids.extend(reader.model.root_assembly.node_sets[tok].node_ids)
                             resolved = True
-                        elif tok in reader.model.root_assembly.sets:
-                            nids.extend(reader.model.root_assembly.sets[tok].node_ids)
-                            resolved = True
+                    if not resolved:
+                        # used to be dropped from the set without a word
+                        raise KeyError(f"*NSET {name}: member {tok!r} is neither a "
+                                       f"node number nor a defined node set")
 
     inst_name = block.params.get("instance", None)
     if reader.context in [KeywordContext.ASSEMBLY]:
-        if inst_name:
-            if inst_name in reader.model.root_assembly.instances:
-                inst = reader.model.root_assembly.instances[inst_name]
-                inst.part.create_set(name, nodes=nids)
-            reader.model.root_assembly.Set(f"{inst_name}.{name}", nodes=nids)
-        else:
-            reader.model.root_assembly.Set(name, nodes=nids)
+        # An assembly set lists INSTANCE-local labels. It is stored on the
+        # assembly with its instance and mapped per instance at flattening.
+        # It used to be written into the instance's PART as well, which put
+        # it on every other instance of that part too.
+        if inst_name and inst_name not in reader.model.root_assembly.instances:
+            raise KeyError(f"assembly set {name}: instance {inst_name!r} is not defined")
+        asm = reader.model.root_assembly
+        inst_key = asm.instances[inst_name].name if inst_name else None
+        prev = asm.node_sets.get(name)
+        members = list(getattr(prev, "members", [])) if prev is not None else []
+        members += [(inst_key, int(i)) for i in nids]
+        aset = asm.Set(name, nodes=[i for _, i in members])
+        aset.members = members
     elif reader.context == KeywordContext.STEP and reader.current_step is not None:
         cur = reader.current_step.step_nsets.setdefault(name, [])
         for nid in nids:
@@ -192,19 +199,26 @@ def _handle_elset(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
                         if tok in reader.model.root_assembly.element_sets:
                             eids.extend(reader.model.root_assembly.element_sets[tok].element_ids)
                             resolved = True
-                        elif tok in reader.model.root_assembly.sets:
-                            eids.extend(reader.model.root_assembly.sets[tok].element_ids)
-                            resolved = True
+                    if not resolved:
+                        # used to be dropped from the set without a word
+                        raise KeyError(f"*ELSET {name}: member {tok!r} is neither a "
+                                       f"element number nor a defined element set")
 
     inst_name = block.params.get("instance", None)
     if reader.context in [KeywordContext.ASSEMBLY]:
-        if inst_name:
-            if inst_name in reader.model.root_assembly.instances:
-                inst = reader.model.root_assembly.instances[inst_name]
-                inst.part.create_set(name, elements=eids)
-            reader.model.root_assembly.Set(f"{inst_name}.{name}", elements=eids)
-        else:
-            reader.model.root_assembly.Set(name, elements=eids)
+        # An assembly set lists INSTANCE-local labels. It is stored on the
+        # assembly with its instance and mapped per instance at flattening.
+        # It used to be written into the instance's PART as well, which put
+        # it on every other instance of that part too.
+        if inst_name and inst_name not in reader.model.root_assembly.instances:
+            raise KeyError(f"assembly set {name}: instance {inst_name!r} is not defined")
+        asm = reader.model.root_assembly
+        inst_key = asm.instances[inst_name].name if inst_name else None
+        prev = asm.element_sets.get(name)
+        members = list(getattr(prev, "members", [])) if prev is not None else []
+        members += [(inst_key, int(i)) for i in eids]
+        aset = asm.Set(name, elements=[i for _, i in members])
+        aset.members = members
     elif reader.context == KeywordContext.STEP and reader.current_step is not None:
         cur = reader.current_step.step_elsets.setdefault(name, [])
         for eid in eids:

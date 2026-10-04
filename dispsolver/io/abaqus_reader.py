@@ -31,12 +31,47 @@ from dispsolver.model.step import Step, PredefinedField
 from dispsolver.model.set import GeneralSet, SetScope
 
 
+# Keywords that only request printed/file output, restart files or solver
+# diagnostics: skipping them cannot change the computed solution.
+OUTPUT_ONLY_KEYWORDS = frozenset({
+    "EL PRINT", "NODE PRINT", "PREPRINT", "EL FILE", "NODE FILE", "MODAL OUTPUT", "MODAL FILE",
+    "RESTART", "ENERGY OUTPUT", "NODE OUT", "ENERGY PRINT", "FILE OUTPUT", "ENERGY FILE", "PRINT",
+    "DIAGNOSTICS", "CONTACT PRINT", "CONTACT FILE", "CONTACT OUTPUT", "SECTION PRINT", "FILE FORMAT",
+    "MONITOR", "MODAL PRINT", "SECTION FILE", "INTEGRATED OUTPUT", "INCREMENTATION OUTPUT",
+    "SURFACE OUTPUT", "RADIATION OUTPUT", "RADIATION PRINT", "RADIATION FILE", "ELEMENT MATRIX OUTPUT",
+    "NODAL ENERGY RATE", "PRINT CONTROLS", "OUTPUT CONTROLS",
+})
+# Solution-technique controls: they change how the answer is reached
+# (tolerances, line search, cutback policy), not the model being solved.
+SOLUTION_CONTROL_KEYWORDS = frozenset({"CONTROLS", "SOLVER CONTROLS"})
+
+
 class AbaqusInputReader:
     """Production reader converting Abaqus keyword blocks into a complete dispsolver.model.Model."""
+
+    def physics_gaps(self) -> List[str]:
+        """Everything in the deck this reader could not turn into model data
+        that may change the solution: unsupported keywords other than pure
+        output/diagnostic ones, and keyword handlers that raised. A run that
+        ignores these solves a different model than the deck describes."""
+        gaps = [f"*{kw} (unsupported)" for kw in self.unsupported_keywords
+                if kw.split(" table rejected")[0] not in OUTPUT_ONLY_KEYWORDS | SOLUTION_CONTROL_KEYWORDS]
+        gaps += [w for w in self.warnings if w.startswith("Error processing keyword")]
+        return gaps
+
+    def require_complete(self) -> None:
+        """Raise if physics_gaps() is not empty (strict execution)."""
+        gaps = self.physics_gaps()
+        if gaps:
+            raise UnsupportedDeckError(
+                "deck uses features this solver does not implement or could not read; refusing to "
+                "solve a different model than the deck describes:\n  " + "\n  ".join(gaps[:30])
+                + ("" if len(gaps) <= 30 else f"\n  ... and {len(gaps) - 30} more"))
 
     def __init__(self, dim: int = 3, model_name: str = "AbaqusModel", strict: bool = True):
         self.dim = int(dim)
         self.model = Model(name=model_name, dim=self.dim)
+        self.model.from_deck = True
         self.registry = GLOBAL_KEYWORD_REGISTRY
         self.strict = bool(strict)
 
@@ -130,6 +165,34 @@ class AbaqusInputReader:
 # ─────────────────────────────────────────────────────────────────────────────
 # HIGH-LEVEL API FUNCTIONS
 # ─────────────────────────────────────────────────────────────────────────────
+
+_ELEM_TYPE_RE = None
+
+
+def detect_dim(source: Union[str, os.PathLike], default: int = 3) -> int:
+    """Spatial dimension from the deck's *ELEMENT TYPE= names: 2 for plane /
+    axisymmetric continuum (CPE*, CPS*, CAX*, CGAX*, CGPE*, R2D*, RAX*), 3 for
+    everything else that is recognisably 3D. A deck with no elements returns
+    `default`. Mixed 2D and 3D element types are refused."""
+    global _ELEM_TYPE_RE
+    import re as _re
+    if _ELEM_TYPE_RE is None:
+        _ELEM_TYPE_RE = _re.compile(r"^\*ELEMENT\b[^\n]*?TYPE\s*=\s*([A-Z0-9_]+)", _re.I | _re.M)
+    src = str(source)
+    text = open(src, encoding="utf-8", errors="replace").read() if os.path.exists(src) else src
+    types = {t.upper() for t in _ELEM_TYPE_RE.findall(text)}
+    two = {t for t in types if t.startswith(("CPE", "CPS", "CAX", "CGAX", "CGPE", "R2D", "RAX"))}
+    three = types - two
+    if two and three:
+        raise ValueError(f"deck mixes 2D element types {sorted(two)} with 3D/other types {sorted(three)}")
+    if two:
+        return 2
+    return 3 if three else default
+
+
+class UnsupportedDeckError(ValueError):
+    """The deck contains physics this solver cannot represent (strict run)."""
+
 
 def _parse_source(source: Union[str, os.PathLike], dim: int = 3,
                  model_name: str = "AbaqusModel", strict: bool = True) -> Tuple[AbaqusInputReader, Model]:
@@ -226,7 +289,7 @@ def execute_inp_smoke(
 
 def execute_inp(
     source: Union[str, os.PathLike],
-    dim: int = 3,
+    dim: Optional[int] = None,
     step_name: Optional[str] = None,
     dt: Optional[float] = None,
     verbose: bool = True,
@@ -262,7 +325,14 @@ def execute_inp(
     """
     from dispsolver.solver.step_executor import MultiStepExecutor
 
+    # The dimension comes from the deck unless the caller insists. It used to
+    # default to 3, which pushed plane-strain decks into the 3D solver (a
+    # 4-node CPE4 landed on the solid-shell kernel and crashed in numba).
+    if dim is None:
+        dim = detect_dim(source)
     reader, model = _parse_source(source, dim=dim, strict=strict)
+    if strict:
+        reader.require_complete()
 
     # Determine steps to run
     if step_name is None:
@@ -270,13 +340,13 @@ def execute_inp(
     else:
         targets = [step_name]
 
-    if len(targets) <= 1:
-        single = model.steps.get(targets[0]) if targets else None
-        if single is not None and (single.get_active_loads() or single.get_active_interactions()):
-            targets = [single.name]
-        else:
-            return _execute_single_step(model, targets[0] if targets else None,
-                                        dt, verbose, dim, reader=reader)
+    if not targets:
+        return _execute_single_step(model, None, dt, verbose, dim, reader=reader)
+    # Every step runs through the step engine, so its BCs ramp over the step
+    # with its amplitudes and increments. Steps without loads used to take a
+    # one-shot solve_step "smoke" shortcut instead: the whole prescribed
+    # displacement in a single increment, ignoring *STATIC incrementation --
+    # a different (path-dependent) answer for plasticity and contact.
 
     if dt is not None:
         for sname in targets:
@@ -286,10 +356,15 @@ def execute_inp(
     executor = MultiStepExecutor(model, verbose=verbose, dim=dim)
     executor.initialize_solver(notices=reader.warnings)
     ok_all = True
+    n_iter, n_inc, max_inc_iter = 0, 0, 0
     for sname in targets:
         ok = executor.execute_step(model.steps[sname],
                                    from_parent_checkpoint=True)
         ok_all = ok_all and ok
+        st = getattr(executor.solver, "last_solve_stats", None) or {}
+        n_iter += int(st.get("iterations", 0))
+        n_inc += int(st.get("increments", 0))
+        max_inc_iter = max(max_inc_iter, int(st.get("max_increment_iterations", 0)))
 
     solver, sys = executor.solver, executor.sys
     if verbose:
@@ -300,7 +375,9 @@ def execute_inp(
         "solver": solver,
         "system": sys,
         "converged": ok_all,
-        "iterations": None,
+        "iterations": n_iter,               # total Newton iterations, all steps
+        "increments": n_inc,                # converged increments, all steps
+        "max_increment_iterations": max_inc_iter,
         "u": solver.u.copy() if hasattr(solver, "u") and solver is not None else None,
         "results_by_step": executor.results_by_step,
         "steps_executed": targets,

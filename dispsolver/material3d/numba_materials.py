@@ -2051,7 +2051,10 @@ def material_dispatch_2d(
     Supports Linear Elasticity, J2 Plasticity (Linear/Nonlinear/Tabular), etc.
     """
     # Fast path for linear elastic
-    if mat_type == 1 or mat_type == 0:  # MAT_LINEAR_ELASTIC or default
+    # Only id 0 is linear elastic. Id 1 is MAT_HYPERELASTIC_NEOHOOKEAN in the
+    # shared table; it used to be caught here too, so every 2D Neo-Hooke
+    # material silently ran as linear elastic (keyword audit 2026-10-04).
+    if mat_type == MAT_LINEAR_ELASTIC:
         E = props[0]
         nu = props[1]
         c_fac = E / ((1.0 + nu) * (1.0 - 2.0 * nu))

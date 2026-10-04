@@ -73,10 +73,19 @@ def print_preflight_summary(reader: AbaqusInputReader, model: Any, dim: int, out
     print(f" Contact Pairs     : {num_cp}")
     print(f" Nodal Transforms  : {list(model.transforms.keys())}")
 
-    if reader.unsupported_keywords:
+    gaps = reader.physics_gaps()
+    if reader.unsupported_keywords or reader.warnings:
         print(f" Warnings          : {len(reader.warnings)} warning(s)")
         print(f" Unsupported KWs   : {list(reader.unsupported_keywords)}")
-    else:
+    if gaps:
+        # Not "100% handled": these change the model being solved.
+        print(" " + "!" * 98)
+        print(f" MODEL GAPS        : {len(gaps)} item(s) NOT represented in this solve "
+              f"(rerun with --strict to refuse):")
+        for g in gaps[:20]:
+            print(f"   - {g}")
+        print(" " + "!" * 98)
+    elif not reader.warnings:
         print(" Compatibility     : 100% Keywords Handled")
     print("-" * 100)
 
@@ -141,6 +150,8 @@ def run_inp_file(
 
     if verbose:
         print_preflight_summary(reader, model, actual_dim, out_dir)
+    if strict:
+        reader.require_complete()
 
     # 3. Determine steps to run
     if step_name is None:
@@ -341,6 +352,8 @@ def main():
                         help="Suppress progress output")
     parser.add_argument("--print-json", action="store_true",
                         help="Print JSON summary of the run to stdout")
+    parser.add_argument("--strict", action="store_true",
+                        help="Refuse to solve a deck with unsupported/unreadable physics keywords")
 
     args = parser.parse_args()
     try:
@@ -352,6 +365,7 @@ def main():
             out_dir=args.out_dir,
             step_name=args.step,
             verbose=not args.quiet,
+            strict=args.strict,
         )
         # If user requested JSON output on stdout, emit the summary dict as JSON
         if getattr(args, "print_json", False):

@@ -4,6 +4,8 @@ from __future__ import annotations
 from typing import Dict, Optional, Any, Union
 import warnings
 import numpy as np
+from dispsolver.model.regions import resolve_node_region, resolve_elem_region
+from dispsolver.model.names import CaseInsensitiveDict
 
 from dispsolver.model.part import Part
 from dispsolver.model.material import Material
@@ -57,19 +59,19 @@ class Model:
     def __init__(self, name: str = "Model-1", dim: int = 3):
         self.name = str(name)
         self.dim = int(dim)
-        self.parts: Dict[str, Part] = {}
-        self.materials: Dict[str, Material] = {}
-        self.sections: Dict[str, Section] = {}
-        self.section_controls: Dict[str, SectionControls] = {}
-        self.orientations: Dict[str, MaterialOrientation] = {}
-        self.transforms: Dict[str, Dict[str, Any]] = {}
-        self.amplitudes: Dict[str, Amplitude] = {}
-        self.constraints: Dict[str, Constraint] = {}
-        self.contact_properties: Dict[str, ContactProperty] = {}
-        self.contact_controls: Dict[str, ContactControl] = {}
-        self.contact_stabilizations: Dict[str, ContactStabilization] = {}
-        self.analytical_rigid_surfaces: Dict[str, Any] = {}
-        self.interactions: Dict[str, Any] = {}
+        self.parts: Dict[str, Part] = CaseInsensitiveDict()
+        self.materials: Dict[str, Material] = CaseInsensitiveDict()
+        self.sections: Dict[str, Section] = CaseInsensitiveDict()
+        self.section_controls: Dict[str, SectionControls] = CaseInsensitiveDict()
+        self.orientations: Dict[str, MaterialOrientation] = CaseInsensitiveDict()
+        self.transforms: Dict[str, Dict[str, Any]] = CaseInsensitiveDict()
+        self.amplitudes: Dict[str, Amplitude] = CaseInsensitiveDict()
+        self.constraints: Dict[str, Constraint] = CaseInsensitiveDict()
+        self.contact_properties: Dict[str, ContactProperty] = CaseInsensitiveDict()
+        self.contact_controls: Dict[str, ContactControl] = CaseInsensitiveDict()
+        self.contact_stabilizations: Dict[str, ContactStabilization] = CaseInsensitiveDict()
+        self.analytical_rigid_surfaces: Dict[str, Any] = CaseInsensitiveDict()
+        self.interactions: Dict[str, Any] = CaseInsensitiveDict()
 
         # Abaqus API parity aliases
         self.interactionProperties = self.contact_properties
@@ -899,6 +901,7 @@ class Model:
 
     def create_solver(self, step_name: Optional[str] = None, notices: Optional[list] = None, dim: Optional[int] = None):
         """Create and configure a production DynamicSolver instance, auto-detecting 2D vs 3D."""
+        self._refuse_unwired_temperature()
         if dim == 3:
             return self.create_solver3d(step_name=step_name, notices=notices)
         elif dim == 2:
@@ -928,73 +931,30 @@ class Model:
         if notices is not None:
             notices.append(msg)
 
-    def _resolve_step_overlay_nset(self, sys, st, region, notices=None):
-        """Resolve a step-overlay NSET name to solver node indices.
+    def _get_nset_indices(self, sys, name: str) -> np.ndarray:
+        """Node indices of a region (dispsolver.model.regions; raises if unresolved)."""
+        return resolve_node_region(sys, name)
 
-        Same value convention as sys.global_nsets. Only unambiguous
-        single-instance models resolve; multi-instance decks need
-        instance-qualified names (P2). Returns None when not resolvable.
-        """
-        ids = st.step_nsets.get(region)
-        if not ids:
-            return None
-        inst_names = {k[0] for k in sys.node_local_to_global.keys()}
-        if len(inst_names) != 1:
-            self._note(notices, f"Step-overlay NSET {region}: multi-instance resolve needs qualified names")
-            return None
-        inst = next(iter(inst_names))
-        gids = []
-        for nid in ids:
-            g = sys.node_local_to_global.get((inst, nid))
-            if g is None or g not in sys.nid_to_idx:
-                self._note(notices, f"Step-overlay NSET {region}: node {nid} not in instance {inst}")
-                return None
-            gids.append(sys.nid_to_idx[g])
-        return sorted(gids)
+    def _get_elset_indices(self, sys, name: str) -> np.ndarray:
+        """Element indices of a region (dispsolver.model.regions; raises if unresolved)."""
+        return resolve_elem_region(sys, name)
 
-    def _get_nset_indices(self, sys, name: str) -> Optional[np.ndarray]:
-        """Resolve a node set name (exact, case-insensitive, or unqualified tail) or direct node ID to node indices."""
-        if not name:
-            return None
-        if name in sys.global_nsets:
-            return sys.global_nsets[name]
-        name_upper = name.upper()
-        for k, v in sys.global_nsets.items():
-            if k.upper() == name_upper:
-                return v
-        for k, v in sys.global_nsets.items():
-            if k.split(".")[-1].upper() == name_upper:
-                return v
-        if str(name).isdigit():
-            nid = int(name)
-            gids = [gid for (pname, local_nid), gid in sys.node_local_to_global.items() if local_nid == nid]
-            if not gids and nid in sys.nid_to_idx:
-                gids = [nid]
-            if gids:
-                return np.array([sys.nid_to_idx[g] for g in gids if g in sys.nid_to_idx], dtype=np.int64)
-        return None
-
-    def _get_elset_indices(self, sys, name: str) -> Optional[np.ndarray]:
-        """Resolve an element set name (exact, case-insensitive, or unqualified tail) to element indices."""
-        if not name:
-            return None
-        if name in sys.global_elsets:
-            return sys.global_elsets[name]
-        name_upper = name.upper()
-        for k, v in sys.global_elsets.items():
-            if k.upper() == name_upper:
-                return v
-        for k, v in sys.global_elsets.items():
-            if k.split(".")[-1].upper() == name_upper:
-                return v
-        if str(name).isdigit():
-            eid = int(name)
-            gids = [gid for (pname, local_eid), gid in getattr(sys, "elem_local_to_global", {}).items() if local_eid == eid]
-            if not gids and eid in sys.global_elsets:
-                return sys.global_elsets[eid]
-            if gids:
-                return np.array([g - 1 for g in gids], dtype=np.int64)
-        return None
+    def _refuse_unwired_temperature(self) -> None:
+        """*TEMPERATURE / *INITIAL CONDITIONS, TYPE=TEMPERATURE reach the model
+        as predefined fields, but nothing passes them to the solver
+        (DynamicSolver3D.set_temperature exists and is never called from a
+        deck). With an *EXPANSION material that silently drops the thermal
+        strain, so refuse it until the wiring exists (keyword audit 2026-10-04)."""
+        temps = [pf for st in self.steps.values() for pf in getattr(st, "predefined_fields", {}).values()
+                 if str(getattr(pf, "field_type", "")).upper() == "TEMPERATURE"]
+        if not temps:
+            return
+        expanding = [n for n, m in self.materials.items() if getattr(m, "expansion", None)]
+        if expanding:
+            raise NotImplementedError(
+                f"temperature field(s) {[pf.name for pf in temps][:4]} with *EXPANSION in material(s) "
+                f"{expanding[:4]}: deck temperatures are not passed to the solver, so the thermal strain "
+                f"would be silently dropped")
 
     def create_solver3d(self, step_name: Optional[str] = None, notices: Optional[list] = None):
         """Create and configure a production DynamicSolver3D instance from this Model."""
@@ -1019,18 +979,9 @@ class Model:
             st = self.steps[step_name]
             solver.nlgeom = bool(getattr(st, "nlgeom", True))
             for entry in st.boundary_conditions.values():
-                if entry.is_active:
+                if entry.is_active():
                     bc = entry.entity
-                    nset_idx = self._get_nset_indices(sys, bc.region)
-                    if nset_idx is not None:
-                        global_node_indices = nset_idx
-                    elif bc.region in st.step_nsets:
-                        global_node_indices = self._resolve_step_overlay_nset(sys, st, bc.region, notices)
-                        if global_node_indices is None:
-                            continue
-                    else:
-                        self._note(notices, f"BC {bc.name}: region {bc.region} resolved to zero nodes")
-                        continue
+                    global_node_indices = resolve_node_region(sys, bc.region, st, what=f"BC {bc.name}")
                     inv_nid = {idx: g for g, idx in sys.nid_to_idx.items()}
                     for node_idx in global_node_indices:
                         gid = inv_nid[node_idx]
@@ -1081,8 +1032,6 @@ class Model:
             for pf in sys.predefined_fields:
                 if pf.field_type.upper() == "STRESS":
                     el_indices = self._get_elset_indices(sys, pf.region)
-                    if el_indices is None:
-                        el_indices = []
                     for idx in el_indices:
                         gid = idx + 1
                         states = solver.element_states.get(gid)
@@ -1134,18 +1083,9 @@ class Model:
             st = self.steps[step_name]
             solver.nlgeom = bool(getattr(st, "nlgeom", True))
             for entry in st.boundary_conditions.values():
-                if entry.is_active:
+                if entry.is_active():
                     bc = entry.entity
-                    nset_idx = self._get_nset_indices(sys, bc.region)
-                    if nset_idx is not None:
-                        global_node_indices = nset_idx
-                    elif bc.region in st.step_nsets:
-                        global_node_indices = self._resolve_step_overlay_nset(sys, st, bc.region, notices)
-                        if global_node_indices is None:
-                            continue
-                    else:
-                        self._note(notices, f"BC {bc.name}: region {bc.region} resolved to zero nodes")
-                        continue
+                    global_node_indices = resolve_node_region(sys, bc.region, st, what=f"BC {bc.name}")
                     inv_nid = {idx: g for g, idx in sys.nid_to_idx.items()}
                     for node_idx in global_node_indices:
                             gid = inv_nid[node_idx]
@@ -1187,8 +1127,6 @@ class Model:
             for pf in sys.predefined_fields:
                 if pf.field_type.upper() == "STRESS":
                     el_indices = self._get_elset_indices(sys, pf.region)
-                    if el_indices is None:
-                        el_indices = []
                     for idx in el_indices:
                         gid = idx + 1
                         states = solver.element_states.get(gid)

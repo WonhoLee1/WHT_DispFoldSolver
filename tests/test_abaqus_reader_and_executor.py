@@ -149,7 +149,10 @@ PULL_X1, 1, 1, 0.1
 """
     res = execute_inp(inp_text, dim=3, verbose=False)
     assert res["converged"] is True
-    assert res["iterations"] <= 3
+    # linear elastic, NLGEOM=NO: every increment of the *STATIC ramp converges
+    # in a couple of iterations (the deck is now solved incrementally like
+    # Abaqus does, not in a single one-shot increment)
+    assert res["max_increment_iterations"] <= 3
 
     # Under E=1000, nu=0, L=1.0, prescribed ux=0.1 at x=1,
     # axial stress = E * eps = 1000 * 0.1 = 100 MPa
@@ -190,7 +193,10 @@ RIGHT_EDGE, 1, 1, 0.05
 """
     res = execute_inp(inp_text, dim=2, verbose=False)
     assert res["converged"] is True
-    assert res["iterations"] <= 3
+    # linear elastic, NLGEOM=NO: every increment of the *STATIC ramp converges
+    # in a couple of iterations (the deck is now solved incrementally like
+    # Abaqus does, not in a single one-shot increment)
+    assert res["max_increment_iterations"] <= 3
     u = res["u"]
     assert u is not None
     # Maximum X displacement should be exactly 0.05

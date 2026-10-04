@@ -197,7 +197,7 @@ class DynamicSolver2D:
                         H_val = float(mat_obj.get("hardening_modulus", mat_obj.get("H", 0.0)))
                         self.elem_props[e, :4] = [E_val, nu_val, sy_val, H_val]
                     else:
-                        self.elem_mat_types[e] = 1  # MAT_LINEAR_ELASTIC
+                        self.elem_mat_types[e] = 0  # MAT_LINEAR_ELASTIC (id 1 is Neo-Hookean)
                         self.elem_props[e, 0] = E_val
                         self.elem_props[e, 1] = nu_val
                 elif hasattr(mat_obj, "props"):
@@ -206,11 +206,11 @@ class DynamicSolver2D:
                     if hasattr(mat_obj, "density"):
                         rho_val = float(getattr(mat_obj, "density"))
                 else:
-                    self.elem_mat_types[e] = 1
+                    self.elem_mat_types[e] = 0
                     self.elem_props[e, 0] = 4000.0
                     self.elem_props[e, 1] = 0.3
             else:
-                self.elem_mat_types[e] = 1
+                self.elem_mat_types[e] = 0
                 self.elem_props[e, 0] = 4000.0
                 self.elem_props[e, 1] = 0.3
 
@@ -235,6 +235,15 @@ class DynamicSolver2D:
                 elif hasattr(mat_obj, "props"):
                     nu = float(mat_obj.props[1]) if len(mat_obj.props) > 1 else 0.3
             is_nearly_incompressible = (nu > 0.48)
+
+            if et.startswith("CPS"):
+                # No 2D kernel implements plane stress (sigma_33 = 0); CPS*
+                # used to run as plane strain. The two coincide only for a
+                # linear elastic material with nu = 0, which is allowed.
+                if not (int(self.elem_mat_types[idx]) == 0 and abs(float(self.elem_props[idx, 1])) < 1e-15):
+                    raise NotImplementedError(
+                        f"element type {et}: plane stress is not implemented in the 2D solver (it would run "
+                        f"as plane strain); only linear elastic nu=0 material is equivalent")
 
             if self.nlgeom:
                 # NLGEOM=True: Automatically promote core elements to Large-Deformation / Corotational
@@ -267,12 +276,8 @@ class DynamicSolver2D:
                 elif et in ["CAX8R", "CAX8RH"]:
                     k = 16
                 else:
-                    n_n = len(elem.node_ids)
-                    if n_n == 2: k = 18
-                    elif n_n == 3: k = 6
-                    elif n_n == 6: k = 7
-                    elif n_n in (8, 9): k = 9
-                    else: k = 5 if not is_nearly_incompressible else 4
+                    # unknown names used to get a kernel by node count
+                    raise NotImplementedError(f"element type {et} is not implemented in the 2D solver")
             else:
                 # Small-strain linear geometry
                 if et in ["CAX4", "CAX4I", "CAX4H", "CAX4IH", "CAX4R", "CAX4RH"]:
@@ -312,12 +317,8 @@ class DynamicSolver2D:
                 elif et in ["CPE6M_CR"]:
                     k = 14
                 else:
-                    n_n = len(elem.node_ids)
-                    if n_n == 2: k = 18
-                    elif n_n == 3: k = 6
-                    elif n_n == 6: k = 7
-                    elif n_n in (8, 9): k = 9
-                    else: k = 0
+                    # unknown names used to get a kernel by node count
+                    raise NotImplementedError(f"element type {et} is not implemented in the 2D solver")
 
             group_key = (k, len(elem.node_ids))
             if group_key not in elem_kernel_indices:
@@ -397,6 +398,14 @@ class DynamicSolver2D:
 
     def add_constraint(self, constraint: Any):
         """Add a constraint or surface tie object to the 2D solver."""
+        # The assembly loop only knows constraints that assemble themselves.
+        # Model-level *TIE / *RIGID BODY / *MPC records have no assemble():
+        # the 2D loop skipped them (bodies silently untied), the 3D loop
+        # crashed with an AttributeError deep in Newton.
+        if not callable(getattr(constraint, "assemble", None)):
+            raise NotImplementedError(
+                f"constraint {getattr(constraint, 'name', '?')!r} of type {type(constraint).__name__} has no "
+                f"solver implementation in this solver (no assemble())")
         self.constraints.append(constraint)
 
     def set_dirichlet_bc(self, global_dof: int, value: float):
@@ -1011,40 +1020,7 @@ class DynamicSolver2D:
         nid_map = self.mesh.node_id_to_index()
 
         for bc_name, bc in active_bcs.items():
-            region_nodes = []
-            if sys is not None and hasattr(sys, "global_nsets") and bc.region in sys.global_nsets:
-                node_indices = sys.global_nsets[bc.region]
-                inv_nid = {idx: g for g, idx in sys.nid_to_idx.items()}
-                region_nodes = [inv_nid[idx] for idx in node_indices]
-            elif hasattr(self.mesh, "node_sets") and bc.region in self.mesh.node_sets:
-                region_nodes = self.mesh.node_sets[bc.region].node_ids
-            elif hasattr(self.mesh, "sets") and bc.region in self.mesh.sets:
-                region_nodes = self.mesh.sets[bc.region].node_ids
-            elif bc.region == "ALL":
-                region_nodes = list(self.mesh.nodes.keys())
-            elif str(bc.region).isdigit():
-                loc_id = int(bc.region)
-                if sys is not None and hasattr(sys, "nid_to_idx") and loc_id in sys.nid_to_idx:
-                    region_nodes = [loc_id]
-                elif sys is not None and hasattr(sys, "node_local_to_global"):
-                    for (inst, l_nid), g_nid in sys.node_local_to_global.items():
-                        if l_nid == loc_id:
-                            region_nodes.append(g_nid)
-                            break
-                elif loc_id in self.mesh.nodes:
-                    region_nodes = [loc_id]
-            elif isinstance(bc.region, str) and "." in bc.region:
-                p_parts = bc.region.split(".")
-                inst_part, loc_id_str = p_parts[0], p_parts[1]
-                if loc_id_str.isdigit() and sys is not None and hasattr(sys, "node_local_to_global"):
-                    g_nid = sys.node_local_to_global.get((inst_part, int(loc_id_str)), None)
-                    if g_nid is not None:
-                        region_nodes = [g_nid]
-            elif bc.region in self.mesh.nodes:
-                region_nodes = [bc.region]
-
-            if not region_nodes:
-                continue
+            region_nodes = self._resolve_region_nodes(bc.region, sys, step, f"BC {bc_name}")
 
             if hasattr(bc, "evaluate_node"):
                 for gid in region_nodes:
@@ -1064,8 +1040,9 @@ class DynamicSolver2D:
                     amp_val = bc.amplitude.evaluate(t, step_time=t, total_time=total_time)
                 elif bc.amplitude is not None and isinstance(bc.amplitude, str) and hasattr(step, "parent_model") and hasattr(step.parent_model, "amplitudes"):
                     amp_obj = step.parent_model.amplitudes.get(bc.amplitude, None)
-                    if amp_obj is not None:
-                        amp_val = amp_obj.evaluate(t, step_time=t, total_time=total_time)
+                    if amp_obj is None:
+                        raise ValueError(f"BC {bc_name}: amplitude {bc.amplitude!r} is not defined")
+                    amp_val = amp_obj.evaluate(t, step_time=t, total_time=total_time)
 
                 is_ramp = False
                 ramp_scale = 1.0
@@ -1090,6 +1067,32 @@ class DynamicSolver2D:
                                 u_prescribed = target_val * amp_val
                             self.fix_dof(gid, d, u_prescribed)
 
+    def _static_ramp(self, vec: np.ndarray, load: Any, step: Any, t: float) -> np.ndarray:
+        """Abaqus default amplitude: ramp over a STATIC step, step otherwise."""
+        if getattr(load, "amplitude", None) is None:
+            proc = str(getattr(step, "procedure", "STATIC")).upper()
+            if proc in ("STATIC", "QUASISTATIC"):
+                period = float(getattr(step, "time_period", 1.0))
+                return vec * min(max(t / max(period, 1e-12), 0.0), 1.0)
+        return vec
+
+    def _resolve_region_nodes(self, region: Any, sys: Optional[Any], step: Any, what: str) -> List[int]:
+        """Global node ids of a BC/load region; raises if it does not resolve."""
+        if sys is not None and hasattr(sys, "global_nsets"):
+            from dispsolver.model.regions import resolve_node_region, node_ids_of
+            return node_ids_of(sys, resolve_node_region(sys, region, step, what=what))
+        if isinstance(region, str) and region.upper() == "ALL":
+            return list(self.mesh.nodes.keys())
+        for attr in ("node_sets", "sets"):
+            for k, v in (getattr(self.mesh, attr, {}) or {}).items():
+                if str(k).upper() == str(region).upper():
+                    return list(v.node_ids)
+        if region in self.mesh.nodes:
+            return [region]
+        if isinstance(region, str) and region.isdigit() and int(region) in self.mesh.nodes:
+            return [int(region)]
+        raise ValueError(f"{what}: node region {region!r} does not resolve")
+
     def _compute_step_external_loads(self, step: Any, sys: Optional[Any], t: float, total_time: float) -> np.ndarray:
         """Compute external load vector f_ext from active loads in step at time t."""
         f_ext = np.zeros(self.num_dofs, dtype=np.float64)
@@ -1100,33 +1103,30 @@ class DynamicSolver2D:
         nid_map = self.mesh.node_id_to_index()
 
         for load_name, load in active_loads.items():
+            if hasattr(load, "get_acceleration_vector") or type(load).__name__ == "BodyForce" or hasattr(load, "b1"):
+                # Used to fall through every branch and be ignored.
+                raise NotImplementedError(f"load {load_name}: body/gravity loads are not implemented "
+                                          f"in the 2D solver")
             if hasattr(load, "get_force_vector"):
-                region_nodes = []
-                if sys is not None and hasattr(sys, "global_nsets") and load.region in sys.global_nsets:
-                    node_indices = sys.global_nsets[load.region]
-                    inv_nid = {idx: g for g, idx in sys.nid_to_idx.items()}
-                    region_nodes = [inv_nid[idx] for idx in node_indices]
-                elif hasattr(self.mesh, "node_sets") and load.region in self.mesh.node_sets:
-                    region_nodes = self.mesh.node_sets[load.region].node_ids
-                elif load.region == "ALL":
-                    region_nodes = list(self.mesh.nodes.keys())
-                elif load.region in self.mesh.nodes:
-                    region_nodes = [load.region]
-
-                if region_nodes:
-                    f_vec = load.get_force_vector(t=t, step_time=t, model=getattr(step, "parent_model", None))
-                    for gid in region_nodes:
-                        if gid in nid_map:
-                            n_idx = nid_map[gid]
-                            f_ext[2 * n_idx + 0] += f_vec[0]
-                            f_ext[2 * n_idx + 1] += f_vec[1]
+                f_vec = np.asarray(load.get_force_vector(t=t, step_time=t, model=getattr(step, "parent_model", None)),
+                                   dtype=np.float64)
+                # Abaqus STATIC default amplitude is a ramp (3D already did this;
+                # 2D applied the full load from the first increment).
+                f_vec = self._static_ramp(f_vec, load, step, t)
+                for gid in self._resolve_region_nodes(load.region, sys, step, f"load {load_name}"):
+                    n_idx = nid_map[gid]
+                    f_ext[2 * n_idx + 0] += f_vec[0]
+                    f_ext[2 * n_idx + 1] += f_vec[1]
 
             elif (hasattr(load, "magnitude") or type(load).__name__ == "Pressure") and hasattr(load, "region"):
                 from dispsolver.solver.traction import SurfaceTraction
-                p_mag = float(getattr(load, "magnitude", 0.0))
-                amp_obj = getattr(load, "amplitude", None)
-                if amp_obj is not None and hasattr(amp_obj, "evaluate"):
-                    p_mag *= amp_obj.evaluate(t=t, step_time=t, total_time=total_time)
+                # get_magnitude applies the load's amplitude whether it is an
+                # object or a *AMPLITUDE name (the name used to be ignored).
+                if hasattr(load, "get_magnitude"):
+                    p_mag = float(load.get_magnitude(t=t, step_time=t, model=getattr(step, "parent_model", None)))
+                else:
+                    p_mag = float(getattr(load, "magnitude", 0.0))
+                p_mag = float(self._static_ramp(np.array([p_mag]), load, step, t)[0])
 
                 load_name = getattr(load, "name", "")
                 face_name = getattr(load, "face", getattr(load, "face_name", "P1"))
@@ -1158,6 +1158,8 @@ class DynamicSolver2D:
         t_curr = 0.0
         inc_count = 0
         total_iters = 0
+        # per-solve() counters, read by execute_inp
+        self.last_solve_stats = {"iterations": 0, "increments": 0, "max_increment_iterations": 0}
 
         self.history_u = [self.u.copy()]
         self.history_t = [0.0]
@@ -1199,6 +1201,10 @@ class DynamicSolver2D:
 
             converged, iters = self.solve_step(dt=dt, f_ext=f_ext, max_iters=50)
             total_iters += iters
+            if converged:
+                self.last_solve_stats["increments"] += 1
+                self.last_solve_stats["max_increment_iterations"] = max(self.last_solve_stats["max_increment_iterations"], int(iters))
+            self.last_solve_stats["iterations"] = total_iters
 
             if converged:
                 t_curr = t_next

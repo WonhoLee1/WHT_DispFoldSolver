@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import warnings
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
@@ -53,8 +54,21 @@ def _handle_amplitude(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
         reader.warnings.append(msg)
         return
     defn = block.params.get("definition", "TABULAR").upper().replace(" ", "")
-    rows = _parse_data_rows(block.data_lines, dtype=float)
-    data = [(float(r[0]), float(r[1])) for r in rows if len(r) >= 2]
+    if defn not in ("TABULAR", "SMOOTHSTEP"):
+        raise NotImplementedError(f"*AMPLITUDE {name}: DEFINITION={defn} is not implemented")
+    time_ref = block.params.get("time", "STEP TIME").upper().replace(" ", "")
+    if time_ref != "STEPTIME":
+        # evaluated against step time; TOTAL TIME would be silently shifted
+        raise NotImplementedError(f"*AMPLITUDE {name}: TIME={block.params.get('time')} is not implemented")
+    if any(k in block.params for k in ("value", "shift", "scalex", "scaley")):
+        raise NotImplementedError(f"*AMPLITUDE {name}: VALUE/SHIFTX/SCALE parameters are not implemented")
+    # Up to four (time, value) pairs per data line. Only the first pair of
+    # each line used to be read, so a typical "0,0, 1,1" table became a
+    # single point and the amplitude a constant 0.
+    flat = [float(v) for r in _parse_data_rows(block.data_lines, dtype=float) for v in r]
+    if len(flat) % 2:
+        raise ValueError(f"*AMPLITUDE {name}: odd number of values ({len(flat)}); expected time/value pairs")
+    data = [(flat[i], flat[i + 1]) for i in range(0, len(flat), 2)]
     if "SMOOTHSTEP" in defn:
         reader.model.SmoothStepAmplitude(name, data)
     else:
@@ -73,20 +87,22 @@ def _handle_dload(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
             reader.current_step.deactivate_load(load_name)
     dload_names = []
     faced = []
-    rows = _parse_data_rows(block.data_lines, dtype=str)
+    # Split the data lines here rather than with _parse_data_rows, which drops
+    # empty fields: Abaqus allows a blank region (data line ", GRAV, 9.81, ...")
+    # meaning the whole model, and dropping it shifted every column left.
+    rows = [[p.strip() for p in ln.split(",")] for ln in block.data_lines if ln.strip()]
     for r in rows:
+        while r and r[-1] == "":
+            r.pop()
         if len(r) < 3:
-            continue
+            raise ValueError(f"*DLOAD line {','.join(r)!r}: expected 'region, load type, magnitude'")
         elset = str(r[0])
         ftype = str(r[1]).upper()
         mag = float(r[2])
         if ftype == "GRAV":
-            dirs = [float(x) for x in r[3:6]]
+            dirs = [float(x) if x else 0.0 for x in r[3:6]]
             if len(dirs) < 3:
-                msg = f"*DLOAD GRAV on {elset} missing direction — skipped"
-                warnings.warn(msg)
-                reader.warnings.append(msg)
-                continue
+                raise ValueError(f"*DLOAD GRAV on {elset!r}: direction vector missing")
             reader.model.Gravity(name=f"DLOAD_GRAV_{elset}", createStepName=step_name,
                                  region=elset, comp1=mag * dirs[0], comp2=mag * dirs[1],
                                  comp3=mag * dirs[2], amplitude=amp)
@@ -97,20 +113,13 @@ def _handle_dload(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
                                    region=elset, b1=comps[0], b2=comps[1], b3=comps[2],
                                    amplitude=amp)
             dload_names.append(f"DLOAD_{elset}_{ftype}")
-        elif ftype.startswith("P") or ftype.startswith("S"):
+        elif re.fullmatch(r"P[1-6]?", ftype):
             faced.append(ftype)
             reader.model.Pressure(name=f"DLOAD_{elset}_{ftype}", createStepName=step_name,
                                   region=elset, magnitude=mag, amplitude=amp, face=ftype)
             dload_names.append(f"DLOAD_{elset}_{ftype}")
         else:
-            msg = f"*DLOAD face {ftype} on {elset} unsupported — skipped"
-            warnings.warn(msg)
-            reader.warnings.append(msg)
-    if faced:
-        msg = (f"*DLOAD faces {sorted(set(faced))} kept in load names; "
-               f"face-selective solver mapping is P1")
-        warnings.warn(msg)
-        reader.warnings.append(msg)
+            raise NotImplementedError(f"*DLOAD load type {ftype} on {elset!r} is not implemented")
     for lname in dload_names:
         entry = reader.current_step.loads.get(lname)
         if entry is not None and entry.entity.region in reader.current_step.step_nsets:

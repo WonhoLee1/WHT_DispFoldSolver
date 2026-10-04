@@ -343,11 +343,34 @@ def _handle_orientation(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
         reader.warnings.append(msg)
 
 
+def _section_part(reader, elset: str, kind: str):
+    """Part a *SOLID/*SHELL SECTION applies to. Inside a *PART: that part,
+    which must define the ELSET. Outside any part (written after *END PART):
+    the one part that defines the ELSET; several candidates are ambiguous.
+    The old fallback took the FIRST part with that ELSET name."""
+    if reader.context == KeywordContext.PART or elset.upper() == "ALL":
+        part = reader.get_active_part()
+        if elset.upper() != "ALL" and elset not in part.element_sets and elset not in part.sets:
+            raise KeyError(f"*{kind} SECTION: ELSET {elset!r} is not defined in part {part.name!r}")
+        return part
+    owners = [p for p in reader.model.parts.values() if elset in p.element_sets or elset in p.sets]
+    if len(owners) == 1:
+        return owners[0]
+    if not owners:
+        raise KeyError(f"*{kind} SECTION: ELSET {elset!r} is not defined in any part")
+    raise KeyError(f"*{kind} SECTION: ELSET {elset!r} is defined in parts {[p.name for p in owners]}; "
+                   f"put the section inside the *PART it belongs to")
+
+
 @GLOBAL_KEYWORD_REGISTRY.register("SOLID SECTION", valid_contexts={KeywordContext.PART, KeywordContext.GLOBAL, KeywordContext.INSTANCE}, aliases=["SOLIDSECTION"])
 def _handle_solid_section(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     elset = block.params.get("elset", "ALL")
     mat_name = block.params.get("material", "DEFAULT")
-    sec_name = f"SEC_SOLID_{elset}"
+    # Section names are per part: Abaqus CAE writes the same ELSET name
+    # (e.g. _PickedSet2) in every part, and a model-wide "SEC_SOLID_<elset>"
+    # made the last part's section overwrite every earlier part's material.
+    part = _section_part(reader, elset, "SOLID")
+    sec_name = f"SEC_SOLID_{part.name}_{elset}"
     orientation = block.params.get("orientation", None)
 
     thickness = 1.0
@@ -374,14 +397,6 @@ def _handle_solid_section(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
                                                thickness=thickness,
                                                orientation=orientation)
     
-    # Locate part containing this elset
-    part = reader.get_active_part()
-    if elset not in part.element_sets and elset not in part.sets:
-        # Search all parts in model
-        for p in reader.model.parts.values():
-            if elset in p.element_sets or elset in p.sets:
-                part = p
-                break
     part.SectionAssignment(region=elset, sectionName=sec_name)
 
 
@@ -389,7 +404,11 @@ def _handle_solid_section(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
 def _handle_shell_section(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     elset = block.params.get("elset", "ALL")
     mat_name = block.params.get("material", "DEFAULT")
-    sec_name = f"SEC_SHELL_{elset}"
+    # Section names are per part: Abaqus CAE writes the same ELSET name
+    # (e.g. _PickedSet2) in every part, and a model-wide "SEC_SHELL_<elset>"
+    # made the last part's section overwrite every earlier part's material.
+    part = _section_part(reader, elset, "SHELL")
+    sec_name = f"SEC_SHELL_{part.name}_{elset}"
 
     thickness = 1.0
     if block.data_lines:
@@ -400,12 +419,6 @@ def _handle_shell_section(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     sec = reader.model.ShellSection(name=sec_name, material=mat_name, thickness=thickness)
     
     # Locate part containing this elset
-    part = reader.get_active_part()
-    if elset not in part.element_sets and elset not in part.sets:
-        for p in reader.model.parts.values():
-            if elset in p.element_sets or elset in p.sets:
-                part = p
-                break
     part.SectionAssignment(region=elset, sectionName=sec_name)
 
 
