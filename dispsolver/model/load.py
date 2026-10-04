@@ -55,7 +55,9 @@ class ConcentratedForce(Load):
             elif isinstance(self.amplitude, str) and model is not None and hasattr(model, "amplitudes"):
                 amp_obj = model.amplitudes.get(self.amplitude)
                 if amp_obj is None:
-                    raise ValueError(f"load {self.name}: amplitude {self.amplitude!r} is not defined")
+                    raise ValueError(f"load {self.name}"
+                                     + (f" [{self.source_location}]" if getattr(self, "source_location", None) else "")
+                                     + f": amplitude {self.amplitude!r} is not defined")
                 if hasattr(amp_obj, "evaluate"):
                     scale = float(amp_obj.evaluate(t, step_time))
         
@@ -87,7 +89,9 @@ class Pressure(Load):
             elif isinstance(self.amplitude, str) and model is not None and hasattr(model, "amplitudes"):
                 amp_obj = model.amplitudes.get(self.amplitude)
                 if amp_obj is None:
-                    raise ValueError(f"load {self.name}: amplitude {self.amplitude!r} is not defined")
+                    raise ValueError(f"load {self.name}"
+                                     + (f" [{self.source_location}]" if getattr(self, "source_location", None) else "")
+                                     + f": amplitude {self.amplitude!r} is not defined")
                 if hasattr(amp_obj, "evaluate"):
                     scale = float(amp_obj.evaluate(t, step_time))
         return self.magnitude * scale
@@ -114,7 +118,9 @@ class Gravity(Load):
             elif isinstance(self.amplitude, str) and model is not None and hasattr(model, "amplitudes"):
                 amp_obj = model.amplitudes.get(self.amplitude)
                 if amp_obj is None:
-                    raise ValueError(f"load {self.name}: amplitude {self.amplitude!r} is not defined")
+                    raise ValueError(f"load {self.name}"
+                                     + (f" [{self.source_location}]" if getattr(self, "source_location", None) else "")
+                                     + f": amplitude {self.amplitude!r} is not defined")
                 if hasattr(amp_obj, "evaluate"):
                     scale = float(amp_obj.evaluate(t, step_time))
         return np.array([self.comp1 * scale, self.comp2 * scale, self.comp3 * scale], dtype=np.float64)
@@ -138,7 +144,9 @@ class BodyForce(Load):
             elif isinstance(self.amplitude, str) and model is not None and hasattr(model, "amplitudes"):
                 amp_obj = model.amplitudes.get(self.amplitude)
                 if amp_obj is None:
-                    raise ValueError(f"load {self.name}: amplitude {self.amplitude!r} is not defined")
+                    raise ValueError(f"load {self.name}"
+                                     + (f" [{self.source_location}]" if getattr(self, "source_location", None) else "")
+                                     + f": amplitude {self.amplitude!r} is not defined")
                 if hasattr(amp_obj, "evaluate"):
                     scale = float(amp_obj.evaluate(t, step_time))
         return np.array([self.b1 * scale, self.b2 * scale, self.b3 * scale], dtype=np.float64)

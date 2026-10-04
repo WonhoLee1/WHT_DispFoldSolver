@@ -324,8 +324,9 @@ class Assembly:
                     mat_name = sec_obj.material_name if sec_obj else "DEFAULT"
                     mat_obj = model.materials.get(mat_name)
                     if mat_obj is None and sec_obj is not None and from_deck:
-                        raise ValueError(f"section {sec_name!r} refers to material {mat_name!r}, "
-                                         f"which the deck does not define")
+                        loc = getattr(sec_obj, "source_location", None)
+                        raise ValueError(f"section {sec_name!r}" + (f" [{loc}]" if loc else "")
+                                         + f" refers to material {mat_name!r}, which the deck does not define")
                     
                     if mat_obj is not None:
                         # Convert to Numba DOD props if available

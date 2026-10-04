@@ -14,6 +14,8 @@ from __future__ import annotations
 import time
 from typing import Dict, List, Tuple, Optional, Any
 import numpy as np
+
+from dispsolver.model.regions import describe as _describe
 from scipy.sparse import csc_matrix, csr_matrix, coo_matrix
 
 try:
@@ -1067,7 +1069,7 @@ class DynamicSolver2D:
         nid_map = self.mesh.node_id_to_index()
 
         for bc_name, bc in active_bcs.items():
-            region_nodes = self._resolve_region_nodes(bc.region, sys, step, f"BC {bc_name}")
+            region_nodes = self._resolve_region_nodes(bc.region, sys, step, _describe(bc, f"BC {bc_name}"))
 
             if hasattr(bc, "evaluate_node"):
                 for gid in region_nodes:
@@ -1088,7 +1090,7 @@ class DynamicSolver2D:
                 elif bc.amplitude is not None and isinstance(bc.amplitude, str) and hasattr(step, "parent_model") and hasattr(step.parent_model, "amplitudes"):
                     amp_obj = step.parent_model.amplitudes.get(bc.amplitude, None)
                     if amp_obj is None:
-                        raise ValueError(f"BC {bc_name}: amplitude {bc.amplitude!r} is not defined")
+                        raise ValueError(f"{_describe(bc, 'BC ' + bc_name)}: amplitude {bc.amplitude!r} is not defined")
                     amp_val = amp_obj.evaluate(t, step_time=t, total_time=total_time)
 
                 is_ramp = False
@@ -1160,7 +1162,7 @@ class DynamicSolver2D:
                 # Abaqus STATIC default amplitude is a ramp (3D already did this;
                 # 2D applied the full load from the first increment).
                 f_vec = self._static_ramp(f_vec, load, step, t)
-                for gid in self._resolve_region_nodes(load.region, sys, step, f"load {load_name}"):
+                for gid in self._resolve_region_nodes(load.region, sys, step, _describe(load, f"load {load_name}")):
                     n_idx = nid_map[gid]
                     f_ext[2 * n_idx + 0] += f_vec[0]
                     f_ext[2 * n_idx + 1] += f_vec[1]

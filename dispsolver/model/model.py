@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Dict, Optional, Any, Union
 import warnings
 import numpy as np
-from dispsolver.model.regions import resolve_node_region, resolve_elem_region
+from dispsolver.model.regions import describe, resolve_node_region, resolve_elem_region
 from dispsolver.model.names import CaseInsensitiveDict
 
 from dispsolver.model.part import Part
@@ -1002,7 +1002,7 @@ class Model:
             for entry in st.boundary_conditions.values():
                 if entry.is_active():
                     bc = entry.entity
-                    global_node_indices = resolve_node_region(sys, bc.region, st, what=f"BC {bc.name}")
+                    global_node_indices = resolve_node_region(sys, bc.region, st, what=describe(bc, f"BC {bc.name}"))
                     inv_nid = {idx: g for g, idx in sys.nid_to_idx.items()}
                     for node_idx in global_node_indices:
                         gid = inv_nid[node_idx]
@@ -1106,7 +1106,7 @@ class Model:
             for entry in st.boundary_conditions.values():
                 if entry.is_active():
                     bc = entry.entity
-                    global_node_indices = resolve_node_region(sys, bc.region, st, what=f"BC {bc.name}")
+                    global_node_indices = resolve_node_region(sys, bc.region, st, what=describe(bc, f"BC {bc.name}"))
                     inv_nid = {idx: g for g, idx in sys.nid_to_idx.items()}
                     for node_idx in global_node_indices:
                             gid = inv_nid[node_idx]

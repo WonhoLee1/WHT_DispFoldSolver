@@ -28,19 +28,10 @@ from dispsolver.export.vtkhdf_exporter import export_vtkhdf
 
 
 def peek_dim_from_file(inp_path: str) -> int:
-    """Fast inspection of .inp file text to detect 2D vs 3D dimension."""
-    with open(inp_path, "r", encoding="utf-8", errors="replace") as f:
-        for line in f:
-            l_upper = line.strip().upper()
-            if l_upper.startswith("*ELEMENT") and "TYPE=" in l_upper:
-                match = re.search(r"TYPE\s*=\s*([A-Z0-9]+)", l_upper)
-                if match:
-                    et = match.group(1)
-                    if (et.startswith("C3D") or et.startswith("S4") or et.startswith("S3")
-                            or et.startswith("M3D") or et.startswith("SC")
-                            or et in ("C3D8", "C3D8I", "C3D8H", "C3D8R", "C3D4", "C3D10", "C3D6", "S4R", "S4", "S3", "S3R")):
-                        return 3
-    return 2
+    """2D vs 3D from the deck's element types (abaqus_reader.detect_dim: the
+    tokenized deck, so *INCLUDE files and indented keyword lines count)."""
+    from dispsolver.io.abaqus_reader import detect_dim
+    return detect_dim(inp_path, default=2)
 
 
 def print_preflight_summary(reader: AbaqusInputReader, model: Any, dim: int, out_dir: str):

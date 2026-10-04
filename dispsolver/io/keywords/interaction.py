@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
 from dispsolver.io.abaqus_lexer import AbaqusKeywordBlock
+from dispsolver.io.keyword_base import _parse_data_rows
 from dispsolver.io.keyword_registry import (
     GLOBAL_KEYWORD_REGISTRY,
     KeywordContext,
@@ -157,17 +158,25 @@ def _handle_contact_pair(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
 def _handle_surface_behavior(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     target = reader.current_interaction
     if target is None or target not in reader.model.contact_properties:
-        return
+        raise ValueError("*SURFACE BEHAVIOR outside a *SURFACE INTERACTION")
     prop = reader.model.contact_properties[target]
-    po = block.params.get("pressure-overclosure", block.params.get("pressure_overclosure", "HARD")).upper()
-    if po == "HARD":
-        prop.normal_behavior = "HARD"
-    elif po in ("LINEAR", "SOFT_LINEAR"):
-        prop.normal_behavior = "SOFT_LINEAR"
-    elif po in ("EXPONENTIAL", "SOFT_EXPONENTIAL"):
-        prop.normal_behavior = "SOFT_EXPONENTIAL"
-    elif po in ("TABULAR", "SOFT_TABULAR"):
-        prop.normal_behavior = "SOFT_TABULAR"
+    po = str(block.params.get("pressure-overclosure", block.params.get("pressure_overclosure", "HARD"))).upper()
+    po = po.replace("SOFT_", "")
+    if po not in ("HARD", "LINEAR", "EXPONENTIAL", "TABULAR"):
+        raise NotImplementedError(f"*SURFACE BEHAVIOR, PRESSURE-OVERCLOSURE={po} is not implemented")
+    # Data lines (Abaqus): LINEAR k | EXPONENTIAL c0, p0 | TABULAR (p_i, h_i)
+    # pairs -- the same layout ContactProperty.NormalBehavior's table takes.
+    # They used to be ignored (and the PRESSURE-OVERCLOSURE parameter itself
+    # was lost by the lexer, so every deck contact ran HARD).
+    rows = [[v for v in r if v is not None] for r in _parse_data_rows(block.data_lines, dtype=float)]
+    rows = [r for r in rows if r]
+    if po != "HARD" and not rows:
+        raise ValueError(f"*SURFACE BEHAVIOR, PRESSURE-OVERCLOSURE={po}: data line missing")
+    if po == "EXPONENTIAL" and len(rows[0]) < 2:
+        raise ValueError("*SURFACE BEHAVIOR, PRESSURE-OVERCLOSURE=EXPONENTIAL: expected 'c0, p0'")
+    if po == "TABULAR" and any(len(r) < 2 for r in rows):
+        raise ValueError("*SURFACE BEHAVIOR, PRESSURE-OVERCLOSURE=TABULAR: expected 'pressure, overclosure' pairs")
+    prop.NormalBehavior(pressureOverclosure=po, table=[tuple(r) for r in rows] if rows else None)
 
 
 

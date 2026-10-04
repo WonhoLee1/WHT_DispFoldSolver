@@ -28,6 +28,13 @@ from typing import Any, Optional
 import numpy as np
 
 
+def describe(obj: Any, label: str) -> str:
+    """`label` plus the deck location the object came from, when known
+    (AbaqusInputReader stamps `source_location` = 'file:line')."""
+    loc = getattr(obj, "source_location", None)
+    return f"{label} [{loc}]" if loc else label
+
+
 class RegionError(ValueError):
     """A region name in the model does not resolve to any node/element."""
 

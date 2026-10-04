@@ -64,7 +64,8 @@ class AbaqusInputReader:
                 continue
             if base_kw in OUTPUT_ONLY_KEYWORDS | SOLUTION_CONTROL_KEYWORDS:
                 continue
-            gaps.append(f"*{kw} (unsupported)")
+            loc = self.unsupported_locations.get(kw)
+            gaps.append(f"*{kw} (unsupported" + (f", {loc})" if loc else ")"))
 
         for kw, p, kind in self.unsupported_params:
             if kind == "control":
@@ -113,7 +114,29 @@ class AbaqusInputReader:
         # Statistics & warnings
         self.unsupported_keywords: List[str] = []
         self.unsupported_params: List[Tuple[str, str, str]] = []
+        self.unsupported_locations: Dict[str, str] = {}   # keyword -> first file:line
         self.warnings: List[str] = []
+
+    def _stamp_locations(self, location: str) -> None:
+        """Give every model object created by the keyword just handled the
+        deck location it came from (`source_location`), so errors raised much
+        later -- while the solver resolves a BC region, an amplitude, a
+        section's material -- can point at the deck line. Objects that already
+        carry a location keep it (copies propagated into later steps too)."""
+        m = self.model
+        groups = [m.materials, m.sections, m.amplitudes, m.constraints, m.interactions,
+                  m.contact_properties]
+        step = self.current_step if self.current_step is not None else m.initial_step
+        for d in (step.boundary_conditions, step.loads, step.interactions):
+            groups.append({k: getattr(e, "entity", e) for k, e in d.items()})
+        groups.append(getattr(step, "predefined_fields", {}))
+        for g in groups:
+            for obj in g.values():
+                if getattr(obj, "source_location", None) is None:
+                    try:
+                        obj.source_location = location
+                    except (AttributeError, TypeError):
+                        pass
 
     def get_active_part(self) -> Part:
         """Return currently active part (or create/return default part for non-assembly models).
@@ -185,9 +208,9 @@ class AbaqusInputReader:
                     if kw in self._STRUCTURAL_KEYWORDS:
                         raise ValueError(
                             f"Keyword *{kw} illegal in context {self.context} "
-                            f"at line {block.line_number}")
+                            f"at {block.location}")
                     msg = (f"Keyword *{kw} outside valid context {self.context} "
-                           f"at line {block.line_number} - skipped")
+                           f"at {block.location} - skipped")
                     if self.strict:
                         raise ValueError(msg)
                     warnings.warn(msg)
@@ -209,7 +232,7 @@ class AbaqusInputReader:
                                 for k in block.params.keys()
                             )
                             if not has_p:
-                                msg = f"Error processing keyword *{kw} at line {block.line_number}: missing required parameter '{p_spec.name}'"
+                                msg = f"Error processing keyword *{kw} at {block.location}: missing required parameter '{p_spec.name}'"
                                 warnings.warn(msg)
                                 self.warnings.append(msg)
 
@@ -217,7 +240,7 @@ class AbaqusInputReader:
                     for p_key in block.params.keys():
                         p_norm = normalize_param_name(p_key)
                         if p_norm not in spec.params:
-                            msg = f"*{kw} at line {block.line_number}: unknown parameter '{p_key}'"
+                            msg = f"*{kw} at {block.location}: unknown parameter '{p_key}'"
                             entry = (kw, p_key, "unknown")
                             if entry not in self.unsupported_params:
                                 self.unsupported_params.append(entry)
@@ -228,7 +251,7 @@ class AbaqusInputReader:
                             p_spec = spec.params[p_norm]
                             if not p_spec.supported:
                                 kind = "control" if p_spec.control else "unsupported"
-                                msg = f"*{kw} at line {block.line_number}: {kind} parameter '{p_key}' not implemented"
+                                msg = f"*{kw} at {block.location}: {kind} parameter '{p_key}' not implemented"
                                 entry = (kw, p_key, kind)
                                 if entry not in self.unsupported_params:
                                     self.unsupported_params.append(entry)
@@ -238,15 +261,17 @@ class AbaqusInputReader:
 
                 try:
                     spec.handler(self, block)
+                    self._stamp_locations(block.location)
                 except _AbortParse:
                     raise
                 except Exception as e:
-                    msg = f"Error processing keyword *{kw} at line {block.line_number}: {e}"
+                    msg = f"Error processing keyword *{kw} at {block.location}: {e}"
                     warnings.warn(msg)
                     self.warnings.append(msg)
             else:
                 if kw not in self.unsupported_keywords:
                     self.unsupported_keywords.append(kw)
+                    self.unsupported_locations[kw] = block.location
 
         # If non-assembly deck was loaded, bind the default instance
         if not self.has_assembly and self._default_part is not None:
@@ -259,21 +284,16 @@ class AbaqusInputReader:
 # HIGH-LEVEL API FUNCTIONS
 # ─────────────────────────────────────────────────────────────────────────────
 
-_ELEM_TYPE_RE = None
-
-
 def detect_dim(source: Union[str, os.PathLike], default: int = 3) -> int:
     """Spatial dimension from the deck's *ELEMENT TYPE= names: 2 for plane /
     axisymmetric continuum (CPE*, CPS*, CAX*, CGAX*, CGPE*, R2D*, RAX*), 3 for
     everything else that is recognisably 3D. A deck with no elements returns
     `default`. Mixed 2D and 3D element types are refused."""
-    global _ELEM_TYPE_RE
-    import re as _re
-    if _ELEM_TYPE_RE is None:
-        _ELEM_TYPE_RE = _re.compile(r"^\*ELEMENT\b[^\n]*?TYPE\s*=\s*([A-Z0-9_]+)", _re.I | _re.M)
+    # From the tokenized deck, not the raw text: *INCLUDE files and indented or
+    # continued *ELEMENT lines count too.
     src = str(source)
-    text = open(src, encoding="utf-8", errors="replace").read() if os.path.exists(src) else src
-    types = {t.upper() for t in _ELEM_TYPE_RE.findall(text)}
+    blocks = tokenize(src) if os.path.exists(src) else tokenize_string(src)
+    types = {str(b.params.get("type", "")).upper() for b in blocks if b.keyword == "ELEMENT"} - {""}
     two = {t for t in types if t.startswith(("CPE", "CPS", "CAX", "CGAX", "CGPE", "R2D", "RAX"))}
     three = types - two
     if two and three:

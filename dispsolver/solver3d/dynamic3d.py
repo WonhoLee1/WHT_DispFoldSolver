@@ -10,6 +10,8 @@ from __future__ import annotations
 from typing import Dict, List, Tuple, Optional, Any
 import warnings
 import numpy as np
+
+from dispsolver.model.regions import describe as _describe
 from scipy.sparse import csc_matrix, csr_matrix, coo_matrix
 
 try:
@@ -2619,7 +2621,7 @@ class DynamicSolver3D:
         nid_map = self.mesh.node_id_to_index()
 
         for bc_name, bc in active_bcs.items():
-            region_nodes = self._resolve_region_nodes(bc.region, sys, step, f"BC {bc_name}")
+            region_nodes = self._resolve_region_nodes(bc.region, sys, step, _describe(bc, f"BC {bc_name}"))
 
             if hasattr(bc, "evaluate_node"):
                 for gid in region_nodes:
@@ -2646,7 +2648,7 @@ class DynamicSolver3D:
                         amp_obj = bc.amplitude
 
                     if amp_obj is None:
-                        raise ValueError(f"BC {bc_name}: amplitude {bc.amplitude!r} is not defined")
+                        raise ValueError(f"{_describe(bc, 'BC ' + bc_name)}: amplitude {bc.amplitude!r} is not defined")
                     amp_val = amp_obj.evaluate(t, step_time=t, total_time=total_time)
 
                 is_ramp = False
@@ -2767,7 +2769,7 @@ class DynamicSolver3D:
                 vec = self._static_ramp(vec, load, step, t)
                 if sys is not None and hasattr(sys, "global_elsets"):
                     from dispsolver.model.regions import resolve_elem_region
-                    elem_indices = resolve_elem_region(sys, load.region, what=f"load {load_name}",
+                    elem_indices = resolve_elem_region(sys, load.region, what=_describe(load, f"load {load_name}"),
                                                        allow_blank_all=is_grav)
                 elif load.region in (None, "", "ALL"):
                     elem_indices = np.arange(len(self.elem_conn_0based))
@@ -2790,7 +2792,7 @@ class DynamicSolver3D:
                 f_vec = np.asarray(load.get_force_vector(t=t, step_time=t, model=getattr(step, "parent_model", None)),
                                    dtype=np.float64)
                 f_vec = self._static_ramp(f_vec, load, step, t)
-                for gid in self._resolve_region_nodes(load.region, sys, step, f"load {load_name}"):
+                for gid in self._resolve_region_nodes(load.region, sys, step, _describe(load, f"load {load_name}")):
                     n_idx = nid_map[gid]
                     f_ext[3 * n_idx: 3 * n_idx + 3] += f_vec[:3]
             elif hasattr(load, "get_magnitude") or hasattr(load, "magnitude") or type(load).__name__ == "Pressure":

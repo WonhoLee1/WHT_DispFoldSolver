@@ -507,7 +507,7 @@ def _handle_equation(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     try:
         nterms = int(float(cells[0]))
     except ValueError:
-        msg = f"*EQUATION at line {block.line_number}: bad term count — skipped"
+        msg = f"*EQUATION at {block.location}: bad term count — skipped"
         warnings.warn(msg)
         reader.warnings.append(msg)
         return
@@ -524,7 +524,7 @@ def _handle_equation(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
         except ValueError:
             continue
         if dof < 0 or dof > 5:
-            msg = (f"*EQUATION at line {block.line_number}: dof {dof + 1} out of "
+            msg = (f"*EQUATION at {block.location}: dof {dof + 1} out of "
                    "range 1..6 — equation skipped")
             warnings.warn(msg)
             reader.warnings.append(msg)
@@ -535,7 +535,7 @@ def _handle_equation(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
         else:
             members = _resolve_equation_nodes(reader, ref_raw)
             if not members:
-                msg = (f"*EQUATION at line {block.line_number}: set '{ref_raw}' "
+                msg = (f"*EQUATION at {block.location}: set '{ref_raw}' "
                        "unresolvable — equation skipped")
                 warnings.warn(msg)
                 reader.warnings.append(msg)
@@ -548,7 +548,7 @@ def _handle_equation(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     if not triples:
         return
     if len(triples) != nterms:
-        msg = (f"*EQUATION at line {block.line_number}: term count {len(triples)} "
+        msg = (f"*EQUATION at {block.location}: term count {len(triples)} "
                f"!= declared {nterms} — kept as parsed")
         warnings.warn(msg)
         reader.warnings.append(msg)

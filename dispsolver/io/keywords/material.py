@@ -500,8 +500,10 @@ def _handle_mullins(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
 def _record_unsupported(reader: AbaqusInputReader, block, label: str) -> None:
     if label not in reader.unsupported_keywords:
         reader.unsupported_keywords.append(label)
-    line = getattr(block, "line_number", "?") if block is not None else "?"
-    msg = f"*{label} at line {line} - no internal landing, recorded as unsupported"
+        if block is not None:
+            reader.unsupported_locations[label] = block.location
+    line = getattr(block, "location", "?") if block is not None else "?"
+    msg = f"*{label} at {line} - no internal landing, recorded as unsupported"
     warnings.warn(msg)
     reader.warnings.append(msg)
 

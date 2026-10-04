@@ -119,10 +119,13 @@ def test_honest_aborts():
         (os.path.join(VERIF, "heplmu_yeoh_cgax4rh.inp"), "INCLUDE"),
         (os.path.join(VERIF, "x_heplmu_yeoh_cax4r.inp"), "INCLUDE"),
     ]
+    # A missing *INCLUDE file is now a lexer error that names the including
+    # file:line and the path it looked for (was a generic _AbortParse).
+    from dispsolver.io.abaqus_lexer import InpSyntaxError
     for path, needle in cases:
-        with pytest.raises(_AbortParse) as exc:
+        with pytest.raises(InpSyntaxError) as exc:
             _read(path)
-        assert needle in str(exc.value), path
+        assert needle in str(exc.value) and "file not found" in str(exc.value), path
 
 
 def test_transform_landing_stored():
