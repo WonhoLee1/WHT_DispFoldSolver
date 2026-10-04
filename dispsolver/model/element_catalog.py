@@ -177,7 +177,7 @@ _ELEMENT_DESCRIPTORS: Tuple[ElementDescriptor, ...] = (
     _hex("C3D8H", 2, 17, hybrid=True, aliases=("C3D8_HYBRID", "HYBRID")),
     # internal formulation names: the named kernel whatever NLGEOM says
     _hex("C3D8_CR", 1, 1, aliases=("C3D8_COROTATIONAL", "C3D8_FBAR_CR")),
-    _hex("C3D8I_CR", 11, 11, "INCOMPATIBLE"),
+    _hex("C3D8I_CR", 11, 11, "INCOMPATIBLE", kernel_yes_inelastic=0),   # NO + inelastic: refused (elastic-only kernel)
     _hex("C3D8H_CR", 2, 2, hybrid=True),
     _hex("C3D8R_CR", 13, 13, "REDUCED"),
     _hex("C3D8_FBAR", 3, 3),

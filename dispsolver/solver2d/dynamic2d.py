@@ -35,7 +35,8 @@ from dispsolver.solver3d.assembly_utils import (
 
 # Small-strain plane kernels co-rotated under NLGEOM (element2d/cr_generic_2d):
 # 6 CPE3, 7 CPE6, 9 CPE8, 10 CPE8R, 18 T2D2.
-_CR_WRAPPED_KERNELS_2D = frozenset({6, 7, 9, 10, 18})
+from dispsolver.model.element_catalog import cr_wrapped_kernels as _cr_wrapped_kernels
+_CR_WRAPPED_KERNELS_2D = _cr_wrapped_kernels(2)
 
 class DynamicSolver2D:
     """Production 2D Non-Linear Newton-Raphson Finite Element Solver."""
@@ -241,11 +242,14 @@ class DynamicSolver2D:
         nid_map = self.mesh.node_id_to_index()
         elements_list = list(self.mesh.elements.values())
         # Map element types to kernel group index k with Material- & Kinematic-Adaptive NLGEOM Dispatch
+        # Element type -> kernel: model/element_catalog.py decides (NLGEOM,
+        # plane stress, axisymmetry, hybrid/reduced substitutions included).
+        from dispsolver.model.element_catalog import ElementCatalog
         elem_kernel_indices: Dict[int, List[int]] = {}
+        failures: Dict[str, str] = {}
+        subst: Dict[str, str] = {}
         for idx, elem in enumerate(elements_list):
             et = elem.elem_type.upper()
-            if et in ["DCOUP3D", "DCOUP2D", "MASS", "ROTARYI", "SPRING1", "SPRING2", "GAPUNI"]:
-                continue
             pid = getattr(elem, "pid", 0)
             mat_obj = self.materials.get(pid, None) if isinstance(self.materials, dict) else None
             nu = 0.3
@@ -254,143 +258,48 @@ class DynamicSolver2D:
                     nu = float(mat_obj.get("nu", 0.3))
                 elif hasattr(mat_obj, "props"):
                     nu = float(mat_obj.props[1]) if len(mat_obj.props) > 1 else 0.3
-            is_nearly_incompressible = (nu > 0.48)
+            linear_elastic = int(self.elem_mat_types[idx]) == 0
+            try:
+                k, notes = ElementCatalog.resolve(et, 2, bool(self.nlgeom), nu=nu, linear_elastic=linear_elastic)
+            except NotImplementedError as exc:
+                failures.setdefault(et, str(exc))
+                continue
+            if k is None:
+                continue
+            desc = ElementCatalog.lookup(et, 2)
+            if desc is not None and desc.plane_stress and not (linear_elastic and abs(float(self.elem_props[idx, 1])) < 1e-15):
+                # No 2D kernel implements plane stress (sigma_33 = 0); the
+                # plane-strain kernels give the same answer only for a linear
+                # elastic material with nu = 0.
+                failures.setdefault(et, f"element type {et}: plane stress is not implemented in the 2D solver "
+                                        f"(it would run as plane strain); only linear elastic nu=0 material is equivalent")
+                continue
+            if notes:
+                subst[et] = "; ".join(notes)
+            elem_kernel_indices.setdefault((k, len(elem.node_ids)), []).append(idx)
 
-            if et.startswith("CPS"):
-                # No 2D kernel implements plane stress (sigma_33 = 0); CPS*
-                # used to run as plane strain. The two coincide only for a
-                # linear elastic material with nu = 0, which is allowed.
-                if not (int(self.elem_mat_types[idx]) == 0 and abs(float(self.elem_props[idx, 1])) < 1e-15):
-                    raise NotImplementedError(
-                        f"element type {et}: plane stress is not implemented in the 2D solver (it would run "
-                        f"as plane strain); only linear elastic nu=0 material is equivalent")
-
-            if self.nlgeom and et.startswith("CAX"):
-                # The axisymmetric kernels are small strain, and a rotation in
-                # the r-z plane is not a rigid motion of the ring, so they
-                # cannot be co-rotated. They used to run unchanged.
-                raise NotImplementedError(
-                    f"element type {et}: NLGEOM=YES is not implemented for axisymmetric elements "
-                    f"(small-strain kernel only)")
-
-            if self.nlgeom:
-                # NLGEOM=True: Automatically promote core elements to Large-Deformation / Corotational
-                if et in ["CAX4", "CAX4I", "CAX4H", "CAX4IH", "CAX4R", "CAX4RH"]:
-                    k = 17
-                elif et in ["CPE4I", "CPS4I", "Q4_EAS", "INCOMPATIBLE", "CPE4I_CR"]:
-                    k = 11  # CPE4I_CR
-                elif et in ["CPE4H", "CPS4H", "CPE4IH", "CPS4IH", "Q4_HYBRID", "CPE4H_CR"]:
-                    k = 12  # CPE4H_CR
-                elif et in ["CPE4R", "CPS4R", "CPE4RH", "CPS4RH", "Q4_REDUCED", "CPE4R_CR", "S4R"]:
-                    k = 13  # CPE4R_CR
-                elif et in ["CPE6M", "CPS6M", "CPE6MH", "CPS6MH", "CPE6M_CR"]:
-                    k = 14  # CPE6M_CR
-                elif et in ["CPE4_CR", "Q4_COROTATIONAL", "CPE4_COROTATIONAL"]:
-                    k = 5   # CPE4_CR
-                elif et in ["CPE4_FBAR", "FBAR"]:
-                    k = 4   # CPE4_FBAR
-                elif et in ["CPE4", "CPS4"]:
-                    k = 5
-                elif et in ["CPE3", "CPS3", "CPE3H", "CPS3H", "T3", "CST"]:
-                    k = 6
-                elif et in ["CPE6", "CPS6", "CPE6H", "CPS6H", "T6"]:
-                    k = 7
-                elif et in ["CPE8", "CPS8", "CPE8H", "CPS8H", "Q8", "S8", "S8R", "S9", "S9R5"]:
-                    k = 9
-                elif et in ["CPE8R", "CPS8R", "CPE8RH", "CPS8RH", "Q8R"]:
-                    k = 10
-                elif et in ["CAX8", "CAX8H"]:
-                    k = 15
-                elif et in ["CAX8R", "CAX8RH"]:
-                    k = 16
-                elif et in ["T2D2", "TRUSS2D", "LINK"]:
-                    k = 18
-                else:
-                    # unknown names used to get a kernel by node count
-                    raise NotImplementedError(f"element type {et} is not implemented in the 2D solver")
-            else:
-                # Small-strain linear geometry
-                if et in ["CAX4", "CAX4I", "CAX4H", "CAX4IH", "CAX4R", "CAX4RH"]:
-                    k = 17
-                elif et in ["CPE4", "CPS4"]:
-                    k = 0
-                elif et in ["CPE4I", "CPS4I", "CPE4IH", "CPS4IH", "Q4_EAS", "INCOMPATIBLE"]:
-                    k = 1
-                elif et in ["CPE4R", "CPS4R", "CPE4RH", "CPS4RH", "Q4_REDUCED", "S4R"]:
-                    k = 2
-                elif et in ["CPE4H", "CPS4H", "Q4_HYBRID"]:
-                    k = 3
-                elif et in ["CPE4_FBAR", "FBAR"]:
-                    k = 4
-                elif et in ["CPE4_CR", "Q4_COROTATIONAL", "CPE4_COROTATIONAL"]:
-                    k = 5
-                elif et in ["CPE3", "CPS3", "CPE3H", "CPS3H", "T3", "CST"]:
-                    k = 6
-                elif et in ["CPE6", "CPS6", "CPE6H", "CPS6H", "T6"]:
-                    k = 7
-                elif et in ["CPE6M", "CPS6M", "CPE6MH", "CPS6MH"]:
-                    k = 8
-                elif et in ["CPE8", "CPS8", "CPE8H", "CPS8H", "Q8", "S8", "S8R", "S9", "S9R5"]:
-                    k = 9
-                elif et in ["CPE8R", "CPS8R", "CPE8RH", "CPS8RH", "Q8R"]:
-                    k = 10
-                elif et in ["CAX8", "CAX8H"]:
-                    k = 15
-                elif et in ["CAX8R", "CAX8RH"]:
-                    k = 16
-                elif et in ["CPE4I_CR"]:
-                    k = 11
-                elif et in ["CPE4H_CR"]:
-                    k = 12
-                elif et in ["CPE4R_CR"]:
-                    k = 13
-                elif et in ["CPE6M_CR"]:
-                    k = 14
-                elif et in ["T2D2", "TRUSS2D", "LINK"]:
-                    k = 18
-                else:
-                    # unknown names used to get a kernel by node count
-                    raise NotImplementedError(f"element type {et} is not implemented in the 2D solver")
-
-            group_key = (k, len(elem.node_ids))
-            if group_key not in elem_kernel_indices:
-                elem_kernel_indices[group_key] = []
-            elem_kernel_indices[group_key].append(idx)
+        if failures:
+            raise NotImplementedError("; ".join(failures.values()))
+        new = {et: why for et, why in subst.items() if et not in getattr(self, "element_substitutions", {})}
+        self.element_substitutions = subst
+        import warnings as _warnings
+        for et, why in new.items():
+            _warnings.warn(f"element type {et}: {why}")
 
         self.elem_kernel_groups = {
             g_key: np.array(indices, dtype=np.int64)
             for g_key, indices in elem_kernel_indices.items()
         }
 
+        from dispsolver.model.element_catalog import KERNELS as _KERNELS
         self.elem_conn_groups = {}
         for g_key, indices in self.elem_kernel_groups.items():
             k_val, n_nodes_val = g_key
-            elem_subset = [elements_list[i] for i in indices]
-            if k_val in (0, 1, 2, 3, 4, 5, 11, 12, 13, 17) and n_nodes_val > 4:
-                self.elem_conn_groups[g_key] = np.array(
-                    [[nid_map[nid] for nid in elem.node_ids[:4]] for elem in elem_subset],
-                    dtype=np.int64
-                )
-            elif k_val in (7, 8, 14) and n_nodes_val > 6:
-                self.elem_conn_groups[g_key] = np.array(
-                    [[nid_map[nid] for nid in elem.node_ids[:6]] for elem in elem_subset],
-                    dtype=np.int64
-                )
-            elif k_val in (9, 10, 15, 16) and n_nodes_val > 8:
-                self.elem_conn_groups[g_key] = np.array(
-                    [[nid_map[nid] for nid in elem.node_ids[:8]] for elem in elem_subset],
-                    dtype=np.int64
-                )
-            elif k_val == 6 and n_nodes_val > 3:
-                self.elem_conn_groups[g_key] = np.array(
-                    [[nid_map[nid] for nid in elem.node_ids[:3]] for elem in elem_subset],
-                    dtype=np.int64
-                )
-            else:
-                self.elem_conn_groups[g_key] = np.array(
-                    [[nid_map[nid] for nid in elem.node_ids] for elem in elem_subset],
-                    dtype=np.int64
-                )
+            n_use = min(n_nodes_val, _KERNELS[2][k_val].nodes)   # kernel consumes its own node count
+            self.elem_conn_groups[g_key] = np.array(
+                [[nid_map[nid] for nid in elements_list[i].node_ids[:n_use]] for i in indices],
+                dtype=np.int64
+            )
 
         # Precompute sparse topology per group
         rows_list = []

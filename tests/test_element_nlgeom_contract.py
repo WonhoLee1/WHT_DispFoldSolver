@@ -272,7 +272,7 @@ def test_c3d4h_nlgeom_yes_raises():
 @pytest.mark.parametrize("etype", ["CAX4", "CAX4R", "CAX8", "CAX8R"])
 def test_cax_nlgeom_yes_raises(etype: str):
     mesh = make_quad4_mesh(etype) if "4" in etype else make_quad8_mesh(etype)
-    with pytest.raises(NotImplementedError, match="NLGEOM=YES is not implemented for axisymmetric elements"):
+    with pytest.raises(NotImplementedError, match="CAX.*NLGEOM=YES is not implemented.*axisymmetric"):
         DynamicSolver2D(mesh, {"E": 200000.0, "nu": 0.3}, nlgeom=True)
 
 
