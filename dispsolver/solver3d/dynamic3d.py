@@ -127,6 +127,27 @@ def _integrate_face_pressure_quad8(coords_20: np.ndarray, face_def: Tuple[list, 
     return face_idx, f_face
 
 
+def _integrate_face_pressure_quad4(face_coords: np.ndarray, elem_center: np.ndarray, p_mag: float) -> np.ndarray:
+    """Consistent nodal forces of a uniform pressure p on a bilinear quad face
+    (2x2 Gauss, reference geometry). Same convention as the quad8 version:
+    the area vector is turned toward the element interior, so a positive
+    pressure pushes INTO the body (Abaqus *DSLOAD/*DLOAD P) whatever the face
+    node order."""
+    v_in = elem_center - np.mean(face_coords, axis=0)
+    gp = 1.0 / np.sqrt(3.0)
+    f_face = np.zeros((4, 3), dtype=np.float64)
+    for xi in (-gp, gp):
+        for eta in (-gp, gp):
+            N = 0.25 * np.array([(1 - xi) * (1 - eta), (1 + xi) * (1 - eta), (1 + xi) * (1 + eta), (1 - xi) * (1 + eta)])
+            dNx = 0.25 * np.array([-(1 - eta), (1 - eta), (1 + eta), -(1 + eta)])
+            dNe = 0.25 * np.array([-(1 - xi), -(1 + xi), (1 + xi), (1 - xi)])
+            dA_vec = np.cross(dNx @ face_coords, dNe @ face_coords)
+            if np.dot(dA_vec, v_in) < 0.0:
+                dA_vec = -dA_vec
+            f_face += np.outer(N, p_mag * dA_vec)
+    return f_face
+
+
 class DynamicSolver3D:
     """3D Implicit Non-Linear Solver with Above-Abaqus Speed & Convergence Engine."""
 
@@ -2395,6 +2416,37 @@ class DynamicSolver3D:
                                 u_prescribed = target_val * amp_val
                             self.fix_dof(gid, d, u_prescribed)
 
+    def _resolve_surface_faces(self, region: Any, sys: Optional[Any], model: Any):
+        """Element-based surface -> [(global element id, 1-based face id)], or
+        None when `region` is not a surface. Accepts an assembly surface name
+        or an instance-qualified part surface ("INST.SURF")."""
+        if model is None or sys is None or not isinstance(region, str):
+            return None
+        asm = getattr(model, "root_assembly", None)
+        l2g = getattr(sys, "elem_local_to_global", {})
+        out = []
+        if asm is not None and region in getattr(asm, "surfaces", {}):
+            for inst, local_eid, fid in getattr(asm.surfaces[region], "inst_faces", None) or []:
+                gid = l2g.get((inst, local_eid))
+                if gid is not None:
+                    out.append((gid, fid))
+            return out or None
+        if "." in region and asm is not None:
+            inst_name, surf_name = region.split(".", 1)
+            inst = getattr(asm, "instances", {}).get(inst_name)
+            part = getattr(inst, "part", inst)
+            surf = getattr(part, "surfaces", {}).get(surf_name) if part is not None else None
+            if surf is None:
+                return None
+            for ef in getattr(surf, "faces", None) or []:
+                eid = ef.element_id if hasattr(ef, "element_id") else ef[0]
+                fid = ef.face_id if hasattr(ef, "face_id") else ef[1]
+                gid = l2g.get((inst_name, eid))
+                if gid is not None:
+                    out.append((gid, fid))
+            return out or None
+        return None
+
     def _compute_step_external_loads(self, step: Any, sys: Optional[Any], t: float, total_time: float) -> np.ndarray:
         """Compute external load vector f_ext from active loads in step at time t."""
         f_ext = np.zeros(self.num_dofs, dtype=np.float64)
@@ -2510,6 +2562,30 @@ class DynamicSolver3D:
                 amp_obj = getattr(load, "amplitude", None)
                 if amp_obj is not None and hasattr(amp_obj, "evaluate"):
                     p_mag *= float(amp_obj.evaluate(t=t, step_time=t, total_time=total_time))
+                elif amp_obj is None and str(getattr(step, "procedure", "STATIC")).upper() in ("STATIC", "QUASISTATIC"):
+                    # Abaqus default for a STATIC step: ramp from 0 to full over
+                    # the step (same rule as the concentrated-load branch above;
+                    # pressure used to be applied in full from the first increment).
+                    step_period = float(getattr(step, "time_period", 1.0))
+                    p_mag *= min(max(t / max(step_period, 1e-12), 0.0), 1.0)
+
+                surf_faces = self._resolve_surface_faces(load.region, sys, getattr(step, "parent_model", None))
+                if surf_faces is not None:
+                    from dispsolver.model.interaction import _HEX_FACE_LOCAL_NODES
+                    for gid, fid in surf_faces:
+                        elem = self.mesh.elements[gid]
+                        nids = list(elem.node_ids)
+                        if len(nids) != 8:
+                            raise NotImplementedError(
+                                f"Pressure load '{load_name}': surface face on a {len(nids)}-node element "
+                                f"(element {gid}) -- only C3D8 faces are integrated on the surface path")
+                        local = _HEX_FACE_LOCAL_NODES[fid - 1]
+                        n_idx = [nid_map[nids[i]] for i in local]
+                        e_idx = [nid_map[n] for n in nids]
+                        f_face = _integrate_face_pressure_quad4(node_coords_all[n_idx], node_coords_all[e_idx].mean(axis=0), p_mag)
+                        for a, ni in enumerate(n_idx):
+                            f_ext[3 * ni: 3 * ni + 3] += f_face[a]
+                    continue
 
                 face_name = getattr(load, "face", None)
                 if face_name:
@@ -2531,34 +2607,23 @@ class DynamicSolver3D:
                                     f_ext[3 * n_idx + 1] += f_face[a, 1]
                                     f_ext[3 * n_idx + 2] += f_face[a, 2]
                                 applied_face = True
+                            elif len(conn_e) == 8:
+                                from dispsolver.model.interaction import _HEX_FACE_LOCAL_NODES
+                                local = _HEX_FACE_LOCAL_NODES[int(face_name[1:]) - 1]
+                                n_idx = [conn_e[i] for i in local]
+                                f_face = _integrate_face_pressure_quad4(
+                                    node_coords_all[n_idx], node_coords_all[conn_e].mean(axis=0), p_mag)
+                                for a, ni in enumerate(n_idx):
+                                    f_ext[3 * ni: 3 * ni + 3] += f_face[a]
+                                applied_face = True
 
                 if not applied_face:
-                    region_nodes = []
-                    if sys is not None and hasattr(sys, "global_nsets") and load.region in sys.global_nsets:
-                        node_indices = sys.global_nsets[load.region]
-                        inv_nid = {idx: g for g, idx in sys.nid_to_idx.items()}
-                        region_nodes = [inv_nid[idx] for idx in node_indices]
-                    elif hasattr(self.mesh, "node_sets") and load.region in self.mesh.node_sets:
-                        region_nodes = self.mesh.node_sets[load.region].node_ids
-                    elif load.region == "ALL":
-                        region_nodes = list(self.mesh.nodes.keys())
-                    elif sys is not None and hasattr(sys, "global_elsets") and load.region in sys.global_elsets:
-                        elem_indices = sys.global_elsets[load.region]
-                        if hasattr(self, "elem_conn_0based") and self.elem_conn_0based is not None:
-                            unique_n_idxs = set()
-                            for e_idx in elem_indices:
-                                unique_n_idxs.update(self.elem_conn_0based[e_idx])
-                            if unique_n_idxs and p_mag != 0.0:
-                                f_per_node = p_mag / len(unique_n_idxs)
-                                for n_idx in unique_n_idxs:
-                                    f_ext[3 * n_idx + 2] -= f_per_node
-
-                    if region_nodes and p_mag != 0.0:
-                        f_per_node = p_mag / len(region_nodes)
-                        for gid in region_nodes:
-                            if gid in nid_map:
-                                n_idx = nid_map[gid]
-                                f_ext[3 * n_idx + 2] -= f_per_node
+                    # No silent fallback: this used to split the magnitude over
+                    # the region's nodes as a -z force (deck #06: 5 MPa on a bore
+                    # became (0, 0, -5) N), which is not a pressure at all.
+                    raise ValueError(
+                        f"Pressure load '{load_name}': region {load.region!r} (face {face_name!r}) "
+                        f"could not be resolved to element faces")
 
         return f_ext
 

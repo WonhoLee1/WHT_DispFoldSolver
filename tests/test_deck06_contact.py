@@ -248,12 +248,14 @@ def test_contact_patch_exact_force(tmp_path, method, scale, n_bot):
     assert abs(abs(top) / PATCH_F - 1.0) <= PATCH_RTOL, f"RF_top={top:.6e}, exact={PATCH_F:.6e}"
 
 
-@_xf  # measured: sum = (0, 0, -5.00) N, identical at t=0.5 and t=1.0
+# Before 2026-10-04 this gave (0, 0, -5.00) N at every t: C3D8 surface pressure
+# fell back to splitting the magnitude over the nodes as a -z force, unramped.
 def test_step2_pressure_load_vector():
     model, ex = _build("PENALTY")
     with contextlib.redirect_stdout(io.StringIO()):
         s, sys_ = ex.initialize_solver()
     step = model.steps["INTERNAL_PRESSURE"]
+    step.parent_model = model   # as MultiStepExecutor.execute_step does
     expect = PIPE_P * PIPE_R * PIPE_H
     for t in (0.5, 1.0):
         f = s._compute_step_external_loads(step, sys_, t, 1.0)
