@@ -120,10 +120,22 @@ __all__ = [
     "GLOBAL_KEYWORD_REGISTRY",
     "KeywordRegistry",
     "KeywordContext",
+    "KeywordSpec",
+    "ParamSpec",
+    "RowSpec",
+    "normalize_param_name",
     "keyword_modules",
 ]
 
 from .abaqus_reader import read_inp, execute_inp, execute_inp_smoke, AbaqusInputReader
-from .keyword_registry import GLOBAL_KEYWORD_REGISTRY, KeywordRegistry, KeywordContext
+from .keyword_registry import (
+    GLOBAL_KEYWORD_REGISTRY,
+    KeywordRegistry,
+    KeywordContext,
+    KeywordSpec,
+    ParamSpec,
+    RowSpec,
+    normalize_param_name,
+)
 from . import keywords as keyword_modules
 

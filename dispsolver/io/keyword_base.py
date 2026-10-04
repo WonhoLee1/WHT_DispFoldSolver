@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from typing import Any, List
 
-def _parse_data_rows(data_lines: List[str], dtype=float) -> List[List[Any]]:
+def _parse_data_rows(data_lines: List[str], dtype=float, default: Any = None) -> List[List[Any]]:
     """Parse comma/whitespace-separated data lines into a table of values.
     Supports Abaqus trailing comma ',' line continuation.
+    Preserves blank/empty fields between commas as default (or empty string if dtype is str).
     """
     merged_lines = []
     curr = ""
@@ -27,17 +28,23 @@ def _parse_data_rows(data_lines: List[str], dtype=float) -> List[List[Any]]:
 
     rows = []
     for line_str in merged_lines:
-        parts = [p.strip() for p in line_str.split(",") if p.strip()]
-        if not parts:
+        if "," in line_str:
+            parts = [p.strip() for p in line_str.split(",")]
+            while parts and parts[-1] == "":
+                parts.pop()
+        else:
             parts = [p.strip() for p in line_str.split() if p.strip()]
         if not parts:
             continue
         row = []
         for p in parts:
-            try:
-                row.append(dtype(p))
-            except ValueError:
-                row.append(p)
+            if p == "":
+                row.append("" if dtype is str else default)
+            else:
+                try:
+                    row.append(dtype(p))
+                except (ValueError, TypeError):
+                    row.append(p)
         rows.append(row)
     return rows
 

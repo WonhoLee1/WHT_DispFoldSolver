@@ -5,14 +5,30 @@ import numpy as np
 
 from dispsolver.io.abaqus_lexer import AbaqusKeywordBlock
 from dispsolver.io.keyword_base import _parse_data_rows
-from dispsolver.io.keyword_registry import GLOBAL_KEYWORD_REGISTRY, KeywordContext
+from dispsolver.io.keyword_registry import (
+    GLOBAL_KEYWORD_REGISTRY,
+    KeywordContext,
+    ParamSpec,
+    RowSpec,
+)
 
 if TYPE_CHECKING:
     from dispsolver.io.abaqus_reader import AbaqusInputReader
 
 # ─── MESH DEFINITION (NODES, ELEMENTS, SETS, SURFACES) ──────────────────────
 
-@GLOBAL_KEYWORD_REGISTRY.register("NODE", valid_contexts={KeywordContext.PART, KeywordContext.GLOBAL, KeywordContext.INSTANCE})
+@GLOBAL_KEYWORD_REGISTRY.register(
+    "NODE",
+    valid_contexts={KeywordContext.PART, KeywordContext.GLOBAL, KeywordContext.INSTANCE},
+    support="FULL",
+    params={
+        "NSET": ParamSpec("NSET"),
+        "SYSTEM": ParamSpec("SYSTEM", default="RC", choices=["RC", "R", "C", "S"]),
+        "INPUT": ParamSpec("INPUT", supported=False),
+    },
+    rows=RowSpec(column_types=[int, float, float, float], min_columns=2, max_columns=4),
+    description="Define node coordinates and assign to node sets",
+)
 def _handle_node(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     import numpy as np
     part = reader.get_active_part()
@@ -68,7 +84,17 @@ def _handle_node(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
         part.create_set(nset_name, nodes=added_nids)
 
 
-@GLOBAL_KEYWORD_REGISTRY.register("ELEMENT", valid_contexts={KeywordContext.PART, KeywordContext.GLOBAL, KeywordContext.INSTANCE})
+@GLOBAL_KEYWORD_REGISTRY.register(
+    "ELEMENT",
+    valid_contexts={KeywordContext.PART, KeywordContext.GLOBAL, KeywordContext.INSTANCE},
+    support="FULL",
+    params={
+        "TYPE": ParamSpec("TYPE", required=True),
+        "ELSET": ParamSpec("ELSET"),
+    },
+    rows=RowSpec(column_types=[int], min_columns=2),
+    description="Define elements by connectivity and assign to element sets",
+)
 def _handle_element(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     part = reader.get_active_part()
     etype = block.params.get("type", "C3D8").upper()
@@ -88,7 +114,21 @@ def _handle_element(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
         part.create_set(elset_name, elements=added_eids)
 
 
-@GLOBAL_KEYWORD_REGISTRY.register("NSET", valid_contexts={KeywordContext.PART, KeywordContext.GLOBAL, KeywordContext.ASSEMBLY, KeywordContext.INSTANCE, KeywordContext.STEP})
+@GLOBAL_KEYWORD_REGISTRY.register(
+    "NSET",
+    valid_contexts={KeywordContext.PART, KeywordContext.GLOBAL, KeywordContext.ASSEMBLY, KeywordContext.INSTANCE, KeywordContext.STEP},
+    support="FULL",
+    params={
+        "NSET": ParamSpec("NSET", required=True),
+        "GENERATE": ParamSpec("GENERATE", type=bool, default=False, aliases=["GEN"]),
+        "INSTANCE": ParamSpec("INSTANCE"),
+        "ELSET": ParamSpec("ELSET"),
+        "INTERNAL": ParamSpec("INTERNAL", type=bool, default=False),
+        "UNSORTED": ParamSpec("UNSORTED", type=bool, default=False),
+    },
+    rows=RowSpec(column_types=[int], min_columns=1),
+    description="Define a set of nodes",
+)
 def _handle_nset(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     name = block.params.get("nset", "")
     if not name:
@@ -160,7 +200,19 @@ def _handle_nset(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
         part.create_set(name, nodes=nids)
 
 
-@GLOBAL_KEYWORD_REGISTRY.register("ELSET", valid_contexts={KeywordContext.PART, KeywordContext.GLOBAL, KeywordContext.ASSEMBLY, KeywordContext.INSTANCE, KeywordContext.STEP})
+@GLOBAL_KEYWORD_REGISTRY.register(
+    "ELSET",
+    valid_contexts={KeywordContext.PART, KeywordContext.GLOBAL, KeywordContext.ASSEMBLY, KeywordContext.INSTANCE, KeywordContext.STEP},
+    support="FULL",
+    params={
+        "ELSET": ParamSpec("ELSET", required=True),
+        "GENERATE": ParamSpec("GENERATE", type=bool, default=False, aliases=["GEN"]),
+        "INSTANCE": ParamSpec("INSTANCE"),
+        "INTERNAL": ParamSpec("INTERNAL", type=bool, default=False),
+    },
+    rows=RowSpec(column_types=[int], min_columns=1),
+    description="Define a set of elements",
+)
 def _handle_elset(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     name = block.params.get("elset", "")
     if not name:
@@ -232,7 +284,20 @@ def _handle_elset(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
         part.create_set(name, elements=eids)
 
 
-@GLOBAL_KEYWORD_REGISTRY.register("SURFACE", valid_contexts={KeywordContext.PART, KeywordContext.GLOBAL, KeywordContext.ASSEMBLY, KeywordContext.INSTANCE})
+@GLOBAL_KEYWORD_REGISTRY.register(
+    "SURFACE",
+    valid_contexts={KeywordContext.PART, KeywordContext.GLOBAL, KeywordContext.ASSEMBLY, KeywordContext.INSTANCE},
+    support="FULL",
+    params={
+        "NAME": ParamSpec("NAME", required=True),
+        "TYPE": ParamSpec("TYPE", default="ELEMENT", choices=["ELEMENT", "NODE", "SEGMENTS", "CYLINDER"]),
+        "COMBINE": ParamSpec("COMBINE"),
+        "TRIM": ParamSpec("TRIM", supported=False),
+        "REGION TYPE": ParamSpec("REGION TYPE", aliases=["REGION_TYPE"], supported=False),
+    },
+    rows=RowSpec(column_types=[str, str], min_columns=1, max_columns=2),
+    description="Define a geometry or element surface",
+)
 def _handle_surface(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     name = block.params.get("name", "")
     stype = block.params.get("type", "ELEMENT").upper()
@@ -369,7 +434,18 @@ def _handle_surface(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
         part.create_surface(name, faces=faces)
 
 
-@GLOBAL_KEYWORD_REGISTRY.register("NGEN", valid_contexts={KeywordContext.PART, KeywordContext.GLOBAL, KeywordContext.INSTANCE})
+@GLOBAL_KEYWORD_REGISTRY.register(
+    "NGEN",
+    valid_contexts={KeywordContext.PART, KeywordContext.GLOBAL, KeywordContext.INSTANCE},
+    support="FULL",
+    params={
+        "NSET": ParamSpec("NSET"),
+        "LINE": ParamSpec("LINE", default="C", choices=["C", "P"], aliases=["L"]),
+        "SYSTEM": ParamSpec("SYSTEM", default="RC", choices=["RC", "C", "S"]),
+    },
+    rows=RowSpec(min_columns=2, max_columns=10),
+    description="Generate nodes between two nodes along a line or circular arc",
+)
 def _handle_ngen(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     import numpy as np
     part = reader.get_active_part()
@@ -464,7 +540,19 @@ def _handle_ngen(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
         part.create_set(nset_name, nodes=sorted(list(set(added_nids))))
 
 
-@GLOBAL_KEYWORD_REGISTRY.register("NFILL", valid_contexts={KeywordContext.PART, KeywordContext.GLOBAL, KeywordContext.INSTANCE})
+@GLOBAL_KEYWORD_REGISTRY.register(
+    "NFILL",
+    valid_contexts={KeywordContext.PART, KeywordContext.GLOBAL, KeywordContext.INSTANCE},
+    support="FULL",
+    params={
+        "NSET": ParamSpec("NSET"),
+        "BIAS": ParamSpec("BIAS", type=float, default=1.0),
+        "SINGULAR": ParamSpec("SINGULAR", type=int, default=0),
+        "TWO STEP": ParamSpec("TWO STEP", aliases=["TWO_STEP"], supported=False),
+    },
+    rows=RowSpec(min_columns=3, max_columns=4),
+    description="Generate nodes between two node sets by interpolation",
+)
 def _handle_nfill(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     import numpy as np
     part = reader.get_active_part()
@@ -508,7 +596,21 @@ def _handle_nfill(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
             part.create_set(nset_name, nodes=all_set_nids)
 
 
-@GLOBAL_KEYWORD_REGISTRY.register("NCOPY", valid_contexts={KeywordContext.PART, KeywordContext.GLOBAL, KeywordContext.INSTANCE})
+@GLOBAL_KEYWORD_REGISTRY.register(
+    "NCOPY",
+    valid_contexts={KeywordContext.PART, KeywordContext.GLOBAL, KeywordContext.INSTANCE},
+    support="FULL",
+    params={
+        "OLD SET": ParamSpec("OLD SET", required=True, aliases=["OLD_SET"]),
+        "CHANGE NUMBER": ParamSpec("CHANGE NUMBER", type=int, required=True, aliases=["CHANGE_NUMBER"]),
+        "SHIFT": ParamSpec("SHIFT", default="NO"),
+        "NEW SET": ParamSpec("NEW SET", aliases=["NEW_SET"]),
+        "MULTIPLE": ParamSpec("MULTIPLE", type=int, supported=False),
+        "POLE": ParamSpec("POLE", supported=False),
+    },
+    rows=RowSpec(column_types=[float], min_columns=0, max_columns=7),
+    description="Copy a node set with an optional translation and coordinate shift",
+)
 def _handle_ncopy(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     import numpy as np
     part = reader.get_active_part()
@@ -549,7 +651,16 @@ def _handle_ncopy(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
         part.create_set(new_set, nodes=new_nids)
 
 
-@GLOBAL_KEYWORD_REGISTRY.register("ELGEN", valid_contexts={KeywordContext.PART, KeywordContext.GLOBAL, KeywordContext.INSTANCE})
+@GLOBAL_KEYWORD_REGISTRY.register(
+    "ELGEN",
+    valid_contexts={KeywordContext.PART, KeywordContext.GLOBAL, KeywordContext.INSTANCE},
+    support="FULL",
+    params={
+        "ELSET": ParamSpec("ELSET"),
+    },
+    rows=RowSpec(column_types=[int], min_columns=2, max_columns=7),
+    description="Generate elements by replicating an existing element pattern",
+)
 def _handle_elgen(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     part = reader.get_active_part()
     elset_name = block.params.get("elset", None)

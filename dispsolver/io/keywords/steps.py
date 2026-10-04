@@ -4,7 +4,12 @@ import warnings
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
 from dispsolver.io.abaqus_lexer import AbaqusKeywordBlock
-from dispsolver.io.keyword_registry import GLOBAL_KEYWORD_REGISTRY, KeywordContext
+from dispsolver.io.keyword_registry import (
+    GLOBAL_KEYWORD_REGISTRY,
+    KeywordContext,
+    ParamSpec,
+    RowSpec,
+)
 from dispsolver.io.keyword_base import _parse_data_rows
 from dispsolver.model.step import PredefinedField
 
@@ -13,7 +18,22 @@ if TYPE_CHECKING:
 
 # ─── STEPS, BCS & LOADS ──────────────────────────────────────────────────────
 
-@GLOBAL_KEYWORD_REGISTRY.register("STEP", valid_contexts={KeywordContext.GLOBAL})
+@GLOBAL_KEYWORD_REGISTRY.register(
+    "STEP",
+    valid_contexts={KeywordContext.GLOBAL},
+    support="FULL",
+    params={
+        "NAME": ParamSpec("NAME"),
+        "NLGEOM": ParamSpec("NLGEOM", default="NO", choices=["YES", "NO"]),
+        "INC": ParamSpec("INC", type=int, default=100),
+        "AMPLITUDE": ParamSpec("AMPLITUDE", default="STEP", choices=["STEP", "RAMP"], aliases=["AMP"]),
+        "TIME PERIOD": ParamSpec("TIME PERIOD", type=float, default=1.0, aliases=["TIME_PERIOD"]),
+        "PERTURBATION": ParamSpec("PERTURBATION", supported=False, aliases=["PERT"]),
+        "UNSYMM": ParamSpec("UNSYMM", supported=False, aliases=["UNSYM"]),
+        "SOLVER": ParamSpec("SOLVER", supported=False),
+    },
+    description="Begin an analysis step",
+)
 def _handle_step(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     step_name = block.params.get("name", f"Step-{len(reader.model.steps)}")
     prev_nlgeom = getattr(reader.current_step, "nlgeom", False) if reader.current_step is not None else False
@@ -36,7 +56,20 @@ def _handle_step(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     reader.current_interaction = None
 
 
-@GLOBAL_KEYWORD_REGISTRY.register("STATIC", valid_contexts={KeywordContext.STEP})
+@GLOBAL_KEYWORD_REGISTRY.register(
+    "STATIC",
+    valid_contexts={KeywordContext.STEP},
+    support="FULL",
+    params={
+        "DIRECT": ParamSpec("DIRECT", type=bool, default=False, supported=False),
+        "ADIABATIC": ParamSpec("ADIABATIC", supported=False),
+        "RIKS": ParamSpec("RIKS", supported=False),
+        "STABILIZE": ParamSpec("STABILIZE", supported=False),
+        "LONG TERM": ParamSpec("LONG TERM", supported=False, aliases=["LONG_TERM"]),
+    },
+    rows=RowSpec(column_types=[float, float, float, float], min_columns=1, max_columns=4, repeating=False),
+    description="Static stress/displacement analysis procedure",
+)
 def _handle_static(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     if reader.current_step is not None:
         reader.current_step.procedure = "STATIC"
@@ -44,16 +77,33 @@ def _handle_static(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
             rows = _parse_data_rows(block.data_lines, dtype=float)
             if rows and len(rows[0]) >= 1:
                 r = rows[0]
-                reader.current_step.dt_init = float(r[0])
-                if len(r) >= 2:
+                if r[0] is not None and r[0] != "":
+                    reader.current_step.dt_init = float(r[0])
+                if len(r) >= 2 and r[1] is not None and r[1] != "":
                     reader.current_step.time_period = float(r[1])
-                if len(r) >= 3:
+                if len(r) >= 3 and r[2] is not None and r[2] != "":
                     reader.current_step.dt_min = float(r[2])
-                if len(r) >= 4:
+                if len(r) >= 4 and r[3] is not None and r[3] != "":
                     reader.current_step.dt_max = float(r[3])
 
 
-@GLOBAL_KEYWORD_REGISTRY.register("DYNAMIC", valid_contexts={KeywordContext.STEP})
+@GLOBAL_KEYWORD_REGISTRY.register(
+    "DYNAMIC",
+    valid_contexts={KeywordContext.STEP},
+    support="FULL",
+    params={
+        "DIRECT": ParamSpec("DIRECT", supported=False),
+        "ALPHA": ParamSpec("ALPHA", supported=False),
+        "HAFT": ParamSpec("HAFT", supported=False, aliases=["HAFTOL"]),
+        "APPLICATION": ParamSpec("APPLICATION", supported=False),
+        "EXPLICIT": ParamSpec("EXPLICIT", supported=False),
+        "ELEMENT BY ELEMENT": ParamSpec("ELEMENT BY ELEMENT", supported=False),
+        "NOHAF": ParamSpec("NOHAF", supported=False),
+        "IMPROVED DT METHOD": ParamSpec("IMPROVED DT METHOD", supported=False),
+    },
+    rows=RowSpec(column_types=[float, float], min_columns=1, max_columns=2, repeating=False),
+    description="Implicit/explicit dynamic analysis procedure",
+)
 def _handle_dynamic(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     if reader.current_step is not None:
         reader.current_step.procedure = "DYNAMIC"
@@ -61,17 +111,40 @@ def _handle_dynamic(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
             rows = _parse_data_rows(block.data_lines, dtype=float)
             if rows and len(rows[0]) >= 1:
                 r = rows[0]
-                reader.current_step.dt_init = float(r[0])
-                if len(r) >= 2:
+                if r[0] is not None and r[0] != "":
+                    reader.current_step.dt_init = float(r[0])
+                if len(r) >= 2 and r[1] is not None and r[1] != "":
                     reader.current_step.time_period = float(r[1])
 
 
-@GLOBAL_KEYWORD_REGISTRY.register("END STEP", valid_contexts={KeywordContext.STEP}, aliases=["ENDSTEP"])
+@GLOBAL_KEYWORD_REGISTRY.register(
+    "END STEP",
+    valid_contexts={KeywordContext.STEP},
+    aliases=["ENDSTEP"],
+    support="FULL",
+    params={},
+    description="End step definition",
+)
 def _handle_end_step(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     reader.context = KeywordContext.GLOBAL
 
 
-@GLOBAL_KEYWORD_REGISTRY.register("BOUNDARY", valid_contexts={KeywordContext.STEP, KeywordContext.GLOBAL})
+@GLOBAL_KEYWORD_REGISTRY.register(
+    "BOUNDARY",
+    valid_contexts={KeywordContext.STEP, KeywordContext.GLOBAL},
+    support="FULL",
+    params={
+        "TYPE": ParamSpec("TYPE", default="DISPLACEMENT", choices=["DISPLACEMENT", "VELOCITY", "ACCELERATION"]),
+        "OP": ParamSpec("OP", default="MOD", choices=["MOD", "NEW"]),
+        "AMPLITUDE": ParamSpec("AMPLITUDE", aliases=["AMP"]),
+        "FIXED": ParamSpec("FIXED", supported=False),
+        "USER": ParamSpec("USER", supported=False),
+        "LOAD CASE": ParamSpec("LOAD CASE", supported=False),
+        "SUBMODEL": ParamSpec("SUBMODEL", supported=False),
+    },
+    rows=RowSpec(column_types=[str, int, int, float], min_columns=2, max_columns=4),
+    description="Prescribe boundary condition on nodes or sets",
+)
 def _handle_boundary(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     target_step = reader.current_step if reader.current_step is not None else reader.model.initial_step
     amp = block.params.get("amplitude", None)
@@ -145,7 +218,19 @@ def _handle_boundary(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
             reader.warnings.append(msg)
 
 
-@GLOBAL_KEYWORD_REGISTRY.register("CLOAD", valid_contexts={KeywordContext.STEP})
+@GLOBAL_KEYWORD_REGISTRY.register(
+    "CLOAD",
+    valid_contexts={KeywordContext.STEP},
+    support="FULL",
+    params={
+        "OP": ParamSpec("OP", default="MOD", choices=["MOD", "NEW"]),
+        "AMPLITUDE": ParamSpec("AMPLITUDE", aliases=["AMP"]),
+        "FOLLOWER": ParamSpec("FOLLOWER", supported=False),
+        "LOAD CASE": ParamSpec("LOAD CASE", supported=False),
+    },
+    rows=RowSpec(column_types=[str, int, float], min_columns=3, max_columns=3),
+    description="Concentrated force applied at nodes",
+)
 def _handle_cload(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     if reader.current_step is None:
         return
@@ -183,7 +268,19 @@ def _handle_cload(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
                 reader.warnings.append(msg)
 
 
-@GLOBAL_KEYWORD_REGISTRY.register("TEMPERATURE", valid_contexts={KeywordContext.STEP, KeywordContext.GLOBAL})
+@GLOBAL_KEYWORD_REGISTRY.register(
+    "TEMPERATURE",
+    valid_contexts={KeywordContext.STEP, KeywordContext.GLOBAL},
+    support="PARTIAL",
+    params={
+        "OP": ParamSpec("OP", default="MOD", choices=["MOD", "NEW"]),
+        "AMPLITUDE": ParamSpec("AMPLITUDE", aliases=["AMP"]),
+        "INPUT": ParamSpec("INPUT", supported=False),
+        "SECTION SPECIFICATION": ParamSpec("SECTION SPECIFICATION", supported=False),
+    },
+    rows=RowSpec(column_types=[str, float], min_columns=2, max_columns=2),
+    description="Prescribe nodal temperature field",
+)
 def _handle_temperature(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     rows = _parse_data_rows(block.data_lines, dtype=str)
     target_step = reader.current_step if reader.current_step is not None else reader.model.initial_step
@@ -200,7 +297,25 @@ def _handle_temperature(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
 
 # ─── OUTPUT REQUESTS (FIELD & HISTORY) ───────────────────────────────────────
 
-@GLOBAL_KEYWORD_REGISTRY.register("OUTPUT", valid_contexts={KeywordContext.STEP})
+@GLOBAL_KEYWORD_REGISTRY.register(
+    "OUTPUT",
+    valid_contexts={KeywordContext.STEP},
+    support="STUB",
+    params={
+        "FIELD": ParamSpec("FIELD", supported=True),
+        "HISTORY": ParamSpec("HISTORY", supported=True, aliases=["HIST"]),
+        "VARIABLE": ParamSpec("VARIABLE", aliases=["VAR"]),
+        "FREQUENCY": ParamSpec("FREQUENCY", aliases=["FREQ", "FRE"]),
+        "NUMBER INTERVALS": ParamSpec("NUMBER INTERVALS", aliases=["NUMBER_INTERVALS", "NUMBER INTERVAL", "NUM", "NUMBER INT", "NUMBER"]),
+        "TIME MARKS": ParamSpec("TIME MARKS", aliases=["TIME_MARKS", "TIMEMARKS"]),
+        "TIME INTERVAL": ParamSpec("TIME INTERVAL", aliases=["TIME_INTERVAL", "TIME INT", "TIMEINT", "TIME INTERV"]),
+        "TIME POINTS": ParamSpec("TIME POINTS", aliases=["TIME_POINTS"]),
+        "FILTER": ParamSpec("FILTER", supported=False),
+        "MODE LIST": ParamSpec("MODE LIST", aliases=["MODELIST"], supported=False),
+        "OP": ParamSpec("OP", supported=False),
+    },
+    description="Output requests container (field or history)",
+)
 def _handle_output(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     if reader.current_step is None:
         return
@@ -223,7 +338,18 @@ def _handle_output(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     reader.current_step._current_output_intervals = num_intervals
 
 
-@GLOBAL_KEYWORD_REGISTRY.register("NODE OUTPUT", valid_contexts={KeywordContext.STEP}, aliases=["NODEOUTPUT"])
+@GLOBAL_KEYWORD_REGISTRY.register(
+    "NODE OUTPUT",
+    valid_contexts={KeywordContext.STEP},
+    aliases=["NODEOUTPUT"],
+    support="STUB",
+    params={
+        "VARIABLE": ParamSpec("VARIABLE", aliases=["VAR"]),
+        "NSET": ParamSpec("NSET"),
+    },
+    rows=RowSpec(column_types=[str]),
+    description="Nodal output variable request",
+)
 def _handle_node_output(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     if reader.current_step is None:
         return
@@ -266,7 +392,21 @@ def _handle_node_output(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
         )
 
 
-@GLOBAL_KEYWORD_REGISTRY.register("ELEMENT OUTPUT", valid_contexts={KeywordContext.STEP}, aliases=["ELEMENTOUTPUT"])
+@GLOBAL_KEYWORD_REGISTRY.register(
+    "ELEMENT OUTPUT",
+    valid_contexts={KeywordContext.STEP},
+    aliases=["ELEMENTOUTPUT"],
+    support="STUB",
+    params={
+        "DIRECTIONS": ParamSpec("DIRECTIONS"),
+        "POSITION": ParamSpec("POSITION", aliases=["POS"]),
+        "VARIABLE": ParamSpec("VARIABLE", aliases=["VAR"]),
+        "ELSET": ParamSpec("ELSET"),
+        "REBAR": ParamSpec("REBAR", supported=False),
+    },
+    rows=RowSpec(column_types=[str]),
+    description="Element output variable request",
+)
 def _handle_element_output(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     if reader.current_step is None:
         return
@@ -307,6 +447,7 @@ def _handle_element_output(reader: AbaqusInputReader, block: AbaqusKeywordBlock)
             variables=variables,
             region=elset,
         )
+
 
 
 

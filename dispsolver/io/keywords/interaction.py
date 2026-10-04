@@ -3,14 +3,32 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
 from dispsolver.io.abaqus_lexer import AbaqusKeywordBlock
-from dispsolver.io.keyword_registry import GLOBAL_KEYWORD_REGISTRY, KeywordContext
+from dispsolver.io.keyword_registry import (
+    GLOBAL_KEYWORD_REGISTRY,
+    KeywordContext,
+    ParamSpec,
+    RowSpec,
+)
 
 if TYPE_CHECKING:
     from dispsolver.io.abaqus_reader import AbaqusInputReader
 
 # ─── CONSTRAINTS & INTERACTIONS ──────────────────────────────────────────────
 
-@GLOBAL_KEYWORD_REGISTRY.register("TIE", valid_contexts={KeywordContext.ASSEMBLY, KeywordContext.GLOBAL})
+@GLOBAL_KEYWORD_REGISTRY.register(
+    "TIE",
+    valid_contexts={KeywordContext.ASSEMBLY, KeywordContext.GLOBAL},
+    support="PARTIAL",
+    params={
+        "NAME": ParamSpec("NAME"),
+        "POSITION TOLERANCE": ParamSpec("POSITION TOLERANCE", type=float, default=0.0, aliases=["POSITION_TOLERANCE"]),
+        "ADJUST": ParamSpec("ADJUST", default="YES", choices=["YES", "NO"]),
+        "TIED PAIR": ParamSpec("TIED PAIR", supported=False),
+        "TYPE": ParamSpec("TYPE", supported=False),
+    },
+    rows=RowSpec(column_types=[str, str], min_columns=2, max_columns=2),
+    description="Tie constraint between two surfaces",
+)
 def _handle_tie(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     name = block.params.get("name", f"TIE-{len(reader.model.root_assembly.ties) + 1}")
     pos_tol = float(block.params.get("position tolerance", block.params.get("position_tolerance", 0.0)))
@@ -29,7 +47,24 @@ def _handle_tie(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
         reader.model.Tie(name=tie_name, master=master, slave=slave, positionTolerance=pos_tol, adjust=adjust)
 
 
-@GLOBAL_KEYWORD_REGISTRY.register("RIGID BODY", valid_contexts={KeywordContext.PART, KeywordContext.ASSEMBLY, KeywordContext.GLOBAL}, aliases=["RIGIDBODY"])
+@GLOBAL_KEYWORD_REGISTRY.register(
+    "RIGID BODY",
+    valid_contexts={KeywordContext.PART, KeywordContext.ASSEMBLY, KeywordContext.GLOBAL},
+    aliases=["RIGIDBODY"],
+    support="PARTIAL",
+    params={
+        "NAME": ParamSpec("NAME"),
+        "REF NODE": ParamSpec("REF NODE", aliases=["REF_NODE", "REFNODE"]),
+        "ELSET": ParamSpec("ELSET"),
+        "TIE NSET": ParamSpec("TIE NSET", aliases=["TIE_NSET", "NSET"]),
+        "PIN NSET": ParamSpec("PIN NSET", aliases=["PIN_NSET"]),
+        "ANALYTICAL SURFACE": ParamSpec("ANALYTICAL SURFACE", aliases=["ANALYTICAL_SURFACE"]),
+        "ISOTHERMAL": ParamSpec("ISOTHERMAL", supported=False),
+        "ROTATION MC": ParamSpec("ROTATION MC", supported=False),
+        "POSITION": ParamSpec("POSITION", supported=False),
+    },
+    description="Rigid body constraint definition",
+)
 def _handle_rigid_body(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     name = block.params.get("name", f"RB_{len(reader.model.constraints) + 1}")
     rp = block.params.get("ref node", block.params.get("ref_node", block.params.get("refnode", None)))
@@ -57,19 +92,41 @@ def _handle_rigid_body(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
                 surf.reference_node = ref_nid
 
 
-@GLOBAL_KEYWORD_REGISTRY.register("SURFACE INTERACTION", valid_contexts={KeywordContext.GLOBAL, KeywordContext.STEP}, aliases=["SURFACEINTERACTION"])
+@GLOBAL_KEYWORD_REGISTRY.register(
+    "SURFACE INTERACTION",
+    valid_contexts={KeywordContext.GLOBAL, KeywordContext.STEP},
+    aliases=["SURFACEINTERACTION"],
+    support="FULL",
+    params={"NAME": ParamSpec("NAME")},
+    description="Contact property / surface interaction container",
+)
 def _handle_surface_interaction(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     name = block.params.get("name", f"INTERACTION-{len(reader.model.contact_properties) + 1}")
     reader.model.ContactProperty(name=name)
     reader.current_interaction = name
 
 
-@GLOBAL_KEYWORD_REGISTRY.register("CONTACT PAIR", valid_contexts={KeywordContext.GLOBAL, KeywordContext.ASSEMBLY, KeywordContext.STEP}, aliases=["CONTACTPAIR"])
+@GLOBAL_KEYWORD_REGISTRY.register(
+    "CONTACT PAIR",
+    valid_contexts={KeywordContext.GLOBAL, KeywordContext.ASSEMBLY, KeywordContext.STEP},
+    aliases=["CONTACTPAIR"],
+    support="FULL",
+    params={
+        "INTERACTION": ParamSpec("INTERACTION", default="DEFAULT"),
+        "SMALL SLIDING": ParamSpec("SMALL SLIDING", type=bool, default=False, supported=True, aliases=["SMALL_SLIDING"]),
+        "ADJUST": ParamSpec("ADJUST", supported=False),
+        "TYPE": ParamSpec("TYPE", supported=False),
+        "WEIGHT": ParamSpec("WEIGHT", supported=False),
+        "TIED": ParamSpec("TIED", supported=False),
+        "CPSET": ParamSpec("CPSET", supported=False),
+        "TRACKING": ParamSpec("TRACKING", supported=False),
+    },
+    rows=RowSpec(column_types=[str, str], min_columns=2, max_columns=2),
+    description="Contact pair between master and slave surfaces",
+)
 def _handle_contact_pair(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     interaction = block.params.get("interaction", "DEFAULT")
     # Abaqus: *CONTACT PAIR is FINITE sliding unless SMALL SLIDING is given.
-    # The parameter used to be ignored and every deck pair ran small sliding
-    # (the model-API default).
     sliding = "SMALL" if "small sliding" in block.params else "FINITE"
     if block.data_lines:
         for line in block.data_lines:
@@ -81,7 +138,22 @@ def _handle_contact_pair(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
                                          sliding=sliding)
 
 
-@GLOBAL_KEYWORD_REGISTRY.register("SURFACE BEHAVIOR", valid_contexts={KeywordContext.GLOBAL, KeywordContext.STEP}, aliases=["SURFACEBEHAVIOR"])
+@GLOBAL_KEYWORD_REGISTRY.register(
+    "SURFACE BEHAVIOR",
+    valid_contexts={KeywordContext.GLOBAL, KeywordContext.STEP},
+    aliases=["SURFACEBEHAVIOR"],
+    support="FULL",
+    params={
+        "PRESSURE OVERCLOSURE": ParamSpec(
+            "PRESSURE OVERCLOSURE",
+            default="HARD",
+            choices=["HARD", "LINEAR", "SOFT_LINEAR", "EXPONENTIAL", "SOFT_EXPONENTIAL", "TABULAR", "SOFT_TABULAR"],
+            aliases=["PRESSURE_OVERCLOSURE", "PRESSURE-OVERCLOSURE"],
+        ),
+        "NO SEPARATION": ParamSpec("NO SEPARATION", supported=False),
+    },
+    description="Normal contact surface behavior and pressure-overclosure relationship",
+)
 def _handle_surface_behavior(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     target = reader.current_interaction
     if target is None or target not in reader.model.contact_properties:
@@ -96,6 +168,7 @@ def _handle_surface_behavior(reader: AbaqusInputReader, block: AbaqusKeywordBloc
         prop.normal_behavior = "SOFT_EXPONENTIAL"
     elif po in ("TABULAR", "SOFT_TABULAR"):
         prop.normal_behavior = "SOFT_TABULAR"
+
 
 
 

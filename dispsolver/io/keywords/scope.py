@@ -6,7 +6,12 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 import numpy as np
 
 from dispsolver.io.abaqus_lexer import AbaqusKeywordBlock
-from dispsolver.io.keyword_registry import GLOBAL_KEYWORD_REGISTRY, KeywordContext
+from dispsolver.io.keyword_registry import (
+    GLOBAL_KEYWORD_REGISTRY,
+    KeywordContext,
+    ParamSpec,
+    RowSpec,
+)
 
 if TYPE_CHECKING:
     from dispsolver.io.abaqus_reader import AbaqusInputReader
@@ -15,7 +20,14 @@ from dispsolver.io.keyword_base import _parse_data_rows
 # KEYWORD HANDLERS IMPLEMENTATION (Standard Abaqus Keywords)
 # ─────────────────────────────────────────────────────────────────────────────
 
-@GLOBAL_KEYWORD_REGISTRY.register("HEADING", valid_contexts={KeywordContext.GLOBAL})
+@GLOBAL_KEYWORD_REGISTRY.register(
+    "HEADING",
+    valid_contexts={KeywordContext.GLOBAL},
+    support="IGNORED",
+    params={},
+    rows=str,
+    description="Model title or comment heading",
+)
 def _handle_heading(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     if block.data_lines:
         reader.model.name = block.data_lines[0].strip()
@@ -23,20 +35,39 @@ def _handle_heading(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
 
 # ─── PART & ASSEMBLY SCOPE ──────────────────────────────────────────────────
 
-@GLOBAL_KEYWORD_REGISTRY.register("PART", valid_contexts={KeywordContext.GLOBAL})
+@GLOBAL_KEYWORD_REGISTRY.register(
+    "PART",
+    valid_contexts={KeywordContext.GLOBAL},
+    support="FULL",
+    params={"NAME": ParamSpec("NAME", default="PART-1")},
+    description="Begin a part definition",
+)
 def _handle_part(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     part_name = block.params.get("name", f"PART-{len(reader.model.parts) + 1}")
     reader.current_part = reader.model.Part(part_name, dim=reader.dim)
     reader.context = KeywordContext.PART
 
 
-@GLOBAL_KEYWORD_REGISTRY.register("END PART", valid_contexts={KeywordContext.PART}, aliases=["ENDPART"])
+@GLOBAL_KEYWORD_REGISTRY.register(
+    "END PART",
+    valid_contexts={KeywordContext.PART},
+    aliases=["ENDPART"],
+    support="FULL",
+    params={},
+    description="End part definition",
+)
 def _handle_end_part(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     reader.current_part = None
     reader.context = KeywordContext.GLOBAL
 
 
-@GLOBAL_KEYWORD_REGISTRY.register("ASSEMBLY", valid_contexts={KeywordContext.GLOBAL})
+@GLOBAL_KEYWORD_REGISTRY.register(
+    "ASSEMBLY",
+    valid_contexts={KeywordContext.GLOBAL},
+    support="FULL",
+    params={"NAME": ParamSpec("NAME", default="ASSEMBLY")},
+    description="Begin the root assembly definition",
+)
 def _handle_assembly(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     reader.has_assembly = True
     reader.context = KeywordContext.ASSEMBLY
@@ -44,12 +75,29 @@ def _handle_assembly(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
         reader.model.root_assembly.name = block.params["name"]
 
 
-@GLOBAL_KEYWORD_REGISTRY.register("END ASSEMBLY", valid_contexts={KeywordContext.ASSEMBLY}, aliases=["ENDASSEMBLY"])
+@GLOBAL_KEYWORD_REGISTRY.register(
+    "END ASSEMBLY",
+    valid_contexts={KeywordContext.ASSEMBLY},
+    aliases=["ENDASSEMBLY"],
+    support="FULL",
+    params={},
+    description="End assembly definition",
+)
 def _handle_end_assembly(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     reader.context = KeywordContext.GLOBAL
 
 
-@GLOBAL_KEYWORD_REGISTRY.register("INSTANCE", valid_contexts={KeywordContext.ASSEMBLY})
+@GLOBAL_KEYWORD_REGISTRY.register(
+    "INSTANCE",
+    valid_contexts={KeywordContext.ASSEMBLY},
+    support="FULL",
+    params={
+        "NAME": ParamSpec("NAME", required=True),
+        "PART": ParamSpec("PART"),
+    },
+    rows=RowSpec(column_types=[float], min_columns=2, max_columns=7),
+    description="Create an instance of a part within the assembly",
+)
 def _handle_instance(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     inst_name = block.params.get("name", "")
     part_name = block.params.get("part", "")
@@ -95,10 +143,18 @@ def _handle_instance(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
                 inst.rotate(axis=axis, angle_deg=angle_deg, center=p_a)
 
 
-@GLOBAL_KEYWORD_REGISTRY.register("END INSTANCE", valid_contexts={KeywordContext.INSTANCE}, aliases=["ENDINSTANCE"])
+@GLOBAL_KEYWORD_REGISTRY.register(
+    "END INSTANCE",
+    valid_contexts={KeywordContext.INSTANCE},
+    aliases=["ENDINSTANCE"],
+    support="FULL",
+    params={},
+    description="End instance definition",
+)
 def _handle_end_instance(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     reader.current_instance = None
     reader.context = KeywordContext.ASSEMBLY
+
 
 
 

@@ -5,7 +5,12 @@ import warnings
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
 from dispsolver.io.abaqus_lexer import AbaqusKeywordBlock
-from dispsolver.io.keyword_registry import GLOBAL_KEYWORD_REGISTRY, KeywordContext
+from dispsolver.io.keyword_registry import (
+    GLOBAL_KEYWORD_REGISTRY,
+    KeywordContext,
+    ParamSpec,
+    RowSpec,
+)
 from dispsolver.io.keyword_base import _AbortParse, _parse_data_rows
 from dispsolver.model.step import PredefinedField
 
@@ -14,7 +19,16 @@ if TYPE_CHECKING:
 
 # ─── P0-2 MATERIAL SUBOPTIONS, LOADS, CONSTRAINTS ───────────────────────────
 
-@GLOBAL_KEYWORD_REGISTRY.register("DENSITY", valid_contexts={KeywordContext.MATERIAL, KeywordContext.GLOBAL})
+@GLOBAL_KEYWORD_REGISTRY.register(
+    "DENSITY",
+    valid_contexts={KeywordContext.MATERIAL, KeywordContext.GLOBAL},
+    support="FULL",
+    params={
+        "DEPENDENCIES": ParamSpec("DEPENDENCIES", type=int, default=0, aliases=["DEP", "DEPE"], supported=False),
+    },
+    rows=RowSpec(column_types=[float], min_columns=1, max_columns=2),
+    description="Define material mass density",
+)
 def _handle_density(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     mat = reader.current_material
     if mat is None:
@@ -23,11 +37,20 @@ def _handle_density(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
         reader.warnings.append(msg)
         return
     rows = _parse_data_rows(block.data_lines, dtype=float)
-    if rows and len(rows[0]) >= 1:
+    if rows and len(rows[0]) >= 1 and rows[0][0] is not None:
         mat.density = float(rows[0][0])
 
 
-@GLOBAL_KEYWORD_REGISTRY.register("TRS", valid_contexts={KeywordContext.MATERIAL, KeywordContext.GLOBAL})
+@GLOBAL_KEYWORD_REGISTRY.register(
+    "TRS",
+    valid_contexts={KeywordContext.MATERIAL, KeywordContext.GLOBAL},
+    support="PARTIAL",
+    params={
+        "DEFINITION": ParamSpec("DEFINITION", default="WLF", choices=["WLF", "ARRHENIUS", "USER"], aliases=["DEF"]),
+    },
+    rows=RowSpec(column_types=[float], min_columns=3, max_columns=3),
+    description="Define temperature-time shift for viscoelastic materials",
+)
 def _handle_trs(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     mat = reader.current_material
     if mat is None:
@@ -38,14 +61,29 @@ def _handle_trs(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     defn = block.params.get("definition", "WLF").upper()
     rows = _parse_data_rows(block.data_lines, dtype=float)
     vals = rows[0] if rows else []
-    if len(vals) >= 3:
+    if len(vals) >= 3 and vals[0] is not None and vals[1] is not None and vals[2] is not None:
         mat.extra_params["trs"] = {"definition": defn, "T_ref": float(vals[0]),
                                    "C1": float(vals[1]), "C2": float(vals[2])}
     else:
-        mat.extra_params["trs"] = {"definition": defn, "values": tuple(float(v) for v in vals)}
+        mat.extra_params["trs"] = {"definition": defn, "values": tuple(float(v) for v in vals if v is not None)}
 
 
-@GLOBAL_KEYWORD_REGISTRY.register("AMPLITUDE", valid_contexts={KeywordContext.GLOBAL, KeywordContext.STEP})
+@GLOBAL_KEYWORD_REGISTRY.register(
+    "AMPLITUDE",
+    valid_contexts={KeywordContext.GLOBAL, KeywordContext.STEP},
+    support="PARTIAL",
+    params={
+        "NAME": ParamSpec("NAME", required=True),
+        "DEFINITION": ParamSpec("DEFINITION", default="TABULAR", choices=["TABULAR", "SMOOTH STEP", "SMOOTHSTEP"], aliases=["DEF"]),
+        "TIME": ParamSpec("TIME", default="STEP TIME", choices=["STEP TIME", "STEPTIME", "TOTAL TIME"], aliases=["STEP_TIME"]),
+        "VALUE": ParamSpec("VALUE", choices=["RELATIVE", "ABSOLUTE"], supported=False),
+        "SHIFT": ParamSpec("SHIFT", supported=False),
+        "SCALEX": ParamSpec("SCALEX", supported=False),
+        "SCALEY": ParamSpec("SCALEY", supported=False),
+    },
+    rows=RowSpec(column_types=[float], min_columns=2, max_columns=8, repeating=True),
+    description="Define time-dependent load or boundary condition amplitude curve",
+)
 def _handle_amplitude(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     name = block.params.get("name", "")
     if not name:
@@ -65,7 +103,7 @@ def _handle_amplitude(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     # Up to four (time, value) pairs per data line. Only the first pair of
     # each line used to be read, so a typical "0,0, 1,1" table became a
     # single point and the amplitude a constant 0.
-    flat = [float(v) for r in _parse_data_rows(block.data_lines, dtype=float) for v in r]
+    flat = [float(v) for r in _parse_data_rows(block.data_lines, dtype=float) for v in r if v is not None]
     if len(flat) % 2:
         raise ValueError(f"*AMPLITUDE {name}: odd number of values ({len(flat)}); expected time/value pairs")
     data = [(flat[i], flat[i + 1]) for i in range(0, len(flat), 2)]
@@ -75,7 +113,17 @@ def _handle_amplitude(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
         reader.model.TabularAmplitude(name, data)
 
 
-@GLOBAL_KEYWORD_REGISTRY.register("DLOAD", valid_contexts={KeywordContext.STEP})
+@GLOBAL_KEYWORD_REGISTRY.register(
+    "DLOAD",
+    valid_contexts={KeywordContext.STEP},
+    support="PARTIAL",
+    params={
+        "AMPLITUDE": ParamSpec("AMPLITUDE", aliases=["AMP"]),
+        "OP": ParamSpec("OP", default="MOD", choices=["MOD", "NEW"]),
+    },
+    rows=RowSpec(min_columns=3, max_columns=7),
+    description="Define distributed body loads (gravity, body force, pressure)",
+)
 def _handle_dload(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     if reader.current_step is None:
         return
@@ -129,7 +177,17 @@ def _handle_dload(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
             reader.warnings.append(msg)
 
 
-@GLOBAL_KEYWORD_REGISTRY.register("DSLOAD", valid_contexts={KeywordContext.STEP})
+@GLOBAL_KEYWORD_REGISTRY.register(
+    "DSLOAD",
+    valid_contexts={KeywordContext.STEP},
+    support="FULL",
+    params={
+        "AMPLITUDE": ParamSpec("AMPLITUDE", aliases=["AMP"]),
+        "OP": ParamSpec("OP", default="MOD", choices=["MOD", "NEW"]),
+    },
+    rows=RowSpec(column_types=[str, str, float], min_columns=3, max_columns=3),
+    description="Define distributed surface loads (pressure on surfaces)",
+)
 def _handle_dsload(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     """Handle Abaqus *DSLOAD keyword (distributed surface loads, pressure)."""
     if reader.current_step is None:
@@ -157,7 +215,16 @@ def _handle_dsload(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
             )
 
 
-@GLOBAL_KEYWORD_REGISTRY.register("MPC", valid_contexts={KeywordContext.GLOBAL, KeywordContext.ASSEMBLY})
+@GLOBAL_KEYWORD_REGISTRY.register(
+    "MPC",
+    valid_contexts={KeywordContext.GLOBAL, KeywordContext.ASSEMBLY},
+    support="PARTIAL",
+    params={
+        "TYPE": ParamSpec("TYPE", default="BEAM", choices=["BEAM", "TIE", "LINK", "PIN", "SLIDER"]),
+    },
+    rows=RowSpec(min_columns=2, max_columns=10),
+    description="Define multi-point constraints between nodes",
+)
 def _handle_mpc(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     mtype = block.params.get("type", "BEAM").upper()
     nodes = []
@@ -175,7 +242,17 @@ def _handle_mpc(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     reader.warnings.append(msg)
 
 
-@GLOBAL_KEYWORD_REGISTRY.register("INITIAL CONDITIONS", valid_contexts={KeywordContext.GLOBAL}, aliases=["INITIALCONDITIONS"])
+@GLOBAL_KEYWORD_REGISTRY.register(
+    "INITIAL CONDITIONS",
+    valid_contexts={KeywordContext.GLOBAL},
+    aliases=["INITIALCONDITIONS"],
+    support="PARTIAL",
+    params={
+        "TYPE": ParamSpec("TYPE", default="TEMPERATURE", aliases=["TYP"]),
+    },
+    rows=RowSpec(min_columns=2, max_columns=10),
+    description="Specify initial values of temperature, field variables, stress",
+)
 def _handle_initial_conditions(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     ictype = block.params.get("type", "TEMPERATURE").upper()
     if ictype == "TEMP":
@@ -213,7 +290,18 @@ def _handle_initial_conditions(reader: AbaqusInputReader, block: AbaqusKeywordBl
         raise _AbortParse(f"*INITIAL CONDITIONS, TYPE={ictype} has no internal landing")
 
 
-@GLOBAL_KEYWORD_REGISTRY.register("COUPLING", valid_contexts={KeywordContext.GLOBAL, KeywordContext.ASSEMBLY})
+@GLOBAL_KEYWORD_REGISTRY.register(
+    "COUPLING",
+    valid_contexts={KeywordContext.GLOBAL, KeywordContext.ASSEMBLY},
+    support="PARTIAL",
+    params={
+        "CONSTRAINT NAME": ParamSpec("CONSTRAINT NAME", aliases=["CONSTRAINT_NAME", "NAME"]),
+        "REF NODE": ParamSpec("REF NODE", aliases=["REF_NODE", "REFNODE"]),
+        "SURFACE": ParamSpec("SURFACE", aliases=["SURF"]),
+    },
+    rows=RowSpec(min_columns=0, max_columns=0),
+    description="Define coupling constraint between reference node and surface",
+)
 def _handle_coupling(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     name = block.params.get("constraint name", block.params.get("name", f"CPL-{len(reader.model.constraints) + 1}"))
     ref = block.params.get("ref node", block.params.get("ref_node", None))
@@ -248,22 +336,64 @@ def _finalize_coupling(reader: AbaqusInputReader, block: AbaqusKeywordBlock, kin
         reader.model.DistributingCoupling(name=name, refPoint=prev.ref_point, surface=prev.surface, **flags)
 
 
-@GLOBAL_KEYWORD_REGISTRY.register("KINEMATIC", valid_contexts={KeywordContext.GLOBAL, KeywordContext.ASSEMBLY})
+@GLOBAL_KEYWORD_REGISTRY.register(
+    "KINEMATIC",
+    valid_contexts={KeywordContext.GLOBAL, KeywordContext.ASSEMBLY},
+    support="PARTIAL",
+    params={
+        "CONSTRAINT NAME": ParamSpec("CONSTRAINT NAME", aliases=["CONSTRAINT_NAME", "NAME"]),
+    },
+    rows=RowSpec(min_columns=0, max_columns=6),
+    description="Sub-option of *COUPLING to constrain degrees of freedom rigidly",
+)
 def _handle_kinematic(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     _finalize_coupling(reader, block, "KINEMATIC")
 
 
-@GLOBAL_KEYWORD_REGISTRY.register("KINEMATIC COUPLING", valid_contexts={KeywordContext.GLOBAL, KeywordContext.ASSEMBLY})
+@GLOBAL_KEYWORD_REGISTRY.register(
+    "KINEMATIC COUPLING",
+    valid_contexts={KeywordContext.GLOBAL, KeywordContext.ASSEMBLY},
+    support="PARTIAL",
+    params={
+        "CONSTRAINT NAME": ParamSpec("CONSTRAINT NAME", aliases=["CONSTRAINT_NAME", "NAME"]),
+        "REF NODE": ParamSpec("REF NODE", aliases=["REF_NODE", "REFNODE"]),
+        "SURFACE": ParamSpec("SURFACE", aliases=["SURF"]),
+        "ELSET": ParamSpec("ELSET"),
+    },
+    rows=RowSpec(min_columns=0, max_columns=6),
+    description="Constrain degrees of freedom on a surface to rigid body motion of reference node",
+)
 def _handle_kinematic_coupling(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     _direct_coupling(reader, block, "KINEMATIC")
 
 
-@GLOBAL_KEYWORD_REGISTRY.register("DISTRIBUTING", valid_contexts={KeywordContext.GLOBAL, KeywordContext.ASSEMBLY})
+@GLOBAL_KEYWORD_REGISTRY.register(
+    "DISTRIBUTING",
+    valid_contexts={KeywordContext.GLOBAL, KeywordContext.ASSEMBLY},
+    support="PARTIAL",
+    params={
+        "CONSTRAINT NAME": ParamSpec("CONSTRAINT NAME", aliases=["CONSTRAINT_NAME", "NAME"]),
+    },
+    rows=RowSpec(min_columns=0, max_columns=6),
+    description="Sub-option of *COUPLING to constrain degrees of freedom in an average sense",
+)
 def _handle_distributing(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     _finalize_coupling(reader, block, "DISTRIBUTING")
 
 
-@GLOBAL_KEYWORD_REGISTRY.register("DISTRIBUTING COUPLING", valid_contexts={KeywordContext.GLOBAL, KeywordContext.ASSEMBLY})
+@GLOBAL_KEYWORD_REGISTRY.register(
+    "DISTRIBUTING COUPLING",
+    valid_contexts={KeywordContext.GLOBAL, KeywordContext.ASSEMBLY},
+    support="PARTIAL",
+    params={
+        "CONSTRAINT NAME": ParamSpec("CONSTRAINT NAME", aliases=["CONSTRAINT_NAME", "NAME"]),
+        "REF NODE": ParamSpec("REF NODE", aliases=["REF_NODE", "REFNODE"]),
+        "SURFACE": ParamSpec("SURFACE", aliases=["SURF"]),
+        "ELSET": ParamSpec("ELSET"),
+    },
+    rows=RowSpec(min_columns=0, max_columns=6),
+    description="Constrain degrees of freedom on a surface to average motion of reference node",
+)
 def _handle_distributing_coupling(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     _direct_coupling(reader, block, "DISTRIBUTING")
 
@@ -294,10 +424,22 @@ def _direct_coupling(reader: AbaqusInputReader, block: AbaqusKeywordBlock, kind:
     reader.warnings.append(msg)
 
 
-@GLOBAL_KEYWORD_REGISTRY.register("FRICTION", valid_contexts={KeywordContext.GLOBAL, KeywordContext.STEP})
+@GLOBAL_KEYWORD_REGISTRY.register(
+    "FRICTION",
+    valid_contexts={KeywordContext.GLOBAL, KeywordContext.STEP},
+    support="FULL",
+    params={
+        "ROUGH": ParamSpec("ROUGH", supported=False),
+        "EXPONENTIAL DECAY": ParamSpec("EXPONENTIAL DECAY", aliases=["EXPONENTIAL_DECAY"], supported=False),
+        "SLIP TOLERANCE": ParamSpec("SLIP TOLERANCE", aliases=["SLIP_TOLERANCE"], supported=False),
+        "USER": ParamSpec("USER", supported=False),
+    },
+    rows=RowSpec(column_types=[float], min_columns=1, max_columns=5),
+    description="Define friction properties for surface contact interaction",
+)
 def _handle_friction(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     rows = _parse_data_rows(block.data_lines, dtype=float)
-    if not rows or len(rows[0]) < 1:
+    if not rows or len(rows[0]) < 1 or rows[0][0] is None:
         return
     target = reader.current_interaction
     if target is None or target not in reader.model.contact_properties:
@@ -312,23 +454,49 @@ _ALL_CONTEXTS = frozenset({KeywordContext.GLOBAL, KeywordContext.PART, KeywordCo
                            KeywordContext.INSTANCE, KeywordContext.STEP, KeywordContext.MATERIAL})
 
 
-@GLOBAL_KEYWORD_REGISTRY.register("INCLUDE", valid_contexts=set(_ALL_CONTEXTS))
+@GLOBAL_KEYWORD_REGISTRY.register(
+    "INCLUDE",
+    valid_contexts=set(_ALL_CONTEXTS),
+    support="STUB",
+    params={
+        "INPUT": ParamSpec("INPUT", required=True),
+    },
+    rows=RowSpec(min_columns=0, max_columns=0),
+    description="Include an external file into the input deck",
+)
 def _handle_include(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     raise _AbortParse("*INCLUDE file insertion is not implemented; split the deck first")
 
 
-@GLOBAL_KEYWORD_REGISTRY.register("TRANSFORM", valid_contexts=set(_ALL_CONTEXTS))
+@GLOBAL_KEYWORD_REGISTRY.register(
+    "TRANSFORM",
+    valid_contexts=set(_ALL_CONTEXTS),
+    support="FULL",
+    params={
+        "NSET": ParamSpec("NSET", required=True),
+        "TYPE": ParamSpec("TYPE", default="R", choices=["R", "C", "S"]),
+    },
+    rows=RowSpec(column_types=[float], min_columns=6, max_columns=7),
+    description="Specify a local coordinate system at nodes",
+)
 def _handle_transform(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     nset = block.params.get("nset", "")
     ttype = block.params.get("type", "R").upper()
     rows = _parse_data_rows(block.data_lines, dtype=float)
-    pts = tuple(tuple(r) for r in rows) if rows else ()
+    pts = tuple(tuple(float(x) for x in r if x is not None) for r in rows) if rows else ()
     name = f"TRF_{nset}_{len(reader.model.transforms) + 1}" if nset else f"TRF_{len(reader.model.transforms) + 1}"
     reader.model.Transform(name, nset=nset, transform_type=ttype, points=pts)
     msg = f"*TRANSFORM {name}: parsed and stored; connected to solver"
 
 
-@GLOBAL_KEYWORD_REGISTRY.register("EQUATION", valid_contexts=set(_ALL_CONTEXTS))
+@GLOBAL_KEYWORD_REGISTRY.register(
+    "EQUATION",
+    valid_contexts=set(_ALL_CONTEXTS),
+    support="FULL",
+    params={},
+    rows=RowSpec(min_columns=3, max_columns=12, repeating=True),
+    description="Define linear multi-point constraint equation between degree of freedoms",
+)
 def _handle_equation(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     rows = _parse_data_rows(block.data_lines, dtype=str)
     cells: List[str] = []

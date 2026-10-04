@@ -20,6 +20,7 @@ from dispsolver.io.keyword_registry import (
     KeywordSpec,
     KeywordRegistry,
     GLOBAL_KEYWORD_REGISTRY,
+    normalize_param_name,
 )
 from dispsolver.io.keyword_base import _AbortParse, _parse_data_rows
 from dispsolver.model.model import Model
@@ -52,10 +53,28 @@ class AbaqusInputReader:
     def physics_gaps(self) -> List[str]:
         """Everything in the deck this reader could not turn into model data
         that may change the solution: unsupported keywords other than pure
-        output/diagnostic ones, and keyword handlers that raised. A run that
-        ignores these solves a different model than the deck describes."""
-        gaps = [f"*{kw} (unsupported)" for kw in self.unsupported_keywords
-                if kw.split(" table rejected")[0] not in OUTPUT_ONLY_KEYWORDS | SOLUTION_CONTROL_KEYWORDS]
+        output/diagnostic ones, unsupported/unknown parameters on non-output keywords,
+        and keyword handlers that raised. A run that ignores these solves a different model
+        than the deck describes."""
+        gaps = []
+        for kw in self.unsupported_keywords:
+            base_kw = kw.split(" table rejected")[0].strip()
+            spec = self.registry.get_handler(base_kw)
+            if spec is not None and spec.support in ("IGNORED", "STUB"):
+                continue
+            if base_kw in OUTPUT_ONLY_KEYWORDS | SOLUTION_CONTROL_KEYWORDS:
+                continue
+            gaps.append(f"*{kw} (unsupported)")
+
+        for kw, p, kind in self.unsupported_params:
+            base_kw = kw.split(" table rejected")[0].strip()
+            spec = self.registry.get_handler(base_kw)
+            if spec is not None and spec.support in ("IGNORED", "STUB"):
+                continue
+            if base_kw in OUTPUT_ONLY_KEYWORDS | SOLUTION_CONTROL_KEYWORDS:
+                continue
+            gaps.append(f"*{kw}, {p.upper()} ({kind} parameter)")
+
         gaps += [w for w in self.warnings if w.startswith("Error processing keyword")]
         return gaps
 
@@ -91,6 +110,7 @@ class AbaqusInputReader:
 
         # Statistics & warnings
         self.unsupported_keywords: List[str] = []
+        self.unsupported_params: List[Tuple[str, str, str]] = []
         self.warnings: List[str] = []
 
     def get_active_part(self) -> Part:
@@ -143,6 +163,48 @@ class AbaqusInputReader:
                     warnings.warn(msg)
                     self.warnings.append(msg)
                     continue
+
+                # Parameter validation against spec
+                if spec.params:
+                    # 1. Check for required parameters
+                    seen_spec_names = set()
+                    for p_spec in spec.params.values():
+                        if p_spec.name in seen_spec_names:
+                            continue
+                        seen_spec_names.add(p_spec.name)
+                        if p_spec.required:
+                            has_p = any(
+                                normalize_param_name(k) == normalize_param_name(p_spec.name)
+                                or any(normalize_param_name(k) == normalize_param_name(a) for a in p_spec.aliases)
+                                for k in block.params.keys()
+                            )
+                            if not has_p:
+                                msg = f"Error processing keyword *{kw} at line {block.line_number}: missing required parameter '{p_spec.name}'"
+                                warnings.warn(msg)
+                                self.warnings.append(msg)
+
+                    # 2. Check for unknown or unsupported parameters
+                    for p_key in block.params.keys():
+                        p_norm = normalize_param_name(p_key)
+                        if p_norm not in spec.params:
+                            msg = f"*{kw} at line {block.line_number}: unknown parameter '{p_key}'"
+                            entry = (kw, p_key, "unknown")
+                            if entry not in self.unsupported_params:
+                                self.unsupported_params.append(entry)
+                            if self.strict:
+                                warnings.warn(msg)
+                            self.warnings.append(msg)
+                        else:
+                            p_spec = spec.params[p_norm]
+                            if not p_spec.supported:
+                                msg = f"*{kw} at line {block.line_number}: unsupported parameter '{p_key}'"
+                                entry = (kw, p_key, "unsupported")
+                                if entry not in self.unsupported_params:
+                                    self.unsupported_params.append(entry)
+                                if self.strict:
+                                    warnings.warn(msg)
+                                self.warnings.append(msg)
+
                 try:
                     spec.handler(self, block)
                 except _AbortParse:
