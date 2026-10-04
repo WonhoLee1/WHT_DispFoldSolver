@@ -1631,6 +1631,29 @@ class DynamicSolver3D:
         not a reason to accept a larger residual."""
         return not is_sdi and bc_err < 1e-5 and self._residual_ok(r_norm, q)
 
+    def _freeze_lift_ok(self, u: np.ndarray, f_ext: np.ndarray, free_dof_mask: np.ndarray,
+                        dt: float, sdi: Dict[str, Any], resid_tol: Optional[float] = None) -> bool:
+        """Gate in front of every acceptance. A frozen contact set is a
+        numerical device (bilateral pairs, labels pinned) -- the answer must
+        satisfy the real one-sided law. With no freeze active this is a
+        no-op returning True. Otherwise the freeze is lifted, the state
+        re-assembled, and the iterate accepted only if the true residual
+        still meets the branch's tolerance (`resid_tol` * q, default the
+        residual-branch rule). If not, the freeze STAYS lifted and the SDI
+        counters restart, so iteration continues on the real law (and ends
+        in a cutback if it cannot converge) -- never a silent accept."""
+        if not any(getattr(c, "frozen_active_nodes", None) is not None for c in self.constraints):
+            return True
+        self._clear_contact_freeze()
+        _, f_free = self.assemble_system(u, dt=dt)
+        r = float(np.linalg.norm((f_ext - f_free)[free_dof_mask]))
+        q = self._force_scale(f_free, f_ext, free_dof_mask)
+        ok = (r <= resid_tol * q or r <= self._r_zero) if resid_tol is not None else self._residual_ok(r, q)
+        if not ok:
+            sdi["sdi_iters"] = 0
+            sdi["recent"] = []
+        return ok
+
     def _accept_increment(self, u_acc: np.ndarray, branch: str, f_ext: np.ndarray,
                           iters: int, dt: float, reset_tuner: bool) -> None:
         """Commit a converged iterate: SDVs, acceptance probe, friction
@@ -1972,7 +1995,8 @@ class DynamicSolver3D:
                       f"n_active={len(current_active_set)} r_norm={r_norm:.4g} r/q={r_norm / max(q, 1e-300):.4g}", flush=True)
 
             bc_err = max([abs(target_val - u_k[dof]) for dof, target_val in self.fixed_dofs.items()], default=0.0)
-            if self._converged_by_residual(iter_count, is_sdi, bc_err, r_norm, q):
+            if (self._converged_by_residual(iter_count, is_sdi, bc_err, r_norm, q)
+                    and self._freeze_lift_ok(u_k, f_ext, free_dof_mask, dt, sdi)):
                 self._accept_increment(u_k, "residual", f_ext, iter_count, dt, reset_tuner=True)
                 return True, iter_count
 
@@ -1988,7 +2012,8 @@ class DynamicSolver3D:
             bc_err_next = max([abs(target_val - u_next[dof]) for dof, target_val in self.fixed_dofs.items()], default=0.0)
             du_free_max = float(np.max(np.abs(du[free_dof_mask]))) if np.any(free_dof_mask) else 0.0
             du_inc_max = float(np.max(np.abs(u_next - u_start)))
-            if self._converged_by_correction(iter_count, is_sdi, bc_err_next, du_free_max, du_inc_max, r_norm, q):
+            if (self._converged_by_correction(iter_count, is_sdi, bc_err_next, du_free_max, du_inc_max, r_norm, q)
+                    and self._freeze_lift_ok(u_next, f_ext, free_dof_mask, dt, sdi, resid_tol=self._CORR_RESID_TOL)):
                 self._accept_increment(u_next, "correction", f_ext, iter_count, dt, reset_tuner=True)
                 return True, iter_count
 
@@ -2058,7 +2083,8 @@ class DynamicSolver3D:
 
         # Exhausted the equilibrium-iteration budget
         self.u = u_k
-        if self._converged_on_exhaustion(is_sdi, bc_err, r_norm, q):
+        if (self._converged_on_exhaustion(is_sdi, bc_err, r_norm, q)
+                and self._freeze_lift_ok(u_k, f_ext, free_dof_mask, dt, sdi)):
             self._accept_increment(u_k, "fallthrough", f_ext, raw_iter, dt, reset_tuner=True)
             return True, raw_iter
 
@@ -2598,12 +2624,13 @@ class DynamicSolver3D:
             K_bc, r_bc = self.apply_boundary_conditions(K_g, residual, u_k)
 
             current_active_set = self._contact_full_state(u_k)
-            is_sdi = self._sdi_update(sdi, current_active_set, u_k, freeze_window=None)
+            is_sdi = self._sdi_update(sdi, current_active_set, u_k, freeze_window=2)
             q = self._force_scale(f_int, f_ext, free_dof_mask)
             if getattr(self, "debug_sdi", False) or (iter_count <= 5 or iter_count % 5 == 0):
                 print(f"      [Iter {iter_count:2d}] r={r_norm:.2e} r/q={r_norm / max(q, 1e-300):.2e} q={q:.2e} sdi={is_sdi} act={len(current_active_set)}", flush=True)
             bc_err = max([abs(target_val - u_k[dof]) for dof, target_val in self.fixed_dofs.items()], default=0.0)
-            if self._converged_by_residual(iter_count, is_sdi, bc_err, r_norm, q):
+            if (self._converged_by_residual(iter_count, is_sdi, bc_err, r_norm, q)
+                    and self._freeze_lift_ok(u_k, f_ext, free_dof_mask, dt, sdi)):
                 self._accept_increment(u_k, "residual", f_ext, iter_count, dt, reset_tuner=False)
                 return True, iter_count
 
@@ -2618,7 +2645,8 @@ class DynamicSolver3D:
             bc_err_next = max([abs(target_val - u_next[dof]) for dof, target_val in self.fixed_dofs.items()], default=0.0)
             du_free_max = float(np.max(np.abs(du[free_dof_mask]))) if np.any(free_dof_mask) else 0.0
             du_inc_max = float(np.max(np.abs(u_next - u_start)))
-            if self._converged_by_correction(iter_count, is_sdi, bc_err_next, du_free_max, du_inc_max, r_norm, q):
+            if (self._converged_by_correction(iter_count, is_sdi, bc_err_next, du_free_max, du_inc_max, r_norm, q)
+                    and self._freeze_lift_ok(u_next, f_ext, free_dof_mask, dt, sdi, resid_tol=self._CORR_RESID_TOL)):
                 self._accept_increment(u_next, "correction", f_ext, iter_count, dt, reset_tuner=False)
                 return True, iter_count
 
@@ -2674,7 +2702,8 @@ class DynamicSolver3D:
 
         # Fallthrough check on stable state
         self.u = u_k
-        if self._converged_on_exhaustion(is_sdi, bc_err, r_norm, q):
+        if (self._converged_on_exhaustion(is_sdi, bc_err, r_norm, q)
+                and self._freeze_lift_ok(u_k, f_ext, free_dof_mask, dt, sdi)):
             self._accept_increment(u_k, "fallthrough", f_ext, raw_iter, dt, reset_tuner=False)
             return True, raw_iter
         self._clear_contact_freeze()

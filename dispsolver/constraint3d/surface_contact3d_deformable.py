@@ -359,8 +359,7 @@ class DeformableSurfaceContactConstraint3D:
     def get_active_set(self, u: np.ndarray) -> frozenset:
         """Same role as SurfaceContactConstraint3D.get_active_set -- feeds
         DynamicSolver3D's severe-discontinuity-iteration (SDI) handling."""
-        if getattr(self, "frozen_active_nodes", None) is not None:
-            return frozenset(self.frozen_active_nodes)
+        frozen = getattr(self, "frozen_active_nodes", None)
         if self.chatter_stabilization:
             # Debounced label -- reads the persistent gate written by
             # update_gate_state(), same convention as
@@ -377,6 +376,10 @@ class DeformableSurfaceContactConstraint3D:
                 p, _ = self.law.evaluate(-gap)
             if p > 0.0:
                 active.add(s_nid)
+        # Frozen pairs stay in the set, but a pair that newly closes while a
+        # freeze is on must still show up -- it is a real status change.
+        if frozen is not None:
+            active |= set(frozen)
         return frozenset(active)
 
     def update_gate_state(self, u: np.ndarray) -> None:
