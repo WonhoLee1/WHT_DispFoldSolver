@@ -21,6 +21,8 @@ htmlcov/
 
 # Output files
 output/
+# ...but not the source package of the same name (it was silently never committed)
+!dispsolver/output/
 *.vtkhdf
 *.vtu
 *.vtk
