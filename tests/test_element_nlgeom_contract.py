@@ -265,7 +265,7 @@ def test_2d_element_nlgeom_contracts(etype: str, builder):
 
 def test_c3d4h_nlgeom_yes_raises():
     mesh = make_tet4_mesh("C3D4H")
-    with pytest.raises(NotImplementedError, match="NLGEOM=YES: C3D4H / C3D4_ANP"):
+    with pytest.raises(NotImplementedError, match="C3D4H.*NLGEOM=YES is not implemented"):
         DynamicSolver3D(mesh, {"E": 200000.0, "nu": 0.3}, nlgeom=True)
 
 

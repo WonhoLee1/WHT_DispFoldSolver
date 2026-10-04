@@ -341,8 +341,8 @@ def test_step_nlgeom_no_reaches_the_small_strain_kernel(tmp_path):
     """*STEP, NLGEOM=NO used to be ignored: the solver is built before any
     step and defaulted to NLGEOM on, so C3D8 always ran the co-rotational
     kernel. And the small-strain C3D8 kernel applied ONE global elasticity
-    matrix to every element. Now the step's NLGEOM picks the kernel, kernel
-    10 assembles per material, and on this linear two-material patch the
+    matrix to every element. Now the step's NLGEOM picks a small-strain
+    kernel that uses each element's material, and on this linear two-material patch the
     consistent Nitsche contact reproduces the exact force to ~1e-5."""
     path = str(tmp_path / "patch_small.inp")
     _patch_deck(path, 3, 2, nlgeom=False)
@@ -358,7 +358,10 @@ def test_step_nlgeom_no_reaches_the_small_strain_kernel(tmp_path):
     s = ex.solver
     assert ok
     assert s.nlgeom is False
-    assert set(s._row_kernel.values()) == {10}
+    # every element runs a small-strain kernel (kernel 16 since the element
+    # NLGEOM work; the id itself is the catalog's business, not this test's)
+    from dispsolver.model.element_catalog import KERNELS
+    assert all(KERNELS[3][k].small_strain for k in set(s._row_kernel.values())), set(s._row_kernel.values())
     _, f = s.assemble_system(s.u, dt=1.0)
     top = sum(f[3 * i + 2] for i in ex.sys.global_nsets["T1.ZTOP"])
     assert abs(-top / PATCH_F - 1.0) <= 1e-4, f"RF_top={top:.6e}, exact={PATCH_F:.6e}"

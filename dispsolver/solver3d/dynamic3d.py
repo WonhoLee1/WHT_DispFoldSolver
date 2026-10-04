@@ -198,25 +198,12 @@ def _volume_shape_integrals(X: np.ndarray, what: str = "body load") -> np.ndarra
 
 
 
-# Small-strain kernels with no large-rotation form of their own: under NLGEOM
-# they are evaluated in co-rotated element frames (element3d/cr_generic_3d).
-# 4 C3D10M, 5 C3D10, 6 C3D4, 7 C3D6, 15 C3D20.  9 (C3D4 ANP) couples elements
-# through shared nodes and is refused under NLGEOM instead.
-_CR_WRAPPED_KERNELS = frozenset({4, 5, 6, 7, 15})
+# Small-strain kernels co-rotated under NLGEOM (element3d/cr_generic_3d); the
+# list lives in model/element_catalog.KERNELS.
+from dispsolver.model.element_catalog import cr_wrapped_kernels as _cr_wrapped_kernels
+_CR_WRAPPED_KERNELS = _cr_wrapped_kernels(3)
 
 
-# Abaqus element types accepted by _build_kernel_groups whose kernel does not
-# carry the full formulation the type name promises.
-_ELEMENT_SUBSTITUTIONS = {
-    "C3D8RH": "runs as C3D8R (reduced integration); the hybrid pressure field is not included",
-    "C3D8IH": "runs as C3D8I (incompatible modes); the hybrid pressure field is not included",
-    "C3D20R": "runs as full-integration C3D20; reduced integration is not implemented",
-    "C3D20H": "runs as C3D20; the hybrid pressure field is not included",
-    "C3D20RH": "runs as full-integration C3D20; neither reduced integration nor the hybrid field is included",
-    "C3D10H": "runs as C3D10M (nu > 0.48) or C3D10; the hybrid pressure field is not included",
-    "C3D10MH": "runs as C3D10M; the hybrid pressure field is not included",
-    "C3D4H": "runs as C3D4 with average nodal pressure (ANP), not the Abaqus hybrid formulation",
-}
 
 class DynamicSolver3D:
     """3D Implicit Non-Linear Solver with Above-Abaqus Speed & Convergence Engine."""
@@ -874,13 +861,15 @@ class DynamicSolver3D:
         nid_map = self.mesh.node_id_to_index()
         elements_list = list(self.mesh.elements.values())
         # Classify element kernel groups with Material- & Kinematic-Adaptive NLGEOM Dispatch
+        # Element type -> kernel: model/element_catalog.py is the only place
+        # that decides it (NLGEOM, near-incompressibility and the material
+        # only pick among the kernels the catalog lists for the type).
+        from dispsolver.model.element_catalog import ElementCatalog
         elem_kernel_indices: Dict[int, List[int]] = {}
-        unknown_types: Dict[str, int] = {}
-        nlgeom_no_subst: Dict[str, str] = {}
+        failures: Dict[str, str] = {}
+        subst: Dict[str, str] = {}
         for idx, elem in enumerate(elements_list):
             et = elem.elem_type.upper()
-            if et in ["DCOUP3D", "DCOUP2D", "MASS", "ROTARYI", "SPRING1", "SPRING2", "GAPUNI"]:
-                continue
             pid = getattr(elem, "pid", 0)
             mat_obj = self.materials.get(pid, None) if hasattr(self, "materials") and isinstance(self.materials, dict) else None
             nu = 0.3
@@ -889,133 +878,23 @@ class DynamicSolver3D:
                     nu = float(mat_obj.get("nu", 0.3))
                 elif hasattr(mat_obj, "props"):
                     nu = float(mat_obj.props[1]) if len(mat_obj.props) > 1 else 0.3
-            is_nearly_incompressible = (nu > 0.48)
             mt = int(self.elem_mat_types[idx]) if getattr(self, "elem_mat_types", None) is not None else MAT_LINEAR_ELASTIC
-            lin_elastic = mt in (MAT_LINEAR_ELASTIC, MAT_CUSTOM_ELASTIC)
+            try:
+                k, notes = ElementCatalog.resolve(et, 3, bool(self.nlgeom), nu=nu,
+                                                  linear_elastic=mt in (MAT_LINEAR_ELASTIC, MAT_CUSTOM_ELASTIC))
+            except NotImplementedError as exc:
+                failures.setdefault(et, str(exc))
+                continue
+            if k is None:
+                continue
+            if notes:
+                subst[et] = "; ".join(notes)
+            elem_kernel_indices.setdefault((k, len(elem.node_ids)), []).append(idx)
 
-            if self.nlgeom:
-                # NLGEOM=True: Automatically promote core elements to Large-Deformation / Corotational
-                if et in ["C3D8I", "C3D8IH", "C3D8_EAS", "C3D8I_CR"]:
-                    # C3D8I_CR's core takes a constant elastic C (it used to
-                    # run every material, plastic included, as linear
-                    # elastic); other materials get the material-aware
-                    # total-Lagrangian EAS kernel 0, which is objective too.
-                    k = 11 if lin_elastic else 0
-                elif et in ["C3D8H", "C3D8_HYBRID", "HYBRID", "C3D8H_CR"]:
-                    k = 2   # C3D8H (u-P Mixed Hybrid + Corotational)
-                elif et in ["C3D8R", "C3D8RH", "C3D8_REDUCED", "C3D8R_CR"]:
-                    k = 13  # C3D8R_CR (Reduced Integration + Corotational)
-                elif et in ["C3D8_CR", "C3D8_COROTATIONAL", "C3D8_FBAR_CR"]:
-                    k = 1   # C3D8_CR
-                elif et in ["C3D8_FBAR"]:
-                    k = 3   # C3D8_FBAR
-                elif et in ["C3D8"]:
-                    k = 1   # C3D8_CR (Hughes B-bar + Corotational)
-                elif et in ["C3D10M", "C3D10MH", "C3D10_MODIFIED"]:
-                    k = 4
-                elif et in ["C3D10", "C3D10H"]:
-                    k = 4 if is_nearly_incompressible else 5
-                elif et in ["C3D4_ANP", "ANP", "C3D4H"]:
-                    k = 9
-                elif et in ["C3D4"]:
-                    k = 9 if is_nearly_incompressible else 6
-                elif et in ["C3D6", "C3D6_WEDGE", "WEDGE6"]:
-                    k = 7
-                elif et in ["C3D20", "C3D20R", "C3D20H", "C3D20RH"]:
-                    k = 15  # C3D20 20-node Quadratic Serendipity Hex
-                elif et in ["SOLID_SHELL", "C3D8_SS"]:
-                    k = 14  # SOLID_SHELL_CR (ANS+EAS + Co-Rotational, promoted for nlgeom)
-                elif et in ["SOLID_SHELL_CR"]:
-                    k = 14  # SOLID_SHELL_CR explicit
-                elif et in ["SOLID_SHELL_LINEAR"]:
-                    k = 12  # SOLID_SHELL small-strain (not recommended for large deflection)
-                elif et in ["S4R", "S4", "S3R", "S3", "M3D4", "M3D4R", "SHELL", "S8R", "S8", "S9R5", "S9", "STRI3", "STRI65"]:
-                    if et in ["S3R", "S3", "STRI3", "C3D4"]:
-                        k = 6
-                    elif self.nlgeom:
-                        k = 14 if len(elem.node_ids) == 4 else (11 if len(elem.node_ids) in (8, 9) else 14)
-                    else:
-                        k = 12 if len(elem.node_ids) == 4 else (10 if len(elem.node_ids) in (8, 9) else 12)
-                else:
-                    # Unknown type names used to be assigned a kernel by node
-                    # count (C3D8T, C3D27, a typo ... all ran as some C3D8).
-                    unknown_types.setdefault(et, 0)
-                    unknown_types[et] += 1
-                    continue
-            else:
-                # Small-strain linear geometry
-                if et in ["C3D8I", "C3D8IH", "C3D8_EAS"]:
-                    # 18: small-strain EAS (linear elastic only). Other
-                    # materials keep the total-Lagrangian EAS kernel 0 -- a
-                    # finite-strain formulation, reported as a substitution.
-                    k = 18 if lin_elastic else 0
-                    if not lin_elastic:
-                        nlgeom_no_subst[et] = ("NLGEOM=NO with a non-elastic material runs the total-Lagrangian "
-                                               "(finite-strain) EAS kernel; no small-strain EAS kernel supports it")
-                elif et in ["C3D8_CR", "C3D8_COROTATIONAL", "C3D8_FBAR_CR"]:
-                    k = 1
-                elif et in ["C3D8H", "C3D8_HYBRID", "HYBRID"]:
-                    k = 17  # C3D8H core with R = I (was the co-rotational kernel 2)
-                elif et in ["C3D8_FBAR"]:
-                    k = 3
-                elif et in ["C3D8"]:
-                    k = 16  # C3D8 B-bar core with R = I, any material (was linear-only kernel 10)
-                elif et in ["C3D10M", "C3D10MH", "C3D10_MODIFIED"]:
-                    k = 4
-                elif et in ["C3D10", "C3D10H"]:
-                    k = 4 if is_nearly_incompressible else 5
-                elif et in ["C3D4_ANP", "ANP", "C3D4H"]:
-                    k = 9
-                elif et in ["C3D4"]:
-                    k = 9 if is_nearly_incompressible else 6
-                elif et in ["C3D6", "C3D6_WEDGE", "WEDGE6"]:
-                    k = 7
-                elif et in ["C3D20", "C3D20R", "C3D20H", "C3D20RH"]:
-                    k = 15  # C3D20 20-node Quadratic Serendipity Hex
-                elif et in ["C3D8R", "C3D8RH", "C3D8_REDUCED"]:
-                    k = 8
-                elif et in ["C3D8I_CR"]:
-                    k = 11
-                elif et in ["C3D8H_CR"]:
-                    k = 2
-                elif et in ["C3D8R_CR"]:
-                    k = 13
-                elif et in ["SOLID_SHELL", "C3D8_SS"]:
-                    k = 12
-                elif et in ["S4R", "S4", "S3R", "S3", "M3D4", "M3D4R", "SHELL", "S8R", "S8", "S9R5", "S9", "STRI3", "STRI65"]:
-                    if et in ["S3R", "S3", "STRI3", "C3D4"]:
-                        k = 6
-                    elif len(elem.node_ids) in (8, 9):
-                        k = 10
-                    else:
-                        k = 12
-                else:
-                    # Unknown type names used to be assigned a kernel by node
-                    # count (C3D8T, C3D27, a typo ... all ran as some C3D8).
-                    unknown_types.setdefault(et, 0)
-                    unknown_types[et] += 1
-                    continue
-            group_key = (k, len(elem.node_ids))
-            if group_key not in elem_kernel_indices:
-                elem_kernel_indices[group_key] = []
-            elem_kernel_indices[group_key].append(idx)
-
-        if unknown_types:
-            raise NotImplementedError(f"element type(s) not implemented in the 3D solver: {unknown_types}")
-        # Abaqus types that run on a kernel lacking part of their formulation
-        # (hybrid pressure field or reduced integration). Report them so the
-        # substitution is visible instead of implied by the type name.
-        subst = {et: _ELEMENT_SUBSTITUTIONS[et] for et in {e.elem_type.upper() for e in elements_list}
-                 if et in _ELEMENT_SUBSTITUTIONS}
-        for et, why in nlgeom_no_subst.items():
-            subst[et] = (subst[et] + "; " if et in subst else "") + why
-        if self.nlgeom and any(gk[0] == 9 for gk in elem_kernel_indices):
-            # C3D4 ANP averages the pressure over shared nodes, so it cannot be
-            # wrapped element by element; it is a small-strain kernel and used
-            # to run unchanged under NLGEOM (not objective).
-            raise NotImplementedError(
-                "NLGEOM=YES: C3D4H / C3D4_ANP (and C3D4 with nu > 0.48) run the small-strain average-"
-                "nodal-pressure kernel, which has no large-rotation form; use C3D10M or hex elements")
+        if failures:
+            raise NotImplementedError("; ".join(failures.values()))
+        # Report formulation substitutions (hybrid field or reduced
+        # integration missing, finite-strain kernel under NLGEOM=NO ...).
         new = {et: why for et, why in subst.items() if et not in getattr(self, "element_substitutions", {})}
         self.element_substitutions = subst
         for et, why in new.items():
@@ -1032,35 +911,15 @@ class DynamicSolver3D:
         # small/large-deformation choice as the assembly.
         self._row_kernel = {int(r): int(gk[0]) for gk, rows in self.elem_kernel_groups.items() for r in rows}
 
+        from dispsolver.model.element_catalog import KERNELS as _KERNELS
         self.elem_conn_groups = {}
         for gk, indices in self.elem_kernel_groups.items():
             k_val, n_nodes_val = gk
-            elem_subset = [elements_list[i] for i in indices]
-            if k_val in (0, 1, 2, 3, 8, 10, 11, 12, 13, 14, 16, 17, 18) and n_nodes_val > 8:
-                self.elem_conn_groups[gk] = np.array(
-                    [[nid_map[nid] for nid in elem.node_ids[:8]] for elem in elem_subset],
-                    dtype=np.int64
-                )
-            elif k_val in (4, 5) and n_nodes_val > 10:
-                self.elem_conn_groups[gk] = np.array(
-                    [[nid_map[nid] for nid in elem.node_ids[:10]] for elem in elem_subset],
-                    dtype=np.int64
-                )
-            elif k_val == 6 and n_nodes_val > 4:
-                self.elem_conn_groups[gk] = np.array(
-                    [[nid_map[nid] for nid in elem.node_ids[:4]] for elem in elem_subset],
-                    dtype=np.int64
-                )
-            elif k_val == 15 and n_nodes_val > 20:
-                self.elem_conn_groups[gk] = np.array(
-                    [[nid_map[nid] for nid in elem.node_ids[:20]] for elem in elem_subset],
-                    dtype=np.int64
-                )
-            else:
-                self.elem_conn_groups[gk] = np.array(
-                    [[nid_map[nid] for nid in elem.node_ids] for elem in elem_subset],
-                    dtype=np.int64
-                )
+            n_use = min(n_nodes_val, _KERNELS[3][k_val].nodes)   # kernel consumes its own node count
+            self.elem_conn_groups[gk] = np.array(
+                [[nid_map[nid] for nid in elements_list[i].node_ids[:n_use]] for i in indices],
+                dtype=np.int64
+            )
 
         rows_list = []
         cols_list = []
@@ -1115,7 +974,8 @@ class DynamicSolver3D:
         # (assembled per material by _elastic_C_groups): refuse other materials
         # instead of running them as linear elastic. 5/6 used to apply
         # self.C_mat_default to every element, whatever its material.
-        for kk, what in ((5, "C3D10"), (6, "C3D4"), (10, "C3D8 linear kernel 10"), (18, "C3D8I (NLGEOM=NO)")):
+        from dispsolver.model.element_catalog import elastic_only_kernels
+        for kk, what in elastic_only_kernels(3).items():
             rows = [r for gk, rr in self.elem_kernel_groups.items() if gk[0] == kk for r in rr]
             if rows and getattr(self, "elem_mat_types", None) is not None:
                 bad = sorted({int(self.elem_mat_types[r]) for r in rows} - {MAT_LINEAR_ELASTIC, MAT_CUSTOM_ELASTIC})
