@@ -1621,8 +1621,13 @@ class DynamicSolver3D:
     _r_zero = 0.0
 
     def _set_roundoff_floor(self, K_g, u: np.ndarray) -> None:
+        # Roundoff in f_int scales with the POSITIONS the kinematics are
+        # evaluated at (x = X + u), not with u: an unloaded, undeformed model
+        # (u ~ 0) still carries ~eps*K*|X| of noise.
+        if getattr(self, "_X_flat", None) is None or self._X_flat.shape != u.shape:
+            self._X_flat = np.asarray(self.mesh.nodes_array(), dtype=np.float64)[:, :3].ravel()[: u.shape[0]]
         kd = float(np.max(np.abs(K_g.diagonal()))) if K_g.shape[0] else 0.0
-        self._r_zero = 1e3 * np.finfo(float).eps * kd * max(float(np.max(np.abs(u))), 1.0e-300)
+        self._r_zero = 1e3 * np.finfo(float).eps * kd * max(float(np.max(np.abs(self._X_flat + u))), 1.0e-300)
 
     def _force_scale(self, f_int: np.ndarray, f_ext: np.ndarray, free_dof_mask: np.ndarray) -> float:
         """q: larger of the applied free-DOF load and the reaction at

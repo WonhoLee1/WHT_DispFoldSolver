@@ -142,7 +142,9 @@ class DeformableSurfaceContactConstraint3D:
         name: str = "SURFACE_CONTACT_3D_DEFORMABLE",
         consistent_tangent: bool = True,
         consistent_friction_tangent: bool = False,
+        master_interior: Optional[Dict[tuple, np.ndarray]] = None,
     ):
+        self.master_interior = dict(master_interior or {})
         self.consistent_tangent = bool(consistent_tangent)
         self.consistent_friction_tangent = bool(consistent_friction_tangent)
         self.slave_node_ids = list(slave_node_ids)
@@ -248,11 +250,16 @@ class DeformableSurfaceContactConstraint3D:
             n_raw = _quad4_normal(q1, q2, q3, q4, xi, eta)
             N1, N2, N3, N4 = _quad4_shape_functions(xi, eta)
             xm_proj0 = N1 * q1 + N2 * q2 + N3 * q3 + N4 * q4
-            gap0 = float(np.dot(xs0 - xm_proj0, n_raw))
-            if abs(gap0) < 1e-5:
-                sign = 1.0
+            interior = self.master_interior.get(tuple(m_face))
+            if interior is not None:
+                # Outward from the master body, whatever the initial gap.
+                sign = 1.0 if np.dot(n_raw, xm_proj0 - interior) >= 0.0 else -1.0
             else:
-                sign = 1.0 if gap0 >= 0.0 else -1.0
+                # No owning element known (raw face tuples): legacy rule, the
+                # normal points toward the slave. Wrong for an initially
+                # overclosed pair -- the 1e-5 guard only covers flush meshes.
+                gap0 = float(np.dot(xs0 - xm_proj0, n_raw))
+                sign = 1.0 if (abs(gap0) < 1e-5 or gap0 >= 0.0) else -1.0
             self.pairs.append((s_nid, m_face, xi, eta, sign))
 
     def _current_gap_and_normal(self, u: np.ndarray, s_nid: int, m_face, xi: float, eta: float, sign: float):

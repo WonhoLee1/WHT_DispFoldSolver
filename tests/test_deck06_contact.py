@@ -186,9 +186,10 @@ def _patch_block(name, n, z0, z1, mat):
     return L
 
 
-def _patch_deck(path, n_bot, n_top):
+def _patch_deck(path, n_bot, n_top, overclosure=0.0, delta=PATCH_DELTA):
     L = ["*HEADING", "contact patch test"]
-    L += _patch_block("BOT", n_bot, 0.0, 1.0, "M_BOT") + _patch_block("TOP", n_top, 1.0, 2.0, "M_TOP")
+    L += _patch_block("BOT", n_bot, 0.0, 1.0, "M_BOT")
+    L += _patch_block("TOP", n_top, 1.0 - overclosure, 2.0 - overclosure, "M_TOP")
     L += ["*ASSEMBLY, NAME=A", "*INSTANCE, NAME=B1, PART=BOT", "*END INSTANCE",
           "*INSTANCE, NAME=T1, PART=TOP", "*END INSTANCE",
           "*SURFACE, NAME=S_SLAVE, COMBINE=UNION", "B1.BOT_TOP",
@@ -200,7 +201,7 @@ def _patch_deck(path, n_bot, n_top):
           "*BOUNDARY", "B1.XSYM, 1, 1, 0.0", "B1.YSYM, 2, 2, 0.0", "B1.ZBOT, 3, 3, 0.0",
           "T1.XSYM, 1, 1, 0.0", "T1.YSYM, 2, 2, 0.0",
           "*STEP, NAME=PRESS, NLGEOM=YES", "*STATIC", "0.25, 1.0, 1e-5, 0.5",
-          "*BOUNDARY", f"T1.ZTOP, 3, 3, {PATCH_DELTA}", "*END STEP"]
+          "*BOUNDARY", f"T1.ZTOP, 3, 3, {delta}", "*END STEP"]
     with open(path, "w") as fh:
         fh.write("\n".join(L) + "\n")
 
@@ -277,3 +278,40 @@ def test_increment_log_records_real_increments():
     assert [r["inc"] for r in done] == list(range(1, len(done) + 1))
     assert abs(done[-1]["t_step"] - 1.0) < 1e-12
     assert all(r["n_iter"] > 0 for r in log)
+
+
+# Interference fit: top block placed 2e-3 INTO the bottom one (well past the
+# 1e-5 flush guard), top face held in place. Exact force is the same uniaxial
+# solution with the overclosure as the imposed shortening. Before the P6 fix
+# the contact normal was oriented from the sign of the initial gap, so an
+# initially overclosed pair got its normal flipped and read as OPEN.
+OVERCLOSURE = 2e-3
+
+
+# x10 for PENALTY (patch-test error 0.3%; x1000 is in the P7 stiff-penalty
+# non-convergence regime), x1000 for NITSCHE (its x1 error is -17%, see above).
+@pytest.mark.parametrize("method,scale", [("PENALTY", 10.0), ("NITSCHE", 1000.0)])
+def test_contact_initial_overclosure_pushes_apart(tmp_path, method, scale):
+    path = str(tmp_path / "interference.inp")
+    _patch_deck(path, 2, 2, overclosure=OVERCLOSURE, delta=0.0)
+    _, model = _parse_source(path, dim=3, strict=True)
+    for o in list(model.interactions.values()) + [getattr(e, "entity", e) for st in model.steps.values()
+                                                   for e in st.interactions.values()]:
+        if hasattr(o, "constraint_enforcement"):
+            o.constraint_enforcement = method
+        prop = getattr(o, "interaction_property", None)
+        if prop is not None and not isinstance(prop, str):
+            prop.stiffness_scale_factor = scale
+    ex = MultiStepExecutor(model, verbose=False, dim=3)
+    with warnings.catch_warnings(), contextlib.redirect_stdout(io.StringIO()):
+        warnings.simplefilter("ignore")
+        ok = ex.execute_step(model.steps["PRESS"], from_parent_checkpoint=True)
+    s = ex.solver
+    _, f = s.assemble_system(s.u, dt=1.0)
+    top = sum(f[3 * i + 2] for i in ex.sys.global_nsets["T1.ZTOP"])
+    exact = OVERCLOSURE / (1.0 / PATCH_E_BOT + 1.0 / PATCH_E_TOP)
+    assert ok
+    # compression shows as a NEGATIVE z-reaction on the top face (as in the
+    # pressed patch test above)
+    assert top < 0.0, f"RF_top={top:.4e}: no compressive contact force from the interference"
+    assert abs(-top / exact - 1.0) <= 0.02, f"RF_top={top:.6e}, exact={exact:.6e}"

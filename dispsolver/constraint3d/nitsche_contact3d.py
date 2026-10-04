@@ -109,7 +109,9 @@ class NitscheContactConstraint3D:
         gamma: float = 1.0e8,
         position_tolerance: float = 1.0,
         name: str = "NITSCHE_CONTACT_3D",
+        master_interior: Optional[Dict[tuple, np.ndarray]] = None,
     ):
+        self.master_interior = dict(master_interior or {})
         self.slave_faces = list(slave_faces)
         self.master_faces = list(master_faces)
         self.nid_to_idx = dict(nid_to_idx)
@@ -150,11 +152,13 @@ class NitscheContactConstraint3D:
             n_c_raw = _quad4_normal(q_m[0], q_m[1], q_m[2], q_m[3], xi_c, eta_c)
             Nm_c = _quad4_shape_functions(xi_c, eta_c)
             xm_c = sum(Nm_c[k] * q_m[k] for k in range(4))
-            gap0 = float(np.dot(centroid_s - xm_c, n_c_raw))
-            if abs(gap0) < 1e-5:
-                sign = 1.0
+            interior = self.master_interior.get(tuple(m_face))
+            if interior is not None:
+                # Outward from the master body, whatever the initial gap.
+                sign = 1.0 if np.dot(n_c_raw, xm_c - interior) >= 0.0 else -1.0
             else:
-                sign = 1.0 if gap0 >= 0.0 else -1.0
+                gap0 = float(np.dot(centroid_s - xm_c, n_c_raw))
+                sign = 1.0 if (abs(gap0) < 1e-5 or gap0 >= 0.0) else -1.0
 
             # Quadrature points on slave face
             quad_points = []

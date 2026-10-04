@@ -625,6 +625,28 @@ _TRI2D_EDGE_LOCAL_NODES = {
 }
 
 
+def _master_face_interior_points(master_faces, mesh) -> Dict[tuple, np.ndarray]:
+    """Centroid of the element owning each master face. Contact constraints
+    orient the face normal AWAY from this point (outward), instead of from the
+    sign of the initial gap -- that rule flips the normal of any pair that
+    starts overclosed (an interference fit) and reads it as open."""
+    node_elems: Dict[int, list] = {}
+    for eid, elem in mesh.elements.items():
+        for nid in elem.node_ids:
+            node_elems.setdefault(nid, []).append(eid)
+    out = {}
+    for face in master_faces:
+        face = tuple(face)
+        cands = set(node_elems.get(face[0], []))
+        for nid in face[1:]:
+            cands &= set(node_elems.get(nid, []))
+        if len(cands) == 1:
+            elem = mesh.elements[next(iter(cands))]
+            out[face] = np.mean([[mesh.nodes[n].x, mesh.nodes[n].y, getattr(mesh.nodes[n], "z", 0.0)]
+                                 for n in elem.node_ids], axis=0)
+    return out
+
+
 def _get_element_face_local_nodes(elem: Any, f_idx: int) -> Optional[Tuple[int, ...]]:
     """Return local node indices for face/edge f_idx based on element topology."""
     n_nodes = len(elem.node_ids)
@@ -1256,6 +1278,7 @@ class ContactPair:
                     coords=coords,
                     gamma=float(k_hard_for_augmented),
                     name=self.name,
+                    master_interior=_master_face_interior_points(master_faces, mesh),
                 )
 
             # S2S Mortar Dispatch (DUAL_MORTAR or STANDARD_MORTAR)
@@ -1300,6 +1323,7 @@ class ContactPair:
                 friction_coefficient=float(mu),
                 tangential_stiffness_ratio=float(k_t_ratio),
                 name=self.name,
+                master_interior=_master_face_interior_points(master_faces, mesh),
             )
 
         is_2d = False
