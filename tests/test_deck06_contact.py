@@ -307,3 +307,29 @@ def test_contact_initial_overclosure_pushes_apart(tmp_path, method, scale):
     # pressed patch test above)
     assert top < 0.0, f"RF_top={top:.4e}: no compressive contact force from the interference"
     assert abs(-top / exact - 1.0) <= 0.02, f"RF_top={top:.6e}, exact={exact:.6e}"
+
+
+def test_dual_mortar_sees_the_penetration_of_a_converged_state():
+    """Mortar oriented each master face from the sign of (slave centroid -
+    master centroid) . n. On deck #06's flush interface those centroids differ
+    only in-plane, so the sign was roundoff and faces came out flipped: at a
+    state with 1.7 um of real penetration (the PENALTY x10 solution) mortar
+    reported zero active nodes and zero force. Normals now point away from
+    the owning master element."""
+    m1, e1 = _build("PENALTY", 10.0)
+    with warnings.catch_warnings(), contextlib.redirect_stdout(io.StringIO()):
+        warnings.simplefilter("ignore")
+        assert e1.execute_step(m1.steps["BOLT_PRELOAD"], from_parent_checkpoint=True)
+    u = e1.solver.u.copy()
+
+    from dispsolver.model.interaction import ContactPair
+    m2, e2 = _build("DUAL_MORTAR", 1.0)
+    with contextlib.redirect_stdout(io.StringIO()):
+        s, sys3d = e2.initialize_solver()
+    pair = next(o for st in m2.steps.values() for e in st.interactions.values()
+                for o in [getattr(e, "entity", e)] if isinstance(o, ContactPair))
+    c = pair.build_runtime_constraint(s.mesh, s.mesh.node_id_to_index(), model=m2, sys=sys3d)
+    c.update_contact_topology(u, force=True)
+    _, _, stats = c.assemble(u)
+    assert stats["n_active"] == 35
+    assert stats["total_normal_force"] > 0.0

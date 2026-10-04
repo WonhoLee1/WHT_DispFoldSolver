@@ -584,7 +584,9 @@ class FiniteSlidingDualMortar3D:
         use_contour_integral: bool = True,
         mortar_type: str = "DUAL",
         name: str = "FINITE_SLIDING_DUAL_MORTAR_3D",
+        master_interior: Optional[Dict[tuple, np.ndarray]] = None,
     ):
+        self.master_interior = dict(master_interior or {})
         self.slave_faces = list(slave_faces)
         self.master_faces = list(master_faces)
         self.nid_to_idx = nid_to_idx
@@ -728,7 +730,14 @@ class FiniteSlidingDualMortar3D:
                 s_cen_ref = 0.25 * sum(s_ref)
                 m_cen_ref = 0.25 * sum(m_ref)
                 gap_ref = s_cen_ref - m_cen_ref
-                if np.linalg.norm(gap_ref) > 1e-12:
+                interior = self.master_interior.get(tuple(m_face))
+                if interior is not None:
+                    # Outward from the master body. The centroid-difference rule
+                    # below is pure roundoff on a flush interface (the centroids
+                    # differ only in-plane), so it oriented faces at random:
+                    # deck #06 read 1.7 um of penetration as zero contact.
+                    sign_m = 1.0 if np.dot(n_m_face, m_cen_ref - interior) >= 0.0 else -1.0
+                elif np.linalg.norm(gap_ref) > 1e-12:
                     sign_m = 1.0 if np.dot(gap_ref, n_m_face) >= 0.0 else -1.0
                 else:
                     sign_m = 1.0 if np.dot(n_s_face, n_m_face) <= 0.0 else -1.0

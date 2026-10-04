@@ -627,9 +627,14 @@ _TRI2D_EDGE_LOCAL_NODES = {
 
 def _face_owner_elements(faces, mesh) -> Dict[tuple, int]:
     """Element id owning each face (the unique element containing all of
-    its nodes); faces with no unique owner are left out."""
+    its nodes); faces with no unique owner are left out. A mesh object
+    without element connectivity yields {} (callers then fall back to their
+    documented no-owner rule)."""
+    elements = getattr(mesh, "elements", None)
+    if not elements:
+        return {}
     node_elems: Dict[int, list] = {}
-    for eid, elem in mesh.elements.items():
+    for eid, elem in elements.items():
         for nid in elem.node_ids:
             node_elems.setdefault(nid, []).append(eid)
     out = {}
@@ -1307,6 +1312,7 @@ class ContactPair:
                         penalty_stiffness=float(k_hard_for_augmented),
                         mortar_type=m_type,
                         name=self.name,
+                        master_interior=_master_face_interior_points(master_faces, mesh),
                     )
                 else:
                     from dispsolver.constraint3d.dual_mortar_clipping3d import DualMortarClippedContactConstraint3D
