@@ -121,11 +121,17 @@ def test_step1_accepted_state_is_in_equilibrium_without_freeze(method, scale):
     assert r["resid"] <= RESID_RTOL * abs(R_REF), f"unfrozen |r_free|={r['resid']:.3e}"
 
 
-@pytest.mark.skip(reason="DUAL_MORTAR stalls at r~1e3 N for 6+ increment attempts and does "
-                         "not return in useful time (plan P8); a hanging test is not a gate")
 def test_step1_dual_mortar():
+    """Never converged before 2026-10-04 (three defects: random master
+    normals on the flush interface, force dropping quadrature points with
+    lambda_h < 0 while the tangent kept them -- K off by 71% --, and active
+    sets judged on stale clipping polygons). Now -6570.79 N at the default
+    stiffness (x10: -6698.49 N, 122 s; x100 still too slow -- the tangent
+    lacks the clipping-geometry derivative, ~3% vs a re-clipping FD)."""
     r = _step1("DUAL_MORTAR")
-    assert r["ok"] and abs(r["rf"] - R_REF) <= 0.02 * abs(R_REF)
+    assert r["ok"]
+    assert r["resid"] <= RESID_RTOL * abs(R_REF)
+    assert abs(r["rf"] - R_REF) <= 0.02 * abs(R_REF)
 
 
 # ---------------------------------------------------------------------------

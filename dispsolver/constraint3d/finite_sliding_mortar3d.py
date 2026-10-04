@@ -615,7 +615,15 @@ class FiniteSlidingDualMortar3D:
         self.contour_segments: List[Dict[str, Any]] = []
         self.frozen_active_nodes: Optional[Set[int]] = None
         self._last_topology_u: Optional[np.ndarray] = None
-        self.topology_update_tol: float = 1e-3
+        # Re-clip on every call (0.0). A positive tolerance enables the fast
+        # path below, which moves quadrature points on polygons clipped at an
+        # EARLIER displacement (often a rejected line-search trial). The solver
+        # force-reclips before each assembly, but get_active_set() takes the
+        # fast path, so the SDI logic judged the contact state on stale
+        # geometry: deck #06 stalled at r/q ~ 10 with 1e-3; with 0.0 it
+        # converges (RF -6570.5 N, matching Nitsche -6569.0 N), with "never
+        # re-clip" it converges to the small-sliding answer (-6463.8 N).
+        self.topology_update_tol: float = 0.0
 
     def _build_mortar_basis(self) -> None:
         """Construct mortar basis transformation per slave face:
@@ -1061,7 +1069,15 @@ class FiniteSlidingDualMortar3D:
                 Nm = np.array(_quad4_shape_functions(qp["xi_m"], qp["eta_m"]))
                 Psi = A_f @ Ns
                 lam_h = float(np.dot(p_face, Psi))
-                if (self.frozen_active_nodes is None and lam_h <= 0.0) or lam_h == 0.0:
+                # Do NOT drop lam_h < 0 here. The dual basis has negative lobes,
+                # so lam_h = sum_a p_a Psi_a is legitimately negative at some
+                # quadrature points even though every nodal p_a >= 0 (the one-
+                # sided condition already lives in p = max(0, k g)). Dropping
+                # them made the force differ from -sum_a p_a b_a -- 18% on the
+                # non-matching contact patch, 38 of 207 points -- while the
+                # tangent kept them: K was off from dF/du by 71% and Newton
+                # stalled on deck #06 at higher stiffness.
+                if lam_h == 0.0:
                     continue
 
                 qp_slave_dofs_list.append(idx_s)

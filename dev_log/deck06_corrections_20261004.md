@@ -18,6 +18,7 @@ Gemini 세션(`dev_log/session_20261004_handoff.md`)과 그 결과를 옮긴 문
 | C10 | deck 경로 `benchmarks/abaqus_standard_inp/...` (handoff, lessons dev_log) | **틀림** | `benchmark_inp/phase2_methodology/06_bolt_preload_gasket_flange_3d.inp` |
 | C11 | 가스켓 "초탄성 EPDM (Mooney-Rivlin)" | **틀림** | `*ELASTIC 1000, 0.38` 선형 탄성 (GEMINI.md L261은 이미 이를 지적함) |
 | C12 | Mortar: "positive-preserving dual basis" 주석 | **미구현** | 주석만 있고 기존 clamp가 삭제됨. 별도 조사 대상. |
+| C13 | DUAL_MORTAR는 미소 슬라이딩 볼트 체결에서 클리핑 꼭짓점 진동(4↔5) 때문에 수렴하지 못한다 (lessons_learned dev_log §3.3, GEMINI.md L219-221) | **틀린 진단** | 실제 원인은 무작위 법선, λ_h<0 적분점 누락, 과거 기하 활성 판정의 세 결함(LESSONS_LEARNED 6.11). 수정 후 x1 −6,570.8 N, x10 −6,698.5 N 수렴. |
 
 ## 2. 이번 작업에서 새로 발견된 결함 (문서에 없던 것)
 
