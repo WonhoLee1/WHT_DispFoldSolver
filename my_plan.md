@@ -1,3 +1,7 @@
+claude -r --allow-dangerously-skip-permissions
+
+agy -c --dangerously-skip-permissions
+
 # contact, D2026-09-19
 모든 interface는 abaqus python api 기준으로 구성하고 기존에 없는 옵션은 추가하자. 소스코드에는 충분한 주석을 담도록 한다.
 특히, 이론적인 측면에서 abaqus와 차이가 있을 것 아닌가. 그런 부분도 담는다.

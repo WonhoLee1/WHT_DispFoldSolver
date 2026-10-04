@@ -1,0 +1,29 @@
+{
+  "inp_path": "D:\\PythonCodeStudy\\WHT_DispFoldSolver\\benchmark_inp\\verification\\viscocylinder_cax4i_dyn.inp",
+  "model_name": "TRANSIENT INTERNAL PRESSURE ON VISCOEL. CYLINDER -- CAX4I",
+  "dimension": 2,
+  "converged": true,
+  "wall_time_seconds": 0.04651069641113281,
+  "steps_executed": [
+    "Step-1"
+  ],
+  "step_results": [
+    {
+      "step_name": "Step-1",
+      "converged": true,
+      "wall_time": 0.041872501373291016
+    }
+  ],
+  "exported_files": [
+    "D:\\PythonCodeStudy\\WHT_DispFoldSolver\\benchmark_abaqus_compatibility\\output_viscocylinder_cax4i_dyn\\viscocylinder_cax4i_dyn_result.vtkhdf",
+    "D:\\PythonCodeStudy\\WHT_DispFoldSolver\\benchmark_abaqus_compatibility\\output_viscocylinder_cax4i_dyn\\viscocylinder_cax4i_dyn_result.vtu"
+  ],
+  "unsupported_keywords": [
+    "DIAGNOSTICS",
+    "NODE FILE",
+    "EL FILE",
+    "NODE PRINT",
+    "EL PRINT"
+  ],
+  "warnings": []
+}

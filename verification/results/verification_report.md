@@ -1,7 +1,7 @@
 # FEM Verification Report
 
-**Generated**: 2026-09-13 21:57:06
-**Runtime**: 210.1s
+**Generated**: 2026-10-01 01:09:27
+**Runtime**: 175.3s
 **Results**: 13 passed, 1 failed
 **Codebase**: dispsolver (JAX-based 2D Plane Strain FEM)
 
@@ -29,17 +29,17 @@
 | Benchmark | jax | jax_q4_bbar | jax_q4_corotational_eas | jax_q4_eas | jax_q4_simo_fs | jax_q4_up | jax_q4_visco_fs | jax_t3 | numba | numba_q4_bbar | numba_q4_corotational | numba_q4_corotational_eas | numba_q4_eas | numba_q4_up | numba_t3 | numpy_q4_bbar | numpy_q4_bbar_strain | numpy_q4_corotational_eas | numpy_q4_eas | numpy_sequential | numpy_t3 | order_fit | teardrop_1layer |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | Patch Test (Element Level) | — | 1.0989e-03 (0.000%) | 1.0989e-03 (0.000%) | 1.0989e-03 (0.000%) | 1.0989e-03 (0.000%) | 1.0989e-03 (0.000%) | 1.0989e-03 (0.000%) | 5.4945e-04 (0.000%) | — | 1.0989e-03 (0.000%) | 1.0989e-03 (0.000%) | 1.0989e-03 (0.000%) | 1.0989e-03 (0.000%) | 1.0989e-03 (0.000%) | 5.4945e-04 (0.000%) | 1.0989e-03 (0.000%) | 0.0000e+00 (0.000%) | 1.0989e-03 (0.000%) | 1.0989e-03 (0.000%) | — | 5.4945e-04 (0.000%) | — | — |
-| Patch Test (Solver Level, Irregular Mesh) | 3.7399e-11 (0.000%) | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | 2.3978e-11 (0.000%) | — | — | — |
-| 3-Point Bending | 2.3698e-04 (0.714%) | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | 2.4670e-04 (4.843%) | — | — | — |
-| 4-Point Bending | 3.2214e-04 (1.715%) | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | 3.2853e-04 (3.731%) | — | — | — |
+| Patch Test (Solver Level, Irregular Mesh) | 2.5124e-11 (0.000%) | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | 2.3978e-11 (0.000%) | — | — | — |
+| 3-Point Bending | 2.4670e-04 (4.843%) | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | 2.4670e-04 (4.843%) | — | — | — |
+| 4-Point Bending | 3.2853e-04 (3.731%) | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | 3.2853e-04 (3.731%) | — | — | — |
 | 2-Point Bending (Gulati Elastica) | 3.1943e+02 (30.172%) | — | — | — | — | — | — | — | 3.1943e+02 (30.172%) | — | — | — | — | — | — | — | — | — | — | — | — | — | — |
 | 1-Layer Teardrop Folding Verification | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | 1.4200e+02 (0.000%) |
-| Cantilever Bending | 3.7327e-03 (1.676%) | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | 3.8420e-03 (4.652%) | — | — | — |
+| Cantilever Bending | 3.8420e-03 (4.652%) | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | 3.8420e-03 (4.652%) | — | — | — |
 | Uniaxial Tension (Plane Strain) | 1.0990e+00 (0.011%) | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | 1.0990e+00 (0.011%) | — | — | — |
 | Uniaxial Compression (Plane Strain) | -1.0988e+00 (0.011%) | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | -1.0988e+00 (0.011%) | — | — | — |
 | Volumetric Compression (Plane Strain) | -9.6154e-01 (0.000%) | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | -9.6154e-01 (0.000%) | — | — | — |
 | Volumetric Tension (Plane Strain) | 9.6154e-01 (0.000%) | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | 9.6154e-01 (0.000%) | — | — | — |
-| Convergence Cantilever Mesh (Q4 B-bar) | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | 4.4716e+00 (78.862%) | — |
+| Convergence Cantilever Mesh (Q4 B-bar) | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | 3.4378e+00 (37.512%) | — |
 | Convergence Elastica Mesh (Corotational) | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | 2.7424e+00 (1.569%) | — |
 | Convergence Elastica Load-Step (Corotational) | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | 2.3939e+00 (0.256%) | — |
 
@@ -81,7 +81,7 @@
 
 | Backend | Value | Error (%) | Iter | Passed |
 |---------|-------|-----------|------|--------|
-| jax | 3.739930e-11 | 0.0000 | 1 | PASS |
+| jax | 2.512438e-11 | 0.0000 | 1 | PASS |
 | numpy_sequential | 2.397843e-11 | 0.0000 | 1 | PASS |
 ### 3-Point Bending — PASS
 
@@ -92,7 +92,7 @@
 
 | Backend | Value | Error (%) | Iter | Passed |
 |---------|-------|-----------|------|--------|
-| jax | 2.369794e-04 | 0.7137 | 1 | PASS |
+| jax | 2.466965e-04 | 4.8434 | 1 | PASS |
 | numpy_sequential | 2.466965e-04 | 4.8434 | 1 | PASS |
 ### 4-Point Bending — PASS
 
@@ -103,7 +103,7 @@
 
 | Backend | Value | Error (%) | Iter | Passed |
 |---------|-------|-----------|------|--------|
-| jax | 3.221427e-04 | 1.7146 | 1 | PASS |
+| jax | 3.285293e-04 | 3.7311 | 1 | PASS |
 | numpy_sequential | 3.285293e-04 | 3.7311 | 1 | PASS |
 ### 2-Point Bending (Gulati Elastica) — FAIL
 
@@ -135,7 +135,7 @@
 
 | Backend | Value | Error (%) | Iter | Passed |
 |---------|-------|-----------|------|--------|
-| jax | 3.732733e-03 | 1.6761 | 1 | PASS |
+| jax | 3.841985e-03 | 4.6520 | 1 | PASS |
 | numpy_sequential | 3.841985e-03 | 4.6520 | 1 | PASS |
 ### Uniaxial Tension (Plane Strain) — PASS
 
@@ -186,23 +186,23 @@
 - **Category**: solver
 - **Theory**: 2.500000e+00 
 - **Tolerance**: 2.50%
-- **Details**: ny= 4 nx= 40: δ=3.732733e-03 err(vs ny=12)=2.41e-02
-ny= 6 nx= 60: δ=3.660667e-03 err(vs ny=12)=4.37e-03
-ny= 8 nx= 80: δ=3.648666e-03 err(vs ny=12)=1.07e-03
+- **Details**: ny= 4 nx= 40: δ=3.841985e-03 err(vs ny=12)=4.59e-02
+ny= 6 nx= 60: δ=3.717506e-03 err(vs ny=12)=1.20e-02
+ny= 8 nx= 80: δ=3.688788e-03 err(vs ny=12)=4.21e-03
 
 | Backend | Value | Error (%) | Iter | Passed |
 |---------|-------|-----------|------|--------|
-| order_fit | 4.471560e+00 | 78.8624 | — | PASS |
+| order_fit | 3.437804e+00 | 37.5122 | — | PASS |
 
 **Convergence Refinement Levels**
 
 | h | Error |
 |---|-------|
-| 2.5000e-01 | 2.41e-02 |
-| 1.6667e-01 | 4.37e-03 |
-| 1.2500e-01 | 1.07e-03 |
+| 2.5000e-01 | 4.59e-02 |
+| 1.6667e-01 | 1.20e-02 |
+| 1.2500e-01 | 4.21e-03 |
 
-**Fitted order**: 4.4716  (expected 2.5000)  **r²**: 0.9983
+**Fitted order**: 3.4378  (expected 2.5000)  **r²**: 0.9992
 
 ### Convergence Elastica Mesh (Corotational) — PASS
 

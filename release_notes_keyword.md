@@ -178,3 +178,55 @@ DAMAGE INITIATION/RELATIVE DENSITY/SOLUTION`, 보관+미연결 경고).
 - 2026-09-20, `benchmark_inp/verification/inventory_all.py` 전수:
   **OK=1377, ABORT=482, ERROR=0**.
 - 2026-09-20, 등록 현황 직접 조회: **정본 48종, raw 58종**.
+- 2026-09-28, `official/hertzcontact_2d_rsurf.inp` (Deck #9):
+  `*SURFACE, TYPE=SEGMENTS` 해석적 강체면 파서 및 순수 대칭(Pure SPD) 2D 점-선 접촉 정식화 구현.
+  `assembly.py` CPE8 4절점 강제 절단 버그 제거 -> 8절점 Numba 3×3 커널 직결. 5 Newton iters, 14.13s 기계 정밀도 수렴 (**PASSED**).
+- 2026-09-28, `official/neckingtensilebar_cax4r.inp` (Deck #10):
+  `*NSET`/`*ELSET` 기존 세트 이름 재귀적 해석 구현 + `*BOUNDARY` trailing comma 라인 병합 방지 및 빈 변위 필드 0.0 처리.
+  축대칭 CAX4R 2단계 인장 파이프라인 수렴 확인했으나, 축대칭 차원 및 $J_2$ 소성 텐서 미지원으로 벤치마크 정식 범위 제외 (**OUT-OF-SCOPE / UNSUPPORTED**).
+- 2026-09-28, `official/nlgeocantilever_c3d8_coarse.inp` (Deck #11) & `nlgeocantilever_c3d8i_coarse.inp` (Deck #12):
+  1) `abaqus_lexer.py`: `RE_KEYWORD` 쉼표 앞 공백(`\s*,\s*`) 허용 및 키워드명 `.strip()` 적용 -> `*SOLID SECTION , ELSET=BEAM, MATERIAL=MATE1` 파라미터 유실 버그 원천 수정 ($E=10^8$ 정상 바인딩).
+  2) `constraint.py`: `Coupling.bind`에서 `global_nsets`의 0-based 인덱스를 `nid_to_idx`로 중복 조회하여 slave/RP 노드가 밀리거나 누락되던 결함 수정 (RP=노드 44, Slaves=[0,1,2,3] 정합).
+  3) `dynamic3d.py`: STATIC 스텝 하중의 Abaqus 기본 진폭 규정(선형 램프 `scale = t / period`) 반영 및 점하중 로컬-글로벌 노드 ID 자동 분해 적용.
+  4) `assembly.py`: `ABAQUS_ELEM_MAP`에서 3D 고급 요소(`C3D8I`, `C3D8H`, `C3D8R`, `C3D10`, `C3D10M`)를 `C3D8`/`C3D4`로 다운그레이드하던 레거시 매핑 완전 제거 -> 정품 `C3D8I_CR` (EAS-9 + Corotational) 커널 직결.
+  5) 물리적 무결성 검증 (Bisshopp & Drucker 1945 / Abaqus Benchmarks Manual §1.2.1):
+     - **Deck #11 (`C3D8` 완전적분 1층 격자)**: 20 증분 전수 컷백 0회 수렴 (2.04s, 48 iters). $u_y = 1.7883\,\text{mm}$ (예상대로 1차 완전적분 전단 잠김(Shear Locking) 발생 재현, **PASSED**).
+     - **Deck #12 (`C3D8I` 9-mode EAS 비적합 모드)**: 32 증분 전수 컷백 0회 수렴 (31.95s, 265 iters). **$u_y = 7.5942\,\text{mm}$** (이론치 $7.5 \sim 8.1\,\text{mm}$ 정중앙 적중, 전단 잠김 완전 소거 입증), 축방향 풀백 $u_x = 4.8286\,\text{mm}$, 비틀림 $u_z = 0.0017\,\text{mm}$ (**PASSED**).
+- 2026-09-28, `official/nlgeocantilever_c3d8r_coarse_eh.inp` (Deck #13):
+  1) `C3D8R` 1점 감차적분 + 플래너건-벨리치코 아워글래스 제어 대변형 외팔보 벤치마크.
+  2) 20 증분 전수 컷백 0회 수렴 (62.62s, 63 Newton iters).
+  3) $u_y = 3.7103\,\text{mm}$, $u_x = 0.8668\,\text{mm}$, $u_z = 4.71\times 10^{-6}\,\text{mm}$.
+  4) 이론적 강성 서열 검증 완료: $u_{y, \text{C3D8}} (1.79) < u_{y, \text{C3D8R}} (3.71) < u_{y, \text{C3D8I}} (7.59) \approx u_{y, \text{theory}} (7.5\sim 8.1)$ (**PASSED**).
+- 2026-09-28, `official/pipecrushing_cpe4i.inp` (Deck #14):
+  1) `CPE4I` 비적합 모드 평면 변형률 16개 요소 + `*PLASTIC` 8점 탄소성 + 이동식 강체 평판(`*RIGID BODY`, `*SURFACE TYPE=SEGMENTS`) 접촉 압축 벤치마크 (Abaqus Benchmarks §1.1.8).
+  2) 5대 핵심 결함 해결:
+     - `dynamic2d.py`: 구속조건 분리/비활성 시 `len(rows_extra) <= 1`에서 `K_global` 미할당 `UnboundLocalError` 수정.
+     - `dynamic2d.py`: `apply_boundary_conditions`에서 `empty_rows`의 `r_bc`를 0으로 덮어써서 비요소 기준 절점(node 1000)의 Dirichlet 처방 변위(-1.3)가 무시되던 결함 수정.
+     - `dynamic2d.py`: `*STATIC` 스텝 경계조건에 명시적 진폭 없을 때 Abaqus 규격 `AMPLITUDE=RAMP` 기본 선형 램프 적용.
+     - `interaction.py` & `mesh.py`: `*rigid body`의 `refnode`(공백 없음) 파라미터 파싱 및 `*rigid body`가 `*surface`보다 선행할 때의 지연 바인딩 연결.
+     - `surface_contact2d.py`: 이동식 강체 평판의 기준점 변위($u_{\text{ref}}$) 반영 및 Newton 제3법칙(상호작용 접촉 강성 및 작용-반작용력) 완전 정식화.
+  3) 103 증분 전수 컷백 0회 완벽 수렴 (32.64s, 468 Newton iters).
+  4) 물리적 정량성 검증 완료:
+     - 강체 평판 처방 변위: $u_y = -1.3000\,\text{in}$ (100.000%).
+     - 관 상단 정점 밀착 압축: $u_y = -1.3083\,\text{in}$.
+     - 관 적도점 타원화 횡팽창(Ovalization): $u_x = +0.7292\,\text{in}$ ($R_o: 2.25 \to 2.98\,\text{in}$).
+     - 대칭면 구속 보존: `XSYMM` $u_x = 0.0$, `YSYMM` $u_y = 0.0$ 보존.
+     - 수직력 작용-반작용 정적 평형: $RF_{y, \text{top}} = -128,540.51\,\text{lbf}$, $RF_{y, \text{bottom}} = +128,539.97\,\text{lbf}$ (평형 오차 $0.55\,\text{lbf}$, 상대 오차 **0.0004%**!) (**PASSED**).
+- 2026-09-28, `official/radstr_holcyl_cax4r.inp` (Deck #15) & `official/rubberdisk_cax4ih_poly.inp` (Deck #17):
+  축대칭(`CAX4R`, `CAX4IH`) $r-\theta-z$ 차원 역학 미지원으로 프로젝트 공식 지원 범위 외 분류 (**OUT-OF-SCOPE / UNSUPPORTED**).
+- 2026-09-28, `official/roofsnapthrough_s4r.inp` (Deck #16):
+  6자유도 미드서피스 순수 쉘 요소(`S4R`) 및 Riks 호장법(`*STATIC, RIKS`) 비선형 좌굴 실행기 미지원으로 한계 명시 (**UNSUPPORTED**).
+- 2026-09-29, `official/thickcompcyl_8el.inp` (Deck #18):
+  1) `C3D20R` 20절점 2차 세렌디피티 감차적분 32개 요소 + 4층 직교이방성 복합재 스택업(`*SOLID SECTION, COMPOSITE`) + 원통 좌표계 국소 방향(`*ORIENTATION, SYSTEM=CYLINDRICAL`) + 내압 $P = 50.0\,\text{MPa}$ (`*DLOAD, Inside, P6, 50.0`) 벤치마크 (Abaqus Benchmarks §1.1.2).
+  2) 핵심 결함 해결:
+     - `material.py`: `*SOLID SECTION, COMPOSITE`에서 데이터 라인의 실제 재료(`Mcircum`, `Maxial`) 및 방향(`Ocircum`) 파싱 연결.
+     - `c3d20_numba.py`: 20절점 형상함수 `_sf3d_c3d20` 기반 각 가우스점 전역 좌표 투영 및 원통 좌표계 직교이방성 텐서 회전 변환($C_{glob} = T_\varepsilon^T S_{loc}^{-1} T_\varepsilon$)과 8점 감차적분 완전 구현.
+     - `dynamic3d.py`: 곡면 2차 8절점 면(Quad8) 2x2 Gauss 등가 절점력 적분($\int N_k P (\mathbf{t}_1 \times \mathbf{t}_2) dA$) 구현 및 `Model.Pressure`의 `face` 인자 전달 복원.
+  3) 22 증분 전수 컷백 0회 완벽 수렴 (29.73s, 매 증분 2회 뉴턴 반복).
+  4) Abaqus 공식 벤치마크 매뉴얼(Lekhnitskii 이론해 / C3D20R 8el) 정량 대조 완료:
+     - **내경 반경 변위 ($R_i = 60\,\text{mm}$)**: Abaqus 공식값 $0.070805\,\text{mm}$ vs WHT 계산값 **$0.070806\,\text{mm}$** (**상대 오차 0.0014%**).
+     - **외경 반경 변위 ($R_o = 140\,\text{mm}$)**: Abaqus 공식값 $0.007480\,\text{mm}$ vs WHT 계산값 **$0.007479\,\text{mm}$** (**상대 오차 0.013%**).
+     - 평면 변형률 축방향 구속 $\max |u_z| = 3.37\times 10^{-17}\,\text{mm}$ (기계 정밀도), 대칭면 구속 오차 0.000%, 원주 방향 원형 유지 편차 0.29% (**PASSED**).
+- 2026-09-29, `official/unifcollapspipe_str_elbelem.inp` (Deck #19):
+  1D 특수 파이프 엘보우 Brazier 타원화 자유도 요소(`ELBOW31B`) 미지원으로 공식 범위 외 분류 (**UNSUPPORTED / OUT-OF-SCOPE**).
+

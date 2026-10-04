@@ -1,0 +1,23 @@
+{
+  "inp_path": "D:\\PythonCodeStudy\\WHT_DispFoldSolver\\examples\\cantilever_90deg_bending.inp",
+  "model_name": "90-DEGREE LARGE ROTATION CANTILEVER BEAM BENDING BENCHMARK",
+  "dimension": 2,
+  "converged": true,
+  "wall_time_seconds": 0.07205343246459961,
+  "steps_executed": [
+    "Step-1"
+  ],
+  "step_results": [
+    {
+      "step_name": "Step-1",
+      "converged": true,
+      "wall_time": 0.06327247619628906
+    }
+  ],
+  "exported_files": [
+    "D:\\PythonCodeStudy\\WHT_DispFoldSolver\\benchmark_abaqus_compatibility\\output_cantilever_90deg_bending\\cantilever_90deg_bending_result.vtkhdf",
+    "D:\\PythonCodeStudy\\WHT_DispFoldSolver\\benchmark_abaqus_compatibility\\output_cantilever_90deg_bending\\cantilever_90deg_bending_result.vtu"
+  ],
+  "unsupported_keywords": [],
+  "warnings": []
+}

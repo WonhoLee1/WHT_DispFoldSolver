@@ -283,7 +283,7 @@ def execute_inp(
             if sname in model.steps:
                 model.steps[sname].dt_init = float(dt)
 
-    executor = MultiStepExecutor(model, verbose=verbose)
+    executor = MultiStepExecutor(model, verbose=verbose, dim=dim)
     executor.initialize_solver(notices=reader.warnings)
     ok_all = True
     for sname in targets:

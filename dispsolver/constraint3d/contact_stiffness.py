@@ -39,6 +39,15 @@ def _material_effective_E(mat_obj: Any, default_E: float = 200000.0) -> float:
         denom = 3.0 * K + mu
         if denom > 1e-30:
             return 9.0 * K * mu / denom
+    if hasattr(mat_obj, "hyperelastic") and mat_obj.hyperelastic:
+        h = mat_obj.hyperelastic
+        c10 = float(h.get("c10", 0.0))
+        c01 = float(h.get("c01", 0.0))
+        mu_val = 2.0 * (c10 + c01) if (c10 + c01) > 0 else float(h.get("mu", 1.0))
+        d1_val = float(h.get("d1", h.get("d", 0.01)))
+        K_val = 2.0 / d1_val if d1_val > 1e-12 else 1e6
+        return float((9.0 * K_val * mu_val) / (3.0 * K_val + mu_val))
+
     if isinstance(mat_obj, dict):
         if "E" in mat_obj:
             return float(mat_obj["E"])
@@ -47,17 +56,53 @@ def _material_effective_E(mat_obj: Any, default_E: float = 200000.0) -> float:
             denom = 3.0 * K + mu
             if denom > 1e-30:
                 return 9.0 * K * mu / denom
+        if "c10" in mat_obj:
+            c10 = float(mat_obj.get("c10", 0.0))
+            c01 = float(mat_obj.get("c01", 0.0))
+            mu_val = 2.0 * (c10 + c01) if (c10 + c01) > 0 else 1.0
+            d1_val = float(mat_obj.get("d1", 0.01))
+            K_val = 2.0 / d1_val if d1_val > 1e-12 else 1e6
+            return float((9.0 * K_val * mu_val) / (3.0 * K_val + mu_val))
     return default_E
 
 
+def _get_elem_nodes(elem: Any) -> list:
+    if hasattr(elem, "node_ids"):
+        return list(elem.node_ids)
+    if isinstance(elem, (list, tuple)) and len(elem) >= 2:
+        if isinstance(elem[1], (list, tuple)):
+            return list(elem[1])
+        return list(elem)
+    return []
+
+
+def _get_node_coords(mesh: Any, nid: int) -> np.ndarray:
+    if hasattr(mesh, "nodes"):
+        node = mesh.nodes[nid]
+        if hasattr(node, "x"):
+            z = getattr(node, "z", 0.0)
+            return np.array([node.x, node.y, z], dtype=np.float64)
+        arr = np.asarray(node, dtype=np.float64)
+        if len(arr) == 2:
+            return np.array([arr[0], arr[1], 0.0], dtype=np.float64)
+        return arr[:3]
+    return np.zeros(3, dtype=np.float64)
+
+
 def _element_characteristic_length(mesh: Any, elem: Any) -> float:
-    coords = np.array(
-        [[mesh.nodes[nid].x, mesh.nodes[nid].y, mesh.nodes[nid].z] for nid in elem.node_ids],
-        dtype=np.float64,
-    )
-    extents = coords.max(axis=0) - coords.min(axis=0)
-    volume = float(np.prod(np.maximum(extents, 1e-30)))
-    return volume ** (1.0 / 3.0)
+    e_nids = _get_elem_nodes(elem)
+    if not e_nids:
+        return 1.0
+    pts = np.array([_get_node_coords(mesh, nid) for nid in e_nids], dtype=np.float64)
+    is_2d = np.all(np.abs(pts[:, 2]) < 1e-12)
+    if is_2d:
+        extents = pts[:, :2].max(axis=0) - pts[:, :2].min(axis=0)
+        area = float(np.prod(np.maximum(extents, 1e-30)))
+        return max(area, 1e-30) ** 0.5
+    else:
+        extents = pts.max(axis=0) - pts.min(axis=0)
+        volume = float(np.prod(np.maximum(extents, 1e-30)))
+        return volume ** (1.0 / 3.0)
 
 
 def representative_element_stiffness(
@@ -76,7 +121,8 @@ def representative_element_stiffness(
     slave_set = set(slave_node_ids)
     k_values = []
     for elem in mesh.elements.values():
-        if slave_set.isdisjoint(elem.node_ids):
+        e_nids = _get_elem_nodes(elem)
+        if slave_set.isdisjoint(e_nids):
             continue
         pid = getattr(elem, "pid", 0)
         mat_obj = (materials or {}).get(pid)
@@ -102,7 +148,8 @@ def representative_element_length(mesh: Any, slave_node_ids) -> Optional[float]:
     slave_set = set(slave_node_ids)
     lengths = []
     for elem in mesh.elements.values():
-        if slave_set.isdisjoint(elem.node_ids):
+        e_nids = _get_elem_nodes(elem)
+        if slave_set.isdisjoint(e_nids):
             continue
         lengths.append(_element_characteristic_length(mesh, elem))
     if not lengths:

@@ -15,17 +15,15 @@ face's CURRENT (deformed) position and local normal are recomputed every
 assemble() call, so the constraint tracks real deformation of the master
 body, unlike the rigid-plane case where the master has no DOFs at all.
 
-Tangent is a MODIFIED NEWTON approximation, matching this project's own
-established precedent (AGENTS.md sec4.4): the local surface normal is
-recomputed fresh every call for the FORCE/gap evaluation, but held FROZEN
-(not differentiated) when building the tangent stiffness -- i.e. only
-d(gap)/du through the shape-function-weighted position term is
-differentiated, not d(normal)/du. This costs a couple of extra Newton
-iterations near large relative-rotation increments (same tradeoff
-AGENTS.md sec4.4 already documents for corotational-frame elements), not
-full quadratic convergence -- acceptable because the same line-search/
-SDI machinery that already covers modified-Newton element tangents
-covers this too.
+Tangent: by default (`consistent_tangent=True`, since 2026-10-01) the
+normal part is the exact Jacobian of the pair force, including the
+normal's rotation dn/du; this makes the block UNSYMMETRIC, which
+DynamicSolver3D._solve_linear detects and factors with LU instead of
+Cholesky. Friction keeps the earlier symmetric stick/slip block unless
+`consistent_friction_tangent=True` (exact, FD-verified, but it made the
+Hertz roller SLIDE step diverge while the symmetric block completes it).
+`consistent_tangent=False` restores the earlier modified-Newton block
+(normal held frozen).
 
 One-sided complementarity (contact, not a bonded tie) through the SAME
 PressureOverclosureLaw seam (dispsolver/constraint3d/pressure_overclosure.py)
@@ -55,9 +53,8 @@ def _quad4_shape_functions(xi: float, eta: float) -> Tuple[float, float, float, 
 
 def _quad4_normal(q1: np.ndarray, q2: np.ndarray, q3: np.ndarray, q4: np.ndarray, xi: float, eta: float) -> np.ndarray:
     """Unit normal of the Quad4 face at (xi, eta), from the cross product
-    of the local tangent vectors dx/dxi, dx/deta. NOT the direction the
-    tangent stiffness differentiates (see module docstring) -- only used
-    to evaluate the current gap/force each call."""
+    of the local tangent vectors dx/dxi, dx/deta. Its derivative is
+    _quad4_normal_derivatives (used by the default consistent tangent)."""
     dN1_dxi, dN2_dxi, dN3_dxi, dN4_dxi = -0.25 * (1.0 - eta), 0.25 * (1.0 - eta), 0.25 * (1.0 + eta), -0.25 * (1.0 + eta)
     dN1_deta, dN2_deta, dN3_deta, dN4_deta = -0.25 * (1.0 - xi), -0.25 * (1.0 + xi), 0.25 * (1.0 + xi), 0.25 * (1.0 - xi)
     t_xi = dN1_dxi * q1 + dN2_dxi * q2 + dN3_dxi * q3 + dN4_dxi * q4
@@ -67,6 +64,31 @@ def _quad4_normal(q1: np.ndarray, q2: np.ndarray, q3: np.ndarray, q4: np.ndarray
     if norm < 1e-14:
         return np.array([0.0, 0.0, 1.0])
     return n / norm
+
+
+def _skew(a: np.ndarray) -> np.ndarray:
+    """[a]x such that [a]x @ v == np.cross(a, v)."""
+    return np.array([[0.0, -a[2], a[1]], [a[2], 0.0, -a[0]], [-a[1], a[0], 0.0]])
+
+
+def _quad4_normal_derivatives(q: List[np.ndarray], xi: float, eta: float, n: np.ndarray) -> List[np.ndarray]:
+    """dn/dq_b (3x3) for each of the face's 4 vertices, for the SIGNED unit
+    normal `n` (= sign * m/|m|, m = t_xi x t_eta) at (xi, eta):
+    dn = sign*(I - m^ m^T)/|m| dm = (I - n n^T)/|m| * sign*dm, and the sign is
+    recovered from n.m. Zero blocks for a degenerate face (norm < 1e-14),
+    matching _quad4_normal's fixed-fallback normal."""
+    dN_dxi = (-0.25 * (1.0 - eta), 0.25 * (1.0 - eta), 0.25 * (1.0 + eta), -0.25 * (1.0 + eta))
+    dN_deta = (-0.25 * (1.0 - xi), -0.25 * (1.0 + xi), 0.25 * (1.0 + xi), 0.25 * (1.0 - xi))
+    t_xi = sum(dN_dxi[b] * q[b] for b in range(4))
+    t_eta = sum(dN_deta[b] * q[b] for b in range(4))
+    m = np.cross(t_xi, t_eta)
+    norm = np.linalg.norm(m)
+    if norm < 1e-14:
+        return [np.zeros((3, 3)) for _ in range(4)]
+    sign = 1.0 if np.dot(m, n) >= 0.0 else -1.0
+    P = (np.eye(3) - np.outer(n, n)) * (sign / norm)
+    S_eta, S_xi = _skew(t_eta), _skew(t_xi)
+    return [P @ (-dN_dxi[b] * S_eta + dN_deta[b] * S_xi) for b in range(4)]
 
 
 def _tangent_basis(n: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
@@ -116,9 +138,13 @@ class DeformableSurfaceContactConstraint3D:
         chatter_stabilization: bool = False,
         hysteresis_band: float = 0.0,
         friction_coefficient: float = 0.0,
-        tangential_stiffness_ratio: float = 1.0,
+        tangential_stiffness_ratio: float = 0.1,
         name: str = "SURFACE_CONTACT_3D_DEFORMABLE",
+        consistent_tangent: bool = True,
+        consistent_friction_tangent: bool = False,
     ):
+        self.consistent_tangent = bool(consistent_tangent)
+        self.consistent_friction_tangent = bool(consistent_friction_tangent)
         self.slave_node_ids = list(slave_node_ids)
         self.master_faces = list(master_faces)
         self.nid_to_idx = nid_to_idx
@@ -223,7 +249,10 @@ class DeformableSurfaceContactConstraint3D:
             N1, N2, N3, N4 = _quad4_shape_functions(xi, eta)
             xm_proj0 = N1 * q1 + N2 * q2 + N3 * q3 + N4 * q4
             gap0 = float(np.dot(xs0 - xm_proj0, n_raw))
-            sign = 1.0 if gap0 >= 0.0 else -1.0
+            if abs(gap0) < 1e-5:
+                sign = 1.0
+            else:
+                sign = 1.0 if gap0 >= 0.0 else -1.0
             self.pairs.append((s_nid, m_face, xi, eta, sign))
 
     def _current_gap_and_normal(self, u: np.ndarray, s_nid: int, m_face, xi: float, eta: float, sign: float):
@@ -271,9 +300,67 @@ class DeformableSurfaceContactConstraint3D:
         f_t_3d = ft1 * t1 + ft2 * t2
         return f_t_3d, Ktt, is_slip, s1, s2, s_mag, t1, t2
 
+    def _consistent_pair_stiffness(self, s_nid: int, xs: np.ndarray, q: List[np.ndarray],
+                                   n: np.ndarray, xi: float, eta: float,
+                                   f_mag: float, k_diag: float, Ktt: np.ndarray) -> np.ndarray:
+        """15x15 Jacobian of this pair's contact force (slave + 4 master
+        vertices, 3 DOFs each) as assemble() computes it, i.e.
+        d(f_contact[a])/d(u_b) with f_contact[a] = -w_a * (f_mag*n - f_t).
+
+        The normal part is exact: the normal's rotation dn/du (in both the
+        gap and the force direction) and the (xs - xm).dn/du gap term, which
+        the pre-2026-10-01 block dropped. The friction part is the same
+        symmetric Ktt as before unless `consistent_friction_tangent`, which
+        also differentiates the slip-branch mu*p(gap) coupling and the
+        anchor's own shape-function weights; the friction force is written
+        through T = I - n n^T, so neither depends on _tangent_basis's
+        arbitrary t1/t2. FD-verified to ~1e-10 in the frictionless, stick
+        and slip branches (tests/test_deformable_contact_consistent_
+        tangent.py); the old block was 3-41% off there.
+        """
+        N = _quad4_shape_functions(xi, eta)
+        w = np.array([1.0, -N[0], -N[1], -N[2], -N[3]])
+        xm = N[0] * q[0] + N[1] * q[1] + N[2] * q[2] + N[3] * q[3]
+        d_g = xs - xm
+        Dn = [np.zeros((3, 3))] + _quad4_normal_derivatives(q, xi, eta, n)
+
+        # d(penetration)/du_b = -(w_b n + Dn_b^T d_g)   (row vectors)
+        dpen = [-(w[b] * n + Dn[b].T @ d_g) for b in range(5)]
+        J = [k_diag * np.outer(n, dpen[b]) + f_mag * Dn[b] for b in range(5)]
+
+        if self.mu > 0.0 and f_mag > 0.0 and not self.consistent_friction_tangent:
+            # Symmetric friction block (the pre-2026-10-01 Ktt, projection
+            # weights): the exact one below is FD-verified but made the
+            # Hertz roller SLIDE step diverge at t=0.213 (active set 6->2->10
+            # per iteration), while this one completes it.
+            J = [J[b] - w[b] * Ktt for b in range(5)]
+        elif self.mu > 0.0 and f_mag > 0.0:
+            Na = _quad4_shape_functions(self._anchor_xi[s_nid], self._anchor_eta[s_nid])
+            wa = np.array([1.0, -Na[0], -Na[1], -Na[2], -Na[3]])
+            xa = Na[0] * q[0] + Na[1] * q[1] + Na[2] * q[2] + Na[3] * q[3]
+            d_a = xs - xa
+            T = np.eye(3) - np.outer(n, n)
+            s_vec = T @ d_a
+            s_mag = float(np.linalg.norm(s_vec))
+            s_crit = (self.mu * f_mag / self.k_t) if self.k_t > 0.0 else 0.0
+            n_da = float(np.dot(n, d_a))
+            for b in range(5):
+                ds = wa[b] * T - n_da * Dn[b] - np.outer(n, Dn[b].T @ d_a)
+                if s_mag <= s_crit:
+                    Jt = self.k_t * ds
+                else:
+                    shat = s_vec / s_mag
+                    Jt = (self.mu * k_diag) * np.outer(shat, dpen[b]) \
+                        + (self.mu * f_mag / s_mag) * (np.eye(3) - np.outer(shat, shat)) @ ds
+                J[b] = J[b] - Jt
+
+        return -np.kron(w[:, None], np.hstack(J))
+
     def get_active_set(self, u: np.ndarray) -> frozenset:
         """Same role as SurfaceContactConstraint3D.get_active_set -- feeds
         DynamicSolver3D's severe-discontinuity-iteration (SDI) handling."""
+        if getattr(self, "frozen_active_nodes", None) is not None:
+            return frozenset(self.frozen_active_nodes)
         if self.chatter_stabilization:
             # Debounced label -- reads the persistent gate written by
             # update_gate_state(), same convention as
@@ -313,6 +400,28 @@ class DeformableSurfaceContactConstraint3D:
                 g = False
             self._gate_active[s_nid] = g
 
+    def capture_state(self) -> dict:
+        """Capture internal contact/friction states for rollback on increment cutback."""
+        return {
+            "_lam": self._lam.copy() if hasattr(self, "_lam") and self._lam is not None else None,
+            "_gate_active": self._gate_active.copy() if hasattr(self, "_gate_active") and self._gate_active is not None else None,
+            "_anchor_xi": self._anchor_xi.copy() if hasattr(self, "_anchor_xi") and self._anchor_xi is not None else None,
+            "_anchor_eta": self._anchor_eta.copy() if hasattr(self, "_anchor_eta") and self._anchor_eta is not None else None,
+        }
+
+    def restore_state(self, state: dict) -> None:
+        """Restore internal contact/friction states upon increment cutback."""
+        if not isinstance(state, dict):
+            return
+        if state.get("_lam") is not None:
+            self._lam = state["_lam"].copy()
+        if state.get("_gate_active") is not None:
+            self._gate_active = state["_gate_active"].copy()
+        if state.get("_anchor_xi") is not None:
+            self._anchor_xi = state["_anchor_xi"].copy()
+        if state.get("_anchor_eta") is not None:
+            self._anchor_eta = state["_anchor_eta"].copy()
+
     def assemble(self, u: np.ndarray) -> Tuple[np.ndarray, Tuple[np.ndarray, np.ndarray, np.ndarray], Dict[str, float]]:
         n_dof = len(u)
         f_contact = np.zeros(n_dof, dtype=np.float64)
@@ -327,7 +436,16 @@ class DeformableSurfaceContactConstraint3D:
         for s_nid, m_face, xi, eta, sign in self.pairs:
             gap, n, (N1, N2, N3, N4), s_idx, m_idx = self._current_gap_and_normal(u, s_nid, m_face, xi, eta, sign)
             penetration = -gap
-            if self.chatter_stabilization:
+            if getattr(self, "frozen_active_nodes", None) is not None:
+                if s_nid not in self.frozen_active_nodes:
+                    continue
+                # Abaqus Chattering Freeze standard: Bilateral spring constraint ensures exact C1 derivative
+                # consistency with k_diag so that Newton-Raphson achieves quadratic convergence without discontinuity shock.
+                # (A unilateral max(0, penetration) variant was measured 2026-09-30 on the Hertz roller deck:
+                # INDENT stalled at t=0.0486 vs t=0.1702 bilateral -- it reintroduces the kink the freeze removes.)
+                f_mag = self.k_contact * penetration
+                k_diag = self.k_contact
+            elif self.chatter_stabilization:
                 # Hysteresis-gated label (design doc sec2.2) -- identical
                 # convention to SurfaceContactConstraint3D's own branch:
                 # gate closed means zero force/stiffness; gate open keeps
@@ -414,18 +532,28 @@ class DeformableSurfaceContactConstraint3D:
                 w_a = weights[a]
                 f_contact[3 * idx_a: 3 * idx_a + 3] += -w_a * f_vec
 
-            # Stiffness: K[a][b] = w_a * w_b * (k_diag*outer(n,n) + Ktt) --
+            # Default: exact normal block (_consistent_pair_stiffness).
+            # Legacy (consistent_tangent=False):
+            # K[a][b] = w_a * w_b * (k_diag*outer(n,n) + Ktt) --
             # the SAME rank-1-per-pair structure
             # SurfaceContactConstraint3D's own slave-only 3x3 block uses
             # (`k_diag * normal[d1]*normal[d2]`), generalized to the
             # 5-node stencil the same way SurfaceTieConstraint3D's own
             # `_build_sparse_indices` generalizes its isotropic stiffness,
             # now carrying the tangential block (Ktt, zero when friction
-            # is off) alongside the normal one. `n` is held fixed here
-            # (not differentiated) -- the modified-Newton approximation
-            # this module's docstring documents; `t1, t2` inside Ktt are
+            # is off) alongside the normal one. `n` is held fixed in this
+            # legacy block (not differentiated); `t1, t2` inside Ktt are
             # likewise frozen for this call (recomputed fresh next call,
             # never differentiated within one call -- same convention).
+            if self.consistent_tangent:
+                K_pair = self._consistent_pair_stiffness(
+                    s_nid, self.coords[s_idx] + u[3 * s_idx: 3 * s_idx + 3], q, n, xi, eta, f_mag, k_diag, Ktt
+                )
+                dofs = np.array([3 * i + d for i in node_indices for d in range(3)], dtype=np.int64)
+                rows.extend(np.repeat(dofs, 15).tolist())
+                cols.extend(np.tile(dofs, 15).tolist())
+                data.extend(K_pair.ravel().tolist())
+                continue
             K_local = k_diag * np.outer(n, n) + Ktt
             for a, idx_a in enumerate(node_indices):
                 w_a = weights[a]

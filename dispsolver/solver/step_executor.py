@@ -46,23 +46,25 @@ class StateCheckpoint:
 class MultiStepExecutor:
     """Executes multi-step CAE analysis trees with state checkpoints and branching."""
 
-    def __init__(self, model: Model, verbose: bool = True):
+    def __init__(self, model: Model, verbose: bool = True, dim: Optional[int] = None):
         self.model = model
         self.verbose = verbose
+        self.dim = dim
         self.checkpoints: Dict[str, StateCheckpoint] = {}
         self.results_by_step: Dict[str, Dict[str, Any]] = {}
         self.solver: Optional[Any] = None
         self.sys: Optional[Any] = None
 
-    def initialize_solver(self, solver_factory=None, notices=None) -> Tuple[Any, Any]:
+    def initialize_solver(self, solver_factory=None, notices=None, dim=None) -> Tuple[Any, Any]:
         """Build global solver system and instantiate the solver.
 
         solver_factory: zero-argument factory returning (solver, sys).
         Defaults to model.create_solver (auto-detects 2D vs 3D).
         notices: optional list receiving solve-side warning strings.
         """
+        use_dim = dim if dim is not None else self.dim
         if solver_factory is None:
-            self.solver, self.sys = self.model.create_solver(notices=notices)
+            self.solver, self.sys = self.model.create_solver(notices=notices, dim=use_dim)
         else:
             self.solver, self.sys = solver_factory()
         return self.solver, self.sys
@@ -92,7 +94,12 @@ class MultiStepExecutor:
         ckpt.restore_to_solver(self.solver)
         return ckpt
 
-    def execute_step(self, step: Step, from_parent_checkpoint: bool = True) -> bool:
+    def execute_step(
+        self,
+        step: Step,
+        from_parent_checkpoint: bool = True,
+        output_mgr: Optional[Any] = None,
+    ) -> bool:
         """Execute a single analysis step, restoring parent checkpoint if requested."""
         if self.solver is None:
             self.initialize_solver()
@@ -109,11 +116,11 @@ class MultiStepExecutor:
         step.parent_model = self.model
 
         if self.verbose:
-            print(f"\n=======================================================", flush=True)
+            print(f"\n{'=' * 100}", flush=True)
             print(f"  EXECUTING STEP: '{step.name}' (Procedure: {step.procedure})", flush=True)
-            print(f"=======================================================", flush=True)
+            print(f"{'=' * 100}", flush=True)
 
-        success = self.solver.solve(step=step, sys=self.sys, verbose=self.verbose)
+        success = self.solver.solve(step=step, sys=self.sys, output_mgr=output_mgr, verbose=self.verbose)
         if success:
             t_parent = 0.0
             if step.parent_step is not None and step.parent_step.name in self.checkpoints:

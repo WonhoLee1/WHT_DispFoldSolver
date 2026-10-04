@@ -1,0 +1,29 @@
+{
+  "inp_path": "D:\\PythonCodeStudy\\WHT_DispFoldSolver\\examples\\ex12_rigid_plate_display_fold.inp",
+  "model_name": "Display folding with rigid plate and tie constraints",
+  "dimension": 2,
+  "converged": true,
+  "wall_time_seconds": 5.146055698394775,
+  "steps_executed": [
+    "Step-1"
+  ],
+  "step_results": [
+    {
+      "step_name": "Step-1",
+      "converged": true,
+      "wall_time": 4.594337701797485
+    }
+  ],
+  "exported_files": [
+    "D:\\PythonCodeStudy\\WHT_DispFoldSolver\\benchmark_abaqus_compatibility\\output_ex12_rigid_plate_display_fold\\ex12_rigid_plate_display_fold_result.vtkhdf",
+    "D:\\PythonCodeStudy\\WHT_DispFoldSolver\\benchmark_abaqus_compatibility\\output_ex12_rigid_plate_display_fold\\ex12_rigid_plate_display_fold_result.vtu"
+  ],
+  "unsupported_keywords": [
+    "CONTROLS",
+    "SECTION CONTROLS"
+  ],
+  "warnings": [
+    "*BOUNDARY BC_100000_DOF6_6: rotational DOFs stored but continuum nodes have no rotation target in the solver; translational part applied",
+    "*BOUNDARY BC_100306_DOF6_6: rotational DOFs stored but continuum nodes have no rotation target in the solver; translational part applied"
+  ]
+}

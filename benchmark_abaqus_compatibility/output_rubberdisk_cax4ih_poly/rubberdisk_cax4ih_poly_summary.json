@@ -1,0 +1,36 @@
+{
+  "inp_path": "D:\\PythonCodeStudy\\WHT_DispFoldSolver\\benchmark_inp\\official\\rubberdisk_cax4ih_poly.inp",
+  "model_name": "PRESSURIZING OF A FLAT RUBBER PLATE (CAX4IH)",
+  "dimension": 2,
+  "converged": false,
+  "wall_time_seconds": 1.361349105834961,
+  "steps_executed": [
+    "Step-1"
+  ],
+  "step_results": [
+    {
+      "step_name": "Step-1",
+      "converged": false,
+      "wall_time": 1.357022762298584
+    }
+  ],
+  "exported_files": [
+    "D:\\PythonCodeStudy\\WHT_DispFoldSolver\\benchmark_abaqus_compatibility\\output_rubberdisk_cax4ih_poly\\rubberdisk_cax4ih_poly_result.vtkhdf",
+    "D:\\PythonCodeStudy\\WHT_DispFoldSolver\\benchmark_abaqus_compatibility\\output_rubberdisk_cax4ih_poly\\rubberdisk_cax4ih_poly_result.vtu"
+  ],
+  "unsupported_keywords": [
+    "RESTART",
+    "MONITOR",
+    "EL PRINT",
+    "NODE FILE",
+    "OUTPUT",
+    "NODE OUTPUT",
+    "EL FILE",
+    "ELEMENT OUTPUT",
+    "NODE PRINT"
+  ],
+  "warnings": [
+    "*EQUATION EQ_1: 3 terms parsed; penalty assembly connected",
+    "*DLOAD faces ['P1'] kept in load names; face-selective solver mapping is P1"
+  ]
+}

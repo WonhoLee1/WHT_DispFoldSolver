@@ -25,6 +25,9 @@
 - `verification/run_all`: 13/14. bending_2pt FAIL은 stash A/B로 기존 실패 확인
   (verification은 dynamic2d 미사용 — 코드경로 무관).
 - `tests/test_2d_elements.py`: 25통과.
+- 3D 솔리드 음체적 가드 및 PARDISO 비대칭 LU 검증 (2026-10-01):
+  - `tests/test_3d_negative_volume_guard.py` 15/15 통과.
+  - `benchmark_element/benchmark_3d_mechanics.py`: 11개 3D 요소 회귀 무결성 검증 완료.
 
 ## 5. Open (미해결)
 - [ ] bending_2pt 손대지 않기로 합의済 (레거시 스택). 단 jax≡numba 6자리 동일은
@@ -39,3 +42,16 @@
     즉 뉴턴 정체를 수렴으로 오인한 false-convergence acceptance.
     NON-CONVERGED 표기 유지 정당. 수정은 전모델 영향이라 미실시 —
     수렴판정 강화는 별도 배치로.
+- [x] 3D solver 수락 기준 엄밀화 검토 (2026-10-03 해결 완료):
+  - 현상: `rel_r < 0.50`, `r_norm < 1000.0` 등의 조기 탈출 휴리스틱으로 인해 뉴턴-라프슨이 초기 잔차 대비 절반 수준에서 조기 종료되어, 고강성 플랜지 내 미완화 탄성 굽힘 응력($\approx 86,400\,\text{N}$)이 동결되어 볼트 반력이 $-89,013\,\text{N}$으로 왜곡됨.
+  - 조치: `dynamic3d.py`의 임의 이완 조건을 전면 제거하고 $r_{\text{norm}} \le 1.0\,\text{N}$ 또는 ($\text{rel\_r} \le 10^{-3}$ and $\text{rel\_f} \le 10^{-3}$) 기준을 강제함.
+  - 결과: Deck #06 Step 1에서 $RF_{\text{bolt}} = -2,750.22\,\text{N}$ vs $RF_{\text{gask}} = +2,747.34\,\text{N}$ (오차 < 0.10%, 99.89% 정적 평형) 완벽 달성.
+- [x] 접촉면 0-간극 머신 엡실론 부호 반전으로 인한 반력 반토막 왜곡 해결 (2026-10-04 해결 완료):
+  - 현상: 초기 형상에서 마스터/슬레이브 접촉면이 일치($z = 1.500000\,\text{mm}$)할 때, 부동소수점 오차($-1.38 \times 10^{-17}$)로 인해 삼항 연산자 `gap0 >= 0`가 False가 되어 접촉 법선 벡터 부호가 요소 내부로 역전. 35개 접촉 절점 중 10개가 분리(Separated)로 오인되어 반력이 $-2,750\,\text{N}$으로 왜곡됨.
+  - 조치: `surface_contact3d_deformable.py` 및 `nitsche_contact3d.py`에 `if abs(gap0) < 1e-5: sign = 1.0` 공차 가드 배치.
+  - 결과: 35개 접촉 절점 100% 정상 활성화, PENALTY (10x) $-6,569.86\,\text{N}$ vs NITSCHE (1x) $-6,412.48\,\text{N}$ (오차 2.4%)로 물리적 유일 정해로 상호 일치 달성.
+- [x] SDI 활성 집합 동결 시 과거 이력 무차별 합집합 버그 해결 (2026-10-04 해결 완료):
+  - 현상: Severe Discontinuity Iteration (SDI) 발생 시 `dynamic3d.py`가 과거 전체 이터레이션의 활성 절점을 무차별 합집합(`set().union(*recent_active_sets)`)하여 이미 분리된 비접촉 노드 20개까지 총 29개가 동결되어 잔차가 $1,360\,\text{N}$에서 정체(Stall).
+  - 조치: 동결 범위를 최근 2회 진동 노드(`recent_active_sets[-2:]`) 및 현재 침투 노드로 제한.
+
+

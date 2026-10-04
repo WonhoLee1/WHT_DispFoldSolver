@@ -130,15 +130,22 @@ def export_vtkhdf(
     von_mises = None
     if stresses is not None:
         stresses = np.asarray(stresses, dtype=np.float64)
-        if stresses.ndim == 2:
-            if stresses.shape[1] >= 3:
-                # 2D plane strain stress [s11, s22, s12, s33] or 3D [s11, s22, s33, s12, s23, s31]
-                s11 = stresses[:, 0]
-                s22 = stresses[:, 1]
-                s12 = stresses[:, 2]
-                s33 = stresses[:, 3] if stresses.shape[1] > 3 else np.zeros_like(s11)
+        if stresses.ndim == 1:
+            stresses = stresses.reshape(-1, 1)
+        if stresses.ndim == 2 and stresses.shape[0] > 0:
+            n_c = stresses.shape[1]
+            if n_c == 1:
+                von_mises = np.abs(stresses[:, 0])
+            elif n_c == 2:
+                s11, s22 = stresses[:, 0], stresses[:, 1]
+                von_mises = np.sqrt(np.maximum(0.0, s11**2 - s11 * s22 + s22**2))
+            elif n_c >= 3:
+                s11, s22, s12 = stresses[:, 0], stresses[:, 1], stresses[:, 2]
+                s33 = stresses[:, 3] if n_c >= 4 else np.zeros_like(s11)
+                s23 = stresses[:, 4] if n_c >= 6 else np.zeros_like(s11)
+                s31 = stresses[:, 5] if n_c >= 6 else np.zeros_like(s11)
                 von_mises = np.sqrt(
-                    0.5 * ((s11 - s22)**2 + (s22 - s33)**2 + (s33 - s11)**2 + 6.0 * (s12**2))
+                    np.maximum(0.0, 0.5 * ((s11 - s22)**2 + (s22 - s33)**2 + (s33 - s11)**2 + 6.0 * (s12**2 + s23**2 + s31**2)))
                 )
 
     with h5py.File(file_path, "w") as f:

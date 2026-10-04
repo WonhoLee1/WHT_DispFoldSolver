@@ -1,0 +1,32 @@
+{
+  "inp_path": "D:\\PythonCodeStudy\\WHT_DispFoldSolver\\benchmark_inp\\official\\nlgeocantilever_c3d8i_coarse.inp",
+  "model_name": "TIP LOADED CANTILEVER  -  LARGE ROTATION  - 10 C3D8I",
+  "dimension": 3,
+  "converged": true,
+  "wall_time_seconds": 0.17541885375976562,
+  "steps_executed": [
+    "Step-1"
+  ],
+  "step_results": [
+    {
+      "step_name": "Step-1",
+      "converged": true,
+      "wall_time": 0.1633296012878418
+    }
+  ],
+  "exported_files": [
+    "D:\\PythonCodeStudy\\WHT_DispFoldSolver\\benchmark_abaqus_compatibility\\output_nlgeocantilever_c3d8i_coarse\\nlgeocantilever_c3d8i_coarse_result.vtkhdf",
+    "D:\\PythonCodeStudy\\WHT_DispFoldSolver\\benchmark_abaqus_compatibility\\output_nlgeocantilever_c3d8i_coarse\\nlgeocantilever_c3d8i_coarse_result.vtu"
+  ],
+  "unsupported_keywords": [
+    "RESTART",
+    "ENERGY PRINT",
+    "NODE PRINT",
+    "EL PRINT",
+    "NODE FILE",
+    "EL FILE"
+  ],
+  "warnings": [
+    "*DISTRIBUTING COUPLING DISTRIBUTING_CPL_1 parsed and stored (ref=TIPLOAD, surf=N1)"
+  ]
+}

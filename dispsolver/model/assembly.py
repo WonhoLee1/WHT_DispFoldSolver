@@ -8,6 +8,46 @@ import numpy as np
 from dispsolver.model.part import Part
 from dispsolver.model.instance import Instance
 from dispsolver.model.set import NodeSet, ElementSet, Surface, SetScope
+from dispsolver._jit_cache import njit_cached
+
+
+@njit_cached
+def _build_topology_indices_numba(elem_conn_0based: np.ndarray, dof_per_node: int):
+    """Numba-accelerated 2-pass topology builder for sparsity pattern (rows_topo, cols_topo)."""
+    n_elems = elem_conn_0based.shape[0]
+    max_nodes = elem_conn_0based.shape[1]
+    
+    # Pass 1: count total entries
+    total_entries = 0
+    for e in range(n_elems):
+        nv = 0
+        for a in range(max_nodes):
+            if elem_conn_0based[e, a] != -1:
+                nv += 1
+        total_entries += (nv * dof_per_node) * (nv * dof_per_node)
+        
+    rows = np.empty(total_entries, dtype=np.int32)
+    cols = np.empty(total_entries, dtype=np.int32)
+    
+    # Pass 2: fill row/col indices
+    idx = 0
+    for e in range(n_elems):
+        for a in range(max_nodes):
+            na = elem_conn_0based[e, a]
+            if na == -1:
+                continue
+            for da in range(dof_per_node):
+                r = na * dof_per_node + da
+                for b in range(max_nodes):
+                    nb = elem_conn_0based[e, b]
+                    if nb == -1:
+                        continue
+                    for db in range(dof_per_node):
+                        c = nb * dof_per_node + db
+                        rows[idx] = r
+                        cols[idx] = c
+                        idx += 1
+    return rows, cols
 
 
 @dataclass
@@ -57,14 +97,12 @@ class FlattenedSolverSystem:
             z = c[2] if self.dim >= 3 else 0.0
             mesh.add_node(gid, c[0], c[1], z)
             
+        inv_nid = {idx: g for g, idx in self.nid_to_idx.items()}
         for e_idx in range(len(self.elem_conn_0based)):
             gid = e_idx + 1
-            # 1-based node IDs
-            node_ids = [gid_val for gid_val, idx_val in self.nid_to_idx.items() if idx_val in self.elem_conn_0based[e_idx]]
-            # Ensure correct connectivity ordering
             conn_0 = self.elem_conn_0based[e_idx]
-            inv_nid = {idx: g for g, idx in self.nid_to_idx.items()}
-            ordered_conn = [inv_nid[idx] for idx in conn_0]
+            valid_conn = conn_0[conn_0 != -1]
+            ordered_conn = [inv_nid[idx] for idx in valid_conn]
             mesh.add_element(gid, ordered_conn, self.elem_types[e_idx], pid=int(self.elem_pids[e_idx]))
             
         return mesh
@@ -81,7 +119,8 @@ class FlattenedSolverSystem:
         for e_idx in range(len(self.elem_conn_0based)):
             gid = e_idx + 1
             conn_0 = self.elem_conn_0based[e_idx]
-            ordered_conn = [inv_nid[idx] for idx in conn_0]
+            valid_conn = conn_0[conn_0 != -1]
+            ordered_conn = [inv_nid[idx] for idx in valid_conn]
             mesh.add_element(gid, ordered_conn, self.elem_types[e_idx], pid=int(self.elem_pids[e_idx]))
             
         return mesh
@@ -100,7 +139,8 @@ class FlattenedSolverSystem:
         for e_idx in range(len(self.elem_conn_0based)):
             gid = e_idx + 1
             conn_0 = self.elem_conn_0based[e_idx]
-            ordered_conn = [inv_nid[idx] for idx in conn_0]
+            valid_conn = conn_0[conn_0 != -1]
+            ordered_conn = [inv_nid[idx] for idx in valid_conn]
             mesh.elements[gid] = Element(gid, ordered_conn, self.elem_types[e_idx], pid=int(self.elem_pids[e_idx]))
             
         return mesh
@@ -228,15 +268,35 @@ class Assembly:
                     for eid in elset.element_ids:
                         elem_to_section[eid] = sa.section_name
 
+            # Element mapping dictionary for Abaqus element compatibility
+            ABAQUS_ELEM_MAP = {
+                "CPE4": "CPE4", "CPS4": "CPS4", "CPE4I": "CPE4I", "CPS4I": "CPS4I", "CPE4R": "CPE4R", "CPE4H": "CPE4H",
+                "CAX4": "CAX4", "CAX4R": "CAX4R", "CAX4I": "CAX4I", "CAX4IH": "CAX4IH", "CAX4H": "CAX4H",
+                "CPE8": "CPE8", "CPS8": "CPS8", "CPS8R": "CPS8R", "CPE8R": "CPE8R",
+                "CPE3": "CPE3", "CPS3": "CPS3", "CPE6": "CPE6", "CPE6H": "CPE6H", "CPS6": "CPS6",
+                "S4": "S4", "S4R": "S4R", "M3D4": "M3D4", "M3D4R": "M3D4R",
+                "C3D8": "C3D8", "C3D8I": "C3D8I", "C3D8H": "C3D8H", "C3D8R": "C3D8R",
+                "C3D4": "C3D4", "C3D10": "C3D10", "C3D10M": "C3D10M", "C3D6": "C3D6",
+            }
+
             # (D) Map Elements and Assign PIDs
             for local_eid, (etype, conn_local) in part.elements.items():
                 gid = global_eid_counter
                 global_eid_counter += 1
                 elem_local_to_global[(inst_name, local_eid)] = gid
 
-                conn_global = [inst_nid_map[nid] for nid in conn_local]
+                conn_global = [inst_nid_map[nid] for nid in conn_local if nid in inst_nid_map]
+                etype_upper = etype.upper()
+                mapped_etype = ABAQUS_ELEM_MAP.get(etype_upper, etype_upper)
+
+                # Trim quadratic elements down only if explicitly mapped to 4-node or 3-node
+                if mapped_etype == "CPE4" and len(conn_global) >= 8:
+                    conn_global = conn_global[:4]
+                elif mapped_etype == "CPE3" and len(conn_global) >= 6:
+                    conn_global = conn_global[:3]
+
                 all_elem_conn.append(conn_global)
-                all_elem_types.append(etype)
+                all_elem_types.append(mapped_etype)
 
                 sec_name = elem_to_section.get(local_eid, "__DEFAULT__")
                 if sec_name not in section_to_pid:
@@ -267,10 +327,11 @@ class Assembly:
 
         nid_to_idx = {gid: idx for idx, gid in enumerate(range(1, n_nodes + 1))}
 
-        nodes_per_elem = len(all_elem_conn[0]) if all_elem_conn else 0
-        elem_conn_0based = np.zeros((len(all_elem_conn), nodes_per_elem), dtype=np.int64)
+        max_nodes_per_elem = max(len(conn) for conn in all_elem_conn) if all_elem_conn else 0
+        elem_conn_0based = np.full((len(all_elem_conn), max_nodes_per_elem), -1, dtype=np.int64)
         for e_idx, conn in enumerate(all_elem_conn):
-            elem_conn_0based[e_idx, :] = [nid_to_idx[nid] for nid in conn]
+            n_c = len(conn)
+            elem_conn_0based[e_idx, :n_c] = [nid_to_idx[nid] for nid in conn]
 
         # 3. Resolve Qualified Sets (e.g. "INST_NAME.SET_NAME")
         global_nsets: Dict[str, np.ndarray] = {}
@@ -312,6 +373,27 @@ class Assembly:
                     gids = [elem_local_to_global[(inst_name, eid)] for eid in resolved_elems if (inst_name, eid) in elem_local_to_global]
                     global_elsets[qual_name] = np.array(sorted([g - 1 for g in gids]), dtype=np.int64)
 
+        # Resolve Part Surfaces into global_nsets (e.g. "INST_NAME.SURF_NAME")
+        for inst_name, inst in self.instances.items():
+            for sname, surf in inst.part.surfaces.items():
+                qual_name = f"{inst_name}.{sname}"
+                snodes = surf.get_nodes(inst.part) if hasattr(surf, "get_nodes") else []
+                if snodes:
+                    gids = [node_local_to_global[(inst_name, nid)] for nid in snodes if (inst_name, nid) in node_local_to_global]
+                    if gids:
+                        global_nsets[qual_name] = np.array(sorted([nid_to_idx[g] for g in gids if g in nid_to_idx]), dtype=np.int64)
+
+        # Resolve Assembly-level Surfaces into global_nsets
+        for sname, surf in self.surfaces.items():
+            if hasattr(surf, "inst_nodes") and surf.inst_nodes:
+                gids = [node_local_to_global[(iname, nid)] for iname, nid in surf.inst_nodes if (iname, nid) in node_local_to_global]
+                if gids:
+                    global_nsets[sname] = np.array(sorted([nid_to_idx[g] for g in gids if g in nid_to_idx]), dtype=np.int64)
+            elif hasattr(surf, "node_ids") and surf.node_ids:
+                gids = [nid for nid in surf.node_ids if nid in nid_to_idx]
+                if gids:
+                    global_nsets[sname] = np.array(sorted([nid_to_idx[g] for g in gids]), dtype=np.int64)
+
         # Register bare set names as aliases (e.g. "FIX_X0" -> global_nsets["INST.FIX_X0"])
         # If bare name doesn't collide or is from the single instance / first occurrence
         for k, v in list(global_nsets.items()):
@@ -327,27 +409,8 @@ class Assembly:
 
         # 4. Precompute Global CSR/CSC Sparsity Topology (rows_topo, cols_topo)
         n_elems = len(elem_conn_0based)
-        if n_elems > 0 and nodes_per_elem > 0:
-            elem_dofs_count = nodes_per_elem * dof_per_node
-            n_entries_per_elem = elem_dofs_count * elem_dofs_count
-
-            rows_topo = np.zeros(n_elems * n_entries_per_elem, dtype=np.int32)
-            cols_topo = np.zeros(n_elems * n_entries_per_elem, dtype=np.int32)
-
-            idx = 0
-            dofs_e = np.zeros(elem_dofs_count, dtype=np.int32)
-            for e in range(n_elems):
-                conn_e = elem_conn_0based[e]
-                for a in range(nodes_per_elem):
-                    n = conn_e[a]
-                    for d in range(dof_per_node):
-                        dofs_e[a * dof_per_node + d] = n * dof_per_node + d
-                for i in range(elem_dofs_count):
-                    r = dofs_e[i]
-                    for j in range(elem_dofs_count):
-                        rows_topo[idx] = r
-                        cols_topo[idx] = dofs_e[j]
-                        idx += 1
+        if n_elems > 0 and max_nodes_per_elem > 0:
+            rows_topo, cols_topo = _build_topology_indices_numba(elem_conn_0based, dof_per_node)
         else:
             rows_topo = np.zeros(0, dtype=np.int32)
             cols_topo = np.zeros(0, dtype=np.int32)
@@ -359,8 +422,12 @@ class Assembly:
                 bind = getattr(constraint, "bind", None)
                 if callable(bind):
                     try:
-                        ok = bind(nid_to_idx, global_nsets,
-                                  node_local_to_global, dim)
+                        ok = bind(nid_to_idx, global_nsets, node_local_to_global, dim, global_elsets, elem_conn_0based)
+                    except TypeError:
+                        try:
+                            ok = bind(nid_to_idx, global_nsets, node_local_to_global, dim, global_elsets)
+                        except TypeError:
+                            ok = bind(nid_to_idx, global_nsets, node_local_to_global, dim)
                     except Exception:
                         ok = False
                     if not ok:

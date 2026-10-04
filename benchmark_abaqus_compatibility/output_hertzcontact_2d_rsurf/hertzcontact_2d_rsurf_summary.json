@@ -1,0 +1,33 @@
+{
+  "inp_path": "D:\\PythonCodeStudy\\WHT_DispFoldSolver\\benchmark_inp\\official\\hertzcontact_2d_rsurf.inp",
+  "model_name": "CONTACT PROBLEM  -  RIGID SURFACE",
+  "dimension": 2,
+  "converged": true,
+  "wall_time_seconds": 0.012481212615966797,
+  "steps_executed": [
+    "Step-1"
+  ],
+  "step_results": [
+    {
+      "step_name": "Step-1",
+      "converged": true,
+      "wall_time": 0.006753206253051758
+    }
+  ],
+  "exported_files": [
+    "D:\\PythonCodeStudy\\WHT_DispFoldSolver\\benchmark_abaqus_compatibility\\output_hertzcontact_2d_rsurf\\hertzcontact_2d_rsurf_result.vtkhdf",
+    "D:\\PythonCodeStudy\\WHT_DispFoldSolver\\benchmark_abaqus_compatibility\\output_hertzcontact_2d_rsurf\\hertzcontact_2d_rsurf_result.vtu"
+  ],
+  "unsupported_keywords": [
+    "RESTART",
+    "CONTACT PRINT",
+    "CONTACT FILE",
+    "OUTPUT",
+    "CONTACT OUTPUT"
+  ],
+  "warnings": [
+    "*EQUATION EQ_2: 2 terms parsed; penalty assembly connected",
+    "*MPC MPC_BEAM_3 parsed and stored; solver assembly not connected",
+    "*BOUNDARY BC_999_DOF1_6: rotational DOFs stored but continuum nodes have no rotation target in the solver; translational part applied"
+  ]
+}

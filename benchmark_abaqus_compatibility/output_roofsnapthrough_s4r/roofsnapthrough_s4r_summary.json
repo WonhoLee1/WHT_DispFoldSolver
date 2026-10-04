@@ -1,0 +1,33 @@
+{
+  "inp_path": "D:\\PythonCodeStudy\\WHT_DispFoldSolver\\benchmark_inp\\official\\roofsnapthrough_s4r.inp",
+  "model_name": "SHALLOW CYLINDRICAL SHELL VIA S4R",
+  "dimension": 3,
+  "converged": true,
+  "wall_time_seconds": 8.77232551574707,
+  "steps_executed": [
+    "Step-1"
+  ],
+  "step_results": [
+    {
+      "step_name": "Step-1",
+      "converged": true,
+      "wall_time": 8.758914232254028
+    }
+  ],
+  "exported_files": [
+    "D:\\PythonCodeStudy\\WHT_DispFoldSolver\\benchmark_abaqus_compatibility\\output_roofsnapthrough_s4r\\roofsnapthrough_s4r_result.vtkhdf",
+    "D:\\PythonCodeStudy\\WHT_DispFoldSolver\\benchmark_abaqus_compatibility\\output_roofsnapthrough_s4r\\roofsnapthrough_s4r_result.vtu"
+  ],
+  "unsupported_keywords": [
+    "RESTART",
+    "MONITOR",
+    "NODE PRINT",
+    "NODE FILE",
+    "OUTPUT",
+    "NODE OUTPUT",
+    "EL PRINT"
+  ],
+  "warnings": [
+    "*BOUNDARY BC_HINGE_DOF1_5: rotational DOFs stored but continuum nodes have no rotation target in the solver; translational part applied"
+  ]
+}

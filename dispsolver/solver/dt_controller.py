@@ -62,9 +62,13 @@ class AdaptiveDtController:
                 # Stall -> standard cutback
                 self.dt *= 0.5
         else:
-            # Step succeeded -> scale based on target iteration count
-            ratio = self.target_iters / max(n_iter, 1)
-            growth = min(max(ratio, 0.85), 1.5)
+            # Step succeeded:
+            # If converged in few iterations, grow dt. Never decay dt on successful convergence!
+            if n_iter <= self.target_iters:
+                ratio = self.target_iters / max(n_iter, 1)
+                growth = min(ratio, 1.25)
+            else:
+                growth = 1.0
             self.dt *= growth
 
         self.dt = float(np.clip(self.dt, self.dt_min, self.dt_max))

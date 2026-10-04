@@ -536,6 +536,12 @@ class AnalyticalRigidSurface:
             raise ValueError(f"AnalyticalRigidSurface '{self.name}': normal vector length cannot be zero.")
         return n / norm
 
+    def get_nodes(self, part: Optional[Any] = None) -> list:
+        """Resolve node IDs for analytical rigid surface (its reference node if present)."""
+        if self.reference_node is not None:
+            return [int(self.reference_node)]
+        return []
+
 
 # ===========================================================================
 # Resolution & Topology Helpers
@@ -557,7 +563,14 @@ def _resolve_node_ids(region: Union[str, Any], model: Any = None, sys: Any = Non
         return list(region.get_nodes(include_elements=True))
     if isinstance(region, (list, tuple, set, np.ndarray)):
         return list(region)
-    if isinstance(region, str) and model is not None:
+    if isinstance(region, str):
+        if sys is not None and hasattr(sys, "global_nsets") and region in sys.global_nsets:
+            idx_list = sys.global_nsets[region]
+            if len(idx_list) > 0:
+                if hasattr(sys, "nid_to_idx"):
+                    inv_map = {idx: gid for gid, idx in sys.nid_to_idx.items()}
+                    return [inv_map[idx] for idx in idx_list if idx in inv_map]
+                return [int(idx) + 1 for idx in idx_list]
         if hasattr(model, "root_assembly") and hasattr(model.root_assembly, "instances"):
             if region in model.root_assembly.instances:
                 inst = model.root_assembly.instances[region]
@@ -579,6 +592,18 @@ def _resolve_node_ids(region: Union[str, Any], model: Any = None, sys: Any = Non
             if nids:
                 return list(nids)
             return list(part.nodes.keys())
+        if hasattr(model, "parts"):
+            for part in model.parts.values():
+                if hasattr(part, "surfaces") and region in part.surfaces:
+                    surf = part.surfaces[region]
+                    nids = surf.get_nodes(part) if hasattr(surf, "get_nodes") else list(getattr(surf, "node_ids", []))
+                    if sys is not None and hasattr(sys, "node_local_to_global"):
+                        inst_name = next(iter(model.root_assembly.instances.keys())) if hasattr(model, "root_assembly") and model.root_assembly.instances else "INST_DEFAULT"
+                        return [sys.node_local_to_global.get((inst_name, nid), nid) for nid in nids]
+                    return list(nids)
+        if hasattr(model, "root_assembly") and hasattr(model.root_assembly, "surfaces") and region in model.root_assembly.surfaces:
+            surf = model.root_assembly.surfaces[region]
+            return list(surf.get_nodes(model.root_assembly)) if hasattr(surf, "get_nodes") else list(getattr(surf, "node_ids", []))
         if hasattr(model, "get_set"):
             s = model.get_set(region)
             if s is not None and hasattr(s, "get_nodes"):
@@ -587,13 +612,54 @@ def _resolve_node_ids(region: Union[str, Any], model: Any = None, sys: Any = Non
 
 
 _HEX_FACE_LOCAL_NODES = {
-    0: (0, 1, 2, 3), 1: (4, 5, 6, 7), 2: (0, 1, 5, 4),
+    0: (0, 3, 2, 1), 1: (4, 5, 6, 7), 2: (0, 1, 5, 4),
     3: (1, 2, 6, 5), 4: (2, 3, 7, 6), 5: (3, 0, 4, 7),
 }
 
+_QUAD2D_EDGE_LOCAL_NODES = {
+    0: (0, 1), 1: (1, 2), 2: (2, 3), 3: (3, 0),
+}
+
+_TRI2D_EDGE_LOCAL_NODES = {
+    0: (0, 1), 1: (1, 2), 2: (2, 0),
+}
+
+
+def _get_element_face_local_nodes(elem: Any, f_idx: int) -> Optional[Tuple[int, ...]]:
+    """Return local node indices for face/edge f_idx based on element topology."""
+    n_nodes = len(elem.node_ids)
+    et = str(getattr(elem, "elem_type", "")).upper()
+    is_2d = any(et.startswith(p) for p in ("CP", "CA", "S2", "B2", "T2", "QUAD4", "TRI3"))
+    if not is_2d and n_nodes in (3, 4):
+        # Fallback check if 2D element without prefix
+        if hasattr(elem, "dimension") and elem.dimension == 2:
+            is_2d = True
+        elif not et.startswith("C3D"):
+            is_2d = True
+
+    if is_2d:
+        if n_nodes == 4:
+            return _QUAD2D_EDGE_LOCAL_NODES.get(f_idx)
+        elif n_nodes == 3:
+            return _TRI2D_EDGE_LOCAL_NODES.get(f_idx)
+    else:
+        if n_nodes in (8, 20):
+            return _HEX_FACE_LOCAL_NODES.get(f_idx)
+        elif n_nodes == 4:
+            # 3D 4-node Tet
+            _TET_FACES = {0: (0, 1, 2), 1: (0, 3, 1), 2: (1, 3, 2), 3: (2, 3, 0)}
+            return _TET_FACES.get(f_idx)
+
+    # General fallback
+    if n_nodes == 8:
+        return _HEX_FACE_LOCAL_NODES.get(f_idx)
+    elif n_nodes == 4:
+        return _QUAD2D_EDGE_LOCAL_NODES.get(f_idx)
+    return None
+
 
 def _resolve_master_faces(region: Union[str, Any], mesh: Any, model: Any = None, sys: Any = None) -> list:
-    """Resolve a master surface reference into a concrete list of Quad4/Tri3 face node tuples."""
+    """Resolve a master surface reference into a concrete list of Quad4/Tri3/Line2 face node tuples."""
     if region is None:
         return []
     if isinstance(region, (list, tuple)) and region and isinstance(region[0], (list, tuple)):
@@ -605,6 +671,37 @@ def _resolve_master_faces(region: Union[str, Any], mesh: Any, model: Any = None,
             return [tuple(f) for f in region.faces]
 
     if isinstance(region, str) and model is not None:
+        assy = getattr(model, "root_assembly", None)
+        if assy is not None and hasattr(assy, "surfaces") and region in assy.surfaces:
+            asurf = assy.surfaces[region]
+            if hasattr(asurf, "inst_faces") and asurf.inst_faces:
+                result = []
+                for inst_name, local_eid, fid in asurf.inst_faces:
+                    gid = local_eid
+                    if sys is not None and hasattr(sys, "elem_local_to_global") and inst_name:
+                        gid = sys.elem_local_to_global.get((inst_name, local_eid), local_eid)
+                    if gid in mesh.elements:
+                        elem = mesh.elements[gid]
+                        f_idx = fid - 1 if fid >= 1 else fid
+                        local = _get_element_face_local_nodes(elem, f_idx)
+                        if local is not None:
+                            result.append(tuple(elem.node_ids[i] for i in local))
+                if result:
+                    return result
+            if hasattr(asurf, "faces") and asurf.faces:
+                result = []
+                for ef in asurf.faces:
+                    eid = ef.element_id if hasattr(ef, "element_id") else ef[0]
+                    fid = ef.face_id if hasattr(ef, "face_id") else ef[1]
+                    if eid in mesh.elements:
+                        elem = mesh.elements[eid]
+                        f_idx = fid - 1 if fid >= 1 else fid
+                        local = _get_element_face_local_nodes(elem, f_idx)
+                        if local is not None:
+                            result.append(tuple(elem.node_ids[i] for i in local))
+                if result:
+                    return result
+
         if hasattr(model, "root_assembly") and hasattr(model.root_assembly, "instances"):
             if region in model.root_assembly.instances:
                 inst = model.root_assembly.instances[region]
@@ -619,6 +716,27 @@ def _resolve_master_faces(region: Union[str, Any], mesh: Any, model: Any = None,
             part = model.parts[region]
             ext_faces = part.get_exterior_faces() if hasattr(part, "get_exterior_faces") else []
             return [tuple(f) for f in ext_faces]
+        if hasattr(model, "parts"):
+            for part in model.parts.values():
+                if hasattr(part, "surfaces") and region in part.surfaces:
+                    psurf = part.surfaces[region]
+                    if hasattr(psurf, "faces") and psurf.faces:
+                        result = []
+                        for ef in psurf.faces:
+                            eid = ef.element_id if hasattr(ef, "element_id") else ef[0]
+                            fid = ef.face_id if hasattr(ef, "face_id") else ef[1]
+                            gid = eid
+                            if sys is not None and hasattr(sys, "elem_local_to_global") and hasattr(model, "root_assembly") and model.root_assembly.instances:
+                                inst_name = next(iter(model.root_assembly.instances.keys()))
+                                gid = sys.elem_local_to_global.get((inst_name, eid), eid)
+                            if gid in mesh.elements:
+                                elem = mesh.elements[gid]
+                                f_idx = fid - 1 if fid >= 1 else fid
+                                local = _get_element_face_local_nodes(elem, f_idx)
+                                if local is not None:
+                                    result.append(tuple(elem.node_ids[i] for i in local))
+                        if result:
+                            return result
 
     faces = None
     if hasattr(region, "get_faces"):
@@ -868,6 +986,14 @@ class ContactPair:
         if self.main is None or self.secondary is None:
             raise ValueError("ContactPair requires both 'main' (or 'master') and 'secondary' (or 'slave').")
 
+    @property
+    def contact_enforcement(self) -> str:
+        return self.constraint_enforcement
+
+    @contact_enforcement.setter
+    def contact_enforcement(self, val: str) -> None:
+        self.constraint_enforcement = str(val).upper()
+
     def build_runtime_constraint(
         self,
         mesh: Any,
@@ -888,15 +1014,39 @@ class ContactPair:
                 f"ContactPair '{self.name}': sliding='{self.sliding}' not implemented -- "
                 "supported values are 'SMALL' and 'FINITE'."
             )
-        valid_enforcements = ("PENALTY", "AUGMENTED_LAGRANGE", "DUAL_MORTAR", "STANDARD_MORTAR")
+        valid_enforcements = ("PENALTY", "AUGMENTED_LAGRANGE", "DUAL_MORTAR", "STANDARD_MORTAR", "NITSCHE")
         if self.constraint_enforcement not in valid_enforcements:
             raise NotImplementedError(
                 f"ContactPair '{self.name}': constraint_enforcement='{self.constraint_enforcement}' "
                 f"not implemented -- supported values are {valid_enforcements}."
             )
+
+        if not isinstance(self.master, AnalyticalRigidSurface) and isinstance(self.master, str):
+            master_name = self.master
+            found_surf = None
+            if model is not None:
+                if hasattr(model, "analytical_rigid_surfaces") and master_name in model.analytical_rigid_surfaces:
+                    found_surf = model.analytical_rigid_surfaces[master_name]
+                elif hasattr(model, "surfaces") and isinstance(model.surfaces.get(master_name), AnalyticalRigidSurface):
+                    found_surf = model.surfaces[master_name]
+                elif hasattr(model, "root_assembly") and hasattr(model.root_assembly, "surfaces") and isinstance(model.root_assembly.surfaces.get(master_name), AnalyticalRigidSurface):
+                    found_surf = model.root_assembly.surfaces[master_name]
+                else:
+                    for p in getattr(model, "parts", {}).values():
+                        if hasattr(p, "surfaces") and isinstance(p.surfaces.get(master_name), AnalyticalRigidSurface):
+                            found_surf = p.surfaces[master_name]
+                            break
+            if found_surf is not None:
+                self.master = found_surf
+
         is_rigid_master = isinstance(self.master, AnalyticalRigidSurface)
 
         prop = self.interaction_property
+        if isinstance(prop, str) and model is not None and hasattr(model, "interaction_properties"):
+            prop = model.interaction_properties.get(prop, None)
+        if prop is None:
+            prop = ContactProperty(name="DEFAULT", normal_behavior="HARD", penalty_form="LINEAR")
+
         valid_behaviors = ("HARD", "SOFT_LINEAR", "SOFT_EXPONENTIAL", "SOFT_TABULAR")
         if prop.normal_behavior not in valid_behaviors:
             raise NotImplementedError(
@@ -920,6 +1070,11 @@ class ContactPair:
             )
 
         sys_obj = kwargs.get("sys", None)
+        if materials is None and sys_obj is not None and hasattr(sys_obj, "materials_by_pid"):
+            materials = sys_obj.materials_by_pid
+        elif materials is None and hasattr(mesh, "materials"):
+            materials = mesh.materials
+
         slave_node_ids = _resolve_node_ids(self.slave, model=model, sys=sys_obj)
         if len(slave_node_ids) == 0:
             raise ValueError(f"ContactPair '{self.name}': slave region resolved to zero nodes.")
@@ -934,9 +1089,29 @@ class ContactPair:
         )
 
         if coords is None:
-            coords = mesh.nodes_array() if hasattr(mesh, "nodes_array") else getattr(mesh, "coords", None)
+            if hasattr(mesh, "nodes_array"):
+                coords = mesh.nodes_array()
+            elif hasattr(mesh, "coords"):
+                coords = mesh.coords
+            elif sys_obj is not None and hasattr(sys_obj, "coords"):
+                coords = sys_obj.coords
+            elif hasattr(mesh, "nodes") and isinstance(mesh.nodes, dict):
+                dim_c = getattr(mesh, "dim", 2)
+                coords = np.zeros((len(nid_to_idx), dim_c), dtype=np.float64)
+                for nid, idx in nid_to_idx.items():
+                    if nid in mesh.nodes:
+                        coords[idx] = np.asarray(mesh.nodes[nid], dtype=np.float64)[:dim_c]
 
-        k_ref = representative_element_stiffness(mesh, materials, slave_node_ids)
+        eval_node_ids = set(slave_node_ids)
+        if not is_rigid_master:
+            try:
+                master_faces_eval = _resolve_master_faces(self.master, mesh, model=model, sys=sys_obj)
+                for f in master_faces_eval:
+                    eval_node_ids.update(f)
+            except Exception:
+                pass
+
+        k_ref = representative_element_stiffness(mesh, materials, list(eval_node_ids))
         if k_ref is None:
             k_ref = 1.0e7
         L_char = representative_element_length(mesh, slave_node_ids)
@@ -1023,24 +1198,24 @@ class ContactPair:
             law = TabularSoftLaw(h_pts=h_pts, p_pts=p_pts)
 
         mu = prop.friction if prop is not None and prop.friction is not None else 0.0
-        k_t_ratio = getattr(prop, "tangential_stiffness_ratio", 1.0) if prop is not None else 1.0
+        k_t_ratio = getattr(prop, "tangential_stiffness_ratio", 0.1) if prop is not None else 0.1
 
         if not is_rigid_master:
             master_faces = _resolve_master_faces(self.master, mesh, model=model, sys=sys_obj)
             if len(master_faces) == 0:
                 raise ValueError(f"ContactPair '{self.name}': master region resolved to zero faces.")
 
-            # S2S Mortar Dispatch (DUAL_MORTAR or STANDARD_MORTAR)
-            if self.constraint_enforcement in ("DUAL_MORTAR", "STANDARD_MORTAR"):
-                m_type = "STANDARD" if self.constraint_enforcement == "STANDARD_MORTAR" else "DUAL"
-                slave_faces = _resolve_master_faces(self.slave, mesh, model=model, sys=sys_obj)
-                is_2d = False
-                if coords is not None and coords.shape[1] == 2:
-                    is_2d = True
-                elif master_faces and len(master_faces[0]) == 2:
-                    is_2d = True
+            is_2d = False
+            if coords is not None and coords.shape[1] == 2:
+                is_2d = True
+            elif master_faces and len(master_faces[0]) == 2:
+                is_2d = True
 
-                if is_2d:
+            if is_2d:
+                if self.constraint_enforcement in ("DUAL_MORTAR", "STANDARD_MORTAR", "NITSCHE"):
+                    m_type = "STANDARD" if self.constraint_enforcement == "STANDARD_MORTAR" else "DUAL"
+                    form = "nitsche" if self.constraint_enforcement == "NITSCHE" else "dual_mortar"
+                    slave_faces = _resolve_master_faces(self.slave, mesh, model=model, sys=sys_obj)
                     from dispsolver.constraint.dual_mortar_contact import DualMortarContactConstraint2D
                     return DualMortarContactConstraint2D(
                         slave_segments=slave_faces,
@@ -1048,9 +1223,45 @@ class ContactPair:
                         nid_to_idx=nid_to_idx,
                         coords=coords,
                         penalty_stiffness=float(k_hard_for_augmented),
+                        formulation=form,
                         mortar_type=m_type,
                         name=self.name,
                     )
+                else:
+                    from dispsolver.constraint.surface_contact2d_deformable import DeformableSurfaceContactConstraint2D
+                    return DeformableSurfaceContactConstraint2D(
+                        slave_node_ids=slave_node_ids,
+                        master_segments=master_faces,
+                        nid_to_idx=nid_to_idx,
+                        coords=coords,
+
+                        penalty_stiffness=float(k_hard_for_augmented),
+                        law=law,
+                        augmented_lagrange=(self.constraint_enforcement == "AUGMENTED_LAGRANGE"),
+                        chatter_stabilization=bool(chatter_stabilization),
+                        hysteresis_band=float(hysteresis_band),
+                        friction_coefficient=float(mu),
+                        tangential_stiffness_ratio=float(k_t_ratio),
+                        name=self.name,
+                    )
+
+            # S2S Nitsche Dispatch
+            if self.constraint_enforcement == "NITSCHE":
+                slave_faces = _resolve_master_faces(self.slave, mesh, model=model, sys=sys_obj)
+                from dispsolver.constraint3d.nitsche_contact3d import NitscheContactConstraint3D
+                return NitscheContactConstraint3D(
+                    slave_faces=slave_faces,
+                    master_faces=master_faces,
+                    nid_to_idx=nid_to_idx,
+                    coords=coords,
+                    gamma=float(k_hard_for_augmented),
+                    name=self.name,
+                )
+
+            # S2S Mortar Dispatch (DUAL_MORTAR or STANDARD_MORTAR)
+            if self.constraint_enforcement in ("DUAL_MORTAR", "STANDARD_MORTAR"):
+                m_type = "STANDARD" if self.constraint_enforcement == "STANDARD_MORTAR" else "DUAL"
+                slave_faces = _resolve_master_faces(self.slave, mesh, model=model, sys=sys_obj)
 
                 if sliding_upper == "FINITE":
                     from dispsolver.constraint3d.finite_sliding_mortar3d import FiniteSlidingDualMortar3D
@@ -1088,6 +1299,47 @@ class ContactPair:
                 hysteresis_band=float(hysteresis_band),
                 friction_coefficient=float(mu),
                 tangential_stiffness_ratio=float(k_t_ratio),
+                name=self.name,
+            )
+
+        is_2d = False
+        if coords is not None and coords.shape[1] == 2:
+            is_2d = True
+        elif hasattr(mesh, "dim") and mesh.dim == 2:
+            is_2d = True
+
+        if is_2d:
+            from dispsolver.constraint.surface_contact2d import SurfaceContactConstraint2D
+            m_pt = np.asarray(self.master.point, dtype=np.float64)[:2] if hasattr(self.master, "point") else np.zeros(2)
+            m_n = self.master.unit_normal()[:2] if hasattr(self.master, "unit_normal") else np.array([0.0, 1.0])
+            ref_n = getattr(self.master, "reference_node", None)
+            ref_idx = None
+            if ref_n is not None:
+                if ref_n in nid_to_idx:
+                    ref_idx = nid_to_idx[ref_n]
+                elif sys_obj is not None and hasattr(sys_obj, "node_local_to_global"):
+                    matches = [g for (inst, nid), g in sys_obj.node_local_to_global.items() if int(nid) == int(ref_n)]
+                    if matches and matches[0] in nid_to_idx:
+                        ref_idx = nid_to_idx[matches[0]]
+                elif sys_obj is not None and hasattr(sys_obj, "global_nsets") and str(ref_n) in sys_obj.global_nsets:
+                    ref_idx = int(sys_obj.global_nsets[str(ref_n)][0])
+
+            return SurfaceContactConstraint2D(
+                slave_node_ids=slave_node_ids,
+                rigid_line_point=m_pt,
+                rigid_line_normal=m_n,
+                nid_to_idx=nid_to_idx,
+                coords=coords,
+                penalty_stiffness=float(k_hard_for_augmented),
+                strain_free_adjust=self.adjust,
+                stabilization_coefficient=float(stabilization_coefficient),
+                augmented_lagrange=(self.constraint_enforcement == "AUGMENTED_LAGRANGE"),
+                law=law,
+                chatter_stabilization=bool(chatter_stabilization),
+                hysteresis_band=float(hysteresis_band),
+                friction_coefficient=float(mu),
+                reference_node=ref_n,
+                ref_idx=ref_idx,
                 name=self.name,
             )
 

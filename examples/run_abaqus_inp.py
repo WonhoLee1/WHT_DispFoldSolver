@@ -26,7 +26,7 @@ def main():
         print(f"Error: Target .inp file '{inp_path}' does not exist.", file=sys.stderr)
         sys.exit(1)
 
-    print(f"\n🚀 Running Abaqus .inp Solver Runner on: {inp_path}\n")
+    print(f"\nRunning Abaqus .inp Solver Runner on: {inp_path}\n")
 
     summary = run_inp_file(
         inp_path=inp_path,

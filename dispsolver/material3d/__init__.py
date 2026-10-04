@@ -28,6 +28,7 @@ from .numba_materials import (
     MAT_RADIOSS_LAW36,
     MAT_CUSTOM_ELASTIC,
     material_dispatch_3d,
+    material_dispatch_2d,
     get_default_sdv_count,
 )
 
@@ -57,6 +58,7 @@ __all__ = [
     "MAT_RADIOSS_LAW36",
     "MAT_CUSTOM_ELASTIC",
     "material_dispatch_3d",
+    "material_dispatch_2d",
     "get_default_sdv_count",
 ]
 

@@ -74,6 +74,7 @@ class Pressure(Load):
     magnitude: float = 0.0
     amplitude: Optional[Union[str, Any]] = None
     distribution: str = "UNIFORM"
+    face: str = "P1"
 
     def get_magnitude(self, t: float = 0.0, step_time: float = 0.0, model: Any = None) -> float:
         """Get pressure magnitude scaled by amplitude at time t."""
@@ -121,6 +122,18 @@ class BodyForce(Load):
     b2: float = 0.0
     b3: float = 0.0
     amplitude: Optional[Union[str, Any]] = None
+
+    def get_force_vector(self, t: float = 0.0, step_time: float = 0.0, model: Any = None) -> np.ndarray:
+        """Get (3,) body force vector scaled by amplitude at time t."""
+        scale = 1.0
+        if self.amplitude is not None:
+            if hasattr(self.amplitude, "evaluate"):
+                scale = float(self.amplitude.evaluate(t, step_time))
+            elif isinstance(self.amplitude, str) and model is not None and hasattr(model, "amplitudes"):
+                amp_obj = model.amplitudes.get(self.amplitude)
+                if amp_obj is not None and hasattr(amp_obj, "evaluate"):
+                    scale = float(amp_obj.evaluate(t, step_time))
+        return np.array([self.b1 * scale, self.b2 * scale, self.b3 * scale], dtype=np.float64)
 
 
 ConcentratedLoad = ConcentratedForce

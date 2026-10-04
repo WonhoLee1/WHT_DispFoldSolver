@@ -124,6 +124,15 @@ class PardisoNonlinearSolver:
         if not PARDISO_AVAILABLE:
             return
 
+        # Release the previous handle's native MKL memory before replacing it
+        # (pypardiso has no __del__). An mtype switch happens whenever the
+        # tangent toggles between symmetric and unsymmetric, e.g. a
+        # consistent contact tangent appearing/disappearing with the active set.
+        if self._solver is not None:
+            try:
+                self._solver.free_memory(everything=True)
+            except Exception:
+                pass
         self._solver = PyPardisoSolver(mtype=target_mtype)
         self._active_mtype = target_mtype
 

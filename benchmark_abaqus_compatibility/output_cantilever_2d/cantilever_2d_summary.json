@@ -1,0 +1,23 @@
+{
+  "inp_path": "D:\\PythonCodeStudy\\WHT_DispFoldSolver\\benchmark_inp\\cantilever_2d.inp",
+  "model_name": "Cantilever continuum analogue (CPE4, tip load)",
+  "dimension": 2,
+  "converged": false,
+  "wall_time_seconds": 3.0879204273223877,
+  "steps_executed": [
+    "BEND"
+  ],
+  "step_results": [
+    {
+      "step_name": "BEND",
+      "converged": false,
+      "wall_time": 3.084249973297119
+    }
+  ],
+  "exported_files": [
+    "D:\\PythonCodeStudy\\WHT_DispFoldSolver\\benchmark_abaqus_compatibility\\output_cantilever_2d\\cantilever_2d_result.vtkhdf",
+    "D:\\PythonCodeStudy\\WHT_DispFoldSolver\\benchmark_abaqus_compatibility\\output_cantilever_2d\\cantilever_2d_result.vtu"
+  ],
+  "unsupported_keywords": [],
+  "warnings": []
+}

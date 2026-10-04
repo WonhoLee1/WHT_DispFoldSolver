@@ -1,0 +1,33 @@
+{
+  "inp_path": "D:\\PythonCodeStudy\\WHT_DispFoldSolver\\scratch\\abaqus_bmk_docs\\nlgeocantilever_cps4i_mload.inp",
+  "model_name": "CANTILEVER WITH A TIP MOMENT -  LARGE ROTATION  -  40 CPS4I",
+  "dimension": 2,
+  "converged": true,
+  "wall_time_seconds": 0.13466596603393555,
+  "steps_executed": [
+    "Step-1"
+  ],
+  "step_results": [
+    {
+      "step_name": "Step-1",
+      "converged": true,
+      "wall_time": 0.12633800506591797
+    }
+  ],
+  "exported_files": [
+    "D:\\PythonCodeStudy\\WHT_DispFoldSolver\\benchmark_abaqus_compatibility\\output_nlgeocantilever_cps4i_mload\\nlgeocantilever_cps4i_mload_result.vtkhdf",
+    "D:\\PythonCodeStudy\\WHT_DispFoldSolver\\benchmark_abaqus_compatibility\\output_nlgeocantilever_cps4i_mload\\nlgeocantilever_cps4i_mload_result.vtu"
+  ],
+  "unsupported_keywords": [
+    "RESTART",
+    "CONTROLS",
+    "NODE PRINT",
+    "EL PRINT",
+    "NODE FILE",
+    "EL FILE"
+  ],
+  "warnings": [
+    "*COUPLING COUPLING_DEFINITION parsed and stored; solver assembly not connected",
+    "*DISTRIBUTING COUPLING_DEFINITION parsed and stored; solver assembly not connected"
+  ]
+}

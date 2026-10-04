@@ -1,0 +1,23 @@
+{
+  "inp_path": "D:\\PythonCodeStudy\\WHT_DispFoldSolver\\benchmark_inp\\tensile_bar_3d.inp",
+  "model_name": "Tensile bar analogue (C3D8)",
+  "dimension": 3,
+  "converged": true,
+  "wall_time_seconds": 0.013918399810791016,
+  "steps_executed": [
+    "TENSION"
+  ],
+  "step_results": [
+    {
+      "step_name": "TENSION",
+      "converged": true,
+      "wall_time": 0.008628368377685547
+    }
+  ],
+  "exported_files": [
+    "D:\\PythonCodeStudy\\WHT_DispFoldSolver\\benchmark_abaqus_compatibility\\output_tensile_bar_3d\\tensile_bar_3d_result.vtkhdf",
+    "D:\\PythonCodeStudy\\WHT_DispFoldSolver\\benchmark_abaqus_compatibility\\output_tensile_bar_3d\\tensile_bar_3d_result.vtu"
+  ],
+  "unsupported_keywords": [],
+  "warnings": []
+}

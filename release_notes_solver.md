@@ -82,6 +82,7 @@ Global M 게이트가 판정. CPE6M은 ~140° 이탈 후 복귀 없음 (§16).
 | SLV-ROLL-01 | rollup Global M 게이트 | <5% | CPE6M 90.4% FAIL 적발 | PASS (게이트 동작) |
 | SLV-DMP-01 | `test_rayleigh_damping.py` (4건) | 모드투영 감쇠율 3%, 에너지 단조, 미사용 bit-identical | 4/4 (2026-09-20) | PASS |
 | SLV-MAS-01 | elem_density fallback | `Material.density=0`이 solver 기본값 무시 → M_global=0 교정 | 회귀 19 passed (2026-09-20) | PASS |
+| SLV-EQ-01 | Deck #06 정적 작용-반작용 평형 | $\sum F_z$ 오차 < 0.20% | Step 1: 0.10%, Step 2: 0.18% (2026-10-03) | PASS |
 
 *bending_2pt FAIL은 stash A/B로 기존 실패 확인 (verification은 dynamic2d 미사용).
 
@@ -92,6 +93,7 @@ Global M 게이트가 판정. CPE6M은 ~140° 이탈 후 복귀 없음 (§16).
   - 2026-09-20: HHT 분기 Rayleigh 감쇠 (`set_rayleigh_damping`, 잔차 HHT 가중 + 접선 `dv/du` 선형화, 미사용 bit-identical 가드)
   - 2026-09-20: `elem_density` 0 fallback (M_global=0 붕괴 교정), `set_field_variable` FV1 플러밍, MAT13 props 패킹 + SDV 10
   - 2026-09-20: MAT14 Drucker-Prager props 패킹 + SDV 7, MAT15 Concrete CDP props 패킹 + SDV 10 (커널 분기와 동일 일자)
+  - 2026-10-03: `solve_step` 및 `_solve_step_with_hooks` 조기 허위 수렴(rel_r < 0.50 등) 조건 전면 제거 및 엄밀 평형 수렴 기준($r_{\text{norm}} \le 1.0\,\text{N}$ or rel_r, rel_f $\le 10^{-3}$) 강제.
 - `dispsolver/io/abaqus_reader.py` — 무착지 키워드 hard abort `_AbortParse` (2026-09-21, 계속 진행 시 silent 오모델 방지; 일반 핸들러 오류는 기존대로 warn+계속)
 - `dispsolver/solver/dynamic.py` — 레거시 2D JAX 솔버 (PARDISO 싱글톤, §4.11)
 - `dispsolver/solver/dt_controller.py` — AdaptiveDtController (target_iters=8)
@@ -109,3 +111,20 @@ Global M 게이트가 판정. CPE6M은 ~140° 이탈 후 복귀 없음 (§16).
 ## 7.2 독립 재측정 기록 (2026-09-21)
 - `pytest tests/test_concrete_dp.py tests/test_abaqus_reader_and_executor.py` → **15 passed** (reader `_AbortParse` + CDP 제하조정 후).
 - `pytest tests/test_3d_mechanics_benchmarks.py` → **15 passed, 4 xfailed** (MAT15 이후 3D 회귀, xfail 4건은 §5 Open 성격의 기지정 체적잠금 항목).
+
+## 7.3 독립 재측정 기록 (2026-10-01)
+- **3D 요소 초기 음체적 가드 전면 확장**:
+  - `_check_initial_element_orientation()` 구현: 8/20절점 Hex(C3D8, C3D20, SOLID_SHELL), 4/10절점 Tet(C3D4, C3D10), 6절점 Wedge(C3D6) 전수 검사 지원.
+  - 음체적(det J ≤ 0, 좌수계 절점 순서) 요소 유입 시 Abaqus `ErrElemVolSmallNegZero` 규격과 동일하게 `ValueError` 발생으로 조기 차단.
+  - `pytest tests/test_3d_negative_volume_guard.py` → **15 passed** (15/15 전수 통과).
+- **PARDISO 비대칭 행렬 자동 LU(mtype=11) 전환 검증**:
+  - `_is_symmetric` 점검을 통해 비대칭 시스템(C3D8_FBAR, 마찰 접촉 등)에서 Cholesky(mtype=2) 강제 시 발생하는 800% 수치 오차 원천 차단.
+  - `python benchmark_element/benchmark_3d_mechanics.py` 전수 실행 → 11개 3D 요소 회귀 무결성 검증 완료 (**ALL GREEN**).
+
+## 7.4 독립 재측정 기록 (2026-10-03)
+- **조기 허위 수렴(Premature False Convergence) 배제 및 엄밀 평형 수렴 기준 강제**:
+  - `dispsolver/solver3d/dynamic3d.py` lines 1825~1860(`solve_step`), lines 2550~2585(`_solve_step_with_hooks`)에서 `rel_r < 0.50`, `r_norm < 1000.0`, `rel_du < 0.05` 등 안일한 조기 수렴 휴리스틱 완전 제거.
+  - Abaqus-grade 엄밀 평형 기준 강제: 힘 잔차 $r_{\text{norm}} \le 1.0\,\text{N}$ 또는 ($\text{rel\_r} \le 10^{-3}$ and $\text{rel\_f} \le 10^{-3}$).
+  - 고강성 플랜지 연속체 해석 시 동결되던 미완화 탄성 굽힘 응력($\approx 86,400\,\text{N}$)을 완벽 해소.
+  - Deck #06(`06_bolt_preload_gasket_flange_3d.inp`): Step 1 ($RF_{\text{bolt}} = -2,750.22\,\text{N}$, $RF_{\text{gask}} = +2,747.34\,\text{N}$, 오차 0.10%), Step 2 ($RF_{\text{bolt}} = -2,743.96\,\text{N}$, $RF_{\text{gask}} = +2,748.90\,\text{N}$, 오차 0.18%) 수직 1:1 작용-반작용 정적 평형 달성.
+

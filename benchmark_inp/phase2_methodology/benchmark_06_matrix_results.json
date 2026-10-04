@@ -1,0 +1,99 @@
+{
+  "results": [
+    {
+      "method": "DUAL_MORTAR",
+      "cores": 1,
+      "constraint_class": "FiniteSlidingDualMortar3D",
+      "converged": false,
+      "wall_time": 413.6456182999973,
+      "total_iters": 0,
+      "rf_z_bolt": 2346.7827288679755,
+      "rf_z_gasket": 683.6364387928355,
+      "fn_total": 109.50046222816708,
+      "max_pen_um": 4.629416578373138,
+      "max_ux_mm": 0.03997968565954018,
+      "max_uy_mm": 0.019794622281108093,
+      "max_uz_mm": 0.021026013646216465
+    },
+    {
+      "method": "DUAL_MORTAR",
+      "cores": 4,
+      "constraint_class": "FiniteSlidingDualMortar3D",
+      "converged": false,
+      "wall_time": 406.9755989000041,
+      "total_iters": 0,
+      "rf_z_bolt": 2346.7827288679755,
+      "rf_z_gasket": 683.6364387928355,
+      "fn_total": 109.50046222816708,
+      "max_pen_um": 4.629416578373138,
+      "max_ux_mm": 0.03997968565954018,
+      "max_uy_mm": 0.019794622281108093,
+      "max_uz_mm": 0.021026013646216465
+    },
+    {
+      "method": "NITSCHE",
+      "cores": 1,
+      "constraint_class": "NitscheContactConstraint3D",
+      "converged": true,
+      "wall_time": 2.337181499999133,
+      "total_iters": 0,
+      "rf_z_bolt": -6346.21087236317,
+      "rf_z_gasket": 6351.210926644607,
+      "fn_total": 6351.210904425822,
+      "max_pen_um": 6.058989543130888,
+      "max_ux_mm": 0.23187925836573664,
+      "max_uy_mm": 0.23114464404967952,
+      "max_uz_mm": 0.06542075181974714
+    },
+    {
+      "method": "NITSCHE",
+      "cores": 4,
+      "constraint_class": "NitscheContactConstraint3D",
+      "converged": true,
+      "wall_time": 2.097687900000892,
+      "total_iters": 0,
+      "rf_z_bolt": -6346.21087236317,
+      "rf_z_gasket": 6351.210926644607,
+      "fn_total": 6351.210904425822,
+      "max_pen_um": 6.058989543130888,
+      "max_ux_mm": 0.23187925836573664,
+      "max_uy_mm": 0.23114464404967952,
+      "max_uz_mm": 0.06542075181974714
+    },
+    {
+      "method": "PENALTY",
+      "cores": 1,
+      "constraint_class": "DeformableSurfaceContactConstraint3D",
+      "converged": true,
+      "wall_time": 1.4523997999931453,
+      "total_iters": 0,
+      "rf_z_bolt": -2744.154727662875,
+      "rf_z_gasket": 2748.868184609175,
+      "fn_total": 2748.8572390474433,
+      "max_pen_um": 11.129229911843222,
+      "max_ux_mm": 0.0581145095808524,
+      "max_uy_mm": 0.19533616740451368,
+      "max_uz_mm": 0.06262182483976851
+    },
+    {
+      "method": "PENALTY",
+      "cores": 4,
+      "constraint_class": "DeformableSurfaceContactConstraint3D",
+      "converged": true,
+      "wall_time": 1.1623976999981096,
+      "total_iters": 0,
+      "rf_z_bolt": -2744.154727662875,
+      "rf_z_gasket": 2748.868184609175,
+      "fn_total": 2748.8572390474433,
+      "max_pen_um": 11.129229911843222,
+      "max_ux_mm": 0.0581145095808524,
+      "max_uy_mm": 0.19533616740451368,
+      "max_uz_mm": 0.06262182483976851
+    }
+  ],
+  "speedups": {
+    "DUAL_MORTAR": 1.0163892366471634,
+    "NITSCHE": 1.1141702728981462,
+    "PENALTY": 1.2494861268183062
+  }
+}

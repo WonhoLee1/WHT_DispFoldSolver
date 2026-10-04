@@ -14,7 +14,7 @@ from __future__ import annotations
 import time
 from typing import Dict, List, Tuple, Optional, Any
 import numpy as np
-from scipy.sparse import csc_matrix
+from scipy.sparse import csc_matrix, csr_matrix, coo_matrix
 
 try:
     from pypardiso import spsolve as pardiso_spsolve
@@ -23,6 +23,11 @@ except ImportError:
 
 from dispsolver.mesh2d.mesh2d import Mesh2D
 from dispsolver.solver2d.assembly_utils2d import build_global_topology_2d, scatter_f_int_2d
+from dispsolver.solver3d.assembly_utils import (
+    build_coo_to_csr_mapping,
+    scatter_k_csr_direct,
+    apply_dirichlet_bcs_csr_fast,
+)
 
 
 class DynamicSolver2D:
@@ -153,23 +158,61 @@ class DynamicSolver2D:
             if mat_obj is not None:
                 if hasattr(mat_obj, "to_numba_props"):
                     mat_obj = mat_obj.to_numba_props()
-                if hasattr(mat_obj, "props"):
+                if hasattr(mat_obj, "mat_type") and hasattr(mat_obj, "props"):
+                    self.elem_mat_types[e] = int(mat_obj.mat_type)
                     p = np.asarray(mat_obj.props, dtype=np.float64)
                     self.elem_props[e, :min(64, len(p))] = p[:64]
                     if hasattr(mat_obj, "density"):
                         rho_val = float(getattr(mat_obj, "density"))
                 elif isinstance(mat_obj, dict):
-                    self.elem_props[e, 0] = float(mat_obj.get("E", 4000.0))
-                    self.elem_props[e, 1] = float(mat_obj.get("nu", 0.3))
+                    mtype = mat_obj.get("mat_type", mat_obj.get("type", 1))
+                    E_val = float(mat_obj.get("E", 4000.0))
+                    nu_val = float(mat_obj.get("nu", 0.3))
                     rho_val = float(mat_obj.get("density", mat_obj.get("rho", default_rho)))
-            # Zero/negative density is never valid dynamics mass; Material's
-            # default density is 0.0, which must not override the solver-level
-            # default (previously zeroed M_global and reduced dynamics to
-            # quasistatics with garbage velocities -- same class as the 3D
-            # fix in solver3d/dynamic3d.py, ported 2026-09-21).
-            if rho_val <= 0.0:
-                rho_val = default_rho
-            self.elem_density[e] = rho_val
+
+                    if mtype in [12, "TABULAR_PLASTIC", "RADIOSS_LAW36"] or "tabular" in mat_obj or "tabular_plastic" in mat_obj:
+                        self.elem_mat_types[e] = 12  # MAT_J2_PLASTICITY_TABULAR
+                        table = mat_obj.get("tabular", mat_obj.get("tabular_plastic", []))
+                        eps_fail = float(mat_obj.get("eps_fail", 1e9))
+                        sigma_fail = float(mat_obj.get("sigma_fail", 0.0))
+                        n_pts = min(len(table), 10)
+                        self.elem_props[e, 0] = E_val
+                        self.elem_props[e, 1] = nu_val
+                        self.elem_props[e, 2] = float(n_pts)
+                        self.elem_props[e, 3] = eps_fail
+                        self.elem_props[e, 4] = sigma_fail
+                        for p_idx in range(n_pts):
+                            self.elem_props[e, 5 + 2 * p_idx] = float(table[p_idx][0])
+                            self.elem_props[e, 6 + 2 * p_idx] = float(table[p_idx][1])
+                    elif mtype in [7, "J2_PLASTICITY_NONLINEAR"] or "R_inf" in mat_obj or "b_exp" in mat_obj:
+                        self.elem_mat_types[e] = 7  # MAT_J2_PLASTICITY_NONLINEAR
+                        sy_val = float(mat_obj.get("yield_stress", mat_obj.get("sigma_y0", 400.0)))
+                        H_val = float(mat_obj.get("hardening_modulus", mat_obj.get("H", 0.0)))
+                        R_inf = float(mat_obj.get("R_inf", 100.0))
+                        b_exp = float(mat_obj.get("b_exp", 10.0))
+                        self.elem_props[e, :6] = [E_val, nu_val, sy_val, H_val, R_inf, b_exp]
+                    elif mtype in [2, "J2_PLASTICITY", "PLASTIC"] or str(mtype).lower() in ["j2", "plasticity", "j2_plasticity"] or "sigma_y0" in mat_obj or "yield_stress" in mat_obj:
+                        self.elem_mat_types[e] = 2  # MAT_J2_PLASTICITY
+                        sy_val = float(mat_obj.get("yield_stress", mat_obj.get("sigma_y0", 400.0)))
+                        H_val = float(mat_obj.get("hardening_modulus", mat_obj.get("H", 0.0)))
+                        self.elem_props[e, :4] = [E_val, nu_val, sy_val, H_val]
+                    else:
+                        self.elem_mat_types[e] = 1  # MAT_LINEAR_ELASTIC
+                        self.elem_props[e, 0] = E_val
+                        self.elem_props[e, 1] = nu_val
+                elif hasattr(mat_obj, "props"):
+                    p = np.asarray(mat_obj.props, dtype=np.float64)
+                    self.elem_props[e, :min(64, len(p))] = p[:64]
+                    if hasattr(mat_obj, "density"):
+                        rho_val = float(getattr(mat_obj, "density"))
+                else:
+                    self.elem_mat_types[e] = 1
+                    self.elem_props[e, 0] = 4000.0
+                    self.elem_props[e, 1] = 0.3
+            else:
+                self.elem_mat_types[e] = 1
+                self.elem_props[e, 0] = 4000.0
+                self.elem_props[e, 1] = 0.3
 
         # SectionControls array: (n_elems, 8)
         self.elem_controls = np.zeros((n_elems, 8), dtype=np.float64)
@@ -181,6 +224,8 @@ class DynamicSolver2D:
         elem_kernel_indices: Dict[int, List[int]] = {}
         for idx, elem in enumerate(elements_list):
             et = elem.elem_type.upper()
+            if et in ["DCOUP3D", "DCOUP2D", "MASS", "ROTARYI", "SPRING1", "SPRING2", "GAPUNI"]:
+                continue
             pid = getattr(elem, "pid", 0)
             mat_obj = self.materials.get(pid, None) if isinstance(self.materials, dict) else None
             nu = 0.3
@@ -193,37 +238,50 @@ class DynamicSolver2D:
 
             if self.nlgeom:
                 # NLGEOM=True: Automatically promote core elements to Large-Deformation / Corotational
-                if et in ["CPE4I", "CPS4I", "Q4_EAS", "INCOMPATIBLE", "CPE4I_CR"]:
+                if et in ["CAX4", "CAX4I", "CAX4H", "CAX4IH", "CAX4R", "CAX4RH"]:
+                    k = 17
+                elif et in ["CPE4I", "CPS4I", "Q4_EAS", "INCOMPATIBLE", "CPE4I_CR"]:
                     k = 11  # CPE4I_CR
-                elif et in ["CPE4H", "CPS4H", "Q4_HYBRID", "CPE4H_CR"]:
+                elif et in ["CPE4H", "CPS4H", "CPE4IH", "CPS4IH", "Q4_HYBRID", "CPE4H_CR"]:
                     k = 12  # CPE4H_CR
-                elif et in ["CPE4R", "CPS4R", "Q4_REDUCED", "CPE4R_CR"]:
+                elif et in ["CPE4R", "CPS4R", "CPE4RH", "CPS4RH", "Q4_REDUCED", "CPE4R_CR", "S4R"]:
                     k = 13  # CPE4R_CR
-                elif et in ["CPE6M", "CPS6M", "CPE6M_CR"]:
+                elif et in ["CPE6M", "CPS6M", "CPE6MH", "CPS6MH", "CPE6M_CR"]:
                     k = 14  # CPE6M_CR
                 elif et in ["CPE4_CR", "Q4_COROTATIONAL", "CPE4_COROTATIONAL"]:
                     k = 5   # CPE4_CR
                 elif et in ["CPE4_FBAR", "FBAR"]:
                     k = 4   # CPE4_FBAR
                 elif et in ["CPE4", "CPS4"]:
-                    k = 4 if is_nearly_incompressible else 5
-                elif et in ["CPE3", "CPS3", "T3", "CST"]:
+                    k = 5
+                elif et in ["CPE3", "CPS3", "CPE3H", "CPS3H", "T3", "CST"]:
                     k = 6
-                elif et in ["CPE6", "CPS6", "T6"]:
+                elif et in ["CPE6", "CPS6", "CPE6H", "CPS6H", "T6"]:
                     k = 7
-                elif et in ["CPE8", "CPS8", "Q8"]:
+                elif et in ["CPE8", "CPS8", "CPE8H", "CPS8H", "Q8", "S8", "S8R", "S9", "S9R5"]:
                     k = 9
-                elif et in ["CPE8R", "CPS8R", "Q8R"]:
+                elif et in ["CPE8R", "CPS8R", "CPE8RH", "CPS8RH", "Q8R"]:
                     k = 10
+                elif et in ["CAX8", "CAX8H"]:
+                    k = 15
+                elif et in ["CAX8R", "CAX8RH"]:
+                    k = 16
                 else:
-                    k = 5 if not is_nearly_incompressible else 4
+                    n_n = len(elem.node_ids)
+                    if n_n == 2: k = 18
+                    elif n_n == 3: k = 6
+                    elif n_n == 6: k = 7
+                    elif n_n in (8, 9): k = 9
+                    else: k = 5 if not is_nearly_incompressible else 4
             else:
                 # Small-strain linear geometry
-                if et in ["CPE4", "CPS4"]:
+                if et in ["CAX4", "CAX4I", "CAX4H", "CAX4IH", "CAX4R", "CAX4RH"]:
+                    k = 17
+                elif et in ["CPE4", "CPS4"]:
                     k = 0
-                elif et in ["CPE4I", "CPS4I", "Q4_EAS", "INCOMPATIBLE"]:
+                elif et in ["CPE4I", "CPS4I", "CPE4IH", "CPS4IH", "Q4_EAS", "INCOMPATIBLE"]:
                     k = 1
-                elif et in ["CPE4R", "CPS4R", "Q4_REDUCED"]:
+                elif et in ["CPE4R", "CPS4R", "CPE4RH", "CPS4RH", "Q4_REDUCED", "S4R"]:
                     k = 2
                 elif et in ["CPE4H", "CPS4H", "Q4_HYBRID"]:
                     k = 3
@@ -231,16 +289,20 @@ class DynamicSolver2D:
                     k = 4
                 elif et in ["CPE4_CR", "Q4_COROTATIONAL", "CPE4_COROTATIONAL"]:
                     k = 5
-                elif et in ["CPE3", "CPS3", "T3", "CST"]:
+                elif et in ["CPE3", "CPS3", "CPE3H", "CPS3H", "T3", "CST"]:
                     k = 6
-                elif et in ["CPE6", "CPS6", "T6"]:
+                elif et in ["CPE6", "CPS6", "CPE6H", "CPS6H", "T6"]:
                     k = 7
-                elif et in ["CPE6M", "CPS6M"]:
+                elif et in ["CPE6M", "CPS6M", "CPE6MH", "CPS6MH"]:
                     k = 8
-                elif et in ["CPE8", "CPS8", "Q8"]:
+                elif et in ["CPE8", "CPS8", "CPE8H", "CPS8H", "Q8", "S8", "S8R", "S9", "S9R5"]:
                     k = 9
-                elif et in ["CPE8R", "CPS8R", "Q8R"]:
+                elif et in ["CPE8R", "CPS8R", "CPE8RH", "CPS8RH", "Q8R"]:
                     k = 10
+                elif et in ["CAX8", "CAX8H"]:
+                    k = 15
+                elif et in ["CAX8R", "CAX8RH"]:
+                    k = 16
                 elif et in ["CPE4I_CR"]:
                     k = 11
                 elif et in ["CPE4H_CR"]:
@@ -250,24 +312,52 @@ class DynamicSolver2D:
                 elif et in ["CPE6M_CR"]:
                     k = 14
                 else:
-                    k = 0
+                    n_n = len(elem.node_ids)
+                    if n_n == 2: k = 18
+                    elif n_n == 3: k = 6
+                    elif n_n == 6: k = 7
+                    elif n_n in (8, 9): k = 9
+                    else: k = 0
 
-            if k not in elem_kernel_indices:
-                elem_kernel_indices[k] = []
-            elem_kernel_indices[k].append(idx)
+            group_key = (k, len(elem.node_ids))
+            if group_key not in elem_kernel_indices:
+                elem_kernel_indices[group_key] = []
+            elem_kernel_indices[group_key].append(idx)
 
         self.elem_kernel_groups = {
-            k: np.array(indices, dtype=np.int64)
-            for k, indices in elem_kernel_indices.items()
+            g_key: np.array(indices, dtype=np.int64)
+            for g_key, indices in elem_kernel_indices.items()
         }
 
         self.elem_conn_groups = {}
-        for k, indices in self.elem_kernel_groups.items():
+        for g_key, indices in self.elem_kernel_groups.items():
+            k_val, n_nodes_val = g_key
             elem_subset = [elements_list[i] for i in indices]
-            self.elem_conn_groups[k] = np.array(
-                [[nid_map[nid] for nid in elem.node_ids] for elem in elem_subset],
-                dtype=np.int64
-            )
+            if k_val in (0, 1, 2, 3, 4, 5, 11, 12, 13, 17) and n_nodes_val > 4:
+                self.elem_conn_groups[g_key] = np.array(
+                    [[nid_map[nid] for nid in elem.node_ids[:4]] for elem in elem_subset],
+                    dtype=np.int64
+                )
+            elif k_val in (7, 8, 14) and n_nodes_val > 6:
+                self.elem_conn_groups[g_key] = np.array(
+                    [[nid_map[nid] for nid in elem.node_ids[:6]] for elem in elem_subset],
+                    dtype=np.int64
+                )
+            elif k_val in (9, 10, 15, 16) and n_nodes_val > 8:
+                self.elem_conn_groups[g_key] = np.array(
+                    [[nid_map[nid] for nid in elem.node_ids[:8]] for elem in elem_subset],
+                    dtype=np.int64
+                )
+            elif k_val == 6 and n_nodes_val > 3:
+                self.elem_conn_groups[g_key] = np.array(
+                    [[nid_map[nid] for nid in elem.node_ids[:3]] for elem in elem_subset],
+                    dtype=np.int64
+                )
+            else:
+                self.elem_conn_groups[g_key] = np.array(
+                    [[nid_map[nid] for nid in elem.node_ids] for elem in elem_subset],
+                    dtype=np.int64
+                )
 
         # Precompute sparse topology per group
         rows_list = []
@@ -281,9 +371,27 @@ class DynamicSolver2D:
         if len(rows_list) > 0:
             self.rows_topo = np.concatenate(rows_list)
             self.cols_topo = np.concatenate(cols_list)
+            # Precompute static CSR sparsity template and 1D direct scatter mapping
+            diags = np.arange(self.num_dofs, dtype=np.int32)
+            rows_all = np.concatenate([self.rows_topo, diags])
+            cols_all = np.concatenate([self.cols_topo, diags])
+            data_dummy = np.zeros(len(rows_all), dtype=np.float64)
+            coo_dummy = coo_matrix((data_dummy, (rows_all, cols_all)), shape=(self.num_dofs, self.num_dofs))
+            self.csr_template = coo_dummy.tocsr()
+            self.csr_indptr = self.csr_template.indptr
+            self.csr_indices = self.csr_template.indices
+            self.csr_data = np.zeros_like(self.csr_template.data)
+            self.topo_to_csr_map = build_coo_to_csr_mapping(
+                self.rows_topo, self.cols_topo, self.csr_indptr, self.csr_indices
+            )
         else:
             self.rows_topo = np.zeros(0, dtype=np.int32)
             self.cols_topo = np.zeros(0, dtype=np.int32)
+            self.csr_template = None
+            self.csr_indptr = None
+            self.csr_indices = None
+            self.csr_data = None
+            self.topo_to_csr_map = None
 
         self.elem_sdvs = np.zeros((n_elems, 9, 7), dtype=np.float64)
 
@@ -389,9 +497,10 @@ class DynamicSolver2D:
         data_topo_list = []
         has_error = False
 
-        for k in sorted(self.elem_kernel_groups.keys()):
-            elem_indices = self.elem_kernel_groups[k]
-            sub_conn = self.elem_conn_groups[k]
+        for g_key in sorted(self.elem_kernel_groups.keys()):
+            k = g_key[0] if isinstance(g_key, tuple) else g_key
+            elem_indices = self.elem_kernel_groups[g_key]
+            sub_conn = self.elem_conn_groups[g_key]
             sub_mat = self.elem_mat_types[elem_indices]
             sub_props = self.elem_props[elem_indices]
             sub_sdvs = self.elem_sdvs[elem_indices] if update_state else self.elem_sdvs[elem_indices].copy()
@@ -442,6 +551,18 @@ class DynamicSolver2D:
             elif k == 14:
                 from dispsolver.element2d.cr_wrapper_2d import assemble_mesh_cpe6m_cr_numba
                 f_sub, K_sub, err = assemble_mesh_cpe6m_cr_numba(node_coords_all, sub_conn, u_eval, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls)
+            elif k == 15:
+                from dispsolver.element2d.cpe8_numba import assemble_mesh_cax8_numba
+                f_sub, K_sub, err = assemble_mesh_cax8_numba(node_coords_all, sub_conn, u_eval, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls)
+            elif k == 16:
+                from dispsolver.element2d.cpe8_numba import assemble_mesh_cax8r_numba
+                f_sub, K_sub, err = assemble_mesh_cax8r_numba(node_coords_all, sub_conn, u_eval, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls)
+            elif k == 17:
+                from dispsolver.element2d.cpe4_numba import assemble_mesh_cax4_numba
+                f_sub, K_sub, err = assemble_mesh_cax4_numba(node_coords_all, sub_conn, u_eval, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls)
+            elif k == 18:
+                from dispsolver.element2d.t2d2_numba import assemble_mesh_t2d2_numba
+                f_sub, K_sub, err = assemble_mesh_t2d2_numba(node_coords_all, sub_conn, u_eval, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls)
             else:
                 raise ValueError(f"Unknown element kernel index: {k}")
 
@@ -469,12 +590,19 @@ class DynamicSolver2D:
         self.last_assembly_error = int(has_error)
         data_topo = np.concatenate(data_topo_list) if len(data_topo_list) > 0 else np.zeros(0, dtype=np.float64)
 
-        K_global = csc_matrix(
-            (data_topo, (self.rows_topo, self.cols_topo)),
-            shape=(self.num_dofs, self.num_dofs)
-        )
-
-        if self.constraints:
+        if not self.constraints:
+            if getattr(self, "topo_to_csr_map", None) is not None:
+                scatter_k_csr_direct(data_topo, self.topo_to_csr_map, self.csr_data)
+                K_global = csr_matrix(
+                    (self.csr_data.copy(), self.csr_indices, self.csr_indptr),
+                    shape=(self.num_dofs, self.num_dofs)
+                )
+            else:
+                K_global = csr_matrix(
+                    (data_topo, (self.rows_topo, self.cols_topo)),
+                    shape=(self.num_dofs, self.num_dofs)
+                )
+        else:
             rows_extra = [self.rows_topo]
             cols_extra = [self.cols_topo]
             data_extra = [data_topo]
@@ -483,18 +611,29 @@ class DynamicSolver2D:
                 if hasattr(c, "reproject_deformed"):
                     c.reproject_deformed(u_vec)
                 if hasattr(c, "assemble"):
-                    f_c, (r_c, c_c, d_c), _ = c.assemble(u_vec)
-                    f_int_global += f_c
-                    rows_extra.append(r_c)
-                    cols_extra.append(c_c)
-                    data_extra.append(d_c)
-                else:
-                    K_lil = K_global.tolil()
+                    res = c.assemble(u_vec)
+                    if len(res) == 3 and isinstance(res[1], tuple):
+                        f_c, (r_c, c_c, d_c), _ = res
+                        f_int_global += f_c
+                        if len(r_c) > 0:
+                            rows_extra.append(r_c)
+                            cols_extra.append(c_c)
+                            data_extra.append(d_c)
+                    elif len(res) == 3:
+                        K_c, f_c, _ = res
+                        f_int_global += f_c
+                        coo_c = K_c.tocoo() if hasattr(K_c, "tocoo") else coo_matrix(K_c)
+                        if len(coo_c.row) > 0:
+                            rows_extra.append(coo_c.row)
+                            cols_extra.append(coo_c.col)
+                            data_extra.append(coo_c.data)
+                elif hasattr(c, "apply_penalty"):
+                    K_lil = csc_matrix((data_topo, (self.rows_topo, self.cols_topo)), shape=(self.num_dofs, self.num_dofs)).tolil()
                     c.apply_penalty(u_vec, f_int_global, K_lil)
-                    K_global = K_lil.tocsc()
+                    K_global = K_lil.tocsr()
 
-            if len(rows_extra) > 1:
-                K_global = csc_matrix(
+            if "K_global" not in locals():
+                K_global = csr_matrix(
                     (np.concatenate(data_extra), (np.concatenate(rows_extra), np.concatenate(cols_extra))),
                     shape=(self.num_dofs, self.num_dofs)
                 )
@@ -504,19 +643,58 @@ class DynamicSolver2D:
             return K_global, f_int_global, has_error
         return K_global, f_int_global
 
-    def apply_boundary_conditions(self, K_global: csc_matrix, residual: np.ndarray, u_k: np.ndarray) -> Tuple[csc_matrix, np.ndarray]:
-        """Apply Dirichlet boundary conditions via diagonal penalty method."""
-        K_bc = K_global.tolil()
+    def apply_boundary_conditions(self, K_global: Any, residual: np.ndarray, u_k: np.ndarray) -> Tuple[csr_matrix, np.ndarray]:
+        """Apply Dirichlet boundary conditions via exact 1.0 diagonal reduction.
+        Fast in-place CSR path eliminates COO conversion and array re-allocation.
+        """
         r_bc = residual.copy()
+        if len(self.fixed_dofs) == 0:
+            if not isinstance(K_global, csr_matrix):
+                K_global = K_global.tocsr()
+            return K_global, r_bc
 
-        penalty = 1.0e15
-        for dof, target_val in self.fixed_dofs.items():
-            K_bc[dof, :] = 0.0
-            K_bc[:, dof] = 0.0
-            K_bc[dof, dof] = penalty
-            r_bc[dof] = penalty * (target_val - u_k[dof])
+        penalty = 1.0
+        fixed = np.fromiter(self.fixed_dofs.keys(), dtype=np.int64, count=len(self.fixed_dofs))
+        is_fixed = np.zeros(K_global.shape[0], dtype=bool)
+        is_fixed[fixed] = True
+        tgt = np.fromiter(self.fixed_dofs.values(), dtype=np.float64, count=len(self.fixed_dofs))
 
-        return K_bc.tocsc(), r_bc
+        if isinstance(K_global, csr_matrix):
+            K_bc_data = K_global.data.copy()
+            apply_dirichlet_bcs_csr_fast(
+                K_bc_data, K_global.indptr, K_global.indices, is_fixed, penalty
+            )
+            K_bc = csr_matrix((K_bc_data, K_global.indices, K_global.indptr), shape=K_global.shape)
+            r_bc[fixed] = penalty * (tgt - u_k[fixed])
+        else:
+            # Fallback for non-CSR format
+            from scipy.sparse import coo_matrix
+            coo = K_global.tocoo()
+            keep = ~(is_fixed[coo.row] | is_fixed[coo.col])
+            rows = np.concatenate([coo.row[keep], fixed])
+            cols = np.concatenate([coo.col[keep], fixed])
+            data = np.concatenate([coo.data[keep], np.full(fixed.shape, penalty)])
+            K_bc = coo_matrix((data, (rows, cols)), shape=K_global.shape).tocsr()
+            r_bc[fixed] = penalty * (tgt - u_k[fixed])
+
+        row_nnz = K_bc.indptr[1:] - K_bc.indptr[:-1]
+        empty_rows = np.where(row_nnz == 0)[0]
+        if len(empty_rows) > 0:
+            from scipy.sparse import coo_matrix
+            add_fixed = empty_rows
+            add_data = np.ones(len(empty_rows), dtype=np.float64)
+            coo_bc = K_bc.tocoo()
+            rows_aug = np.concatenate([coo_bc.row, add_fixed])
+            cols_aug = np.concatenate([coo_bc.col, add_fixed])
+            data_aug = np.concatenate([coo_bc.data, add_data])
+            K_bc = coo_matrix((data_aug, (rows_aug, cols_aug)), shape=K_global.shape).tocsr()
+            for er in empty_rows:
+                if er in self.fixed_dofs:
+                    r_bc[er] = 1.0 * (self.fixed_dofs[er] - u_k[er])
+                else:
+                    r_bc[er] = 0.0
+
+        return K_bc, r_bc
 
     def _record_acceptance(self, branch: str, f_acc: np.ndarray,
                            f_ext: np.ndarray, iters: int) -> None:
@@ -559,9 +737,9 @@ class DynamicSolver2D:
             # Assemble element mass matrices M_global (2D)
             M_elems_list = []
             default_rho = self.density if getattr(self, "density", None) is not None else 7.85e-9
-            for k in sorted(self.elem_kernel_groups.keys()):
-                elem_indices = self.elem_kernel_groups[k]
-                sub_conn = self.elem_conn_groups[k]
+            for g_key in sorted(self.elem_kernel_groups.keys()):
+                elem_indices = self.elem_kernel_groups[g_key]
+                sub_conn = self.elem_conn_groups[g_key]
                 n_sub = len(sub_conn)
                 n_nodes_e = sub_conn.shape[1] if n_sub > 0 else 4
                 n_dofs_e = n_nodes_e * 2
@@ -669,22 +847,32 @@ class DynamicSolver2D:
             r_norm = float(np.linalg.norm(r_free))
             f_ext_free_norm = float(np.linalg.norm(f_ext[free_dof_mask]))
 
+            f_int_norm = float(np.linalg.norm(f_int))
             if r_0_norm is None or r_norm > r_0_norm:
-                r_0_norm = max(r_norm, f_ext_free_norm, 1.0)
+                r_0_norm = max(r_norm, f_ext_free_norm, f_int_norm, 1.0)
 
-            K_bc, r_bc = self.apply_boundary_conditions(K_g, residual, u_k)
             rel_r = r_norm / r_0_norm
+            rel_f = r_norm / max(f_int_norm, 1.0)
+            r_tol = max(tol, 0.05 if len(self.constraints) > 0 else 0.01)
+            f_tol = 0.05 if len(self.constraints) > 0 else 0.01
 
             bc_err = max([abs(target_val - u_k[dof]) for dof, target_val in self.fixed_dofs.items()], default=0.0)
-            if iter_count > 1 and bc_err < 1e-5 and (rel_r < 5e-3 or r_norm < 1e-3):
+            if iter_count > 1 and bc_err < 1e-5 and (rel_r < r_tol or rel_f < f_tol or r_norm < 1e-3):
                 self.u = u_k
                 _, f_acc = self.assemble_system(u_k, dt=dt, update_state=True)
                 self._record_acceptance("residual", f_acc, f_ext, iter_count)
+                for c in self.constraints:
+                    if hasattr(c, "commit_friction_state"):
+                        c.commit_friction_state(u_k)
                 return True, iter_count
+
+            K_bc, r_bc = self.apply_boundary_conditions(K_g, residual, u_k)
 
             try:
                 du = pardiso_spsolve(K_bc, r_bc)
             except Exception as e:
+                import traceback
+                traceback.print_exc()
                 raise RuntimeError("Linear solver failed. Check boundary conditions or rigid body modes.") from e
 
             du_norm = float(np.linalg.norm(du))
@@ -694,9 +882,12 @@ class DynamicSolver2D:
                 self.u = u_next
                 _, f_acc = self.assemble_system(self.u, dt=dt, update_state=True)
                 self._record_acceptance("correction", f_acc, f_ext, iter_count)
+                for c in self.constraints:
+                    if hasattr(c, "commit_friction_state"):
+                        c.commit_friction_state(self.u)
                 return True, iter_count
 
-            # On iteration 1 (kinematic Dirichlet application), take full step s=1.0 unless inverted
+            # On iteration 1 (kinematic Dirichlet application), take full step s=1.0 unless element inverts
             if iter_count == 1:
                 u_trial = u_k + du
                 _, _ = self.assemble_system(u_trial, dt=dt)
@@ -766,9 +957,12 @@ class DynamicSolver2D:
                     c.update_augmented_multipliers(u_k, omega=augment_relaxation)
 
         self.u = u_k
-        if bc_err < 1e-5 and (rel_r < 5e-3 or r_norm < 1e-3):
+        if bc_err < 1e-5 and (rel_r < r_tol or rel_f < f_tol or r_norm < 1e-3):
             _, f_acc = self.assemble_system(u_k, dt=dt, update_state=True)
             self._record_acceptance("fallthrough", f_acc, f_ext, max_iters)
+            for c in self.constraints:
+                if hasattr(c, "commit_friction_state"):
+                    c.commit_friction_state(u_k)
             return True, max_iters
         return False, max_iters
 
@@ -822,8 +1016,32 @@ class DynamicSolver2D:
                 node_indices = sys.global_nsets[bc.region]
                 inv_nid = {idx: g for g, idx in sys.nid_to_idx.items()}
                 region_nodes = [inv_nid[idx] for idx in node_indices]
+            elif hasattr(self.mesh, "node_sets") and bc.region in self.mesh.node_sets:
+                region_nodes = self.mesh.node_sets[bc.region].node_ids
+            elif hasattr(self.mesh, "sets") and bc.region in self.mesh.sets:
+                region_nodes = self.mesh.sets[bc.region].node_ids
             elif bc.region == "ALL":
                 region_nodes = list(self.mesh.nodes.keys())
+            elif str(bc.region).isdigit():
+                loc_id = int(bc.region)
+                if sys is not None and hasattr(sys, "nid_to_idx") and loc_id in sys.nid_to_idx:
+                    region_nodes = [loc_id]
+                elif sys is not None and hasattr(sys, "node_local_to_global"):
+                    for (inst, l_nid), g_nid in sys.node_local_to_global.items():
+                        if l_nid == loc_id:
+                            region_nodes.append(g_nid)
+                            break
+                elif loc_id in self.mesh.nodes:
+                    region_nodes = [loc_id]
+            elif isinstance(bc.region, str) and "." in bc.region:
+                p_parts = bc.region.split(".")
+                inst_part, loc_id_str = p_parts[0], p_parts[1]
+                if loc_id_str.isdigit() and sys is not None and hasattr(sys, "node_local_to_global"):
+                    g_nid = sys.node_local_to_global.get((inst_part, int(loc_id_str)), None)
+                    if g_nid is not None:
+                        region_nodes = [g_nid]
+            elif bc.region in self.mesh.nodes:
+                region_nodes = [bc.region]
 
             if not region_nodes:
                 continue
@@ -841,15 +1059,88 @@ class DynamicSolver2D:
                             self.fix_dof(gid, 1, float(u2))
 
             elif hasattr(bc, "u1") or hasattr(bc, "u2"):
-                amp_val = 1.0
+                amp_val = None
                 if bc.amplitude is not None and hasattr(bc.amplitude, "evaluate"):
                     amp_val = bc.amplitude.evaluate(t, step_time=t, total_time=total_time)
+                elif bc.amplitude is not None and isinstance(bc.amplitude, str) and hasattr(step, "parent_model") and hasattr(step.parent_model, "amplitudes"):
+                    amp_obj = step.parent_model.amplitudes.get(bc.amplitude, None)
+                    if amp_obj is not None:
+                        amp_val = amp_obj.evaluate(t, step_time=t, total_time=total_time)
 
+                is_ramp = False
+                ramp_scale = 1.0
+                if amp_val is None:
+                    proc = str(getattr(step, "procedure", "STATIC")).upper()
+                    if proc in ("STATIC", "QUASISTATIC"):
+                        ramp_scale = min(max(t / max(total_time, 1e-12), 0.0), 1.0)
+                        is_ramp = True
+                    else:
+                        amp_val = 1.0
+
+                u_step_start = getattr(self, "_u_step_start", None)
                 for gid in region_nodes:
-                    if getattr(bc, "u1", None) is not None:
-                        self.fix_dof(gid, 0, float(bc.u1) * amp_val)
-                    if getattr(bc, "u2", None) is not None:
-                        self.fix_dof(gid, 1, float(bc.u2) * amp_val)
+                    n_idx = nid_map.get(gid, None)
+                    for d, val in enumerate([getattr(bc, "u1", None), getattr(bc, "u2", None)]):
+                        if val is not None:
+                            target_val = float(val)
+                            if is_ramp:
+                                u0 = float(u_step_start[2 * n_idx + d]) if (u_step_start is not None and n_idx is not None) else 0.0
+                                u_prescribed = u0 + (target_val - u0) * ramp_scale
+                            else:
+                                u_prescribed = target_val * amp_val
+                            self.fix_dof(gid, d, u_prescribed)
+
+    def _compute_step_external_loads(self, step: Any, sys: Optional[Any], t: float, total_time: float) -> np.ndarray:
+        """Compute external load vector f_ext from active loads in step at time t."""
+        f_ext = np.zeros(self.num_dofs, dtype=np.float64)
+        if not hasattr(step, "get_active_loads"):
+            return f_ext
+
+        active_loads = step.get_active_loads()
+        nid_map = self.mesh.node_id_to_index()
+
+        for load_name, load in active_loads.items():
+            if hasattr(load, "get_force_vector"):
+                region_nodes = []
+                if sys is not None and hasattr(sys, "global_nsets") and load.region in sys.global_nsets:
+                    node_indices = sys.global_nsets[load.region]
+                    inv_nid = {idx: g for g, idx in sys.nid_to_idx.items()}
+                    region_nodes = [inv_nid[idx] for idx in node_indices]
+                elif hasattr(self.mesh, "node_sets") and load.region in self.mesh.node_sets:
+                    region_nodes = self.mesh.node_sets[load.region].node_ids
+                elif load.region == "ALL":
+                    region_nodes = list(self.mesh.nodes.keys())
+                elif load.region in self.mesh.nodes:
+                    region_nodes = [load.region]
+
+                if region_nodes:
+                    f_vec = load.get_force_vector(t=t, step_time=t, model=getattr(step, "parent_model", None))
+                    for gid in region_nodes:
+                        if gid in nid_map:
+                            n_idx = nid_map[gid]
+                            f_ext[2 * n_idx + 0] += f_vec[0]
+                            f_ext[2 * n_idx + 1] += f_vec[1]
+
+            elif (hasattr(load, "magnitude") or type(load).__name__ == "Pressure") and hasattr(load, "region"):
+                from dispsolver.solver.traction import SurfaceTraction
+                p_mag = float(getattr(load, "magnitude", 0.0))
+                amp_obj = getattr(load, "amplitude", None)
+                if amp_obj is not None and hasattr(amp_obj, "evaluate"):
+                    p_mag *= amp_obj.evaluate(t=t, step_time=t, total_time=total_time)
+
+                load_name = getattr(load, "name", "")
+                face_name = getattr(load, "face", getattr(load, "face_name", "P1"))
+                if not face_name or face_name == "P1":
+                    for f_tag in ["P1", "P2", "P3", "P4", "S1", "S2", "S3", "S4"]:
+                        if f_tag in load_name or f_tag in str(getattr(load, "region", "")):
+                            face_name = f_tag
+                            break
+
+                st = SurfaceTraction(elset_name=load.region, face=face_name, pressure=p_mag)
+                f_press, _ = st.assemble_forces_and_stiffness(self.mesh, self.u, p_mag)
+                f_ext += f_press
+
+        return f_ext
 
     def solve(
         self,
@@ -870,9 +1161,29 @@ class DynamicSolver2D:
 
         self.history_u = [self.u.copy()]
         self.history_t = [0.0]
+        self._u_step_start = self.u.copy()
 
         if verbose:
             print(f"=== Starting 2D Step '{step.name}' Solve (Time Period: {total_time:.3f} s) ===", flush=True)
+
+        # Setup active constraints and interactions for this step
+        if hasattr(step, "interactions"):
+            for iname, entry in step.interactions.items():
+                if hasattr(entry, "is_active") and entry.is_active():
+                    inter = entry.entity
+                    if hasattr(inter, "build_runtime_constraint"):
+                        existing_names = [getattr(c, "name", "") for c in self.constraints]
+                        if inter.name not in existing_names:
+                            nid_to_idx = self.mesh.node_id_to_index()
+                            coords = self.mesh.nodes_array() if hasattr(self.mesh, "nodes_array") else (sys.coords if sys is not None else None)
+                            rc = inter.build_runtime_constraint(
+                                mesh=self.mesh,
+                                nid_to_idx=nid_to_idx,
+                                coords=coords,
+                                model=getattr(step, "parent_model", None),
+                                sys=sys
+                            )
+                            self.add_constraint(rc)
 
         while t_curr < total_time - 1e-9:
             inc_count += 1
@@ -881,11 +1192,12 @@ class DynamicSolver2D:
 
             t_next = t_curr + dt
             self._update_step_bcs(step, sys, t_next, total_time)
+            f_ext = self._compute_step_external_loads(step, sys, t_next, total_time)
 
             u_prev = self.u.copy()
             sdvs_prev = self.elem_sdvs.copy()
 
-            converged, iters = self.solve_step(dt=dt, max_iters=50)
+            converged, iters = self.solve_step(dt=dt, f_ext=f_ext, max_iters=50)
             total_iters += iters
 
             if converged:

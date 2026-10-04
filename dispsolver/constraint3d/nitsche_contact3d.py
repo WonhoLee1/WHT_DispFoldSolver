@@ -151,7 +151,10 @@ class NitscheContactConstraint3D:
             Nm_c = _quad4_shape_functions(xi_c, eta_c)
             xm_c = sum(Nm_c[k] * q_m[k] for k in range(4))
             gap0 = float(np.dot(centroid_s - xm_c, n_c_raw))
-            sign = 1.0 if gap0 >= 0.0 else -1.0
+            if abs(gap0) < 1e-5:
+                sign = 1.0
+            else:
+                sign = 1.0 if gap0 >= 0.0 else -1.0
 
             # Quadrature points on slave face
             quad_points = []

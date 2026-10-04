@@ -1,0 +1,19 @@
+====================================================================================================
+ WHT_DispFoldSolver - STATUS FILE (.sta)
+ Job Name  : thickcylcreep1
+ Date/Time : 2026-09-27 12:38:54
+ Dimension : 2D Continuum Model
+====================================================================================================
+
+ STEP    INC   ATT   SEVERE   EQUIL    TOTAL TIME     STEP TIME   INC OF TIME      STATUS
+----------------------------------------------------------------------------------------------------
+    1      1     1        0       1        0.0000        0.0000   1.00000E-01      FAILED
+    2      1     1        0       1        0.0000        0.0000   2.00000E-02      FAILED
+====================================================================================================
+ ANALYSIS SUMMARY:
+   TOTAL INCREMENTS             : 2
+   TOTAL NEWTON ITERATIONS      : 0
+   TOTAL CUTBACKS               : 0
+   TOTAL SEVERE DISCONTINUITIES : 0
+ STATUS: ANALYSIS TERMINATED WITH ERRORS
+====================================================================================================

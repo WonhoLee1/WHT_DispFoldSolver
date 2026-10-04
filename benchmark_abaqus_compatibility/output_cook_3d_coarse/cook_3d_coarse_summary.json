@@ -1,0 +1,23 @@
+{
+  "inp_path": "D:\\PythonCodeStudy\\WHT_DispFoldSolver\\benchmark_inp\\cook_3d_coarse.inp",
+  "model_name": "Cook 3D coarse analogue (C3D8)",
+  "dimension": 3,
+  "converged": true,
+  "wall_time_seconds": 0.8546125888824463,
+  "steps_executed": [
+    "S"
+  ],
+  "step_results": [
+    {
+      "step_name": "S",
+      "converged": true,
+      "wall_time": 0.35320115089416504
+    }
+  ],
+  "exported_files": [
+    "D:\\PythonCodeStudy\\WHT_DispFoldSolver\\benchmark_abaqus_compatibility\\output_cook_3d_coarse\\cook_3d_coarse_result.vtkhdf",
+    "D:\\PythonCodeStudy\\WHT_DispFoldSolver\\benchmark_abaqus_compatibility\\output_cook_3d_coarse\\cook_3d_coarse_result.vtu"
+  ],
+  "unsupported_keywords": [],
+  "warnings": []
+}

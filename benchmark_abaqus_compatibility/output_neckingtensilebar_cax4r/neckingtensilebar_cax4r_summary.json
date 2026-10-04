@@ -1,0 +1,39 @@
+{
+  "inp_path": "D:\\PythonCodeStudy\\WHT_DispFoldSolver\\benchmark_inp\\official\\neckingtensilebar_cax4r.inp",
+  "model_name": "NECKING OF A ROUND TENSILE BAR",
+  "dimension": 2,
+  "converged": true,
+  "wall_time_seconds": 7.64739990234375,
+  "steps_executed": [
+    "Step-1",
+    "Step-2"
+  ],
+  "step_results": [
+    {
+      "step_name": "Step-1",
+      "converged": true,
+      "wall_time": 6.3303422927856445
+    },
+    {
+      "step_name": "Step-2",
+      "converged": true,
+      "wall_time": 1.2509772777557373
+    }
+  ],
+  "exported_files": [
+    "D:\\PythonCodeStudy\\WHT_DispFoldSolver\\benchmark_abaqus_compatibility\\output_neckingtensilebar_cax4r\\neckingtensilebar_cax4r_result.vtkhdf",
+    "D:\\PythonCodeStudy\\WHT_DispFoldSolver\\benchmark_abaqus_compatibility\\output_neckingtensilebar_cax4r\\neckingtensilebar_cax4r_result.vtu"
+  ],
+  "unsupported_keywords": [
+    "RESTART",
+    "POROUS METAL PLASTICITY",
+    "VOID NUCLEATION",
+    "ENERGY PRINT",
+    "EL PRINT",
+    "NODE PRINT",
+    "NODE FILE",
+    "OUTPUT",
+    "NODE OUTPUT"
+  ],
+  "warnings": []
+}

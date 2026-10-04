@@ -68,6 +68,7 @@ class Model:
         self.contact_properties: Dict[str, ContactProperty] = {}
         self.contact_controls: Dict[str, ContactControl] = {}
         self.contact_stabilizations: Dict[str, ContactStabilization] = {}
+        self.analytical_rigid_surfaces: Dict[str, Any] = {}
         self.interactions: Dict[str, Any] = {}
 
         # Abaqus API parity aliases
@@ -817,7 +818,8 @@ class Model:
             region=str(region) if isinstance(region, str) else region,
             magnitude=float(magnitude),
             amplitude=amp_name,
-            distribution=str(distribution).upper()
+            distribution=str(distribution).upper(),
+            face=kwargs.get("face", "P1")
         )
         step = self.steps.get(str(createStepName), self.initial_step)
         step.add_load(load)
@@ -895,17 +897,22 @@ class Model:
         """Flatten root assembly into global solver structures."""
         return self.root_assembly.build_solver_system(self)
 
-    def create_solver(self, step_name: Optional[str] = None, notices: Optional[list] = None):
+    def create_solver(self, step_name: Optional[str] = None, notices: Optional[list] = None, dim: Optional[int] = None):
         """Create and configure a production DynamicSolver instance, auto-detecting 2D vs 3D."""
+        if dim == 3:
+            return self.create_solver3d(step_name=step_name, notices=notices)
+        elif dim == 2:
+            return self.create_solver2d(step_name=step_name, notices=notices)
+
         sys = self.build_solver_system()
         is_3d = False
-        if sys.coords.shape[1] == 3 and np.any(np.abs(sys.coords[:, 2]) > 1e-12):
+        if sys.coords.shape[1] == 3:
             is_3d = True
         else:
             for part in self.parts.values():
                 for elem in part.elements.values():
                     etype = getattr(elem, "elem_type", "")
-                    if etype.startswith("C3D"):
+                    if etype.startswith("C3D") or etype.startswith("S9") or etype.startswith("S8") or etype.startswith("S4") or etype.startswith("M3D"):
                         is_3d = True
                         break
                 if is_3d:
@@ -945,13 +952,60 @@ class Model:
             gids.append(sys.nid_to_idx[g])
         return sorted(gids)
 
+    def _get_nset_indices(self, sys, name: str) -> Optional[np.ndarray]:
+        """Resolve a node set name (exact, case-insensitive, or unqualified tail) or direct node ID to node indices."""
+        if not name:
+            return None
+        if name in sys.global_nsets:
+            return sys.global_nsets[name]
+        name_upper = name.upper()
+        for k, v in sys.global_nsets.items():
+            if k.upper() == name_upper:
+                return v
+        for k, v in sys.global_nsets.items():
+            if k.split(".")[-1].upper() == name_upper:
+                return v
+        if str(name).isdigit():
+            nid = int(name)
+            gids = [gid for (pname, local_nid), gid in sys.node_local_to_global.items() if local_nid == nid]
+            if not gids and nid in sys.nid_to_idx:
+                gids = [nid]
+            if gids:
+                return np.array([sys.nid_to_idx[g] for g in gids if g in sys.nid_to_idx], dtype=np.int64)
+        return None
+
+    def _get_elset_indices(self, sys, name: str) -> Optional[np.ndarray]:
+        """Resolve an element set name (exact, case-insensitive, or unqualified tail) to element indices."""
+        if not name:
+            return None
+        if name in sys.global_elsets:
+            return sys.global_elsets[name]
+        name_upper = name.upper()
+        for k, v in sys.global_elsets.items():
+            if k.upper() == name_upper:
+                return v
+        for k, v in sys.global_elsets.items():
+            if k.split(".")[-1].upper() == name_upper:
+                return v
+        if str(name).isdigit():
+            eid = int(name)
+            gids = [gid for (pname, local_eid), gid in getattr(sys, "elem_local_to_global", {}).items() if local_eid == eid]
+            if not gids and eid in sys.global_elsets:
+                return sys.global_elsets[eid]
+            if gids:
+                return np.array([g - 1 for g in gids], dtype=np.int64)
+        return None
+
     def create_solver3d(self, step_name: Optional[str] = None, notices: Optional[list] = None):
         """Create and configure a production DynamicSolver3D instance from this Model."""
         from dispsolver.solver3d.dynamic3d import DynamicSolver3D
         sys = self.build_solver_system()
         mesh3d = sys.to_mesh3d()
         
-        solver = DynamicSolver3D(mesh=mesh3d, materials=sys.materials_by_pid)
+        st = self.steps.get(step_name) if step_name is not None and step_name in self.steps else None
+        step_nlgeom = bool(st.nlgeom) if st is not None and hasattr(st, "nlgeom") else True
+
+        solver = DynamicSolver3D(mesh=mesh3d, materials=sys.materials_by_pid, nlgeom=step_nlgeom)
         if getattr(sys, "has_transforms", False) and getattr(sys, "node_transforms", None) is not None:
             solver.set_nodal_transforms(sys.node_transforms)
 
@@ -960,14 +1014,16 @@ class Model:
         # Overwriting with sys.rows_topo corrupts the sparsity mapping for multi-material meshes.
 
             
-        # If a step is provided, apply its boundary conditions
+        # If a step is provided, apply its boundary conditions and nlgeom flag
         if step_name is not None and step_name in self.steps:
             st = self.steps[step_name]
+            solver.nlgeom = bool(getattr(st, "nlgeom", True))
             for entry in st.boundary_conditions.values():
                 if entry.is_active:
                     bc = entry.entity
-                    if bc.region in sys.global_nsets:
-                        global_node_indices = sys.global_nsets[bc.region]
+                    nset_idx = self._get_nset_indices(sys, bc.region)
+                    if nset_idx is not None:
+                        global_node_indices = nset_idx
                     elif bc.region in st.step_nsets:
                         global_node_indices = self._resolve_step_overlay_nset(sys, st, bc.region, notices)
                         if global_node_indices is None:
@@ -1024,7 +1080,9 @@ class Model:
             # So gid = idx + 1
             for pf in sys.predefined_fields:
                 if pf.field_type.upper() == "STRESS":
-                    el_indices = sys.global_elsets.get(pf.region, [])
+                    el_indices = self._get_elset_indices(sys, pf.region)
+                    if el_indices is None:
+                        el_indices = []
                     for idx in el_indices:
                         gid = idx + 1
                         states = solver.element_states.get(gid)
@@ -1064,19 +1122,23 @@ class Model:
         sys = self.build_solver_system()
         mesh2d = sys.to_mesh2d()
         
-        solver = DynamicSolver2D(mesh=mesh2d, materials=sys.materials_by_pid)
+        st = self.steps.get(step_name) if step_name is not None and step_name in self.steps else None
+        step_nlgeom = bool(st.nlgeom) if st is not None and hasattr(st, "nlgeom") else True
+
+        solver = DynamicSolver2D(mesh=mesh2d, materials=sys.materials_by_pid, nlgeom=step_nlgeom)
         if getattr(sys, "has_transforms", False) and getattr(sys, "node_transforms", None) is not None:
             solver.set_nodal_transforms(sys.node_transforms)
 
-        # If a step is provided, apply its boundary conditions
-
+        # If a step is provided, apply its boundary conditions and nlgeom flag
         if step_name is not None and step_name in self.steps:
             st = self.steps[step_name]
+            solver.nlgeom = bool(getattr(st, "nlgeom", True))
             for entry in st.boundary_conditions.values():
                 if entry.is_active:
                     bc = entry.entity
-                    if bc.region in sys.global_nsets:
-                        global_node_indices = sys.global_nsets[bc.region]
+                    nset_idx = self._get_nset_indices(sys, bc.region)
+                    if nset_idx is not None:
+                        global_node_indices = nset_idx
                     elif bc.region in st.step_nsets:
                         global_node_indices = self._resolve_step_overlay_nset(sys, st, bc.region, notices)
                         if global_node_indices is None:
@@ -1094,11 +1156,39 @@ class Model:
                             if u2_val is not None:
                                 solver.fix_dof(gid, 1, float(u2_val))
 
+        # Attach model and step constraints & interactions
+        for constraint in sys.constraints:
+            solver.add_constraint(constraint)
+
+        active_steps = [self.initial_step]
+        if step_name is not None and step_name in self.steps:
+            st = self.steps[step_name]
+            if st is not self.initial_step:
+                active_steps.append(st)
+
+        for s in active_steps:
+            for entry in s.interactions.values():
+                if hasattr(entry, "is_active") and entry.is_active():
+                    inter = entry.entity
+                    if hasattr(inter, "build_runtime_constraint"):
+                        existing_names = [getattr(c, "name", "") for c in solver.constraints]
+                        if inter.name not in existing_names:
+                            rc = inter.build_runtime_constraint(
+                                mesh=mesh2d,
+                                nid_to_idx=sys.nid_to_idx,
+                                coords=sys.coords,
+                                model=self,
+                                sys=sys,
+                            )
+                            solver.add_constraint(rc)
+
         # Apply Predefined Fields (Initial Stress/SDV)
         if len(sys.predefined_fields) > 0:
             for pf in sys.predefined_fields:
                 if pf.field_type.upper() == "STRESS":
-                    el_indices = sys.global_elsets.get(pf.region, [])
+                    el_indices = self._get_elset_indices(sys, pf.region)
+                    if el_indices is None:
+                        el_indices = []
                     for idx in el_indices:
                         gid = idx + 1
                         states = solver.element_states.get(gid)

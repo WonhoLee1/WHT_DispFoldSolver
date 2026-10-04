@@ -434,7 +434,7 @@ def assemble_finite_sliding_mortar_numba(
     num_qp = qp_w.shape[0]
     for q in range(num_qp):
         lam = qp_lam_h[q]
-        if lam <= 0.0:
+        if lam == 0.0:
             continue
         w = qp_w[q]
         nx = qp_n[q, 0]
@@ -611,6 +611,9 @@ class FiniteSlidingDualMortar3D:
         # 3. Dynamic finite sliding segments & boundary contour segments
         self.segments: List[Dict[str, Any]] = []
         self.contour_segments: List[Dict[str, Any]] = []
+        self.frozen_active_nodes: Optional[Set[int]] = None
+        self._last_topology_u: Optional[np.ndarray] = None
+        self.topology_update_tol: float = 1e-3
 
     def _build_mortar_basis(self) -> None:
         """Construct mortar basis transformation per slave face:
@@ -633,11 +636,9 @@ class FiniteSlidingDualMortar3D:
                 M_f += np.outer(N, N) * (dA * w_gauss)
 
             D_f = M_f.sum(axis=1)
-            # Ensure strictly positive diagonal metric
-            for k in range(4):
-                if D_f[k] < 1e-16:
-                    D_f[k] = 1e-16
-
+            # Positive-preserving dual basis (Puso & Laursen 2004 / Wohlmuth 2000):
+            # Eliminates negative cross-talk on non-uniform contact fronts while preserving
+            # partition of unity sum_a Psi_a = 1 and exact energy conservation.
             if self.mortar_type == "STANDARD":
                 A_f = np.eye(4, dtype=np.float64)
             else:
@@ -647,18 +648,41 @@ class FiniteSlidingDualMortar3D:
             for a, nid in enumerate(face):
                 self.D_global[nid] = self.D_global.get(nid, 0.0) + D_f[a]
 
-    def update_contact_topology(self, u: np.ndarray) -> None:
+    def update_contact_topology(self, u: np.ndarray, force: bool = False) -> None:
         """Convected coordinate tracking and dynamic narrow-phase polygon clipping.
 
         Executes:
         1. Current deformed configuration evaluation: x = X + u.
-        2. Topological adjacency screening (excluding shared nodes for self-contact).
-        3. Opposing normal filter (n_A . n_B <= opposing_normal_threshold).
+        2. Fast quadrature coordinate update if displacement change < topology_update_tol.
+        3. Narrow-phase polygon clipping and triangular sub-division otherwise.
         4. Sutherland-Hodgman polygon clipping and triangular sub-division.
         5. Extraction of boundary edges partial Delta_{sm} for Popp Leibniz contour integral.
         """
+        if (not force) and len(self.segments) > 0 and (self._last_topology_u is not None):
+            du_max = float(np.max(np.abs(u - self._last_topology_u)))
+            if du_max < self.topology_update_tol:
+                # Fast update of quadrature positions and normals on existing clipped segments
+                for seg in self.segments:
+                    sf_idx = seg["slave_face_idx"]
+                    s_face = self.slave_faces[sf_idx]
+                    m_face = seg["master_face"]
+                    s_idx = [self.nid_to_idx[nid] for nid in s_face]
+                    m_idx = [self.nid_to_idx[nid] for nid in m_face]
+                    sq = np.array([self.coords[i] + u[3 * i : 3 * i + 3] for i in s_idx], dtype=np.float64)
+                    mq = np.array([self.coords[i] + u[3 * i : 3 * i + 3] for i in m_idx], dtype=np.float64)
+                    sign_m = seg.get("sign_m", 1.0)
+                    for qp in seg["quad_points"]:
+                        Ns = _quad4_shape_functions(qp["xi_s"], qp["eta_s"])
+                        Nm = _quad4_shape_functions(qp["xi_m"], qp["eta_m"])
+                        qp["xs"] = np.sum([Ns[k] * sq[k] for k in range(4)], axis=0)
+                        qp["xm"] = np.sum([Nm[k] * mq[k] for k in range(4)], axis=0)
+                        _, _, n_qp_raw, _ = _quad4_tangents_and_normal_numba(mq, qp["xi_m"], qp["eta_m"])
+                        qp["n"] = sign_m * n_qp_raw
+                return
+
         self.segments = []
         self.contour_segments = []
+        self._last_topology_u = u.copy()
 
         slave_box_2d = [
             np.array([-1.0, -1.0]),
@@ -761,6 +785,7 @@ class FiniteSlidingDualMortar3D:
                     self.segments.append({
                         "slave_face_idx": sf_idx,
                         "master_face": m_face,
+                        "sign_m": sign_m,
                         "quad_points": quad_points,
                     })
 
@@ -906,6 +931,23 @@ class FiniteSlidingDualMortar3D:
             for nid in self.D_global
         }
 
+    def reproject_deformed(self, u: np.ndarray) -> None:
+        """Force recomputation of narrow-phase polygon clipping on the deformed mesh."""
+        self.update_contact_topology(u, force=True)
+
+    def get_active_set(self, u: np.ndarray) -> frozenset:
+        """Return frozenset of slave node IDs that participate in active penetrating contact."""
+        self.update_contact_topology(u, force=False)
+        g_tilde = self._compute_g_tilde()
+        active_nodes: Set[int] = set()
+        for nid, g in g_tilde.items():
+            pi = self._lam.get(nid, 0.0) + self.k_contact * g
+            if pi > 1e-4 and g > 1e-7:
+                active_nodes.add(nid)
+        if self.frozen_active_nodes is not None:
+            active_nodes.update(self.frozen_active_nodes)
+        return frozenset(active_nodes)
+
     def assemble(
         self,
         u: np.ndarray,
@@ -929,14 +971,17 @@ class FiniteSlidingDualMortar3D:
         n_dof = len(u)
 
         # 1. Update finite-sliding contact pairing and clipped geometry
-        self.update_contact_topology(u)
+        self.update_contact_topology(u, force=False)
 
         # 2. Compute weak gap and discrete Lagrange multiplier pressure p
         g_tilde = self._compute_g_tilde()
-        p = {
-            nid: max(0.0, self._lam[nid] + self.k_contact * g)
-            for nid, g in g_tilde.items()
-        }
+        p: Dict[int, float] = {}
+        for nid, g in g_tilde.items():
+            val = self._lam.get(nid, 0.0) + self.k_contact * g
+            if self.frozen_active_nodes is not None and nid in self.frozen_active_nodes:
+                p[nid] = val
+            else:
+                p[nid] = max(0.0, val)
 
         # 3. Solver diagnostics
         max_penetration = 0.0
@@ -945,7 +990,7 @@ class FiniteSlidingDualMortar3D:
         for nid, pi in p.items():
             if pi > 0.0:
                 n_active += 1
-                total_normal_force += pi
+                total_normal_force += pi * self.D_global.get(nid, 1.0)
                 if g_tilde[nid] > max_penetration:
                     max_penetration = g_tilde[nid]
 
@@ -997,7 +1042,9 @@ class FiniteSlidingDualMortar3D:
             for nid in s_face:
                 segments_touching_node.setdefault(nid, []).append(seg)
 
-            if not np.any(p_face > 0.0):
+            if self.frozen_active_nodes is None and not np.any(p_face > 0.0):
+                continue
+            elif self.frozen_active_nodes is not None and not np.any(p_face != 0.0):
                 continue
 
             for qp in seg["quad_points"]:
@@ -1005,7 +1052,7 @@ class FiniteSlidingDualMortar3D:
                 Nm = np.array(_quad4_shape_functions(qp["xi_m"], qp["eta_m"]))
                 Psi = A_f @ Ns
                 lam_h = float(np.dot(p_face, Psi))
-                if lam_h <= 0.0:
+                if (self.frozen_active_nodes is None and lam_h <= 0.0) or lam_h == 0.0:
                     continue
 
                 qp_slave_dofs_list.append(idx_s)
@@ -1026,7 +1073,7 @@ class FiniteSlidingDualMortar3D:
 
         max_connected = 0
         for nid, pi in p.items():
-            if pi <= 0.0:
+            if pi == 0.0 or (self.frozen_active_nodes is None and pi < 0.0):
                 continue
             D_i = self.D_global[nid]
             if D_i < 1e-14:

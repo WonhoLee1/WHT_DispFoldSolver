@@ -1,0 +1,80 @@
+[
+  {
+    "method": "NITSCHE",
+    "cores": 1,
+    "converged": false,
+    "wall_time": 299.7140345000007,
+    "total_iters": 0,
+    "rf_y_plate": -19267.276725322263,
+    "rf_y_seal": 176.48694514379224,
+    "fn_total": 266.24291632987496,
+    "max_pen_um": 114.99299946898307,
+    "max_ux_mm": 1.0628828628587939,
+    "max_uy_mm": 1.1349288723423951
+  },
+  {
+    "method": "NITSCHE",
+    "cores": 4,
+    "converged": false,
+    "wall_time": 212.58431389999896,
+    "total_iters": 0,
+    "rf_y_plate": -19267.276725322263,
+    "rf_y_seal": 176.48694514379224,
+    "fn_total": 266.24291632987496,
+    "max_pen_um": 114.99299946898307,
+    "max_ux_mm": 1.0628828628587939,
+    "max_uy_mm": 1.1349288723423951
+  },
+  {
+    "method": "DUAL_MORTAR",
+    "cores": 1,
+    "converged": false,
+    "wall_time": 274.66102830000455,
+    "total_iters": 0,
+    "rf_y_plate": -19267.276725322263,
+    "rf_y_seal": 176.48694514379224,
+    "fn_total": 266.24291632987496,
+    "max_pen_um": 114.99299946898307,
+    "max_ux_mm": 1.0628828628587939,
+    "max_uy_mm": 1.1349288723423951
+  },
+  {
+    "method": "DUAL_MORTAR",
+    "cores": 4,
+    "converged": false,
+    "wall_time": 215.64118620000227,
+    "total_iters": 0,
+    "rf_y_plate": -19267.276725322263,
+    "rf_y_seal": 176.48694514379224,
+    "fn_total": 266.24291632987496,
+    "max_pen_um": 114.99299946898307,
+    "max_ux_mm": 1.0628828628587939,
+    "max_uy_mm": 1.1349288723423951
+  },
+  {
+    "method": "PENALTY",
+    "cores": 1,
+    "converged": false,
+    "wall_time": 308.1411708000014,
+    "total_iters": 0,
+    "rf_y_plate": -19267.276725322263,
+    "rf_y_seal": 176.48694514379224,
+    "fn_total": 266.24291632987496,
+    "max_pen_um": 114.99299946898307,
+    "max_ux_mm": 1.0628828628587939,
+    "max_uy_mm": 1.1349288723423951
+  },
+  {
+    "method": "PENALTY",
+    "cores": 4,
+    "converged": false,
+    "wall_time": 210.21910649999336,
+    "total_iters": 0,
+    "rf_y_plate": -19267.276725322263,
+    "rf_y_seal": 176.48694514379224,
+    "fn_total": 266.24291632987496,
+    "max_pen_um": 114.99299946898307,
+    "max_ux_mm": 1.0628828628587939,
+    "max_uy_mm": 1.1349288723423951
+  }
+]

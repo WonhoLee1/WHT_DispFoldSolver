@@ -10,6 +10,8 @@ Equivalents: Abaqus CPE4I / Ansys SOLID182 (Enhanced Strain) / Wilson Incompatib
 import numpy as np
 from numba import njit, prange
 
+from dispsolver.material3d.numba_materials import material_dispatch_2d
+
 _GP1D = 1.0 / np.sqrt(3.0)
 _GPS = np.array([
     [-_GP1D, -_GP1D],
@@ -74,15 +76,6 @@ def compute_cpe4i_element_numba(
     """
     Computes statically condensed 8x8 tangent Ke and 8-element fe for 1 CPE4I element.
     """
-    E = props[0]
-    nu = props[1]
-
-    # Plane strain C matrix (3x3)
-    c_fac = E / ((1.0 + nu) * (1.0 - 2.0 * nu))
-    C11 = c_fac * (1.0 - nu)
-    C12 = c_fac * nu
-    C33 = c_fac * 0.5 * (1.0 - 2.0 * nu)
-
     # Centroid Jacobian J0
     dN0 = _shape_derivs_cpe4i(0.0, 0.0)
     J0 = dN0 @ coords
@@ -144,19 +137,21 @@ def compute_cpe4i_element_numba(
 
         dV = detJ * wt
 
+        # Compute strain and constitutive response
+        eps = B @ u_elem
+        sdv_pt = sdvs[q] if sdvs is not None and len(sdvs) > q else np.zeros(7, dtype=np.float64)
+        sigma, C_mat_2d, sdv_new, mat_err = material_dispatch_2d(mat_type, props, sdv_pt, eps, dt)
+        if mat_err != 0:
+            has_error = 1
+        if sdvs is not None and len(sdvs) > q:
+            for s_i in range(min(len(sdv_new), len(sdvs[q]))):
+                sdvs[q, s_i] = sdv_new[s_i]
+
         # CB = C * B (3, 8)
-        CB = np.zeros((3, 8), dtype=np.float64)
-        for j in range(8):
-            CB[0, j] = C11 * B[0, j] + C12 * B[1, j]
-            CB[1, j] = C12 * B[0, j] + C11 * B[1, j]
-            CB[2, j] = C33 * B[2, j]
+        CB = C_mat_2d @ B
 
         # CM = C * M (3, 4)
-        CM = np.zeros((3, 4), dtype=np.float64)
-        for j in range(4):
-            CM[0, j] = C11 * M[0, j] + C12 * M[1, j]
-            CM[1, j] = C12 * M[0, j] + C11 * M[1, j]
-            CM[2, j] = C33 * M[2, j]
+        CM = C_mat_2d @ M
 
         # Kuu += B^T * CB * dV
         for i in range(8):
@@ -172,13 +167,6 @@ def compute_cpe4i_element_numba(
         for i in range(4):
             for j in range(4):
                 Kaa[i, j] += (M[0, i] * CM[0, j] + M[1, i] * CM[1, j] + M[2, i] * CM[2, j]) * dV
-
-        # Initial compatible strain and stress
-        eps = B @ u_elem
-        s_xx = C11 * eps[0] + C12 * eps[1]
-        s_yy = C12 * eps[0] + C11 * eps[1]
-        s_xy = C33 * eps[2]
-        sigma = np.array([s_xx, s_yy, s_xy], dtype=np.float64)
 
         for i in range(8):
             fu[i] += (B[0, i] * sigma[0] + B[1, i] * sigma[1] + B[2, i] * sigma[2]) * dV

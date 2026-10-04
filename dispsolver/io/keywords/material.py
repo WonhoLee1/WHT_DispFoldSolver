@@ -27,14 +27,15 @@ def _handle_elastic(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
         mat = reader.model.Material("DEFAULT_ELASTIC")
         reader.current_material = mat
 
+    exp_type = block.params.get("type", "ISOTROPIC").upper()
     rows = _parse_data_rows(block.data_lines, dtype=float)
     if rows:
-        # Table of (E, nu[, temp, ...])
+        flat_tokens = [v for r in rows for v in r]
         table = [tuple(r) for r in rows]
         if "dependencies" in block.params:
-            mat.Elastic(field_table=tuple(table))
+            mat.Elastic(field_table=tuple(table), type=exp_type, flat_tokens=flat_tokens)
         else:
-            mat.Elastic(table=tuple(table))
+            mat.Elastic(table=tuple(table), type=exp_type, flat_tokens=flat_tokens)
 
 
 @GLOBAL_KEYWORD_REGISTRY.register("EXPANSION", valid_contexts={KeywordContext.MATERIAL, KeywordContext.GLOBAL})
@@ -350,10 +351,24 @@ def _handle_solid_section(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     orientation = block.params.get("orientation", None)
 
     thickness = 1.0
+    is_composite = any("COMPOSITE" in str(k).upper() for k in block.params.keys())
     if block.data_lines:
-        rows = _parse_data_rows(block.data_lines, dtype=float)
-        if rows and len(rows[0]) >= 1:
-            thickness = float(rows[0][0])
+        if is_composite:
+            # Composite data line: thickness, num_int_pts, mat_name, [orientation, ply_name]
+            first_line = [tok.strip() for tok in block.data_lines[0].split(',') if tok.strip()]
+            if len(first_line) >= 1:
+                try:
+                    thickness = float(first_line[0])
+                except ValueError:
+                    pass
+            if len(first_line) >= 3:
+                mat_name = first_line[2]
+            if len(first_line) >= 4 and first_line[3]:
+                orientation = first_line[3]
+        else:
+            rows = _parse_data_rows(block.data_lines, dtype=float)
+            if rows and len(rows[0]) >= 1:
+                thickness = float(rows[0][0])
 
     sec = reader.model.HomogeneousSolidSection(name=sec_name, material=mat_name,
                                                thickness=thickness,

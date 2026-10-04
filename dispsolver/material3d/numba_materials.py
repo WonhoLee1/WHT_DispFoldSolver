@@ -2036,3 +2036,72 @@ def material_dispatch_3d(
 
     return S_voigt, C_mat, sdv_new, error_flag
 
+
+@njit(fastmath=True)
+def material_dispatch_2d(
+    mat_type: int,
+    props: np.ndarray,
+    sdv_prev: np.ndarray,
+    eps_2d: np.ndarray,
+    dt: float = 0.0
+):
+    """
+    2D Plane Strain Material Dispatcher (Abaqus UMAT parity).
+    Computes 2D Cauchy/PK2 stress vector [s_xx, s_yy, s_xy] and 3x3 consistent tangent C_mat_2d.
+    Supports Linear Elasticity, J2 Plasticity (Linear/Nonlinear/Tabular), etc.
+    """
+    # Fast path for linear elastic
+    if mat_type == 1 or mat_type == 0:  # MAT_LINEAR_ELASTIC or default
+        E = props[0]
+        nu = props[1]
+        c_fac = E / ((1.0 + nu) * (1.0 - 2.0 * nu))
+        C11 = c_fac * (1.0 - nu)
+        C12 = c_fac * nu
+        C33 = c_fac * 0.5 * (1.0 - 2.0 * nu)
+
+        sigma = np.zeros(3, dtype=np.float64)
+        sigma[0] = C11 * eps_2d[0] + C12 * eps_2d[1]
+        sigma[1] = C12 * eps_2d[0] + C11 * eps_2d[1]
+        sigma[2] = C33 * eps_2d[2]
+
+        C_mat_2d = np.zeros((3, 3), dtype=np.float64)
+        C_mat_2d[0, 0] = C11
+        C_mat_2d[0, 1] = C12
+        C_mat_2d[1, 0] = C12
+        C_mat_2d[1, 1] = C11
+        C_mat_2d[2, 2] = C33
+        return sigma, C_mat_2d, sdv_prev, 0
+
+    # General nonlinear path via 3D dispatch
+    E_voigt = np.zeros(6, dtype=np.float64)
+    E_voigt[0] = eps_2d[0]
+    E_voigt[1] = eps_2d[1]
+    E_voigt[3] = eps_2d[2]
+
+    F_dummy = np.eye(3, dtype=np.float64)
+    detF_dummy = 1.0
+
+    S_voigt, C_6x6, sdv_new, err = material_dispatch_3d(
+        mat_type, props, sdv_prev, E_voigt, F_dummy, detF_dummy, dt
+    )
+
+    sigma = np.zeros(3, dtype=np.float64)
+    sigma[0] = S_voigt[0]
+    sigma[1] = S_voigt[1]
+    sigma[2] = S_voigt[3]
+
+    C_mat_2d = np.zeros((3, 3), dtype=np.float64)
+    C_mat_2d[0, 0] = C_6x6[0, 0]
+    C_mat_2d[0, 1] = C_6x6[0, 1]
+    C_mat_2d[0, 2] = C_6x6[0, 3]
+
+    C_mat_2d[1, 0] = C_6x6[1, 0]
+    C_mat_2d[1, 1] = C_6x6[1, 1]
+    C_mat_2d[1, 2] = C_6x6[1, 3]
+
+    C_mat_2d[2, 0] = C_6x6[3, 0]
+    C_mat_2d[2, 1] = C_6x6[3, 1]
+    C_mat_2d[2, 2] = C_6x6[3, 3]
+
+    return sigma, C_mat_2d, sdv_new, err
+

@@ -1,0 +1,25 @@
+{
+  "inp_path": "D:\\PythonCodeStudy\\WHT_DispFoldSolver\\benchmark_inp\\thick_cylinder_2d.inp",
+  "model_name": "Thick cylinder quarter analogue (CPE4, internal pressure)",
+  "dimension": 2,
+  "converged": true,
+  "wall_time_seconds": 0.19428157806396484,
+  "steps_executed": [
+    "PRESS"
+  ],
+  "step_results": [
+    {
+      "step_name": "PRESS",
+      "converged": true,
+      "wall_time": 0.18849468231201172
+    }
+  ],
+  "exported_files": [
+    "D:\\PythonCodeStudy\\WHT_DispFoldSolver\\benchmark_abaqus_compatibility\\output_thick_cylinder_2d\\thick_cylinder_2d_result.vtkhdf",
+    "D:\\PythonCodeStudy\\WHT_DispFoldSolver\\benchmark_abaqus_compatibility\\output_thick_cylinder_2d\\thick_cylinder_2d_result.vtu"
+  ],
+  "unsupported_keywords": [],
+  "warnings": [
+    "*DLOAD faces ['P1'] kept in load names; face-selective solver mapping is P1"
+  ]
+}

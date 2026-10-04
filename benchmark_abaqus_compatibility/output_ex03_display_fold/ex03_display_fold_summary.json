@@ -1,0 +1,23 @@
+{
+  "inp_path": "D:\\PythonCodeStudy\\WHT_DispFoldSolver\\examples\\ex03_display_fold.inp",
+  "model_name": "DISPLAY PANEL FOLDING ANALYSIS (ex03)",
+  "dimension": 2,
+  "converged": true,
+  "wall_time_seconds": 0.6346487998962402,
+  "steps_executed": [
+    "Step-1"
+  ],
+  "step_results": [
+    {
+      "step_name": "Step-1",
+      "converged": true,
+      "wall_time": 0.55731201171875
+    }
+  ],
+  "exported_files": [
+    "D:\\PythonCodeStudy\\WHT_DispFoldSolver\\benchmark_abaqus_compatibility\\output_ex03_display_fold\\ex03_display_fold_result.vtkhdf",
+    "D:\\PythonCodeStudy\\WHT_DispFoldSolver\\benchmark_abaqus_compatibility\\output_ex03_display_fold\\ex03_display_fold_result.vtu"
+  ],
+  "unsupported_keywords": [],
+  "warnings": []
+}

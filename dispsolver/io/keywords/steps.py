@@ -69,7 +69,6 @@ def _handle_end_step(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
 
 @GLOBAL_KEYWORD_REGISTRY.register("BOUNDARY", valid_contexts={KeywordContext.STEP, KeywordContext.GLOBAL})
 def _handle_boundary(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
-    rows = _parse_data_rows(block.data_lines, dtype=str)
     target_step = reader.current_step if reader.current_step is not None else reader.model.initial_step
     amp = block.params.get("amplitude", None)
     op = block.params.get("op", "MOD").upper()
@@ -77,13 +76,34 @@ def _handle_boundary(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
         for bc_name in list(target_step.boundary_conditions.keys()):
             target_step.deactivate_bc(bc_name)
 
-    for r in rows:
-        if len(r) < 2:
+    for line in block.data_lines:
+        line_clean = line.strip()
+        if not line_clean or line_clean.startswith("**"):
             continue
-        region = str(r[0])
-        first_dof = int(r[1])
-        last_dof = int(r[2]) if len(r) >= 3 and r[2] != "" else first_dof
-        val = float(r[3]) if len(r) >= 4 else 0.0
+        parts = [p.strip() for p in line_clean.split(",")]
+        while len(parts) > 1 and parts[-1] == "":
+            parts.pop()
+        if len(parts) < 2:
+            continue
+        region = str(parts[0])
+        type_str = str(parts[1]).strip().upper()
+        if type_str == "ENCASTRE":
+            first_dof, last_dof, val = 1, 6, 0.0
+        elif type_str == "PINNED":
+            first_dof, last_dof, val = 1, 3, 0.0
+        elif type_str == "XSYMM":
+            first_dof, last_dof, val = 1, 1, 0.0
+        elif type_str == "YSYMM":
+            first_dof, last_dof, val = 2, 2, 0.0
+        elif type_str == "ZSYMM":
+            first_dof, last_dof, val = 3, 3, 0.0
+        else:
+            try:
+                first_dof = int(parts[1])
+                last_dof = int(parts[2]) if len(parts) >= 3 and parts[2] != "" else first_dof
+                val = float(parts[3]) if len(parts) >= 4 and parts[3] != "" else 0.0
+            except (ValueError, TypeError):
+                continue
 
         kwargs = {}
         for dof in range(first_dof, last_dof + 1):
@@ -155,6 +175,118 @@ def _handle_temperature(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
             temp_val = float(r[1])
             pf = PredefinedField(name=f"TEMP_{region}", field_type="TEMPERATURE", region=region, values=temp_val)
             target_step.add_predefined_field(pf)
+
+
+# ─── OUTPUT REQUESTS (FIELD & HISTORY) ───────────────────────────────────────
+
+@GLOBAL_KEYWORD_REGISTRY.register("OUTPUT", valid_contexts={KeywordContext.STEP})
+def _handle_output(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
+    if reader.current_step is None:
+        return
+    out_type = "FIELD"
+    for k in block.params:
+        if k.upper() == "HISTORY":
+            out_type = "HISTORY"
+            break
+        elif k.upper() == "FIELD":
+            out_type = "FIELD"
+            break
+
+    freq = block.params.get("frequency", None)
+    frequency = int(freq) if freq is not None else 1
+    num_intervals = block.params.get("number intervals", block.params.get("number_intervals", None))
+    num_intervals = int(num_intervals) if num_intervals is not None else None
+
+    reader.current_step._current_output_type = out_type
+    reader.current_step._current_output_freq = frequency
+    reader.current_step._current_output_intervals = num_intervals
+
+
+@GLOBAL_KEYWORD_REGISTRY.register("NODE OUTPUT", valid_contexts={KeywordContext.STEP}, aliases=["NODEOUTPUT"])
+def _handle_node_output(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
+    if reader.current_step is None:
+        return
+    out_type = getattr(reader.current_step, "_current_output_type", "FIELD")
+    freq = getattr(reader.current_step, "_current_output_freq", 1)
+    num_intervals = getattr(reader.current_step, "_current_output_intervals", None)
+
+    nset = block.params.get("nset", None)
+    variables = []
+    for line in block.data_lines:
+        line_clean = line.strip()
+        if not line_clean or line_clean.startswith("**"):
+            continue
+        vars_in_line = [v.strip().upper() for v in line_clean.split(",") if v.strip()]
+        variables.extend(vars_in_line)
+
+    if not variables:
+        variables = ["U", "RF"]
+
+    if out_type == "FIELD":
+        req_name = f"F-Output-Node-{reader.current_step.name}"
+        if req_name in reader.current_step.field_output_requests:
+            req = reader.current_step.field_output_requests[req_name]
+            req.variables = list(dict.fromkeys(req.variables + variables))
+        else:
+            reader.current_step.FieldOutputRequest(
+                name=req_name,
+                frequency=freq,
+                num_intervals=num_intervals,
+                variables=variables,
+                region=nset,
+            )
+    else:
+        req_name = f"H-Output-Node-{reader.current_step.name}-{len(reader.current_step.history_output_requests)}"
+        reader.current_step.HistoryOutputRequest(
+            name=req_name,
+            frequency=freq,
+            variables=variables,
+            region=nset,
+        )
+
+
+@GLOBAL_KEYWORD_REGISTRY.register("ELEMENT OUTPUT", valid_contexts={KeywordContext.STEP}, aliases=["ELEMENTOUTPUT"])
+def _handle_element_output(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
+    if reader.current_step is None:
+        return
+    out_type = getattr(reader.current_step, "_current_output_type", "FIELD")
+    freq = getattr(reader.current_step, "_current_output_freq", 1)
+    num_intervals = getattr(reader.current_step, "_current_output_intervals", None)
+
+    elset = block.params.get("elset", None)
+    variables = []
+    for line in block.data_lines:
+        line_clean = line.strip()
+        if not line_clean or line_clean.startswith("**"):
+            continue
+        vars_in_line = [v.strip().upper() for v in line_clean.split(",") if v.strip()]
+        variables.extend(vars_in_line)
+
+    if not variables:
+        variables = ["S", "E"]
+
+    if out_type == "FIELD":
+        req_name = f"F-Output-Elem-{reader.current_step.name}"
+        if req_name in reader.current_step.field_output_requests:
+            req = reader.current_step.field_output_requests[req_name]
+            req.variables = list(dict.fromkeys(req.variables + variables))
+        else:
+            reader.current_step.FieldOutputRequest(
+                name=req_name,
+                frequency=freq,
+                num_intervals=num_intervals,
+                variables=variables,
+                region=elset,
+            )
+    else:
+        req_name = f"H-Output-Elem-{reader.current_step.name}-{len(reader.current_step.history_output_requests)}"
+        reader.current_step.HistoryOutputRequest(
+            name=req_name,
+            frequency=freq,
+            variables=variables,
+            region=elset,
+        )
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────

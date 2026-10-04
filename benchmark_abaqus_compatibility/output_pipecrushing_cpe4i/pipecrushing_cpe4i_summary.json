@@ -1,0 +1,39 @@
+{
+  "inp_path": "D:\\PythonCodeStudy\\WHT_DispFoldSolver\\benchmark_inp\\official\\pipecrushing_cpe4i.inp",
+  "model_name": "CRUSHED TUBE (CPE4I)",
+  "dimension": 2,
+  "converged": true,
+  "wall_time_seconds": 0.3020944595336914,
+  "steps_executed": [
+    "Step-1"
+  ],
+  "step_results": [
+    {
+      "step_name": "Step-1",
+      "converged": true,
+      "wall_time": 0.29685473442077637
+    }
+  ],
+  "exported_files": [
+    "D:\\PythonCodeStudy\\WHT_DispFoldSolver\\benchmark_abaqus_compatibility\\output_pipecrushing_cpe4i\\pipecrushing_cpe4i_result.vtkhdf",
+    "D:\\PythonCodeStudy\\WHT_DispFoldSolver\\benchmark_abaqus_compatibility\\output_pipecrushing_cpe4i\\pipecrushing_cpe4i_result.vtu"
+  ],
+  "unsupported_keywords": [
+    "RESTART",
+    "MONITOR",
+    "CONTACT PRINT",
+    "CONTACT FILE",
+    "OUTPUT",
+    "CONTACT OUTPUT",
+    "NODE PRINT",
+    "EL PRINT",
+    "ENERGY PRINT",
+    "ENERGY FILE",
+    "ENERGY OUTPUT",
+    "NODE FILE",
+    "NODE OUTPUT"
+  ],
+  "warnings": [
+    "*BOUNDARY BC_RSNODE_DOF6_6: rotational DOFs stored but continuum nodes have no rotation target in the solver; translational part applied"
+  ]
+}

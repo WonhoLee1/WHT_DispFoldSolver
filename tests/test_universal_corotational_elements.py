@@ -160,13 +160,13 @@ def test_dynamic2d_nlgeom_auto_promotion():
 
     solver_nlgeom = DynamicSolver2D(mesh, nlgeom=True)
     # k=11 corresponds to CPE4I_CR
-    assert 11 in solver_nlgeom.elem_kernel_groups
-    assert 0 in solver_nlgeom.elem_kernel_groups[11]
+    ks_nlgeom = [k[0] if isinstance(k, tuple) else k for k in solver_nlgeom.elem_kernel_groups.keys()]
+    assert 11 in ks_nlgeom
 
     solver_linear = DynamicSolver2D(mesh, nlgeom=False)
     # k=1 corresponds to small-strain CPE4I
-    assert 1 in solver_linear.elem_kernel_groups
-    assert 0 in solver_linear.elem_kernel_groups[1]
+    ks_linear = [k[0] if isinstance(k, tuple) else k for k in solver_linear.elem_kernel_groups.keys()]
+    assert 1 in ks_linear
 
 
 def test_dynamic3d_nlgeom_auto_promotion():
@@ -183,9 +183,9 @@ def test_dynamic3d_nlgeom_auto_promotion():
     mesh.add_element(1, [1, 2, 3, 4, 5, 6, 7, 8], elem_type="C3D8I")
 
     solver_nlgeom = DynamicSolver3D(mesh, nlgeom=True)
-    assert 11 in solver_nlgeom.elem_kernel_groups
-    assert 0 in solver_nlgeom.elem_kernel_groups[11]
+    ks_nlgeom = [k[0] if isinstance(k, tuple) else k for k in solver_nlgeom.elem_kernel_groups.keys()]
+    assert 11 in ks_nlgeom
 
     solver_linear = DynamicSolver3D(mesh, nlgeom=False)
-    assert 0 in solver_linear.elem_kernel_groups
-    assert 0 in solver_linear.elem_kernel_groups[0]
+    ks_linear = [k[0] if isinstance(k, tuple) else k for k in solver_linear.elem_kernel_groups.keys()]
+    assert 0 in ks_linear

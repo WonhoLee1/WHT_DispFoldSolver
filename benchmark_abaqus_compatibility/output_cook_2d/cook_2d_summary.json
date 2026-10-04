@@ -1,0 +1,80 @@
+{
+  "inp_path": "D:\\PythonCodeStudy\\WHT_DispFoldSolver\\scratch\\abaqus_bmk_docs\\cook_2d.inp",
+  "model_name": "AbaqusModel",
+  "dimension": 2,
+  "converged": true,
+  "wall_time_seconds": 47.70574617385864,
+  "steps_executed": [
+    "Step-1"
+  ],
+  "step_results": [
+    {
+      "step_name": "Step-1",
+      "converged": true,
+      "wall_time": 45.86968231201172
+    }
+  ],
+  "exported_files": [
+    "D:\\PythonCodeStudy\\WHT_DispFoldSolver\\benchmark_abaqus_compatibility\\output_cook_2d\\cook_2d_result.vtkhdf",
+    "D:\\PythonCodeStudy\\WHT_DispFoldSolver\\benchmark_abaqus_compatibility\\output_cook_2d\\cook_2d_result.vtu"
+  ],
+  "unsupported_keywords": [
+    "PREPRINT",
+    "RESTART",
+    "OUTPUT",
+    "NODE OUTPUT",
+    "ELEMENT OUTPUT",
+    "NODE PRINT"
+  ],
+  "warnings": [
+    "*COUPLING cpe3h_04 parsed and stored; solver assembly not connected",
+    "*DISTRIBUTING cpe3h_04 parsed and stored; solver assembly not connected",
+    "*COUPLING cpe3h_08 parsed and stored; solver assembly not connected",
+    "*DISTRIBUTING cpe3h_08 parsed and stored; solver assembly not connected",
+    "*COUPLING cpe3h_16 parsed and stored; solver assembly not connected",
+    "*DISTRIBUTING cpe3h_16 parsed and stored; solver assembly not connected",
+    "*COUPLING cpe3h_32 parsed and stored; solver assembly not connected",
+    "*DISTRIBUTING cpe3h_32 parsed and stored; solver assembly not connected",
+    "*COUPLING cpe4h_04 parsed and stored; solver assembly not connected",
+    "*DISTRIBUTING cpe4h_04 parsed and stored; solver assembly not connected",
+    "*COUPLING cpe4h_08 parsed and stored; solver assembly not connected",
+    "*DISTRIBUTING cpe4h_08 parsed and stored; solver assembly not connected",
+    "*COUPLING cpe4h_16 parsed and stored; solver assembly not connected",
+    "*DISTRIBUTING cpe4h_16 parsed and stored; solver assembly not connected",
+    "*COUPLING cpe4h_32 parsed and stored; solver assembly not connected",
+    "*DISTRIBUTING cpe4h_32 parsed and stored; solver assembly not connected",
+    "*COUPLING cpe4ih_04 parsed and stored; solver assembly not connected",
+    "*DISTRIBUTING cpe4ih_04 parsed and stored; solver assembly not connected",
+    "*COUPLING cpe4ih_08 parsed and stored; solver assembly not connected",
+    "*DISTRIBUTING cpe4ih_08 parsed and stored; solver assembly not connected",
+    "*COUPLING cpe4ih_16 parsed and stored; solver assembly not connected",
+    "*DISTRIBUTING cpe4ih_16 parsed and stored; solver assembly not connected",
+    "*COUPLING cpe4ih_32 parsed and stored; solver assembly not connected",
+    "*DISTRIBUTING cpe4ih_32 parsed and stored; solver assembly not connected",
+    "*COUPLING cpe4rh_04 parsed and stored; solver assembly not connected",
+    "*DISTRIBUTING cpe4rh_04 parsed and stored; solver assembly not connected",
+    "*COUPLING cpe4rh_08 parsed and stored; solver assembly not connected",
+    "*DISTRIBUTING cpe4rh_08 parsed and stored; solver assembly not connected",
+    "*COUPLING cpe4rh_16 parsed and stored; solver assembly not connected",
+    "*DISTRIBUTING cpe4rh_16 parsed and stored; solver assembly not connected",
+    "*COUPLING cpe4rh_32 parsed and stored; solver assembly not connected",
+    "*DISTRIBUTING cpe4rh_32 parsed and stored; solver assembly not connected",
+    "*COUPLING cpe6h_04 parsed and stored; solver assembly not connected",
+    "*DISTRIBUTING cpe6h_04 parsed and stored; solver assembly not connected",
+    "*COUPLING cpe6h_08 parsed and stored; solver assembly not connected",
+    "*DISTRIBUTING cpe6h_08 parsed and stored; solver assembly not connected",
+    "*COUPLING cpe6h_16 parsed and stored; solver assembly not connected",
+    "*DISTRIBUTING cpe6h_16 parsed and stored; solver assembly not connected",
+    "*COUPLING cpe6h_32 parsed and stored; solver assembly not connected",
+    "*DISTRIBUTING cpe6h_32 parsed and stored; solver assembly not connected",
+    "*COUPLING cpe6mh_04 parsed and stored; solver assembly not connected",
+    "*DISTRIBUTING cpe6mh_04 parsed and stored; solver assembly not connected",
+    "*COUPLING cpe6mh_08 parsed and stored; solver assembly not connected",
+    "*DISTRIBUTING cpe6mh_08 parsed and stored; solver assembly not connected",
+    "*COUPLING cpe6mh_16 parsed and stored; solver assembly not connected",
+    "*DISTRIBUTING cpe6mh_16 parsed and stored; solver assembly not connected",
+    "*COUPLING cpe6mh_32 parsed and stored; solver assembly not connected",
+    "*DISTRIBUTING cpe6mh_32 parsed and stored; solver assembly not connected",
+    "*BOUNDARY BC_Fix_DOF1_6: rotational DOFs stored but continuum nodes have no rotation target in the solver; translational part applied"
+  ]
+}

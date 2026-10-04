@@ -93,6 +93,77 @@ class Surface:
     def __len__(self) -> int:
         return len(self.faces) if self.faces else (len(self.node_ids) if self.node_ids else 0)
 
+    def get_nodes(self, part: Optional[Any] = None) -> List[int]:
+        """Resolve node IDs constituting this surface."""
+        if self.node_ids:
+            return sorted(list(self.node_ids))
+        if part is None or not self.faces:
+            return []
+
+        # Abaqus canonical face topologies (1-based S1..S6)
+        tet4_faces = {
+            1: (0, 1, 2),
+            2: (0, 3, 1),
+            3: (1, 3, 2),
+            4: (2, 3, 0),
+        }
+        tet10_faces = {
+            1: (0, 1, 2, 4, 5, 6),
+            2: (0, 3, 1, 7, 8, 4),
+            3: (1, 3, 2, 8, 9, 5),
+            4: (2, 3, 0, 9, 7, 6),
+        }
+        hex8_faces = {
+            1: (0, 1, 2, 3),
+            2: (4, 5, 6, 7),
+            3: (0, 1, 5, 4),
+            4: (1, 2, 6, 5),
+            5: (2, 3, 7, 6),
+            6: (3, 0, 4, 7),
+        }
+        quad4_edges = {
+            1: (0, 1),
+            2: (1, 2),
+            3: (2, 3),
+            4: (3, 0),
+        }
+        quad8_edges = {
+            1: (0, 1, 4),
+            2: (1, 2, 5),
+            3: (2, 3, 6),
+            4: (3, 0, 7),
+        }
+
+        nids = set()
+        for ef in self.faces:
+            eid = ef.element_id
+            fid = ef.face_id
+            if eid not in part.elements:
+                continue
+            etype, conn = part.elements[eid]
+            etype_u = etype.upper()
+
+            face_map = None
+            if etype_u.startswith("C3D4"):
+                face_map = tet4_faces
+            elif etype_u.startswith("C3D10"):
+                face_map = tet10_faces
+            elif etype_u.startswith("C3D8") or etype_u.startswith("C3D20"):
+                face_map = hex8_faces
+            elif etype_u.startswith("CPE8") or etype_u.startswith("CPS8") or etype_u.startswith("CAX8"):
+                face_map = quad8_edges
+            elif etype_u.startswith("CPE4") or etype_u.startswith("CPS4") or etype_u.startswith("CAX4"):
+                face_map = quad4_edges
+
+            if face_map and fid in face_map:
+                for idx in face_map[fid]:
+                    if idx < len(conn):
+                        nids.add(conn[idx])
+            else:
+                nids.update(conn)
+
+        return sorted(list(nids))
+
 
 # Standard canonical face topologies for 2D and 3D solid elements
 _QUAD4_EDGE_NODES = [

@@ -31,6 +31,7 @@ from numba import njit, prange
 
 from dispsolver.material3d.numba_materials import (
     material_dispatch_3d,
+    _eig3x3_jacobi_numba,
     MAT_HYPERELASTIC_NEOHOOKEAN,
     MAT_HYPERELASTIC_ARRUDA_BOYCE,
     MAT_HYPERELASTIC_YEOH,
@@ -43,6 +44,52 @@ from dispsolver.material3d.numba_materials import (
     MAT_CUSTOM_ELASTIC,
     MAT_LINEAR_ELASTIC,
 )
+
+
+@njit(fastmath=True)
+def _hencky_to_green_gl_numba(eps_voigt: np.ndarray):
+    """Convert local small/Hencky strain eps_voigt into genuine Green-Lagrange strain E_voigt
+    and deformation gradient F_loc to ensure det(C) > 0 and prevent material explosion under large compression.
+    """
+    eps_mat = np.zeros((3, 3), dtype=np.float64)
+    eps_mat[0, 0] = eps_voigt[0]
+    eps_mat[1, 1] = eps_voigt[1]
+    eps_mat[2, 2] = eps_voigt[2]
+    eps_mat[0, 1] = eps_mat[1, 0] = 0.5 * eps_voigt[3]
+    eps_mat[1, 2] = eps_mat[2, 1] = 0.5 * eps_voigt[4]
+    eps_mat[2, 0] = eps_mat[0, 2] = 0.5 * eps_voigt[5]
+
+    vals, V = _eig3x3_jacobi_numba(eps_mat)
+
+    exp_vals = np.zeros(3, dtype=np.float64)
+    detF = 1.0
+    for i in range(3):
+        exp_v = np.exp(vals[i])
+        exp_vals[i] = exp_v
+        detF *= exp_v
+
+    F_loc = np.zeros((3, 3), dtype=np.float64)
+    for i in range(3):
+        for j in range(3):
+            for k in range(3):
+                F_loc[i, j] += V[i, k] * exp_vals[k] * V[j, k]
+
+    C_loc = F_loc.T @ F_loc
+    E_gl = np.zeros((3, 3), dtype=np.float64)
+    for i in range(3):
+        for j in range(3):
+            E_gl[i, j] = 0.5 * (C_loc[i, j] - (1.0 if i == j else 0.0))
+
+    E_voigt = np.zeros(6, dtype=np.float64)
+    E_voigt[0] = E_gl[0, 0]
+    E_voigt[1] = E_gl[1, 1]
+    E_voigt[2] = E_gl[2, 2]
+    E_voigt[3] = 2.0 * E_gl[0, 1]
+    E_voigt[4] = 2.0 * E_gl[1, 2]
+    E_voigt[5] = 2.0 * E_gl[2, 0]
+
+    return E_voigt, F_loc, detF
+
 
 _GP_GAUSS = np.array([-1.0 / np.sqrt(3.0), 1.0 / np.sqrt(3.0)], dtype=np.float64)
 
@@ -401,15 +448,14 @@ def compute_c3d8_hybrid_element_umat_numba(
     if anti_inversion_on and J_vol < min_det_f:
         return np.zeros(24, dtype=np.float64), np.zeros((24, 24), dtype=np.float64), 1
 
-    # Distortion control barrier (Abaqus energy penalty formulation: J < j_crit)
+    # Distortion control barrier (Abaqus energy penalty formulation: J < j_crit, scaled by shear modulus mu)
     p_dist = 0.0
     c_dist = 0.0
     if distortion_control_on and J_vol < j_crit:
-        j_eff = max(J_vol, 1e-4)
-        k_dist = K
-        # Psi_dist = 0.5 * k_dist * ((j_crit - j_eff) / j_eff)**2
-        # p_dist = k_dist * j_crit * (j_crit - j_eff) / j_eff^3
-        # C_dist = k_dist * j_crit * (2 * j_crit - j_eff) / j_eff^4
+        if J_vol <= 0.05:
+            return np.zeros(24, dtype=np.float64), np.zeros((24, 24), dtype=np.float64), 1
+        j_eff = max(J_vol, 0.05)
+        k_dist = mu
         p_dist = k_dist * j_crit * (j_crit - j_eff) / (j_eff * j_eff * j_eff)
         c_dist = k_dist * j_crit * (3.0 * j_crit - 2.0 * j_eff) / (j_eff * j_eff * j_eff * j_eff)
 
@@ -501,12 +547,13 @@ def compute_c3d8_hybrid_element_umat_numba(
                     strain_bar[1] += eps_vol_mean / 3.0
                     strain_bar[2] += eps_vol_mean / 3.0
                     sdv_gp = sdvs[gp_idx] if sdvs.shape[0] > gp_idx else np.zeros(0, dtype=np.float64)
-                    vol_ratio = 1.0 + eps_vol_mean
-                    I_3x3 = np.eye(3, dtype=np.float64)
+
+                    E_gl_gp, F_loc_gp, detF_loc_gp = _hencky_to_green_gl_numba(strain_bar)
 
                     stress_bar, C_tangent, sdv_gp_new, mat_err = material_dispatch_3d(
-                        mat_type, props, sdv_gp, strain_bar, I_3x3, vol_ratio, dt
+                        mat_type, props, sdv_gp, E_gl_gp, F_loc_gp, detF_loc_gp, dt
                     )
+
                     if sdvs.shape[0] > gp_idx:
                         sdvs[gp_idx] = sdv_gp_new
 
@@ -540,14 +587,12 @@ def compute_c3d8_hybrid_element_umat_numba(
                     # suite currently exercises); a general anisotropic
                     # MAT_CUSTOM_ELASTIC would need a full P@C@P deviatoric
                     # projection instead, not implemented here.
-                    C_dev = np.zeros((6, 6), dtype=np.float64)
+                    P_dev = np.eye(6, dtype=np.float64)
                     for r in range(3):
                         for c in range(3):
-                            C_dev[r, c] = -(2.0 / 3.0) * mu
-                        C_dev[r, r] += 2.0 * mu
-                    C_dev[3, 3] = mu
-                    C_dev[4, 4] = mu
-                    C_dev[5, 5] = mu
+                            P_dev[r, c] -= 1.0 / 3.0
+                    C_dev = P_dev @ C_tangent @ P_dev
+
                 
                 if stress_init.shape[0] == 8:
                     for i in range(6):

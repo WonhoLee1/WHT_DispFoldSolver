@@ -62,13 +62,26 @@ def _extract_corotational_frame_quad2d(coords: np.ndarray, u_elem: np.ndarray):
         [-sin_th, cos_th]
     ], dtype=np.float64)
 
-    # Local deformational displacement: u_loc = R @ x_curr - coords
+    # Centroid subtraction to rotate relative to element center
+    xc_ref0 = 0.25 * (coords[0, 0] + coords[1, 0] + coords[2, 0] + coords[3, 0])
+    xc_ref1 = 0.25 * (coords[0, 1] + coords[1, 1] + coords[2, 1] + coords[3, 1])
+
+    xc_cur0 = 0.25 * (x_curr[0, 0] + x_curr[1, 0] + x_curr[2, 0] + x_curr[3, 0])
+    xc_cur1 = 0.25 * (x_curr[0, 1] + x_curr[1, 1] + x_curr[2, 1] + x_curr[3, 1])
+
     u_loc = np.zeros(8, dtype=np.float64)
     for a in range(4):
-        xl_a = R[0, 0] * x_curr[a, 0] + R[0, 1] * x_curr[a, 1]
-        yl_a = R[1, 0] * x_curr[a, 0] + R[1, 1] * x_curr[a, 1]
-        u_loc[2 * a + 0] = xl_a - coords[a, 0]
-        u_loc[2 * a + 1] = yl_a - coords[a, 1]
+        dx_c0 = x_curr[a, 0] - xc_cur0
+        dx_c1 = x_curr[a, 1] - xc_cur1
+
+        dx_r0 = coords[a, 0] - xc_ref0
+        dx_r1 = coords[a, 1] - xc_ref1
+
+        xl_a = R[0, 0] * dx_c0 + R[0, 1] * dx_c1
+        yl_a = R[1, 0] * dx_c0 + R[1, 1] * dx_c1
+
+        u_loc[2 * a + 0] = xl_a - dx_r0
+        u_loc[2 * a + 1] = yl_a - dx_r1
 
     return R, u_loc, x_curr
 
@@ -128,12 +141,25 @@ def _extract_corotational_frame_tri6_2d(coords: np.ndarray, u_elem: np.ndarray):
         [-sin_th, cos_th]
     ], dtype=np.float64)
 
+    xc_ref0 = (coords[0, 0] + coords[1, 0] + coords[2, 0] + coords[3, 0] + coords[4, 0] + coords[5, 0]) / 6.0
+    xc_ref1 = (coords[0, 1] + coords[1, 1] + coords[2, 1] + coords[3, 1] + coords[4, 1] + coords[5, 1]) / 6.0
+
+    xc_cur0 = (x_curr[0, 0] + x_curr[1, 0] + x_curr[2, 0] + x_curr[3, 0] + x_curr[4, 0] + x_curr[5, 0]) / 6.0
+    xc_cur1 = (x_curr[0, 1] + x_curr[1, 1] + x_curr[2, 1] + x_curr[3, 1] + x_curr[4, 1] + x_curr[5, 1]) / 6.0
+
     u_loc = np.zeros(12, dtype=np.float64)
     for a in range(6):
-        xl_a = R[0, 0] * x_curr[a, 0] + R[0, 1] * x_curr[a, 1]
-        yl_a = R[1, 0] * x_curr[a, 0] + R[1, 1] * x_curr[a, 1]
-        u_loc[2 * a + 0] = xl_a - coords[a, 0]
-        u_loc[2 * a + 1] = yl_a - coords[a, 1]
+        dx_c0 = x_curr[a, 0] - xc_cur0
+        dx_c1 = x_curr[a, 1] - xc_cur1
+
+        dx_r0 = coords[a, 0] - xc_ref0
+        dx_r1 = coords[a, 1] - xc_ref1
+
+        xl_a = R[0, 0] * dx_c0 + R[0, 1] * dx_c1
+        yl_a = R[1, 0] * dx_c0 + R[1, 1] * dx_c1
+
+        u_loc[2 * a + 0] = xl_a - dx_r0
+        u_loc[2 * a + 1] = yl_a - dx_r1
 
     return R, u_loc, x_curr
 

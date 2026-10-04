@@ -145,52 +145,43 @@ class ModelBuilderResult:
 # ──────────────────────────────────────────────
 
 _ABAQUS_TO_DISPSOLVER_ELEM = {
-    "CPE4": "QUAD4",
-    "CPE4R": "QUAD4",
-    "CPE4H": "QUAD4",
-    "CPE4RH": "QUAD4",
-    "CPE4I": "QUAD4",
-    "CPE4IH": "QUAD4",
-    "CPE3": "TRIA3",
-    "CPS4": "QUAD4",   # plane stress (handled as QUAD4 for mesh)
-    "CPS3": "TRIA3",
+    "CPE4": "CPE4",
+    "CPE4R": "CPE4R",
+    "CPE4H": "CPE4H",
+    "CPE4RH": "CPE4RH",
+    "CPE4I": "CPE4I",
+    "CPE4IH": "CPE4IH",
+    "CPE3": "CPE3",
+    "CPS4": "CPS4",
+    "CPS3": "CPS3",
+    "CAX4": "CAX4",
+    "CAX4I": "CAX4I",
+    "CAX4H": "CAX4H",
+    "CAX4IH": "CAX4IH",
+    "CAX4R": "CAX4R",
+    "CAX4RH": "CAX4RH",
+    "CAX8": "CAX8",
+    "CAX8H": "CAX8H",
+    "CAX8R": "CAX8R",
+    "CAX8RH": "CAX8RH",
 }
 
 # Element type string → solver element_type mapping.
-#
-# CPE4H/CPE4I/CPE4IH/CPE4RH used to map to "Q4_HYBRID"/"Q4_EAS"/
-# "Q4_HYBRID_EAS"/"Q4_HYBRID_RH" -- names from the OLD linear-elastic-only
-# J2/corotational-hybrid element family (`q4_hybrid_jax.py`), not the real
-# finite-strain viscoelastic kernels this codebase now has for those exact
-# Abaqus names (`q4_visco_eas_jax.py`'s CPE4I/CPE4H/CPE4IH,
-# `q4_visco_hybrid_reduced_jax.py`'s CPE4RH). `dynamic.py`'s dispatch
-# tuples (`_VISCO_EAS_TYPES`/`_VISCO_HYBRID_TYPES`/`_VISCO_REDUCED_TYPES`)
-# key on the literal Abaqus names themselves ("CPE4I", "CPE4H", ...), so
-# routing through the OLD names here silently sent any Abaqus-.inp-loaded
-# CPE4H/CPE4I model through the wrong (linear-elastic, no Prony, no
-# pressure field for I) kernel instead -- found 2026-09-08 while wiring
-# CPE4RH. Not production-blocking (the ex12/gen_ex12_inp.py pipeline builds
-# `element_type_by_pid` directly in Python, bypassing this table entirely),
-# but a real bug for anyone loading an arbitrary Abaqus .inp through
-# `AbaqusModelBuilder` with these element names. Fixed to map to the
-# element's own literal name, matching how `dynamic.py` actually dispatches
-# it, rather than translating to a differently-named legacy element.
-#
-# NOT in this table, deliberately: "CPE4S"/"CPE4SH". They are not Abaqus
-# elements -- no Abaqus element applies selective reduced integration to
-# the SHEAR term (SRI in Abaqus is volumetric-only, and the complete
-# plane-strain library is CPE4/CPE4R/CPE4H/CPE4RH/CPE4I/CPE4IH plus the
-# CPE3/CPE6/CPE8 families, AUG 28.1.3). They used to map to this repo's
-# own invented `Q4_SRI`/`Q4_HYBRID_SRI` device, which meant a deck
-# written against a *different* solver's CPE4S would load silently and
-# run something else entirely. A deck naming an element that does not
-# exist must ERROR. See dev_log/plan_abaqus_spirit_element_refactor_20260911.md
-# 1.7 / 3.7.
 _ABAQUS_TO_SOLVER_ELEM_TYPE = {
     "CPE4H": "CPE4H",
     "CPE4RH": "CPE4RH",
     "CPE4IH": "CPE4IH",
     "CPE4I": "CPE4I",
+    "CAX4": "CAX4",
+    "CAX4I": "CAX4I",
+    "CAX4H": "CAX4H",
+    "CAX4IH": "CAX4IH",
+    "CAX4R": "CAX4R",
+    "CAX4RH": "CAX4RH",
+    "CAX8": "CAX8",
+    "CAX8H": "CAX8H",
+    "CAX8R": "CAX8R",
+    "CAX8RH": "CAX8RH",
 }
 
 # Public alias for the contract suite's name-integrity test.
@@ -537,15 +528,25 @@ class ModelBuilder:
                     elif "ARRUDA-BOYCE" in model_type or "ARRUDA BOYCE" in model_type:
                         mu = hyper.get("mu", 1.0)
                         lambda_m = hyper.get("lambda_m", 3.0)
-                        # abaqus_parser stores the compressibility param as
-                        # "D" (Abaqus data-row convention, mu/lambda_m/D),
-                        # not "K" directly -- convert like the NEO HOOKE
-                        # branch above (K = 2/D), or this silently falls
-                        # back to the 100.0 default every time.
                         D = hyper.get("D", 0.0)
                         K_val = 2.0 / D if D > 0 else 100.0
                         mat = ArrudaBoyce()
                         mat_params = {"mu": mu, "lambda_m": lambda_m, "K": K_val}
+                    elif "POLYNOMIAL" in model_type or "MOONEY" in model_type or "RIVLIN" in model_type or hyper.get("table"):
+                        table = hyper.get("table", ())
+                        if table and len(table[0]) >= 1:
+                            C10 = float(table[0][0])
+                            C01 = float(table[0][1]) if len(table[0]) >= 2 else 0.0
+                            D1 = float(table[0][2]) if len(table[0]) >= 3 else 0.0
+                        else:
+                            C10 = float(hyper.get("C10", 0.5))
+                            C01 = float(hyper.get("C01", 0.0))
+                            D1 = float(hyper.get("D1", 0.0))
+                        mu = 2.0 * (C10 + C01)
+                        nu = 0.4999
+                        E = 2.0 * (1.0 + nu) * mu
+                        mat = NeoHookean()
+                        mat_params = {"E": E, "nu": nu, "mu": mu, "lambda": 2.0 / D1 if D1 > 0 else 100.0 * mu}
                     else:
                         warnings.warn(f"Unknown hyperelastic model '{model_type}' — using NeoHookean")
                         mat = NeoHookean()

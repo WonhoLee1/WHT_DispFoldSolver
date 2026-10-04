@@ -1,0 +1,33 @@
+{
+  "inp_path": "D:\\PythonCodeStudy\\WHT_DispFoldSolver\\benchmark_inp\\official\\elasticsheet_cps8r_biderman.inp",
+  "model_name": "UNIAXIAL STRETCHING OF A RUBBER SHEET",
+  "dimension": 2,
+  "converged": true,
+  "wall_time_seconds": 0.20714974403381348,
+  "steps_executed": [
+    "Step-1"
+  ],
+  "step_results": [
+    {
+      "step_name": "Step-1",
+      "converged": true,
+      "wall_time": 0.19559621810913086
+    }
+  ],
+  "exported_files": [
+    "D:\\PythonCodeStudy\\WHT_DispFoldSolver\\benchmark_abaqus_compatibility\\output_elasticsheet_cps8r_biderman\\elasticsheet_cps8r_biderman_result.vtkhdf",
+    "D:\\PythonCodeStudy\\WHT_DispFoldSolver\\benchmark_abaqus_compatibility\\output_elasticsheet_cps8r_biderman\\elasticsheet_cps8r_biderman_result.vtu"
+  ],
+  "unsupported_keywords": [
+    "RESTART",
+    "EL PRINT",
+    "NODE PRINT",
+    "NODE FILE",
+    "ENERGY PRINT",
+    "ENERGY FILE"
+  ],
+  "warnings": [
+    "*EQUATION at line 46: term count 8 != declared 2 — kept as parsed",
+    "*EQUATION EQ_1: 8 terms parsed; penalty assembly connected"
+  ]
+}

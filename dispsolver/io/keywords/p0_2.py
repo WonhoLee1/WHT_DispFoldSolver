@@ -100,7 +100,7 @@ def _handle_dload(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
         elif ftype.startswith("P") or ftype.startswith("S"):
             faced.append(ftype)
             reader.model.Pressure(name=f"DLOAD_{elset}_{ftype}", createStepName=step_name,
-                                  region=elset, magnitude=mag, amplitude=amp)
+                                  region=elset, magnitude=mag, amplitude=amp, face=ftype)
             dload_names.append(f"DLOAD_{elset}_{ftype}")
         else:
             msg = f"*DLOAD face {ftype} on {elset} unsupported — skipped"
@@ -118,6 +118,34 @@ def _handle_dload(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
                    f"resolves global sets only (P2)")
             warnings.warn(msg)
             reader.warnings.append(msg)
+
+
+@GLOBAL_KEYWORD_REGISTRY.register("DSLOAD", valid_contexts={KeywordContext.STEP})
+def _handle_dsload(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
+    """Handle Abaqus *DSLOAD keyword (distributed surface loads, pressure)."""
+    if reader.current_step is None:
+        return
+    step_name = reader.current_step.name
+    amp = block.params.get("amplitude", None)
+    op = block.params.get("op", "MOD").upper()
+    if op == "NEW":
+        for load_name in list(reader.current_step.loads.keys()):
+            reader.current_step.deactivate_load(load_name)
+    rows = _parse_data_rows(block.data_lines, dtype=str)
+    for r in rows:
+        if len(r) < 3:
+            continue
+        surf_name = str(r[0])
+        ltype = str(r[1]).upper()
+        mag = float(r[2])
+        if ltype in ("P", "HP", "PN"):
+            reader.model.Pressure(
+                name=f"DSLOAD_{surf_name}_{ltype}",
+                createStepName=step_name,
+                region=surf_name,
+                magnitude=mag,
+                amplitude=amp,
+            )
 
 
 @GLOBAL_KEYWORD_REGISTRY.register("MPC", valid_contexts={KeywordContext.GLOBAL, KeywordContext.ASSEMBLY})
@@ -183,9 +211,6 @@ def _handle_coupling(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     surf = block.params.get("surface", None)
     reader.model.KinematicCoupling(name=name, refPoint=ref, surface=surf)
     reader.current_coupling = {"name": name}
-    msg = f"*COUPLING {name} parsed and stored; solver assembly not connected"
-    warnings.warn(msg)
-    reader.warnings.append(msg)
 
 
 def _finalize_coupling(reader: AbaqusInputReader, block: AbaqusKeywordBlock, kind: str):
@@ -212,9 +237,6 @@ def _finalize_coupling(reader: AbaqusInputReader, block: AbaqusKeywordBlock, kin
         reader.model.KinematicCoupling(name=name, refPoint=prev.ref_point, surface=prev.surface, **flags)
     else:
         reader.model.DistributingCoupling(name=name, refPoint=prev.ref_point, surface=prev.surface, **flags)
-    msg = f"*{kind} {name} parsed and stored; solver assembly not connected"
-    warnings.warn(msg)
-    reader.warnings.append(msg)
 
 
 @GLOBAL_KEYWORD_REGISTRY.register("KINEMATIC", valid_contexts={KeywordContext.GLOBAL, KeywordContext.ASSEMBLY})
@@ -240,13 +262,25 @@ def _handle_distributing_coupling(reader: AbaqusInputReader, block: AbaqusKeywor
 def _direct_coupling(reader: AbaqusInputReader, block: AbaqusKeywordBlock, kind: str):
     name = block.params.get("constraint name", block.params.get("name", f"{kind}_CPL_{len(reader.model.constraints) + 1}"))
     ref = block.params.get("ref node", block.params.get("ref_node", None))
-    surf = block.params.get("surface", block.params.get("elset", None))
+    surf = block.params.get("surface", None)
+    
+    elset_param = block.params.get("elset", None)
+    if ref is None and elset_param is not None:
+        ref = elset_param
+        
+    if surf is None and block.data_lines:
+        first_line = block.data_lines[0].strip()
+        if first_line:
+            tokens = [t.strip() for t in first_line.replace(",", " ").split() if t.strip()]
+            if tokens:
+                surf = tokens[0]
+
     if kind == "KINEMATIC":
         reader.model.KinematicCoupling(name=name, refPoint=ref, surface=surf)
     else:
         reader.model.DistributingCoupling(name=name, refPoint=ref, surface=surf)
     reader.current_coupling = {"name": name}
-    msg = f"*{kind} COUPLING {name} parsed and stored; solver assembly not connected"
+    msg = f"*{kind} COUPLING {name} parsed and stored (ref={ref}, surf={surf})"
     warnings.warn(msg)
     reader.warnings.append(msg)
 

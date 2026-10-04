@@ -1,0 +1,36 @@
+{
+  "inp_path": "D:\\PythonCodeStudy\\WHT_DispFoldSolver\\benchmark_inp\\verification\\thickcylcreep1.inp",
+  "model_name": "MISES CREEP AND PLASTICITY OF THICK CYLINDER UNDER INTERNAL PRESSURE",
+  "dimension": 2,
+  "converged": false,
+  "wall_time_seconds": 8.433022737503052,
+  "steps_executed": [
+    "Step-1",
+    "Step-2"
+  ],
+  "step_results": [
+    {
+      "step_name": "Step-1",
+      "converged": false,
+      "wall_time": 6.797516822814941
+    },
+    {
+      "step_name": "Step-2",
+      "converged": false,
+      "wall_time": 1.6313469409942627
+    }
+  ],
+  "exported_files": [
+    "D:\\PythonCodeStudy\\WHT_DispFoldSolver\\benchmark_abaqus_compatibility\\output_thickcylcreep1\\thickcylcreep1_result.vtkhdf",
+    "D:\\PythonCodeStudy\\WHT_DispFoldSolver\\benchmark_abaqus_compatibility\\output_thickcylcreep1\\thickcylcreep1_result.vtu"
+  ],
+  "unsupported_keywords": [
+    "EL PRINT",
+    "EL FILE",
+    "NODE PRINT",
+    "VISCO"
+  ],
+  "warnings": [
+    "*DLOAD faces ['P4'] kept in load names; face-selective solver mapping is P1"
+  ]
+}

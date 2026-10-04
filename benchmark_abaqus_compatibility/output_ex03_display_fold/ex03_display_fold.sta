@@ -1,0 +1,18 @@
+====================================================================================================
+ WHT_DispFoldSolver - STATUS FILE (.sta)
+ Job Name  : ex03_display_fold
+ Date/Time : 2026-09-27 12:39:03
+ Dimension : 2D Continuum Model
+====================================================================================================
+
+ STEP    INC   ATT   SEVERE   EQUIL    TOTAL TIME     STEP TIME   INC OF TIME      STATUS
+----------------------------------------------------------------------------------------------------
+    1      1     1        0       1        1.0000        1.0000   2.00000E-02   CONVERGED
+====================================================================================================
+ ANALYSIS SUMMARY:
+   TOTAL INCREMENTS             : 1
+   TOTAL NEWTON ITERATIONS      : 0
+   TOTAL CUTBACKS               : 0
+   TOTAL SEVERE DISCONTINUITIES : 0
+ STATUS: THE ANALYSIS HAS COMPLETED SUCCESSFULLY
+====================================================================================================

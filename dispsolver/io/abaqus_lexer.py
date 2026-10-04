@@ -31,7 +31,7 @@ class AbaqusKeywordBlock:
 # Regex patterns
 RE_COMMENT = re.compile(r"^\*\*")            # ** comment line
 RE_KEYWORD = re.compile(r"^\*([\w-]+(?:[ \t]+[\w-]+){0,2})"  # up to 3-word keywords
-                         r"(?:,\s*(.*))?", re.IGNORECASE | re.MULTILINE)
+                         r"(?:\s*,\s*(.*))?", re.IGNORECASE | re.MULTILINE)
 RE_PARAM   = re.compile(r"(\w[\w.]*(?:\s+[\w.]+)*)\s*=\s*(\"[^\"]*\"|'[^']*'|[^,]*)")
 
 # Blocks whose data rows are free lists/pairs: a trailing comma continues
@@ -183,7 +183,7 @@ def tokenize(filepath: str) -> List[AbaqusKeywordBlock]:
     # Strategy: find all *KEYWORD lines, split text at those positions
     keyword_positions = []
     for m in RE_KEYWORD.finditer(text):
-        keyword_positions.append((m.start(), m.group(1), m.group(2) or ""))
+        keyword_positions.append((m.start(), m.group(1).strip(), m.group(2) or ""))
 
     blocks: List[AbaqusKeywordBlock] = []
 

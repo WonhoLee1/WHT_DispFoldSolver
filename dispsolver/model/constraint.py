@@ -117,12 +117,9 @@ class Coupling(AssemblableConstraint):
     - DISTRIBUTING: Coupled nodes follow the weighted average motion of the RP
       without artificial stiffening of the coupled surface (RBE3).
     """
-    ref_point: Union[str, int, Sequence[float], Any]
-    surface: Union[str, Any]  # Coupled surface/node set
+    ref_point: Union[str, int, Sequence[float], Any] = None
+    surface: Union[str, Any] = None  # Coupled surface/node set
     coupling_type: str = "KINEMATIC"  # "KINEMATIC" or "DISTRIBUTING"
-
-    def assemble(self, u_vec: np.ndarray) -> tuple[np.ndarray, tuple[np.ndarray, np.ndarray, np.ndarray], bool]:
-        raise NotImplementedError(f"Assembly for {self.coupling_type} Coupling is not yet implemented.")
     influence_radius: Optional[float] = None
     u1: bool = True
     u2: bool = True
@@ -131,6 +128,144 @@ class Coupling(AssemblableConstraint):
     ur2: bool = True
     ur3: bool = True
     weighting_method: str = "UNIFORM"  # "UNIFORM", "LINEAR", "QUADRATIC"
+    _rp_idx: Optional[int] = field(default=None, repr=False)
+    _slave_indices: List[int] = field(default_factory=list, repr=False)
+    _dim: int = field(default=2, repr=False)
+    _bound: bool = field(default=False, repr=False)
+
+    def bind(self, nid_to_idx: dict, global_nsets: dict, node_local_to_global: dict, dim: int, global_elsets: dict = None, elem_conn_0based: np.ndarray = None) -> bool:
+        """Resolve RP reference node and slave node set indices."""
+        rp_idx = None
+        ref_str = str(self.ref_point) if self.ref_point is not None else ""
+        if ref_str.isdigit():
+            ref_int = int(ref_str)
+            if ref_int in nid_to_idx:
+                rp_idx = nid_to_idx[ref_int]
+            else:
+                matches = [g for (inst, nid), g in node_local_to_global.items() if int(nid) == ref_int]
+                if matches and matches[0] in nid_to_idx:
+                    rp_idx = nid_to_idx[matches[0]]
+        if rp_idx is None and ref_str:
+            arr = global_nsets.get(ref_str)
+            if arr is None:
+                for k, v in global_nsets.items():
+                    if k.split(".")[-1].upper() == ref_str.upper():
+                        arr = v
+                        break
+            if arr is not None and len(arr) > 0:
+                rp_idx = int(arr[0])
+            elif global_elsets is not None:
+                el_arr = global_elsets.get(ref_str)
+                if el_arr is None:
+                    for k, v in global_elsets.items():
+                        if k.split(".")[-1].upper() == ref_str.upper():
+                            el_arr = v
+                            break
+                if el_arr is not None and len(el_arr) > 0 and elem_conn_0based is not None:
+                    e_idx = int(el_arr[0])
+                    if e_idx < len(elem_conn_0based):
+                        rp_idx = int(elem_conn_0based[e_idx][0])
+
+        if rp_idx is None:
+            return False
+
+        slave_indices = []
+        surf_str = str(self.surface) if self.surface is not None else ""
+        if surf_str:
+            arr = global_nsets.get(surf_str)
+            if arr is None:
+                for k, v in global_nsets.items():
+                    if k.split(".")[-1].upper() == surf_str.upper():
+                        arr = v
+                        break
+            if arr is not None:
+                for raw_id in np.asarray(arr).ravel().tolist():
+                    s_idx = int(raw_id)
+                    if s_idx != rp_idx and s_idx not in slave_indices:
+                        slave_indices.append(s_idx)
+            elif global_elsets is not None and elem_conn_0based is not None:
+                el_arr = global_elsets.get(surf_str)
+                if el_arr is None:
+                    for k, v in global_elsets.items():
+                        if k.split(".")[-1].upper() == surf_str.upper():
+                            el_arr = v
+                            break
+                if el_arr is not None:
+                    for e_idx in np.asarray(el_arr).ravel().tolist():
+                        if int(e_idx) < len(elem_conn_0based):
+                            for n_idx in elem_conn_0based[int(e_idx)]:
+                                if n_idx >= 0 and int(n_idx) != rp_idx and int(n_idx) not in slave_indices:
+                                    slave_indices.append(int(n_idx))
+
+        if len(slave_indices) == 0:
+            self._bound = False
+            return False
+
+        self._rp_idx = rp_idx
+        self._slave_indices = slave_indices
+        self._dim = dim
+        self._bound = True
+        return True
+
+    def assemble(self, u_vec: np.ndarray) -> tuple[np.ndarray, tuple[np.ndarray, np.ndarray, np.ndarray], bool]:
+        """Penalty assembly of kinematic (RBE2) or distributing (RBE3) coupling."""
+        n_dof = len(u_vec)
+        f_c = np.zeros(n_dof, dtype=np.float64)
+        if not getattr(self, "_bound", False) or not hasattr(self, "_rp_idx") or self._rp_idx is None:
+            return f_c, (np.zeros(0, dtype=np.int32), np.zeros(0, dtype=np.int32), np.zeros(0, dtype=np.float64)), False
+
+        k = 1e7
+        dim = self._dim
+        rp_idx = self._rp_idx
+        slave_indices = self._slave_indices
+        n_s = len(slave_indices)
+        if n_s == 0:
+            return f_c, (np.zeros(0, dtype=np.int32), np.zeros(0, dtype=np.int32), np.zeros(0, dtype=np.float64)), False
+
+        rows_l, cols_l, data_l = [], [], []
+
+        if str(self.coupling_type).upper() == "KINEMATIC":
+            for s_idx in slave_indices:
+                for d in range(dim):
+                    dof_rp = rp_idx * dim + d
+                    dof_s = s_idx * dim + d
+                    if dof_s >= n_dof or dof_rp >= n_dof:
+                        continue
+                    
+                    diff = u_vec[dof_s] - u_vec[dof_rp]
+                    f_c[dof_s] += k * diff
+                    f_c[dof_rp] -= k * diff
+
+                    for r, c, val in [
+                        (dof_s, dof_s, k),
+                        (dof_s, dof_rp, -k),
+                        (dof_rp, dof_s, -k),
+                        (dof_rp, dof_rp, k)
+                    ]:
+                        rows_l.append(r)
+                        cols_l.append(c)
+                        data_l.append(val)
+
+        else:
+            w = 1.0 / n_s
+            for d in range(dim):
+                dof_rp = rp_idx * dim + d
+                dofs = [s_idx * dim + d for s_idx in slave_indices if (s_idx * dim + d) < n_dof] + [dof_rp]
+                if dof_rp >= n_dof:
+                    continue
+                coeffs = [w] * (len(dofs) - 1) + [-1.0]
+
+                r = sum(c_i * u_vec[d_i] for d_i, c_i in zip(dofs, coeffs))
+                for d_i, c_i in zip(dofs, coeffs):
+                    f_c[d_i] += k * r * c_i
+
+                for i, d_i in enumerate(dofs):
+                    for j, d_j in enumerate(dofs):
+                        rows_l.append(d_i)
+                        cols_l.append(d_j)
+                        data_l.append(k * coeffs[i] * coeffs[j])
+
+        return f_c, (np.array(rows_l, dtype=np.int32), np.array(cols_l, dtype=np.int32), np.array(data_l, dtype=np.float64)), False
 
 
 @dataclass
@@ -156,7 +291,7 @@ class EquationConstraint(AssemblableConstraint):
     """
     terms: List[Tuple[int, int, float]] = field(default_factory=list)
     constant: float = 0.0
-    penalty_stiffness: float = 1e6
+    penalty_stiffness: float = 1e9
     _dofs: List[int] = field(default_factory=list, repr=False)
     _coeffs: List[float] = field(default_factory=list, repr=False)
     _bound: bool = field(default=False, repr=False)
@@ -181,12 +316,15 @@ class EquationConstraint(AssemblableConstraint):
                     dofs.append(int(idx) * dim + int(dof))
                     coeffs.append(float(coeff))
             else:
-                matches = [g for (inst, nid), g in node_local_to_global.items()
-                           if int(nid) == int(ref)]
-                if len(matches) != 1:
-                    return False
-                gid = matches[0]
-                idx = nid_to_idx.get(gid)
+                idx = None
+                if int(ref) in nid_to_idx:
+                    idx = nid_to_idx[int(ref)]
+                else:
+                    matches = [g for (inst, nid), g in node_local_to_global.items()
+                               if int(nid) == int(ref)]
+                    if len(matches) == 1:
+                        gid = matches[0]
+                        idx = nid_to_idx.get(gid)
                 if idx is None or dof < 0 or dof >= dim:
                     return False
                 dofs.append(int(idx) * dim + int(dof))

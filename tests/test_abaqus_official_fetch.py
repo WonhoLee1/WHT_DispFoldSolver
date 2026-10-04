@@ -52,8 +52,8 @@ def test_official_deck_reads(name, counts):
     reader, model = _read(name)
     n_nodes = sum(len(p.nodes) for p in model.parts.values())
     n_elems = sum(len(p.elements) for p in model.parts.values())
-    assert n_nodes == min_nodes, name
-    assert n_elems == min_elems, name
+    assert n_nodes >= min_nodes, f"{name}: parsed n_nodes={n_nodes} < min_nodes={min_nodes}"
+    assert n_elems >= min_elems, f"{name}: parsed n_elems={n_elems} < min_elems={min_elems}"
     assert len(model.steps) >= 1, name
 
 

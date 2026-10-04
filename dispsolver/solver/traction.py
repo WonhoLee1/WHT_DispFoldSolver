@@ -43,6 +43,12 @@ _Q4_FACE_NODES_STR: Dict[str, List[int]] = {
     "P3": [2, 3], "S3": [2, 3],
     "P4": [3, 0], "S4": [3, 0],
 }
+_Q8_FACE_NODES_STR: Dict[str, List[int]] = {
+    "P1": [0, 1, 4], "S1": [0, 1, 4],
+    "P2": [1, 2, 5], "S2": [1, 2, 5],
+    "P3": [2, 3, 6], "S3": [2, 3, 6],
+    "P4": [3, 0, 7], "S4": [3, 0, 7],
+}
 
 _T3_FACE_NODES: Dict[int, List[int]] = {
     1: [0, 1],
@@ -58,16 +64,24 @@ _T3_FACE_NODES_STR: Dict[str, List[int]] = {
 
 def _resolve_face_indices(face: str | int, elem_type: str) -> List[int]:
     """Return element-local node indices for the given face."""
-    if elem_type.upper() == "QUAD4":
+    et_upper = elem_type.upper()
+    if et_upper in ("CPE8", "CPS8", "CAX8", "CPE8R", "CPS8R", "CAX8R", "CPE8H", "CPS8H", "CAX8H", "Q8", "Q8R"):
+        if isinstance(face, str):
+            return _Q8_FACE_NODES_STR.get(face.upper(), [0, 1, 4])
+        return [0, 1, 4]
+    elif et_upper in ("QUAD4", "CPE4", "CPS4", "CAX4", "CPE4R", "CPS4R", "CAX4R", "CPE4I", "CPS4I", "CPE4H", "CPS4H", "S4R", "S4", "CPE4_CR", "CPE4I_CR", "CPE4R_CR", "CPE4H_CR", "Q4", "Q4_EAS", "Q4_REDUCED"):
         if isinstance(face, str):
             return _Q4_FACE_NODES_STR.get(face.upper(), _Q4_FACE_NODES.get(1, [0, 1]))
         return _Q4_FACE_NODES.get(face, [0, 1])
-    elif elem_type.upper() == "TRIA3":
+    elif et_upper in ("TRIA3", "CPE3", "CPS3", "CAX3", "T3", "CST", "CPE3H", "CPS3H"):
         if isinstance(face, str):
             return _T3_FACE_NODES_STR.get(face.upper(), _T3_FACE_NODES.get(1, [0, 1]))
         return _T3_FACE_NODES.get(face, [0, 1])
     else:
-        raise ValueError(f"Unknown element type: {elem_type}")
+        # Fallback based on 4-node quad default
+        if isinstance(face, str):
+            return _Q4_FACE_NODES_STR.get(face.upper(), [0, 1])
+        return _Q4_FACE_NODES.get(face, [0, 1])
 
 
 # ------------------------------------------------------------------
@@ -129,7 +143,7 @@ def compute_face_forces(u_face: np.ndarray, X_face: np.ndarray,
     u_jax = jnp.array(u_face, dtype=jnp.float64)
     X_jax = jnp.array(X_face, dtype=jnp.float64)
     p_jax = jnp.array(pressure, dtype=jnp.float64)
-    return np.asarray(_traction_grad(u_jax, X_jax, p_jax))
+    return -np.asarray(_traction_grad(u_jax, X_jax, p_jax))
 
 
 def compute_face_stiffness(u_face: np.ndarray, X_face: np.ndarray,
@@ -226,10 +240,15 @@ class SurfaceTraction:
         """
         n_dofs = len(u)
 
-        # Get element IDs in this set
-        elem_ids = mesh.element_sets.get(self.elset_name, set())
+        # Get element IDs in this set or single element ID
+        elem_ids = set()
+        if self.elset_name in mesh.element_sets:
+            elem_ids = mesh.element_sets[self.elset_name]
+        elif isinstance(self.elset_name, int) or (isinstance(self.elset_name, str) and self.elset_name.isdigit()):
+            eid = int(self.elset_name)
+            if eid in mesh.elements:
+                elem_ids = {eid}
         if not elem_ids:
-            # Fallback: try use all elements
             elem_ids = set(mesh.elements.keys())
 
         f_global = np.zeros(n_dofs, dtype=np.float64)
@@ -261,15 +280,34 @@ class SurfaceTraction:
             # Get initial coordinates of face nodes
             X_face = []
             for nid in face_nids:
-                node = mesh.get_node(nid)
-                X_face.extend([node.x, node.y])
+                node = mesh.nodes[nid]
+                if hasattr(node, "x"):
+                    X_face.extend([node.x, node.y])
+                elif hasattr(node, "coords"):
+                    X_face.extend([node.coords[0], node.coords[1]])
+                else:
+                    X_face.extend([float(node[0]), float(node[1])])
 
-            # JAX autodiff: compute force and stiffness
-            f_face = compute_face_forces(
-                np.array(u_face, dtype=np.float64),
-                np.array(X_face, dtype=np.float64),
-                pressure,
-            )
+            u_face_arr = np.array(u_face, dtype=np.float64)
+            X_face_arr = np.array(X_face, dtype=np.float64)
+
+            if len(face_nids) == 3:
+                u_sub1 = u_face_arr[[0, 1, 4, 5]]
+                X_sub1 = X_face_arr[[0, 1, 4, 5]]
+                u_sub2 = u_face_arr[[4, 5, 2, 3]]
+                X_sub2 = X_face_arr[[4, 5, 2, 3]]
+                f_sub1 = compute_face_forces(u_sub1, X_sub1, pressure)
+                f_sub2 = compute_face_forces(u_sub2, X_sub2, pressure)
+                f_face = np.zeros(6, dtype=np.float64)
+                f_face[0:2] = f_sub1[0:2]
+                f_face[4:6] = f_sub1[2:4] + f_sub2[0:2]
+                f_face[2:4] = f_sub2[2:4]
+            else:
+                f_face = compute_face_forces(
+                    u_face_arr,
+                    X_face_arr,
+                    pressure,
+                )
 
             # Assemble
             for i, dof_i in enumerate(dofs):

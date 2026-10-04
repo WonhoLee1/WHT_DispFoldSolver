@@ -8,6 +8,7 @@ Calculates element-to-global scatter maps for in-place CSR/COO matrix updates.
 import numpy as np
 from numba import njit, prange
 from scipy.sparse import coo_matrix, csr_matrix
+from dispsolver._jit_cache import njit_cached
 
 
 def build_global_topology(num_dofs: int, elem_conn: np.ndarray):
@@ -33,13 +34,14 @@ def build_global_topology(num_dofs: int, elem_conn: np.ndarray):
     cols = np.zeros(n_entries, dtype=np.int32)
     
     if n_elems > 0:
-        _populate_topology(elem_conn, rows, cols)
+        actual_entries = _populate_topology(elem_conn, rows, cols)
+        return rows[:actual_entries], cols[:actual_entries]
     
     return rows, cols
 
 
 @njit(fastmath=True)
-def _populate_topology(elem_conn: np.ndarray, rows: np.ndarray, cols: np.ndarray):
+def _populate_topology(elem_conn: np.ndarray, rows: np.ndarray, cols: np.ndarray) -> int:
     n_elems = elem_conn.shape[0]
     n_nodes = elem_conn.shape[1]
     n_dofs = n_nodes * 3
@@ -50,15 +52,28 @@ def _populate_topology(elem_conn: np.ndarray, rows: np.ndarray, cols: np.ndarray
         nodes_e = elem_conn[e]
         for i in range(n_nodes):
             n = nodes_e[i]
-            dofs_e[3*i + 0] = 3 * n + 0
-            dofs_e[3*i + 1] = 3 * n + 1
-            dofs_e[3*i + 2] = 3 * n + 2
+            if n >= 0:
+                dofs_e[3*i + 0] = 3 * n + 0
+                dofs_e[3*i + 1] = 3 * n + 1
+                dofs_e[3*i + 2] = 3 * n + 2
+            else:
+                dofs_e[3*i + 0] = -1
+                dofs_e[3*i + 1] = -1
+                dofs_e[3*i + 2] = -1
             
         for i in range(n_dofs):
+            r = dofs_e[i]
+            if r < 0:
+                continue
             for j in range(n_dofs):
-                rows[idx] = dofs_e[i]
-                cols[idx] = dofs_e[j]
+                c = dofs_e[j]
+                if c < 0:
+                    continue
+                rows[idx] = r
+                cols[idx] = c
                 idx += 1
+
+    return idx
 
 
 @njit(fastmath=True)
@@ -73,9 +88,10 @@ def scatter_f_int_3d(f_elems: np.ndarray, elem_conn: np.ndarray, f_int_global: n
         nodes_e = elem_conn[e]
         for i in range(n_nodes):
             n = nodes_e[i]
-            f_int_global[3 * n + 0] += f_elems[e, 3 * i + 0]
-            f_int_global[3 * n + 1] += f_elems[e, 3 * i + 1]
-            f_int_global[3 * n + 2] += f_elems[e, 3 * i + 2]
+            if n >= 0:
+                f_int_global[3 * n + 0] += f_elems[e, 3 * i + 0]
+                f_int_global[3 * n + 1] += f_elems[e, 3 * i + 1]
+                f_int_global[3 * n + 2] += f_elems[e, 3 * i + 2]
 
 
 @njit(parallel=True, fastmath=True)
@@ -93,33 +109,88 @@ def scatter_k_csr_numba(k_elems: np.ndarray, data_offsets: np.ndarray, csr_data:
                 csr_data[off] += k_elems[e, i, j]
 
 
-@njit(fastmath=True)
-def apply_dirichlet_bcs_csr_numba(
+@njit_cached
+def build_coo_to_csr_mapping(rows: np.ndarray, cols: np.ndarray, indptr: np.ndarray, indices: np.ndarray) -> np.ndarray:
+    """
+    Build a 1D mapping array of length len(rows) where mapping[k] is the index in csr.data
+    corresponding to (rows[k], cols[k]).
+    Uses binary search within the row's column index slice indices[indptr[r]:indptr[r+1]].
+    """
+    N = len(rows)
+    mapping = np.empty(N, dtype=np.int32)
+    for k in range(N):
+        r = rows[k]
+        c = cols[k]
+        start = indptr[r]
+        end = indptr[r + 1]
+        low = start
+        high = end - 1
+        found = -1
+        while low <= high:
+            mid = (low + high) // 2
+            mid_val = indices[mid]
+            if mid_val == c:
+                found = mid
+                break
+            elif mid_val < c:
+                low = mid + 1
+            else:
+                high = mid - 1
+        mapping[k] = found
+    return mapping
+
+
+@njit_cached(fastmath=True)
+def scatter_k_csr_direct(data: np.ndarray, mapping: np.ndarray, csr_data: np.ndarray):
+    """
+    Accumulates flat element stiffness data into pre-allocated CSR data array using precomputed 1D mapping.
+    Zero memory allocation, zero sorting/re-indexing.
+    """
+    csr_data.fill(0.0)
+    for k in range(len(data)):
+        m = mapping[k]
+        if m >= 0:
+            csr_data[m] += data[k]
+
+
+@njit_cached(parallel=True, fastmath=True)
+def apply_dirichlet_bcs_csr_fast(
     csr_data: np.ndarray,
     indptr: np.ndarray,
     indices: np.ndarray,
-    rhs: np.ndarray,
-    fixed_dofs: np.ndarray,
-    fixed_vals: np.ndarray
+    is_fixed: np.ndarray,
+    penalty: float
 ):
     """
-    Applies Dirichlet boundary conditions directly in-place on CSR data matrix and RHS vector.
-    Zeros out rows of fixed DOFs and sets diagonal element to 1.0.
+    Applies Dirichlet boundary conditions directly in-place on CSR data matrix.
+    Zeros out rows and columns of fixed DOFs to preserve matrix symmetry, sets
+    diagonal elements to penalty, and provides 1.0 on diagonal for isolated DOFs.
     """
-    n_fixed = len(fixed_dofs)
-    for k in range(n_fixed):
-        dof = fixed_dofs[k]
-        val = fixed_vals[k]
-        rhs[dof] = val
+    n_rows = len(indptr) - 1
+    for r in prange(n_rows):
+        r_fixed = is_fixed[r]
+        row_start = indptr[r]
+        row_end = indptr[r + 1]
         
-        row_start = indptr[dof]
-        row_end = indptr[dof + 1]
+        diag_p = -1
+        row_has_nonzero = False
+        
         for p in range(row_start, row_end):
-            col = indices[p]
-            if col == dof:
-                csr_data[p] = 1.0
+            c = indices[p]
+            if c == r:
+                diag_p = p
+            if r_fixed or is_fixed[c]:
+                if r == c:
+                    csr_data[p] = penalty
+                    row_has_nonzero = True
+                else:
+                    csr_data[p] = 0.0
             else:
-                csr_data[p] = 0.0
+                if csr_data[p] != 0.0:
+                    row_has_nonzero = True
+                    
+        if not r_fixed and not row_has_nonzero and diag_p != -1:
+            csr_data[diag_p] = 1.0
 
 
 def compute_element_coloring(elem_conn: np.ndarray, num_nodes: int):

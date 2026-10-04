@@ -1,0 +1,23 @@
+{
+  "inp_path": "D:\\PythonCodeStudy\\WHT_DispFoldSolver\\benchmark_inp\\contact_2block_2d.inp",
+  "model_name": "Two-block contact analogue (CPE4, CONTACT PAIR)",
+  "dimension": 2,
+  "converged": true,
+  "wall_time_seconds": 0.025007247924804688,
+  "steps_executed": [
+    "S"
+  ],
+  "step_results": [
+    {
+      "step_name": "S",
+      "converged": true,
+      "wall_time": 0.021360397338867188
+    }
+  ],
+  "exported_files": [
+    "D:\\PythonCodeStudy\\WHT_DispFoldSolver\\benchmark_abaqus_compatibility\\output_contact_2block_2d\\contact_2block_2d_result.vtkhdf",
+    "D:\\PythonCodeStudy\\WHT_DispFoldSolver\\benchmark_abaqus_compatibility\\output_contact_2block_2d\\contact_2block_2d_result.vtu"
+  ],
+  "unsupported_keywords": [],
+  "warnings": []
+}

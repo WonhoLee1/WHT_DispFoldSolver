@@ -273,7 +273,8 @@ def apply_nodal_transforms_to_element_group(
     is_non_identity = np.zeros(n_nodes, dtype=bool)
     I_dim = np.eye(dim, dtype=np.float64)
     for i in range(n_nodes):
-        if not np.allclose(node_transforms[i], I_dim):
+        R_i = node_transforms[i][:dim, :dim] if node_transforms[i].ndim == 2 else node_transforms[i]
+        if R_i.shape == (dim, dim) and not np.allclose(R_i, I_dim):
             is_non_identity[i] = True
 
     if not np.any(is_non_identity):
@@ -285,10 +286,13 @@ def apply_nodal_transforms_to_element_group(
             continue
 
         # Build element block transformation matrix T_e
-        T_e = np.zeros((n_dofs, n_dofs), dtype=np.float64)
-        for a in range(nodes_per_elem):
+        T_e = np.eye(n_dofs, dtype=np.float64)
+        n_block = min(nodes_per_elem, n_dofs // dim)
+        for a in range(n_block):
             n_idx = conn_e[a]
-            T_e[a * dim: a * dim + dim, a * dim: a * dim + dim] = node_transforms[n_idx]
+            R_node = node_transforms[n_idx][:dim, :dim] if node_transforms[n_idx].ndim == 2 else node_transforms[n_idx]
+            if R_node.shape == (dim, dim):
+                T_e[a * dim: a * dim + dim, a * dim: a * dim + dim] = R_node
 
         # Transform f_sub
         f_sub[e] = T_e.T @ f_sub[e]

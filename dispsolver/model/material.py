@@ -44,7 +44,7 @@ class Material:
         }
 
     def Elastic(self, table: Any = None, E: Optional[float] = None, nu: Optional[float] = None,
-                field_table: Any = None) -> None:
+                field_table: Any = None, type: str = "ISOTROPIC", flat_tokens: Any = None) -> None:
         """Abaqus-style Elastic property definition (supports table tuple or E, nu keywords).
 
         If table rows have 3 columns: ((E, nu, temp), ...), temperature dependence is activated.
@@ -52,24 +52,52 @@ class Material:
         (*ELASTIC, DEPENDENCIES=1) is activated instead. Temperature and field tables are
         mutually exclusive per call; pass at most one of table / field_table.
         """
+        type_upper = type.upper()
+        if E is not None and nu is not None:
+            self.elastic = (float(E), float(nu))
+            return
+
+        if flat_tokens is not None and len(flat_tokens) >= 6 and any(k in type_upper for k in ("ENGINEER", "LAMINA", "ORTHO", "ANISO")):
+            # Engineering constants / Orthotropic / Lamina / Anisotropic
+            E1 = float(flat_tokens[0])
+            E2 = float(flat_tokens[1]) if len(flat_tokens) > 1 else E1
+            E3 = float(flat_tokens[2]) if len(flat_tokens) > 2 else E2
+            nu12 = float(flat_tokens[3]) if len(flat_tokens) > 3 else 0.3
+            nu13 = float(flat_tokens[4]) if len(flat_tokens) > 4 else nu12
+            nu23 = float(flat_tokens[5]) if len(flat_tokens) > 5 else nu12
+            G12 = float(flat_tokens[6]) if len(flat_tokens) > 6 else 0.5 * E1 / (1.0 + nu12)
+            G13 = float(flat_tokens[7]) if len(flat_tokens) > 7 else G12
+            G23 = float(flat_tokens[8]) if len(flat_tokens) > 8 else G12
+
+            E_eff = (E1 + E2 + E3) / 3.0
+            nu_eff = (nu12 + nu13 + nu23) / 3.0
+            self.elastic = (E_eff, nu_eff)
+            self.extra_params["elastic_type"] = type_upper
+            self.extra_params["engineering_constants"] = (E1, E2, E3, nu12, nu13, nu23, G12, G13, G23)
+            return
+
         if field_table is not None:
             rows = list(field_table)
             self.elastic = (float(rows[0][0]), float(rows[0][1]))
             self.extra_params["field_elastic_table"] = [
                 (float(row[0]), float(row[1]), float(row[2])) for row in rows
+                if isinstance(row, (list, tuple)) and len(row) >= 3
             ]
             return
-        if E is not None and nu is not None:
-            self.elastic = (float(E), float(nu))
-        elif isinstance(table, (list, tuple)) and len(table) > 0:
+
+        if isinstance(table, (list, tuple)) and len(table) > 0:
             if isinstance(table[0], (list, tuple)):
-                self.elastic = (float(table[0][0]), float(table[0][1]))
-                if len(table[0]) >= 3:
+                E_val = float(table[0][0])
+                nu_val = float(table[0][1]) if len(table[0]) > 1 else 0.3
+                self.elastic = (E_val, nu_val)
+                if all(isinstance(row, (list, tuple)) and len(row) >= 3 for row in table):
                     self.extra_params["temp_elastic_table"] = [
                         (float(row[0]), float(row[1]), float(row[2])) for row in table
                     ]
             else:
-                self.elastic = (float(table[0]), float(table[1]))
+                E_val = float(table[0])
+                nu_val = float(table[1]) if len(table) > 1 else 0.3
+                self.elastic = (E_val, nu_val)
 
     def Plastic(self, table: Any, hardening: str = "ISOTROPIC", field_table: Any = None) -> None:
         """Abaqus-style Plastic property definition.
@@ -100,7 +128,10 @@ class Material:
                 self.mat_type = "TABULAR_PLASTIC"
                 self.extra_params["tabular_plastic"] = self.plastic
             elif hardening.upper() in ["KINEMATIC", "COMBINED"]:
+                self.mat_type = "J2_PLASTICITY"
                 self.extra_params["hardening_type"] = hardening.upper()
+            else:
+                self.mat_type = "J2_PLASTICITY"
 
     def DamageInitiation(self, type: str = "DUCTILE", table: Any = None, **kwargs) -> None:
         """Abaqus-style damage initiation (*DAMAGE INITIATION).

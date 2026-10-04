@@ -30,13 +30,14 @@ def build_global_topology_2d(num_dofs: int, elem_conn: np.ndarray):
     cols = np.zeros(n_entries, dtype=np.int32)
 
     if n_elems > 0:
-        _populate_topology_2d(elem_conn, rows, cols)
+        actual_entries = _populate_topology_2d(elem_conn, rows, cols)
+        return rows[:actual_entries], cols[:actual_entries]
 
     return rows, cols
 
 
 @njit(fastmath=True)
-def _populate_topology_2d(elem_conn: np.ndarray, rows: np.ndarray, cols: np.ndarray):
+def _populate_topology_2d(elem_conn: np.ndarray, rows: np.ndarray, cols: np.ndarray) -> int:
     n_elems = elem_conn.shape[0]
     n_nodes = elem_conn.shape[1]
     n_dofs = n_nodes * 2
@@ -47,15 +48,26 @@ def _populate_topology_2d(elem_conn: np.ndarray, rows: np.ndarray, cols: np.ndar
         nodes_e = elem_conn[e]
         for i in range(n_nodes):
             n = nodes_e[i]
-            dofs_e[2 * i + 0] = 2 * n + 0
-            dofs_e[2 * i + 1] = 2 * n + 1
+            if n >= 0:
+                dofs_e[2 * i + 0] = 2 * n + 0
+                dofs_e[2 * i + 1] = 2 * n + 1
+            else:
+                dofs_e[2 * i + 0] = -1
+                dofs_e[2 * i + 1] = -1
 
         for i in range(n_dofs):
             r = dofs_e[i]
+            if r < 0:
+                continue
             for j in range(n_dofs):
+                c = dofs_e[j]
+                if c < 0:
+                    continue
                 rows[idx] = r
-                cols[idx] = dofs_e[j]
+                cols[idx] = c
                 idx += 1
+
+    return idx
 
 
 @njit(fastmath=True)
@@ -69,5 +81,6 @@ def scatter_f_int_2d(f_elems: np.ndarray, elem_conn: np.ndarray, f_int_global: n
         nodes_e = elem_conn[e]
         for i in range(n_nodes):
             n = nodes_e[i]
-            f_int_global[2 * n + 0] += f_elems[e, 2 * i + 0]
-            f_int_global[2 * n + 1] += f_elems[e, 2 * i + 1]
+            if n >= 0:
+                f_int_global[2 * n + 0] += f_elems[e, 2 * i + 0]
+                f_int_global[2 * n + 1] += f_elems[e, 2 * i + 1]

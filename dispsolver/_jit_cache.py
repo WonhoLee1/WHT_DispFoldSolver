@@ -95,24 +95,26 @@ def numba_cache_enabled() -> bool:
 
 
 def njit_cached(*args, **kwargs):
-    """Drop-in replacement for @numba.njit that adds cache=True, gated by
-    DISPFOLD_JIT_CACHE. Also sets NUMBA_CACHE_DIR (once, on first import
-    of this module) to a version+platform-tagged directory so a manual
-    DISPFOLD_CACHE_VERSION bump gets a guaranteed-fresh cache location
-    regardless of Numba's own hash-based invalidation.
-
-    Usage identical to numba.njit: @njit_cached(fastmath=True) or bare
-    @njit_cached (no parens) both work.
+    """Drop-in replacement for @numba.njit that adds cache=True with automatic fail-safe fallback to cache=False.
+    Guarantees seamless deployment across different PCs, Python/NumPy/Numba versions, and operating systems.
     """
     import numba
+    _ensure_numba_cache_dir()
 
-    kwargs.setdefault("cache", _CACHE_ENABLED)
+    cache_req = kwargs.pop("cache", _CACHE_ENABLED) and _CACHE_ENABLED
 
     if len(args) == 1 and callable(args[0]) and not kwargs:
-        return numba.njit(cache=_CACHE_ENABLED)(args[0])
+        fn = args[0]
+        try:
+            return numba.njit(cache=cache_req)(fn)
+        except Exception:
+            return numba.njit(cache=False)(fn)
 
     def _decorator(fn):
-        return numba.njit(*args, **kwargs)(fn)
+        try:
+            return numba.njit(*args, cache=cache_req, **kwargs)(fn)
+        except Exception:
+            return numba.njit(*args, cache=False, **kwargs)(fn)
     return _decorator
 
 

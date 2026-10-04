@@ -224,4 +224,7 @@ mat_d.DamageEvolution(type="ENERGY_LINEAR", Gf=2.0, L=1.0)
 - `pytest tests/test_damage_ductile_jc.py tests/test_drucker_prager.py tests/test_van_der_waals.py tests/test_forming_limit.py` → **33 passed** (2026-09-21, 후속 회귀).
 - `pytest tests/test_concrete_dp.py tests/test_abaqus_reader_and_executor.py` → **15 passed** (2026-09-21, reader `_AbortParse` + CDP 제하조정 후).
 - `pytest tests/test_3d_mechanics_benchmarks.py` → **15 passed, 4 xfailed** (2026-09-21, MAT15 이후 3D 회귀).
+- `dispsolver/material3d/numba_materials.py` — `material_dispatch_2d` 신설 (2026-10-02, 2D CPE4I/CPE4 J2 탄소성 UMAT 및 일관 접선 강성 $C^{ep}_{3\times 3}$).
+- `tests/test_cpe4i_plasticity_2d.py` → **2 passed** (2026-10-02, 단일 CPE4I 요소 1축 인장 항복 및 경화 슬로프 2차 수렴성 검증).
+
 
