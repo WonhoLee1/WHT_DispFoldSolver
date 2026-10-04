@@ -789,6 +789,20 @@ class DynamicSolver3D:
         self.elem_controls[:, 3] = 1.0   # anti_inversion_barrier default ON
         self.elem_controls[:, 4] = 0.02  # min_det_f default 0.02
         
+        self._build_kernel_groups()
+
+        # Check if mesh or sections provide custom controls
+        if hasattr(self.mesh, "elem_controls") and self.mesh.elem_controls is not None:
+            self.elem_controls[:] = self.mesh.elem_controls
+
+    def _build_kernel_groups(self) -> None:
+        """Assign every element its assembly kernel from its type and the
+        CURRENT self.nlgeom (the small/large-deformation promotion), then build
+        the per-kernel connectivity and the sparsity pattern. Split out of
+        _setup_numba_topology so a step can re-run it when NLGEOM changes
+        without resetting materials, SDVs or initial stresses."""
+        nid_map = self.mesh.node_id_to_index()
+        elements_list = list(self.mesh.elements.values())
         # Classify element kernel groups with Material- & Kinematic-Adaptive NLGEOM Dispatch
         elem_kernel_indices: Dict[int, List[int]] = {}
         for idx, elem in enumerate(elements_list):
@@ -921,6 +935,11 @@ class DynamicSolver3D:
             for gk, indices in elem_kernel_indices.items()
             if gk[0] >= 0
         }
+        # element row -> kernel id: the result of the NLGEOM-dependent element
+        # promotion above. element_point_stress() dispatches on it, so anything
+        # that needs "the stress this element produces" follows the same
+        # small/large-deformation choice as the assembly.
+        self._row_kernel = {int(r): int(gk[0]) for gk, rows in self.elem_kernel_groups.items() for r in rows}
 
         self.elem_conn_groups = {}
         for gk, indices in self.elem_kernel_groups.items():
@@ -997,9 +1016,27 @@ class DynamicSolver3D:
             self.csr_data = None
             self.topo_to_csr_map = None
 
-        # Check if mesh or sections provide custom controls
-        if hasattr(self.mesh, "elem_controls") and self.mesh.elem_controls is not None:
-            self.elem_controls[:] = self.mesh.elem_controls
+        # Kernel 10 (C3D8 without NLGEOM) integrates ONE global C_mat_default for
+        # every element. That is only right if all of its elements share a
+        # single linear-elastic material equal to it; otherwise refuse instead
+        # of silently giving every element the same stiffness.
+        rows10 = [r for gk, rows in self.elem_kernel_groups.items() if gk[0] == 10 for r in rows]
+        if rows10 and getattr(self, "elem_mat_types", None) is not None:
+            bad = sorted({int(self.elem_mat_types[r]) for r in rows10} - {MAT_LINEAR_ELASTIC})
+            if bad:
+                raise NotImplementedError(
+                    "NLGEOM=NO: C3D8 elements run the small-strain linear kernel 10, which only "
+                    f"supports linear-elastic materials; found material types {bad}.")
+
+    @staticmethod
+    def _linear_elastic_C(E: float, nu: float) -> np.ndarray:
+        lam = E * nu / ((1.0 + nu) * (1.0 - 2.0 * nu))
+        mu = E / (2.0 * (1.0 + nu))
+        C = np.zeros((6, 6))
+        C[:3, :3] = lam
+        C[0, 0] = C[1, 1] = C[2, 2] = lam + 2.0 * mu
+        C[3, 3] = C[4, 4] = C[5, 5] = mu
+        return C
 
     def set_element_controls(
         self,
@@ -1275,10 +1312,23 @@ class DynamicSolver3D:
                             node_coords_all, sub_conn, u_eval, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls, elem_stress_init=sub_stress_init
                         )
                     elif k == 10:
+                        # Small-strain linear C3D8 (NLGEOM off). The kernel takes
+                        # ONE elasticity matrix, so assemble each linear-elastic
+                        # material separately with its own C -- it used to apply
+                        # self.C_mat_default to every element whatever its
+                        # material. _build_kernel_groups refuses kernel 10 for
+                        # non-linear-elastic materials.
                         from dispsolver.element3d.c3d8_numba import assemble_mesh_c3d8_numba
-                        f_sub, K_sub = assemble_mesh_c3d8_numba(
-                            node_coords_all, sub_conn, u_eval, self.C_mat_default
-                        )
+                        f_sub = np.zeros((len(elem_indices), 24), dtype=np.float64)
+                        K_sub = np.zeros((len(elem_indices), 24, 24), dtype=np.float64)
+                        props2 = np.round(self.elem_props[elem_indices, :2], 12)
+                        for key in {tuple(r) for r in props2}:
+                            sel = np.where((props2[:, 0] == key[0]) & (props2[:, 1] == key[1]))[0]
+                            f_g, K_g = assemble_mesh_c3d8_numba(
+                                node_coords_all, np.ascontiguousarray(sub_conn[sel]), u_eval,
+                                self._linear_elastic_C(key[0], key[1]))
+                            f_sub[sel] = f_g
+                            K_sub[sel] = K_g
                         err = 0
                     elif k == 11:
                         from dispsolver.element3d.cr_wrapper_3d import assemble_mesh_c3d8i_cr_numba
@@ -1559,6 +1609,59 @@ class DynamicSolver3D:
     # how prescribed DOFs move during a partial step) the difference is an
     # explicit argument, not a silent fork.
     # ------------------------------------------------------------------
+
+    # Kernels whose stress field can be evaluated at an arbitrary natural point
+    # by element_point_stress(), with the SAME kinematics/strain measure the
+    # assembly kernel uses.
+    _POINT_STRESS_KERNELS = {
+        1: "C3D8 under NLGEOM (C3D8_CR: co-rotational, Hughes B-bar, small local strain)",
+        10: "C3D8 without NLGEOM (c3d8_numba: linear small strain, per-element linear-elastic C)",
+    }
+
+    def element_point_stress(self, row: int, X_e: np.ndarray, dNdX: np.ndarray,
+                             vol_mean: np.ndarray, u_e: np.ndarray, dt: float = 1.0) -> Optional[np.ndarray]:
+        """Global Cauchy stress (3x3) of element `row` at a point with reference
+        shape-function gradients dNdX (8, 3), evaluated with the element's own
+        kernel -- i.e. after the NLGEOM-dependent promotion that picked that
+        kernel. vol_mean is the B-bar volumetric row (only used by kernel 1).
+        Returns None if the material reports a failure. Kernels outside
+        _POINT_STRESS_KERNELS raise: substituting another strain measure would
+        silently make a consistency-based method (Nitsche) inconsistent."""
+        from dispsolver.material3d.numba_materials import material_dispatch_3d
+        kern = getattr(self, "_row_kernel", {}).get(int(row))
+        if kern not in self._POINT_STRESS_KERNELS:
+            raise NotImplementedError(
+                f"element_point_stress: element row {row} runs kernel {kern}, not one of "
+                f"{sorted(self._POINT_STRESS_KERNELS)} ({'; '.join(self._POINT_STRESS_KERNELS.values())})")
+        B = np.zeros((6, 24))
+        for i in range(8):
+            dx, dy, dz = dNdX[i]
+            B[0, 3 * i] = dx; B[1, 3 * i + 1] = dy; B[2, 3 * i + 2] = dz
+            B[3, 3 * i] = dy; B[3, 3 * i + 1] = dx
+            B[4, 3 * i + 1] = dz; B[4, 3 * i + 2] = dy
+            B[5, 3 * i] = dz; B[5, 3 * i + 2] = dx
+        if kern == 10:
+            sv = self._linear_elastic_C(self.elem_props[row, 0], self.elem_props[row, 1]) @ (B @ u_e.ravel())
+            R = np.eye(3)
+        else:  # kern == 1
+            from dispsolver.element3d.c3d8_corotational_numba import compute_element_rotation_3d
+            x_e = X_e + u_e
+            R = compute_element_rotation_3d(X_e, x_e)
+            u_loc = ((x_e - x_e.mean(axis=0)) @ R - (X_e - X_e.mean(axis=0))).ravel()
+            vol_std = (B[0] + B[1] + B[2]) / 3.0
+            for r_ in range(3):
+                B[r_] = B[r_] - vol_std + vol_mean
+            eps = B @ u_loc
+            sdv_all = getattr(self, "elem_sdvs", None)
+            sdv = np.zeros(0) if sdv_all is None else np.asarray(sdv_all[row])
+            sdv = np.ascontiguousarray(sdv[0] if sdv.ndim > 1 else sdv, dtype=np.float64)
+            sv, _, _, err = material_dispatch_3d(int(self.elem_mat_types[row]), self.elem_props[row], sdv,
+                                                 np.ascontiguousarray(eps), np.eye(3),
+                                                 1.0 + eps[0] + eps[1] + eps[2], dt)
+            if err != 0:
+                return None
+        sig = np.array([[sv[0], sv[3], sv[5]], [sv[3], sv[1], sv[4]], [sv[5], sv[4], sv[2]]])
+        return R @ sig @ R.T
 
     def _clear_contact_freeze(self) -> None:
         for c in self.constraints:
@@ -2802,6 +2905,16 @@ class DynamicSolver3D:
         """Fully encapsulated Abaqus-like step solve engine."""
         from dispsolver.solver.dt_controller import AdaptiveDtController
         from dispsolver.model.sensor import SensorManager, Sensor, IterationHook
+
+        # Effective NLGEOM for this step. The solver is built before any step
+        # is known (nlgeom defaulted to True), so *STEP, NLGEOM=NO used to be
+        # ignored. Abaqus/Standard rule: once NLGEOM is on in a step it stays
+        # on for the rest of the analysis.
+        want = bool(getattr(step, "nlgeom", self.nlgeom)) or bool(getattr(self, "_nlgeom_engaged", False))
+        if want != self.nlgeom:
+            self.nlgeom = want
+            self._build_kernel_groups()
+        self._nlgeom_engaged = bool(getattr(self, "_nlgeom_engaged", False) or self.nlgeom)
 
         T_total = time_period if time_period is not None else getattr(step, "time_period", 1.0)
         dt_init = getattr(step, "dt_init", 0.02)

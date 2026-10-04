@@ -95,9 +95,10 @@ RF_CASES = [
     pytest.param("PENALTY", 100.0, id="penalty-x100"),                      # -6655.36; stalled 40+ min before the Pardiso fix
     pytest.param("NITSCHE", 1.0, id="nitsche-default"),                     # -6584.62 (+0.26%); was -6412.48 as a penalty
     pytest.param("NITSCHE", 100.0, id="nitsche-x100"),                      # -6567.76
-    # gamma0 = 5e4 (x1000): fails from the first increment (all attempts cut
-    # back). Far beyond the stability threshold; not characterized further.
-    pytest.param("NITSCHE", 1000.0, marks=_xf, id="nitsche-x1000"),
+    # gamma0 = 5e4 (x1000): failed from the first increment while the Nitsche
+    # stress used Green-Lagrange/PK2 instead of the element's own co-rotational
+    # B-bar strain; converges since the stress comes from the element kernel.
+    pytest.param("NITSCHE", 1000.0, id="nitsche-x1000"),
 ]
 
 
@@ -185,7 +186,7 @@ def _patch_block(name, n, z0, z1, mat):
     return L
 
 
-def _patch_deck(path, n_bot, n_top, overclosure=0.0, delta=PATCH_DELTA):
+def _patch_deck(path, n_bot, n_top, overclosure=0.0, delta=PATCH_DELTA, nlgeom=True):
     L = ["*HEADING", "contact patch test"]
     L += _patch_block("BOT", n_bot, 0.0, 1.0, "M_BOT")
     L += _patch_block("TOP", n_top, 1.0 - overclosure, 2.0 - overclosure, "M_TOP")
@@ -199,7 +200,7 @@ def _patch_deck(path, n_bot, n_top, overclosure=0.0, delta=PATCH_DELTA):
           "*CONTACT PAIR, INTERACTION=INT", "S_SLAVE, S_MASTER",
           "*BOUNDARY", "B1.XSYM, 1, 1, 0.0", "B1.YSYM, 2, 2, 0.0", "B1.ZBOT, 3, 3, 0.0",
           "T1.XSYM, 1, 1, 0.0", "T1.YSYM, 2, 2, 0.0",
-          "*STEP, NAME=PRESS, NLGEOM=YES", "*STATIC", "0.25, 1.0, 1e-5, 0.5",
+          f"*STEP, NAME=PRESS, NLGEOM={'YES' if nlgeom else 'NO'}", "*STATIC", "0.25, 1.0, 1e-5, 0.5",
           "*BOUNDARY", f"T1.ZTOP, 3, 3, {delta}", "*END STEP"]
     with open(path, "w") as fh:
         fh.write("\n".join(L) + "\n")
@@ -339,3 +340,30 @@ def test_dual_mortar_sees_the_penetration_of_a_converged_state():
     _, _, stats = c.assemble(u)
     assert stats["n_active"] == 35
     assert stats["total_normal_force"] > 0.0
+
+
+def test_step_nlgeom_no_reaches_the_small_strain_kernel(tmp_path):
+    """*STEP, NLGEOM=NO used to be ignored: the solver is built before any
+    step and defaulted to NLGEOM on, so C3D8 always ran the co-rotational
+    kernel. And the small-strain C3D8 kernel applied ONE global elasticity
+    matrix to every element. Now the step's NLGEOM picks the kernel, kernel
+    10 assembles per material, and on this linear two-material patch the
+    consistent Nitsche contact reproduces the exact force to ~1e-5."""
+    path = str(tmp_path / "patch_small.inp")
+    _patch_deck(path, 3, 2, nlgeom=False)
+    _, model = _parse_source(path, dim=3, strict=True)
+    for o in list(model.interactions.values()) + [getattr(e, "entity", e) for st in model.steps.values()
+                                                   for e in st.interactions.values()]:
+        if hasattr(o, "constraint_enforcement"):
+            o.constraint_enforcement = "NITSCHE"
+    ex = MultiStepExecutor(model, verbose=False, dim=3)
+    with warnings.catch_warnings(), contextlib.redirect_stdout(io.StringIO()):
+        warnings.simplefilter("ignore")
+        ok = ex.execute_step(model.steps["PRESS"], from_parent_checkpoint=True)
+    s = ex.solver
+    assert ok
+    assert s.nlgeom is False
+    assert set(s._row_kernel.values()) == {10}
+    _, f = s.assemble_system(s.u, dt=1.0)
+    top = sum(f[3 * i + 2] for i in ex.sys.global_nsets["T1.ZTOP"])
+    assert abs(-top / PATCH_F - 1.0) <= 1e-4, f"RF_top={top:.6e}, exact={PATCH_F:.6e}"

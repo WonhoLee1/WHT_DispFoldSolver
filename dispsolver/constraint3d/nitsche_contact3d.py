@@ -84,6 +84,29 @@ def _hex8_shape(xi: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     return N, dN
 
 
+def _b_std(dNdX: np.ndarray) -> np.ndarray:
+    """Engineering-strain B (6 x 24) in c3d8_corotational_numba's Voigt order
+    [xx, yy, zz, xy, yz, xz]."""
+    B = np.zeros((6, 24))
+    for i in range(8):
+        dx, dy, dz = dNdX[i]
+        B[0, 3 * i] = dx
+        B[1, 3 * i + 1] = dy
+        B[2, 3 * i + 2] = dz
+        B[3, 3 * i] = dy
+        B[3, 3 * i + 1] = dx
+        B[4, 3 * i + 1] = dz
+        B[4, 3 * i + 2] = dy
+        B[5, 3 * i] = dz
+        B[5, 3 * i + 2] = dx
+    return B
+
+
+def _bbar_vol_row(dNdX: np.ndarray) -> np.ndarray:
+    B = _b_std(dNdX)
+    return (B[0] + B[1] + B[2]) / 3.0
+
+
 def _hex8_inverse_map(X_target: np.ndarray, X_e: np.ndarray) -> np.ndarray:
     """Natural coordinates of a reference point inside / on a hex8."""
     xi = np.zeros(3)
@@ -289,6 +312,27 @@ class NitscheContactConstraint3D:
             e_idx = [self.nid_to_idx[n] for n in nids]
             X_e = self.coords[e_idx]
             idx_s = [self.nid_to_idx[n] for n in face]
+            kern = getattr(solver, "_row_kernel", {}).get(eid_to_row[eid])
+            if kern not in getattr(solver, "_POINT_STRESS_KERNELS", {}):
+                raise NotImplementedError(
+                    f"Nitsche contact '{self.name}': slave element {eid} runs solver kernel {kern}; "
+                    f"the solver cannot evaluate that kernel's stress at a contact point "
+                    f"(DynamicSolver3D.element_point_stress), and any other stress definition "
+                    f"would make the method inconsistent.")
+            # Volume-averaged shape-function gradients (reference), exactly as
+            # c3d8_corotational_numba builds B-bar.
+            g = 1.0 / np.sqrt(3.0)
+            dN_mean = np.zeros((8, 3))
+            V0 = 0.0
+            for gx in (-g, g):
+                for gy in (-g, g):
+                    for gz in (-g, g):
+                        _, dNg = _hex8_shape(np.array([gx, gy, gz]))
+                        Jg = X_e.T @ dNg
+                        detg = float(np.linalg.det(Jg))
+                        dN_mean += (dNg @ np.linalg.inv(Jg)) * detg
+                        V0 += detg
+            vol_mean = _bbar_vol_row(dN_mean / V0)
             h_fd = 1e-7 * float(np.max(np.ptp(X_e, axis=0)))
             gamma_e = self.gamma
             if self.gamma0 is not None:
@@ -312,48 +356,45 @@ class NitscheContactConstraint3D:
                 qp["dNdX"] = dN @ np.linalg.inv(X_e.T @ dN).T   # (8, 3): dN_a/dX
                 qp["h_fd"] = h_fd
                 qp["gamma"] = gamma_e
+                qp["X_e"] = X_e
+                qp["vol_mean"] = vol_mean
 
-    def _sigma_nn_F(self, F: np.ndarray, qp: Dict[str, Any]) -> Optional[float]:
-        """n . sigma(F) . n with the slave element's material."""
-        from dispsolver.material3d.numba_materials import material_dispatch_3d
-        s = self._solver
-        J = float(np.linalg.det(F))
-        if J <= 0.0:
+    def _sigma_nn_cr(self, u_e: np.ndarray, qp: Dict[str, Any]) -> Optional[float]:
+        """n . sigma . n at the quadrature point, sigma being the stress the
+        slave element itself produces there: delegated to
+        DynamicSolver3D.element_point_stress, which dispatches on the kernel the
+        solver picked for that element (NLGEOM-dependent). An earlier version
+        hard-coded Green-Lagrange/PK2 at the compatible F, i.e. a strain
+        measure the element does not use."""
+        sig = self._solver.element_point_stress(qp["e_row"], qp["X_e"], qp["dNdX"], qp["vol_mean"],
+                                                u_e, self._dt)
+        if sig is None:
             return None
-        E = 0.5 * (F.T @ F - np.eye(3))
-        E_v = np.array([E[0, 0], E[1, 1], E[2, 2], 2 * E[0, 1], 2 * E[0, 2], 2 * E[1, 2]])
-        row = qp["e_row"]
-        sdv_all = getattr(s, "elem_sdvs", None)
-        sdv = np.zeros(0) if sdv_all is None else np.asarray(sdv_all[row])
-        sdv = np.ascontiguousarray(sdv[0] if sdv.ndim > 1 else sdv, dtype=np.float64)
-        S_v, _, _, err = material_dispatch_3d(int(s.elem_mat_types[row]), s.elem_props[row], sdv, E_v, F, J, self._dt)
-        if err != 0:
-            return None
-        S = np.array([[S_v[0], S_v[3], S_v[4]], [S_v[3], S_v[1], S_v[5]], [S_v[4], S_v[5], S_v[2]]])
         n = qp["n"]
-        return float(n @ (F @ S @ F.T) @ n) / J
-
-    def _F_at(self, u: np.ndarray, qp: Dict[str, Any]) -> np.ndarray:
-        return np.eye(3) + u[qp["e_dofs"]].reshape(8, 3).T @ qp["dNdX"]
+        return float(n @ sig @ n)
 
     def _sigma_nn(self, u_e: np.ndarray, qp: Dict[str, Any]) -> Optional[float]:
-        return self._sigma_nn_F(np.eye(3) + u_e.T @ qp["dNdX"], qp)
+        return self._sigma_nn_cr(u_e, qp)
 
-    def _sigma_nn_grad(self, F: np.ndarray, qp: Dict[str, Any]) -> Optional[np.ndarray]:
-        """d sigma_nn / d u_e (24,): central differences in the 9 components of
-        F, chained with dF_ij/du_(a,i) = dN_a/dX_j (exact for the hex8)."""
-        h = 1e-7 * max(1.0, float(np.abs(F).max()))
-        dS_dF = np.zeros((3, 3))
-        for i in range(3):
-            for j in range(3):
-                Fp = F.copy(); Fp[i, j] += h
-                Fm = F.copy(); Fm[i, j] -= h
-                sp, sm = self._sigma_nn_F(Fp, qp), self._sigma_nn_F(Fm, qp)
-                if sp is None or sm is None:
-                    return None
-                dS_dF[i, j] = (sp - sm) / (2.0 * h)
-        # grad[a, i] = sum_j dS_dF[i, j] * dNdX[a, j]
-        return (qp["dNdX"] @ dS_dF.T).ravel()
+    def _sigma_nn_and_grad_u(self, u: np.ndarray, qp: Dict[str, Any]):
+        """sigma_nn and d sigma_nn / d u_e (24,) by central differences on the
+        element DOFs (R depends on all of them, so no cheaper chain rule)."""
+        u_e = u[qp["e_dofs"]].reshape(8, 3)
+        sig = self._sigma_nn_cr(u_e, qp)
+        if sig is None:
+            return None, None
+        flat = u_e.ravel()
+        h = qp["h_fd"]
+        grad = np.zeros(24)
+        for j in range(24):
+            up = flat.copy(); up[j] += h
+            um = flat.copy(); um[j] -= h
+            sp = self._sigma_nn_cr(up.reshape(8, 3), qp)
+            sm = self._sigma_nn_cr(um.reshape(8, 3), qp)
+            if sp is None or sm is None:
+                return sig, None
+            grad[j] = (sp - sm) / (2.0 * h)
+        return sig, grad
 
     def _require_bound(self) -> None:
         if self._solver is None:
@@ -402,8 +443,7 @@ class NitscheContactConstraint3D:
                 n = qp["n"]
                 g_n = -float(np.dot(xs - xm, n))
                 if self.consistency:
-                    F_qp = self._F_at(u, qp)
-                    sig = self._sigma_nn_F(F_qp, qp)
+                    sig = self._sigma_nn(u[qp["e_dofs"]].reshape(8, 3), qp)
                     if sig is None:
                         continue
                     gam = qp["gamma"]
@@ -412,7 +452,7 @@ class NitscheContactConstraint3D:
                 p_n = gam * g_n - sig
                 if p_n <= 0.0:
                     continue
-                dsig = self._sigma_nn_grad(F_qp, qp) if self.consistency else None
+                dsig = self._sigma_nn_and_grad_u(u, qp)[1] if self.consistency else None
                 n_active += 1
                 max_penetration = max(max_penetration, g_n)
                 w = qp["w"]
