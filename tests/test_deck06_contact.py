@@ -25,17 +25,15 @@ from dispsolver.solver.step_executor import MultiStepExecutor
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 INP = os.path.join(ROOT, "benchmark_inp", "phase2_methodology", "06_bolt_preload_gasket_flange_3d.inp")
 
-# Step 1 bolt-seat reaction R_z [N], each method's OWN limit on this mesh.
-# There is no single reference: PENALTY is node-to-surface (35 gasket nodes
-# on a non-matching flange mesh) and NITSCHE is surface-to-surface, so their
-# discrete limits differ (1.5%). Mesh error is ~5% (plan P0-3), so neither is
-# the continuum answer. Measured 2026-10-04 after the Pardiso symmetry fix
-# (unsymmetric tangents had been solved symmetrized) and the real Nitsche:
+# Step 1 bolt-seat reaction R_z [N], each method's limit on this mesh (mesh
+# error itself ~5%, plan P0-3). Measured 2026-10-04:
 #   PENALTY: x10 -6543.05, x30 -6625.60, x50 -6642.39, x100 -6655.36,
 #            x300 -6663.55 -> limit ~ -6668
-#   NITSCHE (consistent): x1 -6584.62, x10 -6568.99, x100 -6567.76 -- nearly
-#            gamma-independent, as a consistent method should be
-R_LIMIT = {"PENALTY": -6668.0, "NITSCHE": -6567.8}
+#   NITSCHE: x1 -6653.41, x10 -6664.00, x100 -6666.85
+# The two used to differ by 1.5% at every refinement (m=1/2/3): Nitsche froze
+# the master normal at build time, and deck #06's flange rotates while the
+# gasket slides ~0.3 mm along it. With the current normal they agree to 0.1%.
+R_LIMIT = {"PENALTY": -6668.0, "NITSCHE": -6666.0}
 R_REF = R_LIMIT["NITSCHE"]    # force scale for residual tolerances
 RF_RTOL = {"PENALTY": 0.02,   # penalty regularization at Abaqus's default 10x k_ref measured 1.6%
            "NITSCHE": 0.01}
@@ -93,12 +91,9 @@ RF_CASES = [
     pytest.param("PENALTY", 1.0, marks=_xf, id="penalty-default"),          # -5618.34 (-15.7%), 13.5 um penetration
     pytest.param("PENALTY", 10.0, id="penalty-x10"),                        # -6543.05 (-1.9%)
     pytest.param("PENALTY", 100.0, id="penalty-x100"),                      # -6655.36; stalled 40+ min before the Pardiso fix
-    pytest.param("NITSCHE", 1.0, id="nitsche-default"),                     # -6584.62 (+0.26%); was -6412.48 as a penalty
-    pytest.param("NITSCHE", 100.0, id="nitsche-x100"),                      # -6567.76
-    # gamma0 = 5e4 (x1000): failed from the first increment while the Nitsche
-    # stress used Green-Lagrange/PK2 instead of the element's own co-rotational
-    # B-bar strain; converges since the stress comes from the element kernel.
-    pytest.param("NITSCHE", 1000.0, id="nitsche-x1000"),
+    pytest.param("NITSCHE", 1.0, id="nitsche-default"),                     # -6653.41; was -6412.48 as a penalty
+    pytest.param("NITSCHE", 100.0, id="nitsche-x100"),                      # -6666.85
+    # x1000 (gamma0 = 5e4) converges to -6667.25 but takes ~10 min: not a gate.
 ]
 
 

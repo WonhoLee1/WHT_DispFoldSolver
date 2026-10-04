@@ -247,6 +247,7 @@ class NitscheContactConstraint3D:
                     "eta_m": float(eta_m),
                     "w": float(dA),
                     "n": n_contact.copy(),
+                    "sign": float(sign),
                 })
 
             self.pairs.append({
@@ -272,9 +273,10 @@ class NitscheContactConstraint3D:
                 xs = sum(Ns[a] * (self.coords[idx_s[a]] + u[3 * idx_s[a] : 3 * idx_s[a] + 3]) for a in range(4))
                 xm = sum(Nm[b] * (self.coords[idx_m[b]] + u[3 * idx_m[b] : 3 * idx_m[b] + 3]) for b in range(4))
 
-                g_n = -float(np.dot(xs - xm, qp["n"]))
+                n = self._current_normal(u, idx_m, qp)
+                g_n = -float(np.dot(xs - xm, n))
                 # Same activity rule as assemble(): p = gamma*g_n - sigma_nn > 0.
-                sig = (self._sigma_nn(u[qp["e_dofs"]].reshape(8, 3), qp)
+                sig = (self._sigma_nn_cr(u[qp["e_dofs"]].reshape(8, 3), qp, n)
                        if (self.consistency and self._solver is not None) else 0.0)
                 gam = qp.get("gamma", self.gamma)
                 if gam * g_n - (sig if sig is not None else 0.0) > 0.0:
@@ -359,7 +361,7 @@ class NitscheContactConstraint3D:
                 qp["X_e"] = X_e
                 qp["vol_mean"] = vol_mean
 
-    def _sigma_nn_cr(self, u_e: np.ndarray, qp: Dict[str, Any]) -> Optional[float]:
+    def _sigma_nn_cr(self, u_e: np.ndarray, qp: Dict[str, Any], n: Optional[np.ndarray] = None) -> Optional[float]:
         """n . sigma . n at the quadrature point, sigma being the stress the
         slave element itself produces there: delegated to
         DynamicSolver3D.element_point_stress, which dispatches on the kernel the
@@ -370,17 +372,18 @@ class NitscheContactConstraint3D:
                                                 u_e, self._dt)
         if sig is None:
             return None
-        n = qp["n"]
+        if n is None:
+            n = qp["n"]
         return float(n @ sig @ n)
 
     def _sigma_nn(self, u_e: np.ndarray, qp: Dict[str, Any]) -> Optional[float]:
         return self._sigma_nn_cr(u_e, qp)
 
-    def _sigma_nn_and_grad_u(self, u: np.ndarray, qp: Dict[str, Any]):
+    def _sigma_nn_and_grad_u(self, u: np.ndarray, qp: Dict[str, Any], n: Optional[np.ndarray] = None):
         """sigma_nn and d sigma_nn / d u_e (24,) by central differences on the
         element DOFs (R depends on all of them, so no cheaper chain rule)."""
         u_e = u[qp["e_dofs"]].reshape(8, 3)
-        sig = self._sigma_nn_cr(u_e, qp)
+        sig = self._sigma_nn_cr(u_e, qp, n)
         if sig is None:
             return None, None
         flat = u_e.ravel()
@@ -389,12 +392,23 @@ class NitscheContactConstraint3D:
         for j in range(24):
             up = flat.copy(); up[j] += h
             um = flat.copy(); um[j] -= h
-            sp = self._sigma_nn_cr(up.reshape(8, 3), qp)
-            sm = self._sigma_nn_cr(um.reshape(8, 3), qp)
+            sp = self._sigma_nn_cr(up.reshape(8, 3), qp, n)
+            sm = self._sigma_nn_cr(um.reshape(8, 3), qp, n)
             if sp is None or sm is None:
                 return sig, None
             grad[j] = (sp - sm) / (2.0 * h)
         return sig, grad
+
+    def _current_normal(self, u: np.ndarray, idx_m: List[int], qp: Dict[str, Any]) -> np.ndarray:
+        """Master normal at the paired master point in the CURRENT geometry.
+        It used to be frozen at build time (qp["n"]); when the master surface
+        rotates (deck #06: the flange bends) while the slave slides along it
+        (the gasket bulges ~0.3 mm), a frozen normal mis-measures the gap by
+        about slip x rotation, and the contact force acts in a stale
+        direction. The node-to-surface penalty and the mortar already use the
+        current normal."""
+        q = [self.coords[i] + u[3 * i: 3 * i + 3] for i in idx_m]
+        return qp.get("sign", 1.0) * _quad4_normal(q[0], q[1], q[2], q[3], qp["xi_m"], qp["eta_m"])
 
     def _require_bound(self) -> None:
         if self._solver is None:
@@ -440,10 +454,10 @@ class NitscheContactConstraint3D:
                 Nm = _quad4_shape_functions(qp["xi_m"], qp["eta_m"])
                 xs = sum(Ns[a] * (self.coords[idx_s[a]] + u[3 * idx_s[a]: 3 * idx_s[a] + 3]) for a in range(4))
                 xm = sum(Nm[b] * (self.coords[idx_m[b]] + u[3 * idx_m[b]: 3 * idx_m[b] + 3]) for b in range(4))
-                n = qp["n"]
+                n = self._current_normal(u, idx_m, qp)
                 g_n = -float(np.dot(xs - xm, n))
                 if self.consistency:
-                    sig = self._sigma_nn(u[qp["e_dofs"]].reshape(8, 3), qp)
+                    sig = self._sigma_nn_cr(u[qp["e_dofs"]].reshape(8, 3), qp, n)
                     if sig is None:
                         continue
                     gam = qp["gamma"]
@@ -452,7 +466,7 @@ class NitscheContactConstraint3D:
                 p_n = gam * g_n - sig
                 if p_n <= 0.0:
                     continue
-                dsig = self._sigma_nn_and_grad_u(u, qp)[1] if self.consistency else None
+                dsig = self._sigma_nn_and_grad_u(u, qp, n)[1] if self.consistency else None
                 n_active += 1
                 max_penetration = max(max_penetration, g_n)
                 w = qp["w"]
@@ -470,6 +484,26 @@ class NitscheContactConstraint3D:
                     rows.append(np.repeat(c_dofs, len(e_dofs)))
                     cols.append(np.tile(e_dofs, len(c_dofs)))
                     data.append((-w * np.outer(c_vec, dsig)).ravel())
+                if self.consistency:
+                    # Rotation of the current master normal n(q_m): it enters the
+                    # gap, sigma_nn = n.sigma.n and the force direction.
+                    from dispsolver.constraint3d.surface_contact3d_deformable import _quad4_normal_derivatives
+                    q_m = [self.coords[i] + u[3 * i: 3 * i + 3] for i in idx_m]
+                    Dn = _quad4_normal_derivatives(q_m, qp["xi_m"], qp["eta_m"], n)
+                    sig_t = self._solver.element_point_stress(
+                        qp["e_row"], qp["X_e"], qp["dNdX"], qp["vol_mean"],
+                        u[qp["e_dofs"]].reshape(8, 3), self._dt)
+                    d_vec = xs - xm
+                    sn2 = 2.0 * (sig_t @ n)
+                    blk = np.zeros((24, 12))
+                    for bb in range(4):
+                        dp_b = -gam * (d_vec @ Dn[bb]) - sn2 @ Dn[bb]          # (3,)
+                        geo = np.vstack([-Ns[a] * Dn[bb] for a in range(4)] + [Nm[b2] * Dn[bb] for b2 in range(4)])
+                        blk[:, 3 * bb: 3 * bb + 3] = w * np.outer(c_vec, dp_b) + w * p_n * geo
+                    m_dofs = np.array([3 * i + dd for i in idx_m for dd in range(3)], dtype=np.int64)
+                    rows.append(np.repeat(c_dofs, 12))
+                    cols.append(np.tile(m_dofs, len(c_dofs)))
+                    data.append(blk.ravel())
 
         stats = {
             "max_penetration": max_penetration,
