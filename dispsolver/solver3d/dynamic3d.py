@@ -427,7 +427,7 @@ class DynamicSolver3D:
 
 
     def _record_acceptance(self, branch: str, f_acc: np.ndarray,
-                           f_ext: np.ndarray, iters: int) -> None:
+                           f_ext: np.ndarray, iters: int, dt: float = 1.0) -> None:
         """Read-only calibration probe: true free-DOF residual norm at the
         accepted state. Never influences acceptance (AGENTS.md section 4.7:
         the AND-criterion rewrite caused dt-collapse, so thresholds stay
@@ -436,7 +436,25 @@ class DynamicSolver3D:
         if self.fixed_dofs:
             mask[list(self.fixed_dofs.keys())] = False
         r = float(np.linalg.norm((f_ext - np.asarray(f_acc))[mask]))
-        self.last_accept = {"branch": branch, "r_norm": r, "iters": iters}
+        # f_acc was assembled with any SDI contact freeze still in place, where
+        # frozen pairs are bilateral and unfrozen ones may be skipped -- not the
+        # one-sided law the answer is supposed to satisfy. Re-assemble once with
+        # the freeze lifted (only when one is active) and record that residual
+        # too (dev_log/plan_deck06_contact_fix_20261004.md, P0-4).
+        frozen = [c for c in self.constraints if getattr(c, "frozen_active_nodes", None) is not None]
+        r_unfrozen = r
+        if frozen:
+            saved = [c.frozen_active_nodes for c in frozen]
+            try:
+                for c in frozen:
+                    c.frozen_active_nodes = None
+                _, f_free = self.assemble_system(self.u, dt=dt)
+                r_unfrozen = float(np.linalg.norm((f_ext - np.asarray(f_free))[mask]))
+            finally:
+                for c, s in zip(frozen, saved):
+                    c.frozen_active_nodes = s
+        self.last_accept = {"branch": branch, "r_norm": r, "r_norm_unfrozen": r_unfrozen,
+                            "frozen": bool(frozen), "iters": iters}
 
     def _solve_linear(self, K_bc, r_bc):
         """Solve K_bc @ du = r_bc, preferring the phase-reuse Pardiso
@@ -1836,7 +1854,7 @@ class DynamicSolver3D:
                 self.u = u_k
                 # Commit state variables (SDV) for the converged increment
                 _, f_acc = self.assemble_system(u_k, dt=dt, update_state=True)
-                self._record_acceptance("residual", f_acc, f_ext, iter_count)
+                self._record_acceptance("residual", f_acc, f_ext, iter_count, dt=dt)
                 self._commit_contact_friction_state(u_k)
                 self.contact_tuner.reset_attempt_counter()
                 _clear_freeze()
@@ -1866,7 +1884,7 @@ class DynamicSolver3D:
             if is_converged_correction:
                 self.u = u_next
                 _, f_acc = self.assemble_system(self.u, dt=dt, update_state=True)
-                self._record_acceptance("correction", f_acc, f_ext, iter_count)
+                self._record_acceptance("correction", f_acc, f_ext, iter_count, dt=dt)
                 self._commit_contact_friction_state(self.u)
                 self.contact_tuner.reset_attempt_counter()
                 _clear_freeze()
@@ -1970,7 +1988,7 @@ class DynamicSolver3D:
         self.u = u_k
         if not is_sdi and bc_err < 1e-5 and (rel_r < 5e-3 or r_norm < 1e-3):
             _, f_acc = self.assemble_system(u_k, dt=dt, update_state=True)
-            self._record_acceptance("fallthrough", f_acc, f_ext, raw_iter)
+            self._record_acceptance("fallthrough", f_acc, f_ext, raw_iter, dt=dt)
             self._commit_contact_friction_state(u_k)
             self.contact_tuner.reset_attempt_counter()
             _clear_freeze()
@@ -2576,7 +2594,7 @@ class DynamicSolver3D:
             if is_converged_residual:
                 self.u = u_k
                 _, f_acc = self.assemble_system(u_k, dt=dt, update_state=True)
-                self._record_acceptance("residual", f_acc, f_ext, iter_count)
+                self._record_acceptance("residual", f_acc, f_ext, iter_count, dt=dt)
                 self._commit_contact_friction_state(u_k)
                 _clear_freeze()
                 return True, iter_count
@@ -2605,7 +2623,7 @@ class DynamicSolver3D:
             if is_converged_correction:
                 self.u = u_next
                 _, f_acc = self.assemble_system(self.u, dt=dt, update_state=True)
-                self._record_acceptance("correction", f_acc, f_ext, iter_count)
+                self._record_acceptance("correction", f_acc, f_ext, iter_count, dt=dt)
                 self._commit_contact_friction_state(self.u)
                 _clear_freeze()
                 return True, iter_count
@@ -2695,7 +2713,7 @@ class DynamicSolver3D:
         self.u = u_k
         if not is_sdi and bc_err < 1e-5 and (rel_r < 5e-3 or r_norm < 1e-3):
             _, f_acc = self.assemble_system(u_k, dt=dt, update_state=True)
-            self._record_acceptance("fallthrough", f_acc, f_ext, raw_iter)
+            self._record_acceptance("fallthrough", f_acc, f_ext, raw_iter, dt=dt)
             self._commit_contact_friction_state(u_k)
             _clear_freeze()
             return True, raw_iter
