@@ -397,3 +397,17 @@ def test_step_amplitude_the_solver_does_not_apply_is_a_gap():
         warnings.simplefilter("ignore")
         reader, _ = _parse_source(deck(head="*STEP, AMPLITUDE=STEP\n*STATIC\n0.1, 1.0\n"), dim=3)
     assert any("AMPLITUDE=STEP" in g for g in reader.physics_gaps())
+
+
+def test_equation_block_with_several_equations_and_node_sets():
+    # every equation of the block is read (only the first was), and a node-set
+    # term gives one equation per node of the set (all nodes were lumped into one)
+    text = ("*NODE\n1,0,0,0\n2,1,0,0\n3,0,1,0\n4,1,1,0\n9,5,5,5\n*NSET, NSET=A\n1,2\n*NSET, NSET=B\n3,4\n"
+            "*EQUATION\n2,\nA, 1, 1., B, 1, -1.\n3\nA, 2, 1., B, 2, -1., 9, 2, 0.5\n")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        reader, model = _parse_source(text, dim=3)
+    terms = [c.terms for c in model.constraints.values()]
+    assert terms == [[(1, 0, 1.0), (3, 0, -1.0)], [(2, 0, 1.0), (4, 0, -1.0)],
+                     [(1, 1, 1.0), (3, 1, -1.0), (9, 1, 0.5)], [(2, 1, 1.0), (4, 1, -1.0), (9, 1, 0.5)]]
+    assert not reader.physics_gaps()

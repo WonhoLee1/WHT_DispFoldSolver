@@ -489,60 +489,82 @@ def _handle_transform(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     description="Define linear multi-point constraint equation between degree of freedoms",
 )
 def _handle_equation(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
-    rows = _parse_data_rows(block.data_lines, dtype=str)
-    cells: List[str] = []
-    for r in rows:
-        cells.extend([str(c).strip() for c in r if str(c).strip() != ""])
-    if not cells:
-        return
-    try:
-        nterms = int(float(cells[0]))
-    except ValueError:
-        msg = f"*EQUATION at {block.location}: bad term count — skipped"
-        reader.report("error", "bad-row", msg, block)
-        return
-    triples: List[Tuple[Any, int, float]] = []
-    pos = 1
-    while pos + 2 < len(cells) + 1 and len(triples) < nterms:
-        if pos + 2 >= len(cells):
-            break
-        ref_raw, dof_raw, coeff_raw = cells[pos], cells[pos + 1], cells[pos + 2]
-        pos += 3
-        try:
-            dof = int(float(dof_raw)) - 1
-            coeff = float(coeff_raw)
-        except ValueError:
+    """*EQUATION: one or more linear constraint equations per block.
+
+    Data (Abaqus Keywords Reference, *EQUATION): a line with the number of
+    terms N, then the N terms "node or node set, dof, coefficient", at most
+    four per line, continued on as many lines as needed; then the next
+    equation's N, and so on.
+
+    A node-set term generates one equation per node of the set (nodes paired
+    by position, in the set's order); all multi-node sets in an equation must
+    have the same size. A node number or a single-node set is used in every
+    generated equation -- an assumption (reported as info), not taken from a
+    local copy of the manual.
+
+    The previous handler merged all lines into one list, read only the FIRST
+    equation of a block, and put every node of a set into that one equation.
+    """
+    lines = [(t, block.data_location(i)) for i, t in enumerate(block.data_lines)]
+    i = 0
+    n_eq = 0
+    while i < len(lines):
+        text, loc = lines[i]
+        head = [c.strip() for c in text.split(",") if c.strip()]
+        i += 1
+        if not head:
             continue
-        if dof < 0 or dof > 5:
-            msg = (f"*EQUATION at {block.location}: dof {dof + 1} out of "
-                   "range 1..6 — equation skipped")
-            reader.report("error", "bad-row", msg, block)
-            triples = []
-            break
-        if ref_raw.lstrip("-").isdigit():
-            triples.append((int(ref_raw), dof, coeff))
-        else:
-            members = _resolve_equation_nodes(reader, ref_raw)
-            if not members:
-                msg = (f"*EQUATION at {block.location}: set '{ref_raw}' "
-                       "unresolvable — equation skipped")
-                reader.report("error", "unresolved-ref", msg, block)
-                reader.unsupported_keyword(f"EQUATION set {ref_raw}", block)
-                triples = []
-                break
-            for nid in members:
-                triples.append((int(nid), dof, coeff))
-    if not triples:
-        return
-    if len(triples) != nterms:
-        msg = (f"*EQUATION at {block.location}: term count {len(triples)} "
-               f"!= declared {nterms} — kept as parsed")
-        reader.report("error", "bad-row", msg, block)
-    name = f"EQ_{len(reader.model.constraints) + 1}"
-    reader.model.Equation(name, terms=triples)
-    msg = (f"*EQUATION {name}: {len(triples)} terms parsed; "
-           "penalty assembly connected")
-    reader.report("info", "equation-parsed", msg, block)
+        try:
+            nterms = int(float(head[0]))
+        except ValueError:
+            reader.report("error", "bad-row", f"*EQUATION at {loc}: expected the number of terms, got {text!r}", block)
+            return
+        if len(head) != 1 or nterms < 1:
+            reader.report("error", "bad-row", f"*EQUATION at {loc}: the term-count line must hold one positive integer, got {text!r}", block)
+            return
+        vals: List[str] = []
+        while len(vals) < 3 * nterms and i < len(lines):
+            vals += [c.strip() for c in lines[i][0].split(",") if c.strip()]
+            i += 1
+        if len(vals) != 3 * nterms:
+            reader.report("error", "bad-row", f"*EQUATION at {loc}: {nterms} terms declared, "
+                                              f"{len(vals) / 3:g} given", block)
+            return
+        terms = []          # (list of node ids, dof, coeff)
+        for t in range(nterms):
+            ref, dof_raw, coeff_raw = vals[3 * t: 3 * t + 3]
+            try:
+                dof = int(float(dof_raw)) - 1
+                coeff = float(coeff_raw)
+            except ValueError:
+                reader.report("error", "bad-row", f"*EQUATION at {loc}: bad term {ref}, {dof_raw}, {coeff_raw}", block)
+                return
+            if not 0 <= dof <= 5:
+                reader.report("error", "bad-row", f"*EQUATION at {loc}: dof {dof + 1} out of range 1..6", block)
+                return
+            if ref.lstrip("-").isdigit():
+                nodes = [int(ref)]
+            else:
+                nodes = _resolve_equation_nodes(reader, ref)
+                if not nodes:
+                    reader.report("error", "unresolved-ref", f"*EQUATION at {loc}: node set {ref!r} is not defined", block)
+                    return
+            terms.append((nodes, dof, coeff))
+        sizes = {len(nodes) for nodes, _, _ in terms if len(nodes) > 1}
+        if len(sizes) > 1:
+            reader.report("error", "bad-row", f"*EQUATION at {loc}: node sets of different sizes {sorted(sizes)}", block)
+            return
+        count = sizes.pop() if sizes else 1
+        if count > 1 and any(len(nodes) == 1 for nodes, _, _ in terms):
+            reader.report("info", "equation-set-broadcast",
+                          f"*EQUATION at {loc}: single nodes used in each of the {count} equations generated "
+                          f"from the node sets", block)
+        for k in range(count):
+            triples = [(nodes[k] if len(nodes) > 1 else nodes[0], dof, coeff) for nodes, dof, coeff in terms]
+            name = f"EQ_{len(reader.model.constraints) + 1}"
+            reader.model.Equation(name, terms=triples)
+            n_eq += 1
+    reader.report("info", "equation-parsed", f"*EQUATION at {block.location}: {n_eq} equation(s)", block)
 
 
 def _resolve_equation_nodes(reader: AbaqusInputReader, ref: str) -> List[int]:

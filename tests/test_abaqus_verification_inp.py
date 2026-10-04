@@ -169,7 +169,9 @@ def test_equation_lands_binds_assembles():
     from dispsolver.model.constraint import EquationConstraint
     eqs = [c for c in model.constraints.values()
            if isinstance(c, EquationConstraint)]
-    assert len(eqs) == 3
+    # 3 blocks, each 'node set (3 nodes) = node': one equation per set node
+    # (the set's nodes used to be lumped into a single equation)
+    assert len(eqs) == 9
     sys = model.build_solver_system()
     bound = [c for c in sys.constraints if isinstance(c, EquationConstraint)]
     assert all(c._bound for c in bound)
