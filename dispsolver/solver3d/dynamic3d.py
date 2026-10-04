@@ -1557,7 +1557,11 @@ class DynamicSolver3D:
         None) plus its current active set."""
         is_sdi = current_active_set != st["prev"]
         recent = st["recent"]
-        is_oscillation = (current_active_set in recent) if len(recent) >= 2 else False
+        # Oscillation = the state CHANGED back to one seen before (A->B->A).
+        # The former test (`current in recent`) also fired for an active set
+        # that simply stayed the same, freezing every steadily-converging
+        # contact on its third iteration.
+        is_oscillation = is_sdi and current_active_set in recent[:-1]
         recent.append(current_active_set)
         if len(recent) > 6:
             recent.pop(0)
@@ -1580,23 +1584,52 @@ class DynamicSolver3D:
         st["prev"] = current_active_set
         return is_sdi
 
+    # Residual tolerances are RELATIVE to the current iterate's force scale q
+    # (_force_scale), never absolute: an absolute `r < 1.0 N` accepted a 10%
+    # residual on a 0.2 N contact patch test, and a historical-max reference
+    # (the old r_0_norm, inflated by the iteration-2 Dirichlet spike of
+    # ~2e5 N on deck #06) let the exhaustion branch accept r = 90 N.
+    _RESID_TOL_CONTACT = 1e-3
+    _RESID_TOL = 5e-3
+    _CORR_TOL = 1e-3          # max|du_free| relative to max|u - u_n| this increment
+    _CORR_RESID_TOL = 1e-2    # residual allowed alongside a converged correction
+    # Residual at roundoff level, ~eps * |K| * |u|. Needed when q ~ 0 (e.g. a
+    # pure rigid translation: no load, no reaction, residual is only noise).
+    # Scaled, not absolute: an absolute 1e-10 rejected 1.3e-10 of noise on a
+    # K ~ 1e6, u ~ 0.5 model. Set per iterate by _set_roundoff_floor().
+    _r_zero = 0.0
+
+    def _set_roundoff_floor(self, K_g, u: np.ndarray) -> None:
+        kd = float(np.max(np.abs(K_g.diagonal()))) if K_g.shape[0] else 0.0
+        self._r_zero = 1e3 * np.finfo(float).eps * kd * max(float(np.max(np.abs(u))), 1.0e-300)
+
+    def _force_scale(self, f_int: np.ndarray, f_ext: np.ndarray, free_dof_mask: np.ndarray) -> float:
+        """q: larger of the applied free-DOF load and the reaction at
+        prescribed DOFs, both at the current iterate."""
+        f_ext_free = float(np.linalg.norm(f_ext[free_dof_mask]))
+        reaction = float(np.linalg.norm(f_int[~free_dof_mask])) if not free_dof_mask.all() else 0.0
+        return max(f_ext_free, reaction)
+
+    def _residual_ok(self, r_norm: float, q: float) -> bool:
+        tol = self._RESID_TOL_CONTACT if len(self.constraints) > 0 else self._RESID_TOL
+        return r_norm <= tol * q or r_norm <= self._r_zero
+
     def _converged_by_residual(self, iter_count: int, is_sdi: bool, bc_err: float,
-                               r_norm: float, rel_r: float, rel_f: float) -> bool:
-        r_tol = 1e-3 if len(self.constraints) > 0 else 5e-3
-        f_tol = 1e-3 if len(self.constraints) > 0 else 0.01
-        return (iter_count > 1 and not is_sdi and bc_err < 1e-5 and (
-            r_norm < 1.0 or (rel_r < r_tol and rel_f < f_tol) or (r_norm < 1e-3)))
+                               r_norm: float, q: float) -> bool:
+        return iter_count > 1 and not is_sdi and bc_err < 1e-5 and self._residual_ok(r_norm, q)
 
-    @staticmethod
-    def _converged_by_correction(iter_count: int, is_sdi: bool, bc_err_next: float,
-                                 du_norm: float, du_free_norm: float,
-                                 r_norm: float, rel_r: float) -> bool:
-        return (iter_count > 1 and not is_sdi and bc_err_next < 1e-5 and (
-            (du_norm < 1e-4 or du_free_norm < 1e-4) and (r_norm < 10.0 or rel_r < 0.01)))
+    def _converged_by_correction(self, iter_count: int, is_sdi: bool, bc_err_next: float,
+                                 du_free_max: float, du_inc_max: float,
+                                 r_norm: float, q: float) -> bool:
+        if not (iter_count > 1 and not is_sdi and bc_err_next < 1e-5):
+            return False
+        corr_ok = du_free_max <= self._CORR_TOL * du_inc_max or du_free_max <= self._r_zero
+        return corr_ok and (r_norm <= self._CORR_RESID_TOL * q or r_norm <= self._r_zero)
 
-    @staticmethod
-    def _converged_on_exhaustion(is_sdi: bool, bc_err: float, rel_r: float, r_norm: float) -> bool:
-        return not is_sdi and bc_err < 1e-5 and (rel_r < 5e-3 or r_norm < 1e-3)
+    def _converged_on_exhaustion(self, is_sdi: bool, bc_err: float, r_norm: float, q: float) -> bool:
+        """Same criterion as the residual branch: running out of iterations is
+        not a reason to accept a larger residual."""
+        return not is_sdi and bc_err < 1e-5 and self._residual_ok(r_norm, q)
 
     def _accept_increment(self, u_acc: np.ndarray, branch: str, f_ext: np.ndarray,
                           iters: int, dt: float, reset_tuner: bool) -> None:
@@ -1611,7 +1644,7 @@ class DynamicSolver3D:
         self._clear_contact_freeze()
 
     def _line_search(self, u_k: np.ndarray, du_step: np.ndarray, f_ext: np.ndarray,
-                     free_dof_mask: np.ndarray, r_norm: float, r_0_norm: float, dt: float,
+                     free_dof_mask: np.ndarray, r_norm: float, q: float, dt: float,
                      n_trials: int, prescribed_at_partial_step: str,
                      diag: Optional[list] = None) -> Tuple[Optional[np.ndarray], float, bool]:
         """Backtracking on s = 1, 1/2, ... (n_trials values). Returns
@@ -1641,13 +1674,29 @@ class DynamicSolver3D:
             if r_t_norm < min_r_norm:
                 min_r_norm = r_t_norm
                 min_u = u_trial
-            if r_t_norm <= max(r_norm, 1e-4 * r_0_norm, 1e-6):
+            if r_t_norm <= max(r_norm, 1e-4 * q, self._r_zero):
                 # The first trial meeting the bound is also the minimum so far:
                 # every earlier trial exceeded that bound.
                 return u_trial, s, True
             s *= 0.5
-        if min_u is not None and (min_r_norm <= 2.5 * r_norm or min_r_norm < 1e5):
+        # No trial reduced the residual.
+        if min_u is not None and min_r_norm <= 2.5 * r_norm:
             return min_u, s, False
+        # A step that changes the contact active set is a severe
+        # discontinuity, not a bad direction: newly closed points jump from
+        # zero to k*gap, so the residual grows ~linearly in s and no
+        # backtracking can reduce it. Take the full step (if it does not
+        # invert elements) and let the next iterate see the new contact
+        # state as an SDI iteration (no convergence check; bounded by the
+        # caller's SDI budget). This replaces a former `or min_r_norm < 1e5`
+        # clause that accepted ANY step whenever the residual was below 1e5 N.
+        u_full = u_k + du_step
+        for dof, target_val in self.fixed_dofs.items():
+            u_full[dof] = target_val
+        if self._contact_full_state(u_full) != self._contact_full_state(u_k):
+            self.assemble_system(u_full, dt=dt)
+            if self.last_assembly_error == 0:
+                return u_full, 1.0, False
         return None, s, False
 
     def solve_step(
@@ -1884,7 +1933,7 @@ class DynamicSolver3D:
             free_dof_mask[list(self.fixed_dofs.keys())] = False
 
         u_k = self.u.copy()
-        r_0_norm = None
+        u_start = u_k.copy()
 
         accelerator = None
         if use_anderson_accel:
@@ -1904,16 +1953,12 @@ class DynamicSolver3D:
             if self.last_assembly_error > 0:
                 # Smart Cutback: Element inverted
                 return False, iter_count
+            self._set_roundoff_floor(K_g, u_k)
             residual = f_ext - f_int
 
             # Compute true physical residual norm on free DOFs
             r_free = residual[free_dof_mask]
             r_norm = float(np.linalg.norm(r_free))
-            f_ext_free_norm = float(np.linalg.norm(f_ext[free_dof_mask]))
-            f_int_norm = float(np.linalg.norm(f_int))
-
-            if r_0_norm is None or r_norm > r_0_norm:
-                r_0_norm = max(r_norm, f_ext_free_norm, f_int_norm, 1.0)
 
             # Apply BCs for linear system solve
             K_bc, r_bc = self.apply_boundary_conditions(K_g, residual, u_k)
@@ -1921,14 +1966,13 @@ class DynamicSolver3D:
             # Severe-discontinuity-iteration (SDI) check
             current_active_set = self._contact_full_state(u_k)
             is_sdi = self._sdi_update(sdi, current_active_set, u_k, freeze_window=2)
+            q = self._force_scale(f_int, f_ext, free_dof_mask)
             if getattr(self, "debug_sdi", False):
                 print(f"[SDI] raw_iter={raw_iter} equil_iters={sdi['equil_iters']} is_sdi={is_sdi} "
-                      f"n_active={len(current_active_set)} r_norm={r_norm:.4g} rel_r={r_norm/r_0_norm:.4g}", flush=True)
+                      f"n_active={len(current_active_set)} r_norm={r_norm:.4g} r/q={r_norm / max(q, 1e-300):.4g}", flush=True)
 
-            rel_r = r_norm / r_0_norm
-            rel_f = r_norm / max(f_int_norm, 1.0)
             bc_err = max([abs(target_val - u_k[dof]) for dof, target_val in self.fixed_dofs.items()], default=0.0)
-            if self._converged_by_residual(iter_count, is_sdi, bc_err, r_norm, rel_r, rel_f):
+            if self._converged_by_residual(iter_count, is_sdi, bc_err, r_norm, q):
                 self._accept_increment(u_k, "residual", f_ext, iter_count, dt, reset_tuner=True)
                 return True, iter_count
 
@@ -1940,11 +1984,11 @@ class DynamicSolver3D:
                 traceback.print_exc()
                 raise RuntimeError("Pardiso linear solver failed (matrix is likely singular). Check boundary conditions or rigid body modes.") from e
 
-            du_free_norm = float(np.linalg.norm(du[free_dof_mask]))
-            du_norm = float(np.linalg.norm(du))
             u_next = u_k + du
             bc_err_next = max([abs(target_val - u_next[dof]) for dof, target_val in self.fixed_dofs.items()], default=0.0)
-            if self._converged_by_correction(iter_count, is_sdi, bc_err_next, du_norm, du_free_norm, r_norm, rel_r):
+            du_free_max = float(np.max(np.abs(du[free_dof_mask]))) if np.any(free_dof_mask) else 0.0
+            du_inc_max = float(np.max(np.abs(u_next - u_start)))
+            if self._converged_by_correction(iter_count, is_sdi, bc_err_next, du_free_max, du_inc_max, r_norm, q):
                 self._accept_increment(u_next, "correction", f_ext, iter_count, dt, reset_tuner=True)
                 return True, iter_count
 
@@ -1985,7 +2029,7 @@ class DynamicSolver3D:
                     r_aa = f_ext - f_aa
                     r_aa_norm = float(np.linalg.norm(r_aa[free_dof_mask]))
                     # Accept accelerated iterate if it doesn't cause divergence
-                    if r_aa_norm < r_norm or r_aa_norm <= max(1.2 * r_norm, 1e-4 * r_0_norm, 1e-5):
+                    if r_aa_norm < r_norm or r_aa_norm <= max(1.2 * r_norm, 1e-4 * q, 1e-5):
                         u_k = u_aa
                         aa_accepted = True
                         for c in self.constraints:
@@ -1997,7 +2041,7 @@ class DynamicSolver3D:
                 # AA trial rejected by safeguard: pop the unverified record
                 accelerator.pop_last()
 
-            u_new, s, _ = self._line_search(u_k, du_step, f_ext, free_dof_mask, r_norm, r_0_norm, dt,
+            u_new, s, _ = self._line_search(u_k, du_step, f_ext, free_dof_mask, r_norm, q, dt,
                                             n_trials=6, prescribed_at_partial_step="target")
             if u_new is None:
                 # Non-descent / diverging search direction: cut back cleanly
@@ -2014,7 +2058,7 @@ class DynamicSolver3D:
 
         # Exhausted the equilibrium-iteration budget
         self.u = u_k
-        if self._converged_on_exhaustion(is_sdi, bc_err, rel_r, r_norm):
+        if self._converged_on_exhaustion(is_sdi, bc_err, r_norm, q):
             self._accept_increment(u_k, "fallthrough", f_ext, raw_iter, dt, reset_tuner=True)
             return True, raw_iter
 
@@ -2513,13 +2557,14 @@ class DynamicSolver3D:
             free_dof_mask[list(self.fixed_dofs.keys())] = False
 
         u_k = self.u.copy()
-        r_0_norm = None
+        u_start = u_k.copy()
         self._clear_contact_freeze()
         sdi = {"prev": self._contact_full_state(u_k), "recent": [], "sdi_iters": 0, "equil_iters": 0}
         raw_iter = 0
         max_raw_iters = max_iters + 200
         consecutive_r_growth = 0
         prev_r_norm = float("inf")
+        is_sdi = False
 
         while sdi["equil_iters"] < max_iters and raw_iter < max_raw_iters:
             raw_iter += 1
@@ -2527,15 +2572,11 @@ class DynamicSolver3D:
             K_g, f_int = self.assemble_system(u_k, dt=dt)
             if self.last_assembly_error > 0:
                 return False, iter_count
+            self._set_roundoff_floor(K_g, u_k)
 
             residual = f_ext - f_int
             r_free = residual[free_dof_mask]
             r_norm = float(np.linalg.norm(r_free))
-            f_ext_free_norm = float(np.linalg.norm(f_ext[free_dof_mask]))
-            f_int_norm = float(np.linalg.norm(f_int))
-            if r_0_norm is None or r_norm > r_0_norm:
-                # Abaqus standard: under displacement control (f_ext=0), representative force scale is f_int
-                r_0_norm = max(r_norm, f_ext_free_norm, f_int_norm, 1.0)
 
             if iter_count > 16 and r_norm >= prev_r_norm * 0.999 and not is_sdi:
                 consecutive_r_growth += 1
@@ -2558,12 +2599,11 @@ class DynamicSolver3D:
 
             current_active_set = self._contact_full_state(u_k)
             is_sdi = self._sdi_update(sdi, current_active_set, u_k, freeze_window=None)
-            rel_r = r_norm / r_0_norm
-            rel_f = r_norm / max(f_int_norm, 1.0)
+            q = self._force_scale(f_int, f_ext, free_dof_mask)
             if getattr(self, "debug_sdi", False) or (iter_count <= 5 or iter_count % 5 == 0):
-                print(f"      [Iter {iter_count:2d}] r={r_norm:.2e} rel_r={rel_r:.2e} rel_f={rel_f:.2e} f_int={f_int_norm:.2e} sdi={is_sdi} act={len(current_active_set)}", flush=True)
+                print(f"      [Iter {iter_count:2d}] r={r_norm:.2e} r/q={r_norm / max(q, 1e-300):.2e} q={q:.2e} sdi={is_sdi} act={len(current_active_set)}", flush=True)
             bc_err = max([abs(target_val - u_k[dof]) for dof, target_val in self.fixed_dofs.items()], default=0.0)
-            if self._converged_by_residual(iter_count, is_sdi, bc_err, r_norm, rel_r, rel_f):
+            if self._converged_by_residual(iter_count, is_sdi, bc_err, r_norm, q):
                 self._accept_increment(u_k, "residual", f_ext, iter_count, dt, reset_tuner=False)
                 return True, iter_count
 
@@ -2574,11 +2614,11 @@ class DynamicSolver3D:
                 traceback.print_exc()
                 raise RuntimeError("Pardiso linear solver failed (matrix is likely singular). Check boundary conditions or rigid body modes.") from e
 
-            du_free_norm = float(np.linalg.norm(du[free_dof_mask]))
-            du_norm = float(np.linalg.norm(du))
             u_next = u_k + du
             bc_err_next = max([abs(target_val - u_next[dof]) for dof, target_val in self.fixed_dofs.items()], default=0.0)
-            if self._converged_by_correction(iter_count, is_sdi, bc_err_next, du_norm, du_free_norm, r_norm, rel_r):
+            du_free_max = float(np.max(np.abs(du[free_dof_mask]))) if np.any(free_dof_mask) else 0.0
+            du_inc_max = float(np.max(np.abs(u_next - u_start)))
+            if self._converged_by_correction(iter_count, is_sdi, bc_err_next, du_free_max, du_inc_max, r_norm, q):
                 self._accept_increment(u_next, "correction", f_ext, iter_count, dt, reset_tuner=False)
                 return True, iter_count
 
@@ -2618,7 +2658,7 @@ class DynamicSolver3D:
 
             line_search_diag = []
             u_new, _, found_reduction = self._line_search(
-                u_k, du_step, f_ext, free_dof_mask, r_norm, r_0_norm, dt,
+                u_k, du_step, f_ext, free_dof_mask, r_norm, q, dt,
                 n_trials=8, prescribed_at_partial_step="scaled", diag=line_search_diag)
             if r_norm > 1e4 and iter_count <= 4:
                 print(f"      [DIAG LineSearch] trials: {line_search_diag} | found={found_reduction}", flush=True)
@@ -2634,7 +2674,7 @@ class DynamicSolver3D:
 
         # Fallthrough check on stable state
         self.u = u_k
-        if self._converged_on_exhaustion(is_sdi, bc_err, rel_r, r_norm):
+        if self._converged_on_exhaustion(is_sdi, bc_err, r_norm, q):
             self._accept_increment(u_k, "fallthrough", f_ext, raw_iter, dt, reset_tuner=False)
             return True, raw_iter
         self._clear_contact_freeze()

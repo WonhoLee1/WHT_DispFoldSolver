@@ -123,13 +123,24 @@ def _build_two_cube_deformable_contact(normal_behavior="HARD", penalty_form="LIN
     return solver, contact, nid_to_idx
 
 
+def _top_face_z_dofs(solver):
+    """Prescribed z-DOFs of the TOP cube's top face only. The former
+    selection (`k % 3 == 2 and v == 0.0`) also caught the bottom cube's
+    fixed base, so "driving the top face down" translated the whole stack
+    rigidly: no compression, no contact, and a residual of pure roundoff --
+    which the old absolute `r_norm < 1.0` acceptance hid."""
+    z = solver.mesh.nodes_array()[:, 2]
+    z_top = z.max()
+    return [k for k in solver.fixed_dofs if k % 3 == 2 and z[k // 3] == z_top]
+
+
 def test_hard_linear_still_works_unaffected():
     """The original, already-verified HARD+LINEAR path must be bit-for-
     bit unaffected by relaxing the restriction for other laws."""
     solver, contact, nid_to_idx = _build_two_cube_deformable_contact("HARD", "LINEAR")
     for n in solver.fixed_dofs:
         pass
-    top_top_nodes_dof = [k for k, v in solver.fixed_dofs.items() if k % 3 == 2 and v == 0.0]
+    top_top_nodes_dof = _top_face_z_dofs(solver)
     # Drive the top face down to compress the interface.
     for dof in top_top_nodes_dof:
         solver.fixed_dofs[dof] = -0.55
@@ -147,7 +158,7 @@ def test_nonlinear_penalty_no_longer_raises_and_converges():
     from dispsolver.constraint3d.pressure_overclosure import NonlinearPenaltyLaw
     assert isinstance(contact.law, NonlinearPenaltyLaw)
 
-    top_top_nodes_dof = [k for k, v in solver.fixed_dofs.items() if k % 3 == 2 and v == 0.0]
+    top_top_nodes_dof = _top_face_z_dofs(solver)
     for dof in top_top_nodes_dof:
         solver.fixed_dofs[dof] = -0.55
     converged, _iters = solver.solve_step(dt=1.0, max_iters=80)
@@ -169,7 +180,7 @@ def test_soft_laws_no_longer_raise_and_converge(behavior):
         f"expected a real {behavior} law object, got HardLaw (silent fallback)"
     )
 
-    top_top_nodes_dof = [k for k, v in solver.fixed_dofs.items() if k % 3 == 2 and v == 0.0]
+    top_top_nodes_dof = _top_face_z_dofs(solver)
     for dof in top_top_nodes_dof:
         solver.fixed_dofs[dof] = -0.55
     converged, _iters = solver.solve_step(dt=1.0, max_iters=80)
@@ -189,7 +200,7 @@ def test_augmented_lagrangian_now_wired_for_deformable_hard():
     solver, contact, nid_to_idx = _build_two_cube_deformable_contact("HARD", "LINEAR", "AUGMENTED_LAGRANGE")
     assert contact.augmented_lagrange is True
 
-    top_top_nodes_dof = [k for k, v in solver.fixed_dofs.items() if k % 3 == 2 and v == 0.0]
+    top_top_nodes_dof = _top_face_z_dofs(solver)
     for dof in top_top_nodes_dof:
         solver.fixed_dofs[dof] = -0.55
 

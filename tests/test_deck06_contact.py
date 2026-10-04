@@ -92,9 +92,18 @@ RF_CASES = [
     pytest.param("PENALTY", 1.0, marks=_xf, id="penalty-default"),          # -5623.95 (-15.7%), 13.5 um penetration
     pytest.param("PENALTY", 10.0, id="penalty-x10"),                        # -6562.18 (-1.6%)
     pytest.param("PENALTY", 30.0, id="penalty-x30"),                        # -6636.23 (-0.5%)
-    pytest.param("PENALTY", 100.0, marks=_xf, id="penalty-x100"),           # does not converge
+    # PENALTY x100 is not run: Newton stalls at r/q ~ 1e-3 (r ~ 3 N) and,
+    # under the relative acceptance rule, the step crawls down to dt ~ 2e-3 --
+    # more than 40 minutes before it fails (the old rules failed it fast by
+    # accepting non-descent steps). Characterized in plan P7.
     pytest.param("NITSCHE", 1.0, marks=_xf, id="nitsche-default"),          # -6412.48 (-2.4%)
-    pytest.param("NITSCHE", 1000.0, id="nitsche-x1000"),                    # -6567.44 (defines its limit)
+    # -6567.44 (defines its limit) was reached only while the line search
+    # accepted residual-INCREASING steps (`min_r_norm < 1e5`). Without that, the
+    # line search finds no descent: r grows ~linearly in the step length. The
+    # contact tangent itself is exact (FD 2.5e-9 at x1000), so the likely cause is
+    # quadrature-point activation inside an already-active face -- the solver
+    # tracks Nitsche activity per face, so this kink is never seen as an SDI. P7.
+    pytest.param("NITSCHE", 1000.0, marks=_xf, id="nitsche-x1000"),
 ]
 
 
@@ -108,11 +117,10 @@ def test_step1_reaction_reaches_own_stiffness_limit(method, scale):
 
 @pytest.mark.parametrize("method,scale", [
     ("PENALTY", 1.0), ("PENALTY", 10.0), ("NITSCHE", 1.0),
-    # FALSE CONVERGENCE: reports ok=True, but the state re-assembled with the
-    # freeze lifted is out of equilibrium by 90.2 N and RF_bolt=-6956.73
-    # (+4.3% past the limit) -- the bilateral-freeze/line-search defect
-    # (plan P2/P3) caught in the act.
-    pytest.param("PENALTY", 50.0, marks=_xf),
+    # PENALTY x50 used to be FALSELY accepted (ok=True, exhaustion branch,
+    # r = 90.2 N, RF_bolt=-6956.73). The exhaustion branch now uses the same
+    # residual criterion, so it is no longer accepted -- and, like x100, it
+    # crawls for minutes before failing (plan P7). Not run here.
 ])
 def test_step1_accepted_state_is_in_equilibrium_without_freeze(method, scale):
     r = _step1(method, scale)

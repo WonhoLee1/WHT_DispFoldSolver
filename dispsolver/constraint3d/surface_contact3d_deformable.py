@@ -400,6 +400,18 @@ class DeformableSurfaceContactConstraint3D:
                 g = False
             self._gate_active[s_nid] = g
 
+    def _law_opening(self):
+        """(h_open, slope) where the pressure-overclosure law starts carrying
+        load: h = -c0 for every analytic law, the first table point for
+        TabularSoftLaw; slope is the law's tangent just past that point."""
+        if hasattr(self.law, "h_pts"):
+            h_open = float(self.law.h_pts[0])
+        else:
+            h_open = -float(getattr(self.law, "c0", 0.0))
+        eps = 1e-9 * max(1.0, abs(h_open))
+        _, k_open = self.law.evaluate(h_open + eps)
+        return h_open, (k_open if k_open > 0.0 else self.k_contact)
+
     def capture_state(self) -> dict:
         """Capture internal contact/friction states for rollback on increment cutback."""
         return {
@@ -436,15 +448,24 @@ class DeformableSurfaceContactConstraint3D:
         for s_nid, m_face, xi, eta, sign in self.pairs:
             gap, n, (N1, N2, N3, N4), s_idx, m_idx = self._current_gap_and_normal(u, s_nid, m_face, xi, eta, sign)
             penetration = -gap
-            if getattr(self, "frozen_active_nodes", None) is not None:
-                if s_nid not in self.frozen_active_nodes:
-                    continue
-                # Abaqus Chattering Freeze standard: Bilateral spring constraint ensures exact C1 derivative
-                # consistency with k_diag so that Newton-Raphson achieves quadratic convergence without discontinuity shock.
-                # (A unilateral max(0, penetration) variant was measured 2026-09-30 on the Hertz roller deck:
-                # INDENT stalled at t=0.0486 vs t=0.1702 bilateral -- it reintroduces the kink the freeze removes.)
-                f_mag = self.k_contact * penetration
-                k_diag = self.k_contact
+            frozen = getattr(self, "frozen_active_nodes", None)
+            if frozen is not None and s_nid in frozen:
+                # SDI chatter freeze: keep this pair engaged even if it opens.
+                # While the pressure-overclosure law gives a positive force it
+                # is used AS IS -- the former `k_contact * penetration` here
+                # silently replaced any soft/nonlinear law by a linear spring
+                # for frozen pairs, a residual jump at fixed u that stalled
+                # SOFT_EXPONENTIAL contact (2026-10-04). Past the law's opening
+                # point it continues as a linear spring with the law's own
+                # opening slope (bilateral, so the freeze removes the kink; a
+                # unilateral variant stalled the Hertz roller INDENT step at
+                # t=0.0486 vs 0.1702, measured 2026-09-30). For HardLaw this
+                # is identical to the former expression.
+                f_mag, k_diag = self.law.evaluate(penetration)
+                if f_mag <= 0.0:
+                    h_open, k_open = self._law_opening()
+                    f_mag = k_open * (penetration - h_open)
+                    k_diag = k_open
             elif self.chatter_stabilization:
                 # Hysteresis-gated label (design doc sec2.2) -- identical
                 # convention to SurfaceContactConstraint3D's own branch:
