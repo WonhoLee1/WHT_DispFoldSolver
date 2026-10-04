@@ -1521,6 +1521,135 @@ class DynamicSolver3D:
             if hasattr(c, "commit_friction_state"):
                 c.commit_friction_state(u)
 
+    # ------------------------------------------------------------------
+    # Newton-loop decision logic, shared by solve_step() and
+    # _solve_step_with_hooks(). These two loops used to carry private copies
+    # of every rule below, and a fix applied to one never reached the other
+    # (the .inp path runs _solve_step_with_hooks; see dev_log/
+    # plan_deck06_contact_fix_20261004.md P1). Change a rule HERE, once.
+    # Where the two loops still differ (freeze window, line-search length,
+    # how prescribed DOFs move during a partial step) the difference is an
+    # explicit argument, not a silent fork.
+    # ------------------------------------------------------------------
+
+    def _clear_contact_freeze(self) -> None:
+        for c in self.constraints:
+            if hasattr(c, "frozen_active_nodes"):
+                c.frozen_active_nodes = None
+
+    @staticmethod
+    def _node_ids_of(active_set) -> set:
+        ids = set()
+        for item in active_set:
+            nid = item if isinstance(item, int) else (item[0] if isinstance(item, tuple) else None)
+            if nid is not None:
+                ids.add(nid)
+        return ids
+
+    def _sdi_update(self, st: Dict[str, Any], current_active_set: frozenset,
+                    u_k: np.ndarray, freeze_window: Optional[int]) -> bool:
+        """Severe-discontinuity bookkeeping for one iterate. Mutates `st`
+        (keys: prev, recent, sdi_iters, equil_iters) and returns is_sdi.
+
+        After 3 SDI iterations, or when the contact state revisits a recent
+        one, each freezable constraint's active node set is frozen to the
+        union of the last `freeze_window` states (all retained states when
+        None) plus its current active set."""
+        is_sdi = current_active_set != st["prev"]
+        recent = st["recent"]
+        is_oscillation = (current_active_set in recent) if len(recent) >= 2 else False
+        recent.append(current_active_set)
+        if len(recent) > 6:
+            recent.pop(0)
+        if is_sdi:
+            st["sdi_iters"] += 1
+        if (st["sdi_iters"] >= 3 or is_oscillation) and len(self.constraints) > 0:
+            is_sdi = False
+            st["equil_iters"] += 1
+            window = recent if freeze_window is None else recent[-freeze_window:]
+            for c in self.constraints:
+                if hasattr(c, "get_active_set") and getattr(c, "frozen_active_nodes", None) is None:
+                    union_nodes = set()
+                    for s_set in window:
+                        union_nodes |= self._node_ids_of(s_set)
+                    c_active = c.get_active_set(u_k)
+                    union_nodes |= self._node_ids_of(c_active)
+                    c.frozen_active_nodes = union_nodes if union_nodes else set(c_active)
+        elif not is_sdi:
+            st["equil_iters"] += 1
+        st["prev"] = current_active_set
+        return is_sdi
+
+    def _converged_by_residual(self, iter_count: int, is_sdi: bool, bc_err: float,
+                               r_norm: float, rel_r: float, rel_f: float) -> bool:
+        r_tol = 1e-3 if len(self.constraints) > 0 else 5e-3
+        f_tol = 1e-3 if len(self.constraints) > 0 else 0.01
+        return (iter_count > 1 and not is_sdi and bc_err < 1e-5 and (
+            r_norm < 1.0 or (rel_r < r_tol and rel_f < f_tol) or (r_norm < 1e-3)))
+
+    @staticmethod
+    def _converged_by_correction(iter_count: int, is_sdi: bool, bc_err_next: float,
+                                 du_norm: float, du_free_norm: float,
+                                 r_norm: float, rel_r: float) -> bool:
+        return (iter_count > 1 and not is_sdi and bc_err_next < 1e-5 and (
+            (du_norm < 1e-4 or du_free_norm < 1e-4) and (r_norm < 10.0 or rel_r < 0.01)))
+
+    @staticmethod
+    def _converged_on_exhaustion(is_sdi: bool, bc_err: float, rel_r: float, r_norm: float) -> bool:
+        return not is_sdi and bc_err < 1e-5 and (rel_r < 5e-3 or r_norm < 1e-3)
+
+    def _accept_increment(self, u_acc: np.ndarray, branch: str, f_ext: np.ndarray,
+                          iters: int, dt: float, reset_tuner: bool) -> None:
+        """Commit a converged iterate: SDVs, acceptance probe, friction
+        anchors, then lift any contact freeze."""
+        self.u = u_acc
+        _, f_acc = self.assemble_system(u_acc, dt=dt, update_state=True)
+        self._record_acceptance(branch, f_acc, f_ext, iters, dt=dt)
+        self._commit_contact_friction_state(u_acc)
+        if reset_tuner:
+            self.contact_tuner.reset_attempt_counter()
+        self._clear_contact_freeze()
+
+    def _line_search(self, u_k: np.ndarray, du_step: np.ndarray, f_ext: np.ndarray,
+                     free_dof_mask: np.ndarray, r_norm: float, r_0_norm: float, dt: float,
+                     n_trials: int, prescribed_at_partial_step: str,
+                     diag: Optional[list] = None) -> Tuple[Optional[np.ndarray], float, bool]:
+        """Backtracking on s = 1, 1/2, ... (n_trials values). Returns
+        (u_new, s, found_reduction); u_new is None when the step must be cut
+        back.
+
+        prescribed_at_partial_step: "target" puts prescribed DOFs at their
+        target value on every trial; "scaled" does so only at s == 1 and
+        otherwise moves them by s*du_step like the free DOFs."""
+        s = 1.0
+        min_r_norm = float("inf")
+        min_u = None
+        for _ in range(n_trials):
+            u_trial = u_k + s * du_step
+            if prescribed_at_partial_step == "target" or s >= 0.999:
+                for dof, target_val in self.fixed_dofs.items():
+                    u_trial[dof] = target_val
+            _, f_t = self.assemble_system(u_trial, dt=dt)
+            if self.last_assembly_error > 0:
+                if diag is not None:
+                    diag.append((s, "err"))
+                s *= 0.5
+                continue
+            r_t_norm = float(np.linalg.norm((f_ext - f_t)[free_dof_mask]))
+            if diag is not None:
+                diag.append((s, f"{r_t_norm:.2e}"))
+            if r_t_norm < min_r_norm:
+                min_r_norm = r_t_norm
+                min_u = u_trial
+            if r_t_norm <= max(r_norm, 1e-4 * r_0_norm, 1e-6):
+                # The first trial meeting the bound is also the minimum so far:
+                # every earlier trial exceeded that bound.
+                return u_trial, s, True
+            s *= 0.5
+        if min_u is not None and (min_r_norm <= 2.5 * r_norm or min_r_norm < 1e5):
+            return min_u, s, False
+        return None, s, False
+
     def solve_step(
         self,
         dt: float = 1.0,
@@ -1762,20 +1891,12 @@ class DynamicSolver3D:
             from dispsolver.solver.anderson_acceleration import AndersonAccelerator
             accelerator = AndersonAccelerator(m=anderson_m, beta=anderson_beta)
 
-        def _clear_freeze():
-            for c in self.constraints:
-                if hasattr(c, "frozen_active_nodes"):
-                    c.frozen_active_nodes = None
-
-        _clear_freeze()
-        prev_active_set = self._contact_full_state(u_k)
-        recent_active_sets = []
-        equil_iters = 0
-        sdi_iters = 0
+        self._clear_contact_freeze()
+        sdi = {"prev": self._contact_full_state(u_k), "recent": [], "sdi_iters": 0, "equil_iters": 0}
         raw_iter = 0
         max_raw_iters = max_iters + max_sdi_iters
 
-        while equil_iters < max_iters and raw_iter < max_raw_iters:
+        while sdi["equil_iters"] < max_iters and raw_iter < max_raw_iters:
             raw_iter += 1
             iter_count = raw_iter
             # print(f"    --> Starting assemble_system iter {iter_count}", flush=True)
@@ -1799,65 +1920,16 @@ class DynamicSolver3D:
 
             # Severe-discontinuity-iteration (SDI) check
             current_active_set = self._contact_full_state(u_k)
-            is_sdi = current_active_set != prev_active_set
-
-            # Abaqus Chattering Oscillation Detection:
-            # Check if current contact state was visited in recent iterations (cycle loop)
-            is_oscillation = (current_active_set in recent_active_sets) if len(recent_active_sets) >= 2 else False
-            recent_active_sets.append(current_active_set)
-            if len(recent_active_sets) > 6:
-                recent_active_sets.pop(0)
-
-            if is_sdi:
-                sdi_iters += 1
-
-            if (sdi_iters >= 3 or is_oscillation) and len(self.constraints) > 0:
-                # Abaqus standard: cap consecutive SDI iterations and freeze active contact nodes.
-                # Take union of all oscillating sets to guarantee boundary nodes remain supported.
-                is_sdi = False
-                equil_iters += 1
-                for c in self.constraints:
-                    if hasattr(c, "get_active_set") and getattr(c, "frozen_active_nodes", None) is None:
-                        union_nodes = set()
-                        for s_set in recent_active_sets[-2:]:
-                            for item in s_set:
-                                nid = item if isinstance(item, int) else (item[0] if isinstance(item, tuple) else None)
-                                if nid is not None:
-                                    union_nodes.add(nid)
-                        c_active = c.get_active_set(u_k)
-                        for item in c_active:
-                            nid = item if isinstance(item, int) else (item[0] if isinstance(item, tuple) else None)
-                            if nid is not None:
-                                union_nodes.add(nid)
-                        c.frozen_active_nodes = union_nodes if union_nodes else set(c_active)
-            elif not is_sdi:
-                equil_iters += 1
+            is_sdi = self._sdi_update(sdi, current_active_set, u_k, freeze_window=2)
             if getattr(self, "debug_sdi", False):
-                print(f"[SDI] raw_iter={raw_iter} equil_iters={equil_iters} is_sdi={is_sdi} "
+                print(f"[SDI] raw_iter={raw_iter} equil_iters={sdi['equil_iters']} is_sdi={is_sdi} "
                       f"n_active={len(current_active_set)} r_norm={r_norm:.4g} rel_r={r_norm/r_0_norm:.4g}", flush=True)
-            prev_active_set = current_active_set
 
             rel_r = r_norm / r_0_norm
-            f_int_norm = float(np.linalg.norm(f_int))
             rel_f = r_norm / max(f_int_norm, 1.0)
-            r_tol = 1e-3 if len(self.constraints) > 0 else 5e-3
-            f_tol = 1e-3 if len(self.constraints) > 0 else 0.01
             bc_err = max([abs(target_val - u_k[dof]) for dof, target_val in self.fixed_dofs.items()], default=0.0)
-            
-            # Strict Abaqus-grade Equilibrium Residual Convergence:
-            is_converged_residual = (
-                iter_count > 1 and not is_sdi and bc_err < 1e-5 and (
-                    r_norm < 1.0 or (rel_r < r_tol and rel_f < f_tol) or (r_norm < 1e-3)
-                )
-            )
-            if is_converged_residual:
-                self.u = u_k
-                # Commit state variables (SDV) for the converged increment
-                _, f_acc = self.assemble_system(u_k, dt=dt, update_state=True)
-                self._record_acceptance("residual", f_acc, f_ext, iter_count, dt=dt)
-                self._commit_contact_friction_state(u_k)
-                self.contact_tuner.reset_attempt_counter()
-                _clear_freeze()
+            if self._converged_by_residual(iter_count, is_sdi, bc_err, r_norm, rel_r, rel_f):
+                self._accept_increment(u_k, "residual", f_ext, iter_count, dt, reset_tuner=True)
                 return True, iter_count
 
             # Solve linear system \Delta u = K^-1 * r
@@ -1872,22 +1944,8 @@ class DynamicSolver3D:
             du_norm = float(np.linalg.norm(du))
             u_next = u_k + du
             bc_err_next = max([abs(target_val - u_next[dof]) for dof, target_val in self.fixed_dofs.items()], default=0.0)
-            u_free_norm = float(np.linalg.norm(u_k[free_dof_mask]))
-            rel_du = du_free_norm / max(u_free_norm, 1e-5)
-            
-            # Strict Displacement Correction Convergence with residual safety bound:
-            is_converged_correction = (
-                iter_count > 1 and not is_sdi and bc_err_next < 1e-5 and (
-                    (du_norm < 1e-4 or du_free_norm < 1e-4) and (r_norm < 10.0 or rel_r < 0.01)
-                )
-            )
-            if is_converged_correction:
-                self.u = u_next
-                _, f_acc = self.assemble_system(self.u, dt=dt, update_state=True)
-                self._record_acceptance("correction", f_acc, f_ext, iter_count, dt=dt)
-                self._commit_contact_friction_state(self.u)
-                self.contact_tuner.reset_attempt_counter()
-                _clear_freeze()
+            if self._converged_by_correction(iter_count, is_sdi, bc_err_next, du_norm, du_free_norm, r_norm, rel_r):
+                self._accept_increment(u_next, "correction", f_ext, iter_count, dt, reset_tuner=True)
                 return True, iter_count
 
             # Displacement correction limiter: prevent artificial element inversion during contact release/SDI shock
@@ -1939,43 +1997,13 @@ class DynamicSolver3D:
                 # AA trial rejected by safeguard: pop the unverified record
                 accelerator.pop_last()
 
-            # Standard Armijo / Backtracking Line Search:
-            # Find step size s in [1.0, 0.5, 0.25, 0.125, 0.0625, 0.03125] that reduces residual norm
-            s = 1.0
-            min_r_norm = float("inf")
-            min_u = None
-            found_reduction = False
-
-            for _ in range(6):
-                u_trial = u_k + s * du_step
-                for dof, target_val in self.fixed_dofs.items():
-                    u_trial[dof] = target_val
-                _, f_t = self.assemble_system(u_trial, dt=dt)
-                if self.last_assembly_error > 0:
-                    s *= 0.5
-                    continue
-                r_t = f_ext - f_t
-                r_t_norm = float(np.linalg.norm(r_t[free_dof_mask]))
-
-                if r_t_norm < min_r_norm:
-                    min_r_norm = r_t_norm
-                    min_u = u_trial
-
-                if r_t_norm <= max(r_norm, 1e-4 * r_0_norm, 1e-6):
-                    found_reduction = True
-                    u_k = u_trial
-                    break
-                s *= 0.5
-
-            if not found_reduction:
-                if min_u is not None and (min_r_norm <= 2.5 * r_norm or min_r_norm < 1e5):
-                    u_k = min_u
-                else:
-                    # Non-descent / diverging search direction: cut back cleanly
-                    _clear_freeze()
-                    return False, iter_count
-            else:
-                u_k = min_u if min_u is not None else u_k
+            u_new, s, _ = self._line_search(u_k, du_step, f_ext, free_dof_mask, r_norm, r_0_norm, dt,
+                                            n_trials=6, prescribed_at_partial_step="target")
+            if u_new is None:
+                # Non-descent / diverging search direction: cut back cleanly
+                self._clear_contact_freeze()
+                return False, iter_count
+            u_k = u_new
             if accelerator is not None and not aa_accepted:
                 accelerator.record(u_k - s * du, s * du)
 
@@ -1986,19 +2014,15 @@ class DynamicSolver3D:
 
         # Exhausted the equilibrium-iteration budget
         self.u = u_k
-        if not is_sdi and bc_err < 1e-5 and (rel_r < 5e-3 or r_norm < 1e-3):
-            _, f_acc = self.assemble_system(u_k, dt=dt, update_state=True)
-            self._record_acceptance("fallthrough", f_acc, f_ext, raw_iter, dt=dt)
-            self._commit_contact_friction_state(u_k)
-            self.contact_tuner.reset_attempt_counter()
-            _clear_freeze()
+        if self._converged_on_exhaustion(is_sdi, bc_err, rel_r, r_norm):
+            self._accept_increment(u_k, "fallthrough", f_ext, raw_iter, dt, reset_tuner=True)
             return True, raw_iter
 
         # Autonomous In-situ Healing & Relaxation
         if auto_tune_contact:
             tuned = self.contact_tuner.tune_and_relax(reason=f"Newton divergence / Chattering at iter {raw_iter}")
             if tuned:
-                _clear_freeze()
+                self._clear_contact_freeze()
                 # Rollback to initial increment state and retry with relaxed parameters
                 success, retry_iters = self.solve_step(
                     dt=dt,
@@ -2016,7 +2040,7 @@ class DynamicSolver3D:
                     self.contact_tuner.reset_attempt_counter()
                     return True, raw_iter + retry_iters
 
-        _clear_freeze()
+        self._clear_contact_freeze()
         return False, raw_iter
 
 
@@ -2490,22 +2514,14 @@ class DynamicSolver3D:
 
         u_k = self.u.copy()
         r_0_norm = None
-        def _clear_freeze():
-            for c in self.constraints:
-                if hasattr(c, "frozen_active_nodes"):
-                    c.frozen_active_nodes = None
-
-        _clear_freeze()
-        prev_active_set = self._contact_full_state(u_k)
-        recent_active_sets = []
-        equil_iters = 0
-        sdi_iters = 0
+        self._clear_contact_freeze()
+        sdi = {"prev": self._contact_full_state(u_k), "recent": [], "sdi_iters": 0, "equil_iters": 0}
         raw_iter = 0
         max_raw_iters = max_iters + 200
         consecutive_r_growth = 0
         prev_r_norm = float("inf")
 
-        while equil_iters < max_iters and raw_iter < max_raw_iters:
+        while sdi["equil_iters"] < max_iters and raw_iter < max_raw_iters:
             raw_iter += 1
             iter_count = raw_iter
             K_g, f_int = self.assemble_system(u_k, dt=dt)
@@ -2525,7 +2541,7 @@ class DynamicSolver3D:
                 consecutive_r_growth += 1
                 if consecutive_r_growth >= 6:
                     # Abaqus standard: Cutback on persistent residual stagnation
-                    _clear_freeze()
+                    self._clear_contact_freeze()
                     return False, iter_count
             else:
                 consecutive_r_growth = 0
@@ -2541,62 +2557,14 @@ class DynamicSolver3D:
             K_bc, r_bc = self.apply_boundary_conditions(K_g, residual, u_k)
 
             current_active_set = self._contact_full_state(u_k)
-            is_sdi = current_active_set != prev_active_set
-
-            # Abaqus Chattering Oscillation Detection:
-            # Check if current contact state was visited in recent iterations (cycle loop)
-            is_oscillation = (current_active_set in recent_active_sets) if len(recent_active_sets) >= 2 else False
-            recent_active_sets.append(current_active_set)
-            if len(recent_active_sets) > 6:
-                recent_active_sets.pop(0)
-
-            if is_sdi:
-                sdi_iters += 1
-
-            if (sdi_iters >= 3 or is_oscillation) and len(self.constraints) > 0:
-                # Abaqus standard: cap consecutive SDI iterations and freeze active contact nodes.
-                # Take union of all oscillating sets to guarantee boundary nodes remain supported.
-                is_sdi = False
-                equil_iters += 1
-                for c in self.constraints:
-                    if hasattr(c, "get_active_set") and getattr(c, "frozen_active_nodes", None) is None:
-                        union_nodes = set()
-                        for s_set in recent_active_sets:
-                            for item in s_set:
-                                nid = item if isinstance(item, int) else (item[0] if isinstance(item, tuple) else None)
-                                if nid is not None:
-                                    union_nodes.add(nid)
-                        c_active = c.get_active_set(u_k)
-                        for item in c_active:
-                            nid = item if isinstance(item, int) else (item[0] if isinstance(item, tuple) else None)
-                            if nid is not None:
-                                union_nodes.add(nid)
-                        c.frozen_active_nodes = union_nodes if union_nodes else set(c_active)
-            elif not is_sdi:
-                equil_iters += 1
-            prev_active_set = current_active_set
+            is_sdi = self._sdi_update(sdi, current_active_set, u_k, freeze_window=None)
             rel_r = r_norm / r_0_norm
-            f_int_norm = float(np.linalg.norm(f_int))
             rel_f = r_norm / max(f_int_norm, 1.0)
             if getattr(self, "debug_sdi", False) or (iter_count <= 5 or iter_count % 5 == 0):
                 print(f"      [Iter {iter_count:2d}] r={r_norm:.2e} rel_r={rel_r:.2e} rel_f={rel_f:.2e} f_int={f_int_norm:.2e} sdi={is_sdi} act={len(current_active_set)}", flush=True)
-            r_tol = 1e-3 if len(self.constraints) > 0 else 5e-3
-            f_tol = 1e-3 if len(self.constraints) > 0 else 0.01
             bc_err = max([abs(target_val - u_k[dof]) for dof, target_val in self.fixed_dofs.items()], default=0.0)
-            
-            # Strict Abaqus-grade Equilibrium Residual Convergence:
-            # Prevents premature exit when large unrelaxed internal bending forces exist
-            is_converged_residual = (
-                iter_count > 1 and not is_sdi and bc_err < 1e-5 and (
-                    r_norm < 1.0 or (rel_r < r_tol and rel_f < f_tol) or (r_norm < 1e-3)
-                )
-            )
-            if is_converged_residual:
-                self.u = u_k
-                _, f_acc = self.assemble_system(u_k, dt=dt, update_state=True)
-                self._record_acceptance("residual", f_acc, f_ext, iter_count, dt=dt)
-                self._commit_contact_friction_state(u_k)
-                _clear_freeze()
+            if self._converged_by_residual(iter_count, is_sdi, bc_err, r_norm, rel_r, rel_f):
+                self._accept_increment(u_k, "residual", f_ext, iter_count, dt, reset_tuner=False)
                 return True, iter_count
 
             try:
@@ -2606,26 +2574,12 @@ class DynamicSolver3D:
                 traceback.print_exc()
                 raise RuntimeError("Pardiso linear solver failed (matrix is likely singular). Check boundary conditions or rigid body modes.") from e
 
-            du_free = du[free_dof_mask]
-            du_free_norm = float(np.linalg.norm(du_free))
+            du_free_norm = float(np.linalg.norm(du[free_dof_mask]))
             du_norm = float(np.linalg.norm(du))
             u_next = u_k + du
             bc_err_next = max([abs(target_val - u_next[dof]) for dof, target_val in self.fixed_dofs.items()], default=0.0)
-            u_free_norm = float(np.linalg.norm(u_k[free_dof_mask]))
-            rel_du = du_free_norm / max(u_free_norm, 1e-5)
-
-            # Strict Displacement Correction Convergence with residual safety bound:
-            is_converged_correction = (
-                iter_count > 1 and not is_sdi and bc_err_next < 1e-5 and (
-                    (du_norm < 1e-4 or du_free_norm < 1e-4) and (r_norm < 10.0 or rel_r < 0.01)
-                )
-            )
-            if is_converged_correction:
-                self.u = u_next
-                _, f_acc = self.assemble_system(self.u, dt=dt, update_state=True)
-                self._record_acceptance("correction", f_acc, f_ext, iter_count, dt=dt)
-                self._commit_contact_friction_state(self.u)
-                _clear_freeze()
+            if self._converged_by_correction(iter_count, is_sdi, bc_err_next, du_norm, du_free_norm, r_norm, rel_r):
+                self._accept_increment(u_next, "correction", f_ext, iter_count, dt, reset_tuner=False)
                 return True, iter_count
 
             # Displacement correction limiter: prevent artificial element inversion during contact release/SDI shock
@@ -2662,48 +2616,17 @@ class DynamicSolver3D:
                 free_dof_indices = np.where(free_dof_mask)[0]
                 print(f"      [DIAG] Top 3 residual DOFs: {[(free_dof_indices[idx], free_dof_indices[idx]//3, free_dof_indices[idx]%3, float(r_free[idx])) for idx in top_free]}", flush=True)
 
-            # Standard Armijo / Backtracking Line Search:
-            # Find step size s in [1.0, 0.5, 0.25, 0.125, 0.0625, 0.03125, 0.015625, 0.0078125]
-            s = 1.0
-            min_r_norm = float("inf")
-            min_u = None
-            found_reduction = False
-
             line_search_diag = []
-            for _ in range(8):
-                u_trial = u_k + s * du_step
-                if s >= 0.999:
-                    for dof, target_val in self.fixed_dofs.items():
-                        u_trial[dof] = target_val
-                _, f_t = self.assemble_system(u_trial, dt=dt)
-                if self.last_assembly_error > 0:
-                    line_search_diag.append((s, "err"))
-                    s *= 0.5
-                    continue
-                r_t = f_ext - f_t
-                r_t_norm = float(np.linalg.norm(r_t[free_dof_mask]))
-                line_search_diag.append((s, f"{r_t_norm:.2e}"))
-
-                if r_t_norm < min_r_norm:
-                    min_r_norm = r_t_norm
-                    min_u = u_trial
-
-                if r_t_norm <= max(r_norm, 1e-4 * r_0_norm, 1e-6):
-                    found_reduction = True
-                    u_k = u_trial
-                    break
-                s *= 0.5
-
+            u_new, _, found_reduction = self._line_search(
+                u_k, du_step, f_ext, free_dof_mask, r_norm, r_0_norm, dt,
+                n_trials=8, prescribed_at_partial_step="scaled", diag=line_search_diag)
             if r_norm > 1e4 and iter_count <= 4:
                 print(f"      [DIAG LineSearch] trials: {line_search_diag} | found={found_reduction}", flush=True)
-
-            if not found_reduction:
-                if min_u is not None and (min_r_norm <= 2.5 * r_norm or min_r_norm < 1e5):
-                    u_k = min_u
-                else:
-                    # Non-descent / diverging search direction: cut back cleanly
-                    _clear_freeze()
-                    return False, iter_count
+            if u_new is None:
+                # Non-descent / diverging search direction: cut back cleanly
+                self._clear_contact_freeze()
+                return False, iter_count
+            u_k = u_new
             for c in self.constraints:
                 if getattr(c, "augmented_lagrange", False):
                     c.update_augmented_multipliers(u_k, omega=1.0)
@@ -2711,13 +2634,10 @@ class DynamicSolver3D:
 
         # Fallthrough check on stable state
         self.u = u_k
-        if not is_sdi and bc_err < 1e-5 and (rel_r < 5e-3 or r_norm < 1e-3):
-            _, f_acc = self.assemble_system(u_k, dt=dt, update_state=True)
-            self._record_acceptance("fallthrough", f_acc, f_ext, raw_iter, dt=dt)
-            self._commit_contact_friction_state(u_k)
-            _clear_freeze()
+        if self._converged_on_exhaustion(is_sdi, bc_err, rel_r, r_norm):
+            self._accept_increment(u_k, "fallthrough", f_ext, raw_iter, dt, reset_tuner=False)
             return True, raw_iter
-        _clear_freeze()
+        self._clear_contact_freeze()
         return False, raw_iter
 
     def solve(
