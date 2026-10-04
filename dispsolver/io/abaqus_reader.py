@@ -67,6 +67,8 @@ class AbaqusInputReader:
             gaps.append(f"*{kw} (unsupported)")
 
         for kw, p, kind in self.unsupported_params:
+            if kind == "control":
+                continue   # solution control (incrementation, storage), not the model
             base_kw = kw.split(" table rejected")[0].strip()
             spec = self.registry.get_handler(base_kw)
             if spec is not None and spec.support in ("IGNORED", "STUB"):
@@ -114,9 +116,37 @@ class AbaqusInputReader:
         self.warnings: List[str] = []
 
     def get_active_part(self) -> Part:
-        """Return currently active part (or create/return default part for non-assembly models)."""
+        """Return currently active part (or create/return default part for non-assembly models).
+
+        Inside *INSTANCE ... *END INSTANCE, model data (*NODE, *ELEMENT, sets,
+        sections) belongs to that instance: it goes to a part of its own when
+        the instance's part is empty, else to that part provided no other
+        instance shares it. This used
+        to fall through to PART_DEFAULT, which no instance references, so an
+        instance-level mesh (Abaqus CAE writes them for independent instances)
+        vanished from the assembly."""
         if self.current_part is not None:
             return self.current_part
+        if self.context == KeywordContext.INSTANCE and self.current_instance is not None:
+            inst = self.current_instance
+            part = inst.part
+            if getattr(inst, "_private_part", False):
+                return part
+            if not part.nodes and not part.elements:
+                # Independent instance of an empty part (Abaqus CAE writes its
+                # mesh inside *INSTANCE): the instance gets a part of its own,
+                # so further instances of the same empty part keep theirs.
+                private = self.model.Part(f"{part.name}__{inst.name}", dim=self.dim)
+                inst.part = private
+                inst._private_part = True
+                return private
+            sharing = [i.name for i in self.model.root_assembly.instances.values()
+                       if i.part is part and i is not inst]
+            if sharing:
+                raise NotImplementedError(
+                    f"*INSTANCE {inst.name}: instance-level model data on part {part.name!r}, "
+                    f"which already has a mesh and is also used by instances {sharing}")
+            return part
         if self._default_part is None:
             self._default_part = self.model.Part("PART_DEFAULT", dim=self.dim)
         return self._default_part
@@ -197,8 +227,9 @@ class AbaqusInputReader:
                         else:
                             p_spec = spec.params[p_norm]
                             if not p_spec.supported:
-                                msg = f"*{kw} at line {block.line_number}: unsupported parameter '{p_key}'"
-                                entry = (kw, p_key, "unsupported")
+                                kind = "control" if p_spec.control else "unsupported"
+                                msg = f"*{kw} at line {block.line_number}: {kind} parameter '{p_key}' not implemented"
+                                entry = (kw, p_key, kind)
                                 if entry not in self.unsupported_params:
                                     self.unsupported_params.append(entry)
                                 if self.strict:

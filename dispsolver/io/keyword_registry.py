@@ -38,6 +38,10 @@ class ParamSpec:
     required: bool = False                              # Mandatory parameter?
     choices: Optional[List[Any]] = None                 # Valid values (case-insensitive strings or values)
     supported: bool = True                              # Whether this solver implements this parameter
+    # Solution-technique control (incrementation, matrix storage, residual
+    # tolerances): when unsupported it changes how the answer is reached, not
+    # the model, so it is reported but is not a physics gap.
+    control: bool = False
     aliases: List[str] = field(default_factory=list)    # Alternative spellings or abbreviations (e.g. AMP for AMPLITUDE)
     description: str = ""
 

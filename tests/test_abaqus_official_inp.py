@@ -118,4 +118,7 @@ def test_assembly_rotated_2d_reads():
     assert reader.unsupported_keywords == []
     part = model.parts["P"]
     assert "EDGE" in part.sets
-    assert "I__ILOCAL" in part.sets
+    # a set defined inside *INSTANCE keeps its deck name on the instance's own
+    # part (it used to be renamed I__ILOCAL, which INST.SET references and
+    # sections could not find)
+    assert "ILOCAL" in part.sets

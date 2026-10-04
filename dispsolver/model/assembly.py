@@ -531,6 +531,7 @@ class Assembly:
 
         from dispsolver.model.nodal_transform import build_nodal_transforms
         sys.ambiguous_names = ambiguous_names
+        sys.assembly_name = self.name
         node_transforms, has_transforms = build_nodal_transforms(sys, model)
         sys.node_transforms = node_transforms
         sys.has_transforms = has_transforms

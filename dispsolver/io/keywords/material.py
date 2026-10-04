@@ -564,7 +564,7 @@ def _section_part(reader, elset: str, kind: str):
     which must define the ELSET. Outside any part (written after *END PART):
     the one part that defines the ELSET; several candidates are ambiguous.
     The old fallback took the FIRST part with that ELSET name."""
-    if reader.context == KeywordContext.PART or elset.upper() == "ALL":
+    if reader.context in (KeywordContext.PART, KeywordContext.INSTANCE) or elset.upper() == "ALL":
         part = reader.get_active_part()
         if elset.upper() != "ALL" and elset not in part.element_sets and elset not in part.sets:
             raise KeyError(f"*{kind} SECTION: ELSET {elset!r} is not defined in part {part.name!r}")

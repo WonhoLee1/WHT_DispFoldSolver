@@ -304,3 +304,96 @@ def test_tie_without_solver_implementation_fails_at_solve_not_silently():
     _, _, solver, _, _ = build(text)
     with pytest.raises(NotImplementedError, match="T1"):
         solver.assemble_system(np.zeros(solver.num_dofs))
+
+
+# ----------------------------------------------------------------- instance-level data, qualified sets
+INSTANCE_LEVEL = """*PART, NAME=P
+*END PART
+*ASSEMBLY, NAME=ASM
+*INSTANCE, NAME=I1, PART=P
+*NODE
+1,0,0,0
+2,1,0,0
+3,1,1,0
+4,0,1,0
+5,0,0,1
+6,1,0,1
+7,1,1,1
+8,0,1,1
+*ELEMENT, TYPE=C3D8
+1, 1,2,3,4,5,6,7,8
+*ELSET, ELSET=_I1, INTERNAL
+1
+*NSET, NSET=BOT
+1,2,3,4
+*NSET, NSET=TOP
+5,6,7,8
+*SOLID SECTION, ELSET=_I1, MATERIAL=SOFT
+*END INSTANCE
+*NSET, NSET=FIX
+I1.BOT
+*NSET, NSET=PULL
+ASM.I1.TOP
+*END ASSEMBLY
+""" + MATS + STEP + "*BOUNDARY\nFIX, 1, 3\n*CLOAD\nPULL, 3, 1.\n*END STEP\n"
+
+
+def test_instance_level_mesh_sets_and_section():
+    # Abaqus CAE writes independent-instance meshes inside *INSTANCE. The mesh
+    # used to land on PART_DEFAULT (no instance -> dropped), the sets were
+    # renamed INST__SET, and the section could not find its ELSET.
+    fixed, f, solver, reader = at_end(INSTANCE_LEVEL)
+    assert len(solver.mesh.elements) == 1
+    assert np.isclose(np.asarray(solver.elem_props)[0, 0], 1000.0)          # SOFT, not a default
+    assert sorted({n for n, _ in fixed}) == [1, 2, 3, 4]                       # FIX = I1.BOT
+    assert np.allclose(f[4:8, 2], 1.0)                                         # PULL = ASM.I1.TOP
+    assert not reader.physics_gaps()
+
+
+def test_instance_level_meshes_of_one_empty_part_get_private_parts():
+    # two independent instances of the same EMPTY part, each with its own mesh
+    second = INSTANCE_LEVEL[INSTANCE_LEVEL.index("*INSTANCE, NAME=I1"):INSTANCE_LEVEL.index("*END INSTANCE")]
+    second = second.replace("NAME=I1", "NAME=I2")
+    for a, b in (("1,0,0,0", "1,5,0,0"), ("2,1,0,0", "2,6,0,0"), ("3,1,1,0", "3,6,1,0"), ("4,0,1,0", "4,5,1,0"),
+                 ("5,0,0,1", "5,5,0,1"), ("6,1,0,1", "6,6,0,1"), ("7,1,1,1", "7,6,1,1"), ("8,0,1,1", "8,5,1,1")):
+        second = second.replace(a, b)
+    text = INSTANCE_LEVEL.replace("*END INSTANCE\n", "*END INSTANCE\n" + second + "*END INSTANCE\n", 1)
+    text = text.replace("*NSET, NSET=FIX\nI1.BOT\n", "*NSET, NSET=FIX\nI1.BOT\nI2.BOT\n")
+    fixed, f, solver, reader = at_end(text)
+    assert len(solver.mesh.elements) == 2
+    assert len({n for n, _ in fixed}) == 8
+
+
+def test_instance_level_data_on_a_meshed_shared_part_is_refused():
+    text = ("*PART, NAME=P\n" + CUBE + "*SOLID SECTION, ELSET=SEC, MATERIAL=STEEL\n*END PART\n"
+            "*ASSEMBLY, NAME=A\n*INSTANCE, NAME=IA, PART=P\n*END INSTANCE\n"
+            "*INSTANCE, NAME=IB, PART=P\n*NODE\n9,5,5,5\n*END INSTANCE\n*END ASSEMBLY\n" + MATS + STEP + "*END STEP\n")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        reader, _ = _parse_source(text, dim=3)
+    assert any("already has a mesh" in g for g in reader.physics_gaps())
+
+
+def test_model_level_sets_after_the_assembly_use_qualified_names():
+    text = INSTANCE_LEVEL.replace("*NSET, NSET=FIX\nI1.BOT\n*NSET, NSET=PULL\nASM.I1.TOP\n*END ASSEMBLY\n",
+                                  "*END ASSEMBLY\n*NSET, NSET=FIX\nI1.BOT\n")
+    text = text.replace("*CLOAD\nPULL, 3, 1.\n", "*CLOAD\nASM.I1.TOP, 3, 1.\n")
+    fixed, f, solver, reader = at_end(text)
+    assert sorted({n for n, _ in fixed}) == [1, 2, 3, 4]
+    assert np.allclose(f[4:8, 2], 1.0)
+
+
+# ----------------------------------------------------------------- control vs physics parameters
+def test_solution_control_parameters_are_not_physics_gaps():
+    for head in ("*STEP, UNSYMM=YES\n*STATIC, DIRECT\n0.1, 1.0\n", "*STEP, AMPLITUDE=RAMP\n*STATIC\n0.1, 1.0\n"):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            reader, _ = _parse_source(deck(head=head), dim=3)
+        assert not reader.physics_gaps(), (head, reader.physics_gaps())
+
+
+def test_step_amplitude_the_solver_does_not_apply_is_a_gap():
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        reader, _ = _parse_source(deck(head="*STEP, AMPLITUDE=STEP\n*STATIC\n0.1, 1.0\n"), dim=3)
+    assert any("AMPLITUDE=STEP" in g for g in reader.physics_gaps())

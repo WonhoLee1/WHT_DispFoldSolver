@@ -32,6 +32,15 @@ class RegionError(ValueError):
     """A region name in the model does not resolve to any node/element."""
 
 
+def _strip_assembly(sys: Any, key: str) -> str:
+    """ASSEMBLY.INSTANCE.SET -> INSTANCE.SET (Abaqus writes the assembly name in
+    front of instance-qualified names in history data)."""
+    asm = getattr(sys, "assembly_name", None)
+    if asm and key.upper().startswith(str(asm).upper() + "."):
+        return key[len(asm) + 1:]
+    return key
+
+
 def _instance_names(sys: Any) -> set:
     return {k[0] for k in getattr(sys, "node_local_to_global", {}).keys()}
 
@@ -50,7 +59,7 @@ def resolve_node_region(sys: Any, region: Any, step: Any = None, what: str = "re
     if region is None or (isinstance(region, str) and not region.strip()):
         raise RegionError(f"{what}: empty node region")
     gn = getattr(sys, "global_nsets", {})
-    key = str(region).strip()
+    key = _strip_assembly(sys, str(region).strip())
     if key in gn:
         return np.asarray(gn[key], dtype=np.int64)
     _ambiguous(sys, key, "nset", what)
@@ -100,7 +109,7 @@ def resolve_elem_region(sys: Any, region: Any, what: str = "region", allow_blank
             return np.arange(n_elem, dtype=np.int64)
         raise RegionError(f"{what}: empty element region")
     ge = getattr(sys, "global_elsets", {})
-    key = str(region).strip()
+    key = _strip_assembly(sys, str(region).strip())
     if key in ge:
         return np.asarray(ge[key], dtype=np.int64)
     _ambiguous(sys, key, "elset", what)

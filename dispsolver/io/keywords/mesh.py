@@ -133,71 +133,117 @@ def _handle_nset(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     name = block.params.get("nset", "")
     if not name:
         return
+    _store_set(reader, "node", name, _set_members(reader, block, "node", name))
 
-    generate = "generate" in block.params or "gen" in block.params or block.params.get("generate", "").lower() in ["yes", "true", "1"] or block.params.get("gen", "").lower() in ["yes", "true", "1"]
-    nids = []
 
-    if generate and block.data_lines:
+def _assembly_scope(reader: AbaqusInputReader) -> bool:
+    """Sets are assembly sets inside *ASSEMBLY, and also at model level (after
+    *END ASSEMBLY) in a deck that has an assembly: Abaqus decks refer to
+    instance sets there as INSTANCE.SET / ASSEMBLY.INSTANCE.SET."""
+    return (reader.context == KeywordContext.ASSEMBLY
+            or (reader.context == KeywordContext.GLOBAL and getattr(reader, "has_assembly", False)))
+
+
+def _set_members(reader: AbaqusInputReader, block: AbaqusKeywordBlock, kind: str, name: str):
+    """Members of a *NSET/*ELSET as (instance name or None, label) pairs.
+
+    Labels are instance-local; the instance is None outside the assembly.
+    In the assembly a member may be a label (of INSTANCE=), an assembly set,
+    a set of the INSTANCE= instance, or an instance-qualified set INST.SET
+    (also written ASSEMBLY.INST.SET). Qualified names used to be rejected
+    (and before that silently dropped)."""
+    ids_attr = "node_ids" if kind == "node" else "element_ids"
+    part_sets = "node_sets" if kind == "node" else "element_sets"
+    kw = "*NSET" if kind == "node" else "*ELSET"
+    asm = reader.model.root_assembly
+    in_asm = _assembly_scope(reader)
+    inst_param = block.params.get("instance", None)
+    inst_key = None
+    if in_asm and inst_param:
+        if inst_param not in asm.instances:
+            raise KeyError(f"{kw} {name}: instance {inst_param!r} is not defined")
+        inst_key = asm.instances[inst_param].name
+
+    def part_set(part, tok):
+        for table in (getattr(part, part_sets), part.sets):
+            if tok in table:
+                return list(getattr(table[tok], ids_attr))
+        return None
+
+    generate = ("generate" in block.params or "gen" in block.params)
+    out = []
+    if generate:
         for line in block.data_lines:
-            parts = [int(p) for p in line.replace(",", " ").split() if p.strip()]
-            if len(parts) >= 2:
-                start = parts[0]
-                end = parts[1]
-                step = parts[2] if len(parts) >= 3 else 1
-                nids.extend(list(range(start, end + 1, step)))
-    else:
-        part_ctx = reader.get_active_part()
-        for line in block.data_lines:
-            tokens = [p.strip() for p in line.replace(",", " ").split() if p.strip()]
-            for tok in tokens:
-                clean_tok = tok.replace("-", "")
-                if clean_tok.isdigit():
-                    nids.append(int(tok))
-                else:
-                    # Resolve referenced set name
-                    resolved = False
-                    if part_ctx is not None:
-                        if tok in part_ctx.node_sets:
-                            nids.extend(part_ctx.node_sets[tok].node_ids)
-                            resolved = True
-                        elif tok in part_ctx.sets:
-                            nids.extend(part_ctx.sets[tok].node_ids)
-                            resolved = True
-                    if not resolved and hasattr(reader.model, "root_assembly"):
-                        if tok in reader.model.root_assembly.node_sets:
-                            nids.extend(reader.model.root_assembly.node_sets[tok].node_ids)
-                            resolved = True
-                    if not resolved:
-                        # used to be dropped from the set without a word
-                        raise KeyError(f"*NSET {name}: member {tok!r} is neither a "
-                                       f"node number nor a defined node set")
+            vals = [int(v) for v in line.replace(",", " ").split() if v.strip()]
+            if len(vals) >= 2:
+                step = vals[2] if len(vals) >= 3 else 1
+                out += [(inst_key, i) for i in range(vals[0], vals[1] + 1, step)]
+        return out
 
-    inst_name = block.params.get("instance", None)
-    if reader.context in [KeywordContext.ASSEMBLY]:
+    part_ctx = None if in_asm else reader.get_active_part()
+    for line in block.data_lines:
+        for tok in (t.strip() for t in line.replace(",", " ").split() if t.strip()):
+            if tok.lstrip("-").isdigit():
+                out.append((inst_key, int(tok)))
+                continue
+            if not in_asm:
+                ids = part_set(part_ctx, tok) if part_ctx is not None else None
+                if ids is None:
+                    raise KeyError(f"{kw} {name}: member {tok!r} is neither a {kind} number nor a defined {kind} set")
+                out += [(None, i) for i in ids]
+                continue
+            # assembly level
+            aset = getattr(asm, part_sets).get(tok)
+            if aset is not None:
+                mem = getattr(aset, "members", None)
+                out += list(mem) if mem is not None else [(None, int(i)) for i in getattr(aset, ids_attr)]
+                continue
+            if inst_key is not None:
+                ids = part_set(asm.instances[inst_key].part, tok)
+                if ids is not None:
+                    out += [(inst_key, i) for i in ids]
+                    continue
+            pieces = tok.split(".")
+            if len(pieces) >= 2:
+                if len(pieces) == 3 and pieces[0].upper() == str(asm.name).upper():
+                    pieces = pieces[1:]
+                iname, sname = ".".join(pieces[:-1]), pieces[-1]
+                if iname in asm.instances:
+                    inst = asm.instances[iname]
+                    ids = part_set(inst.part, sname)
+                    if ids is not None:
+                        out += [(inst.name, i) for i in ids]
+                        continue
+            raise KeyError(f"{kw} {name}: member {tok!r} is neither a {kind} number, an assembly {kind} set "
+                           f"nor an instance-qualified set (INSTANCE.SET)")
+    return out
+
+
+def _store_set(reader: AbaqusInputReader, kind: str, name: str, members):
+    asm = reader.model.root_assembly
+    labels = [i for _, i in members]
+    if _assembly_scope(reader):
         # An assembly set lists INSTANCE-local labels. It is stored on the
         # assembly with its instance and mapped per instance at flattening.
-        # It used to be written into the instance's PART as well, which put
-        # it on every other instance of that part too.
-        if inst_name and inst_name not in reader.model.root_assembly.instances:
-            raise KeyError(f"assembly set {name}: instance {inst_name!r} is not defined")
-        asm = reader.model.root_assembly
-        inst_key = asm.instances[inst_name].name if inst_name else None
-        prev = asm.node_sets.get(name)
-        members = list(getattr(prev, "members", [])) if prev is not None else []
-        members += [(inst_key, int(i)) for i in nids]
-        aset = asm.Set(name, nodes=[i for _, i in members])
-        aset.members = members
+        table = asm.node_sets if kind == "node" else asm.element_sets
+        prev = table.get(name)
+        allm = (list(getattr(prev, "members", [])) if prev is not None else []) + list(members)
+        aset = asm.Set(name, nodes=[i for _, i in allm]) if kind == "node" else asm.Set(name, elements=[i for _, i in allm])
+        aset.members = allm
     elif reader.context == KeywordContext.STEP and reader.current_step is not None:
-        cur = reader.current_step.step_nsets.setdefault(name, [])
-        for nid in nids:
-            if nid not in cur:
-                cur.append(nid)
-    elif reader.context == KeywordContext.INSTANCE and reader.current_instance is not None:
-        inst = reader.current_instance
-        inst.part.create_set(f"{inst.name}__{name}", nodes=nids)
+        cur = (reader.current_step.step_nsets if kind == "node" else reader.current_step.step_elsets).setdefault(name, [])
+        for i in labels:
+            if i not in cur:
+                cur.append(i)
     else:
+        # PART, GLOBAL and INSTANCE (get_active_part returns the instance's
+        # own part there; the set keeps its deck name so sections and
+        # INST.SET references find it -- it used to be renamed INST__SET).
         part = reader.get_active_part()
-        part.create_set(name, nodes=nids)
+        if kind == "node":
+            part.create_set(name, nodes=labels)
+        else:
+            part.create_set(name, elements=labels)
 
 
 @GLOBAL_KEYWORD_REGISTRY.register(
@@ -217,71 +263,7 @@ def _handle_elset(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     name = block.params.get("elset", "")
     if not name:
         return
-
-    generate = "generate" in block.params or "gen" in block.params or block.params.get("generate", "").lower() in ["yes", "true", "1"] or block.params.get("gen", "").lower() in ["yes", "true", "1"]
-    eids = []
-
-    if generate and block.data_lines:
-        for line in block.data_lines:
-            parts = [int(p) for p in line.replace(",", " ").split() if p.strip()]
-            if len(parts) >= 2:
-                start = parts[0]
-                end = parts[1]
-                step = parts[2] if len(parts) >= 3 else 1
-                eids.extend(list(range(start, end + 1, step)))
-    else:
-        part_ctx = reader.get_active_part()
-        for line in block.data_lines:
-            tokens = [p.strip() for p in line.replace(",", " ").split() if p.strip()]
-            for tok in tokens:
-                clean_tok = tok.replace("-", "")
-                if clean_tok.isdigit():
-                    eids.append(int(tok))
-                else:
-                    # Resolve referenced element set name
-                    resolved = False
-                    if part_ctx is not None:
-                        if tok in part_ctx.element_sets:
-                            eids.extend(part_ctx.element_sets[tok].element_ids)
-                            resolved = True
-                        elif tok in part_ctx.sets:
-                            eids.extend(part_ctx.sets[tok].element_ids)
-                            resolved = True
-                    if not resolved and hasattr(reader.model, "root_assembly"):
-                        if tok in reader.model.root_assembly.element_sets:
-                            eids.extend(reader.model.root_assembly.element_sets[tok].element_ids)
-                            resolved = True
-                    if not resolved:
-                        # used to be dropped from the set without a word
-                        raise KeyError(f"*ELSET {name}: member {tok!r} is neither a "
-                                       f"element number nor a defined element set")
-
-    inst_name = block.params.get("instance", None)
-    if reader.context in [KeywordContext.ASSEMBLY]:
-        # An assembly set lists INSTANCE-local labels. It is stored on the
-        # assembly with its instance and mapped per instance at flattening.
-        # It used to be written into the instance's PART as well, which put
-        # it on every other instance of that part too.
-        if inst_name and inst_name not in reader.model.root_assembly.instances:
-            raise KeyError(f"assembly set {name}: instance {inst_name!r} is not defined")
-        asm = reader.model.root_assembly
-        inst_key = asm.instances[inst_name].name if inst_name else None
-        prev = asm.element_sets.get(name)
-        members = list(getattr(prev, "members", [])) if prev is not None else []
-        members += [(inst_key, int(i)) for i in eids]
-        aset = asm.Set(name, elements=[i for _, i in members])
-        aset.members = members
-    elif reader.context == KeywordContext.STEP and reader.current_step is not None:
-        cur = reader.current_step.step_elsets.setdefault(name, [])
-        for eid in eids:
-            if eid not in cur:
-                cur.append(eid)
-    elif reader.context == KeywordContext.INSTANCE and reader.current_instance is not None:
-        inst = reader.current_instance
-        inst.part.create_set(f"{inst.name}__{name}", elements=eids)
-    else:
-        part = reader.get_active_part()
-        part.create_set(name, elements=eids)
+    _store_set(reader, "element", name, _set_members(reader, block, "element", name))
 
 
 @GLOBAL_KEYWORD_REGISTRY.register(
@@ -390,12 +372,7 @@ def _handle_surface(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
         assembly.surfaces[name] = surf_obj
         return
 
-    if reader.context == KeywordContext.INSTANCE and reader.current_instance is not None:
-        inst = reader.current_instance
-        name = f"{inst.name}__{name}"
-        part = inst.part
-    else:
-        part = reader.get_active_part()
+    part = reader.get_active_part()   # the instance's own part inside *INSTANCE
 
     faces = []
     nodes = []

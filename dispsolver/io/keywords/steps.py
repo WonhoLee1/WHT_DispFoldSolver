@@ -29,7 +29,7 @@ if TYPE_CHECKING:
         "AMPLITUDE": ParamSpec("AMPLITUDE", default="STEP", choices=["STEP", "RAMP"], aliases=["AMP"]),
         "TIME PERIOD": ParamSpec("TIME PERIOD", type=float, default=1.0, aliases=["TIME_PERIOD"]),
         "PERTURBATION": ParamSpec("PERTURBATION", supported=False, aliases=["PERT"]),
-        "UNSYMM": ParamSpec("UNSYMM", supported=False, aliases=["UNSYM"]),
+        "UNSYMM": ParamSpec("UNSYMM", supported=False, control=True, aliases=["UNSYM"]),
         "SOLVER": ParamSpec("SOLVER", supported=False),
     },
     description="Begin an analysis step",
@@ -52,8 +52,21 @@ def _handle_step(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
         time_period=time_period,
         nlgeom=nlgeom
     )
+    reader.current_step._amplitude_param = block.params.get("amplitude", block.params.get("amp", None))
     reader.context = KeywordContext.STEP
     reader.current_interaction = None
+
+
+def _check_step_amplitude(reader: AbaqusInputReader, procedure: str, applied: str) -> None:
+    """*STEP, AMPLITUDE= sets the default load/BC variation over the step.
+    The solver applies RAMP in STATIC and STEP in DYNAMIC steps whatever the
+    deck says, so a different request is recorded as a physics gap (it used to
+    be accepted and ignored)."""
+    want = str(getattr(reader.current_step, "_amplitude_param", "") or "").upper()
+    if want and want != applied:
+        entry = ("STEP", f"AMPLITUDE={want} (with *{procedure})", "unsupported")
+        if entry not in reader.unsupported_params:
+            reader.unsupported_params.append(entry)
 
 
 @GLOBAL_KEYWORD_REGISTRY.register(
@@ -61,7 +74,7 @@ def _handle_step(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     valid_contexts={KeywordContext.STEP},
     support="FULL",
     params={
-        "DIRECT": ParamSpec("DIRECT", type=bool, default=False, supported=False),
+        "DIRECT": ParamSpec("DIRECT", type=bool, default=False, supported=False, control=True),
         "ADIABATIC": ParamSpec("ADIABATIC", supported=False),
         "RIKS": ParamSpec("RIKS", supported=False),
         "STABILIZE": ParamSpec("STABILIZE", supported=False),
@@ -73,6 +86,7 @@ def _handle_step(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
 def _handle_static(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     if reader.current_step is not None:
         reader.current_step.procedure = "STATIC"
+        _check_step_amplitude(reader, "STATIC", "RAMP")
         if block.data_lines:
             rows = _parse_data_rows(block.data_lines, dtype=float)
             if rows and len(rows[0]) >= 1:
@@ -92,9 +106,9 @@ def _handle_static(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     valid_contexts={KeywordContext.STEP},
     support="FULL",
     params={
-        "DIRECT": ParamSpec("DIRECT", supported=False),
+        "DIRECT": ParamSpec("DIRECT", supported=False, control=True),
         "ALPHA": ParamSpec("ALPHA", supported=False),
-        "HAFT": ParamSpec("HAFT", supported=False, aliases=["HAFTOL"]),
+        "HAFT": ParamSpec("HAFT", supported=False, control=True, aliases=["HAFTOL"]),
         "APPLICATION": ParamSpec("APPLICATION", supported=False),
         "EXPLICIT": ParamSpec("EXPLICIT", supported=False),
         "ELEMENT BY ELEMENT": ParamSpec("ELEMENT BY ELEMENT", supported=False),
@@ -107,6 +121,7 @@ def _handle_static(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
 def _handle_dynamic(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     if reader.current_step is not None:
         reader.current_step.procedure = "DYNAMIC"
+        _check_step_amplitude(reader, "DYNAMIC", "STEP")
         if block.data_lines:
             rows = _parse_data_rows(block.data_lines, dtype=float)
             if rows and len(rows[0]) >= 1:
