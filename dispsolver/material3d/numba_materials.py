@@ -33,6 +33,7 @@ MAT_RADIOSS_LAW36 = MAT_J2_PLASTICITY_TABULAR
 MAT_J2_DUCTILE_DAMAGE = 13
 MAT_DRUCKER_PRAGER = 14
 MAT_CONCRETE_DP = 15
+MAT_ORTHOTROPIC_CYLINDRICAL = 17
 MAT_CUSTOM_ELASTIC = 99
 
 @njit(fastmath=True)
@@ -71,6 +72,8 @@ def get_default_sdv_count(mat_type: int) -> int:
     elif mat_type == MAT_HYPER_VISCOELASTIC:
         # Up to 6 Prony terms: 6 * 6 = 36 overstress components + 6 previous elastic deviatoric stress = 42
         return 42
+    elif mat_type == MAT_ORTHOTROPIC_CYLINDRICAL:
+        return 0
     elif mat_type == MAT_CUSTOM_ELASTIC:
         return 0
     return 0

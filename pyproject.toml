@@ -25,3 +25,6 @@ include = ["dispsolver*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "corpus_full: full corpus sweep tests",
+]

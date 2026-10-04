@@ -7,6 +7,13 @@ from .arruda_boyce import ArrudaBoyce
 from .viscoelastic import ViscoelasticMaterial
 from .linear_viscoelastic import LinearViscoelastic
 from .plastic import J2Plasticity
+from .catalog import (
+    MaterialSpec,
+    MATERIALS,
+    material_id,
+    pack_props,
+    is_linear_elastic,
+)
 
 __all__ = [
     "MaterialModel",
@@ -16,4 +23,9 @@ __all__ = [
     "ViscoelasticMaterial",
     "LinearViscoelastic",
     "J2Plasticity",
+    "MaterialSpec",
+    "MATERIALS",
+    "material_id",
+    "pack_props",
+    "is_linear_elastic",
 ]
