@@ -67,13 +67,18 @@ def _handle_surface_interaction(reader: AbaqusInputReader, block: AbaqusKeywordB
 @GLOBAL_KEYWORD_REGISTRY.register("CONTACT PAIR", valid_contexts={KeywordContext.GLOBAL, KeywordContext.ASSEMBLY, KeywordContext.STEP}, aliases=["CONTACTPAIR"])
 def _handle_contact_pair(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     interaction = block.params.get("interaction", "DEFAULT")
+    # Abaqus: *CONTACT PAIR is FINITE sliding unless SMALL SLIDING is given.
+    # The parameter used to be ignored and every deck pair ran small sliding
+    # (the model-API default).
+    sliding = "SMALL" if "small sliding" in block.params else "FINITE"
     if block.data_lines:
         for line in block.data_lines:
             parts = [p.strip() for p in line.split(",") if p.strip()]
             if len(parts) >= 2:
                 slave, master = parts[0], parts[1]
                 name = f"CP_{slave}_{master}"
-                reader.model.ContactPair(name=name, main=master, secondary=slave, interactionProperty=interaction)
+                reader.model.ContactPair(name=name, main=master, secondary=slave, interactionProperty=interaction,
+                                         sliding=sliding)
 
 
 @GLOBAL_KEYWORD_REGISTRY.register("SURFACE BEHAVIOR", valid_contexts={KeywordContext.GLOBAL, KeywordContext.STEP}, aliases=["SURFACEBEHAVIOR"])

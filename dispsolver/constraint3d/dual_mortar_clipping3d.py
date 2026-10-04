@@ -256,6 +256,31 @@ class DualMortarClippedContactConstraint3D:
                         "quad_points": quad_points,
                     })
 
+    def bind_solver(self, solver: Any, dt: float = 1.0) -> None:
+        """Small sliding: the contact plane rotates with the master surface
+        under NLGEOM (Abaqus); without NLGEOM it stays in the reference
+        configuration. This class used the reference normal in both cases,
+        so a large rigid rotation of the contact pair was not objective."""
+        self.mode = "small" if bool(getattr(solver, "nlgeom", True)) else "linear"
+
+    def _qp_normal(self, u: np.ndarray, idx_m: List[int], qp: Dict[str, Any]) -> np.ndarray:
+        """Contact normal at a quadrature point: the stored reference normal
+        ("linear"), or the current master normal with the same orientation
+        ("small"). The tangent keeps the reference-normal structure (the
+        normal's rotation derivative is not included) -- the residual is
+        exact, convergence under large rotation is not quadratic."""
+        if getattr(self, "mode", "linear") != "small":
+            return qp["n"]
+        q = [self.coords[i] + u[3 * i: 3 * i + 3] for i in idx_m]
+        n_raw = _quad4_normal(q[0], q[1], q[2], q[3], qp["xi_m"], qp["eta_m"])
+        sgn = qp.get("_sgn")
+        if sgn is None:
+            q0 = [self.coords[i] for i in idx_m]
+            sgn = 1.0 if float(np.dot(_quad4_normal(q0[0], q0[1], q0[2], q0[3], qp["xi_m"], qp["eta_m"]),
+                                      qp["n"])) >= 0.0 else -1.0
+            qp["_sgn"] = sgn
+        return sgn * n_raw
+
     def _compute_g_tilde(self, u: np.ndarray) -> Dict[int, float]:
         gap_numerator: Dict[int, float] = {nid: 0.0 for nid in self.D_global}
         for seg in self.segments:
@@ -271,7 +296,7 @@ class DualMortarClippedContactConstraint3D:
                 Psi = A_f @ Ns
                 xs = sum(Ns[a] * (self.coords[idx_s[a]] + u[3 * idx_s[a]: 3 * idx_s[a] + 3]) for a in range(4))
                 xm = sum(Nm[b] * (self.coords[idx_m[b]] + u[3 * idx_m[b]: 3 * idx_m[b] + 3]) for b in range(4))
-                penetration_q = -float(np.dot(xs - xm, qp["n"]))
+                penetration_q = -float(np.dot(xs - xm, self._qp_normal(u, idx_m, qp)))
                 for a in range(4):
                     gap_numerator[face[a]] += Psi[a] * penetration_q * qp["w"]
 
@@ -317,7 +342,7 @@ class DualMortarClippedContactConstraint3D:
                 lam_h = float(np.dot(np.where(p_face > 0.0, p_face, 0.0), Psi))
                 if lam_h == 0.0:
                     continue
-                n_qp = qp["n"]
+                n_qp = self._qp_normal(u, idx_m, qp)
                 w = qp["w"]
                 for a in range(4):
                     f_contact[3 * idx_s[a]: 3 * idx_s[a] + 3] += -Ns[a] * w * lam_h * n_qp
@@ -345,7 +370,7 @@ class DualMortarClippedContactConstraint3D:
                     Psi_i_qp = float(A_f[a_local, :] @ Ns)
                     if Psi_i_qp == 0.0:
                         continue
-                    n_qp = qp["n"]
+                    n_qp = self._qp_normal(u, idx_m, qp)
                     w = qp["w"]
                     for a in range(4):
                         b_i.setdefault(idx_s[a], np.zeros(3))

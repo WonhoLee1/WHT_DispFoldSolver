@@ -41,6 +41,8 @@ import numpy as np
 
 from dispsolver.constraint3d.surface_tie3d import _project_point_to_quad4
 from dispsolver.constraint3d.pressure_overclosure import HardLaw
+from dispsolver.constraint3d.contact_geometry import (MasterFaceLocator, contact_mode, face_signs,
+                                                      normalize_sliding)
 
 
 def _quad4_shape_functions(xi: float, eta: float) -> Tuple[float, float, float, float]:
@@ -143,8 +145,16 @@ class DeformableSurfaceContactConstraint3D:
         consistent_tangent: bool = True,
         consistent_friction_tangent: bool = False,
         master_interior: Optional[Dict[tuple, np.ndarray]] = None,
+        sliding: str = "SMALL",
     ):
         self.master_interior = dict(master_interior or {})
+        # Contact geometry configuration (contact_geometry.contact_mode):
+        # FINITE re-tracks the closest master point every assembly; SMALL keeps
+        # the initial pairing, with the current normal under NLGEOM ("small")
+        # or the reference normal without it ("linear", gap linear in u).
+        # bind_solver() fixes the mode from the solver's NLGEOM.
+        self.sliding = normalize_sliding(sliding)
+        self.mode = "finite" if self.sliding == "FINITE" else "small"
         self.consistent_tangent = bool(consistent_tangent)
         self.consistent_friction_tangent = bool(consistent_friction_tangent)
         self.slave_node_ids = list(slave_node_ids)
@@ -228,6 +238,62 @@ class DeformableSurfaceContactConstraint3D:
         # anchor starts exactly at the slave's own projection point.
         self._anchor_xi: Dict[int, float] = {p[0]: p[2] for p in self.pairs}
         self._anchor_eta: Dict[int, float] = {p[0]: p[3] for p in self.pairs}
+        # Face the anchor's (xi, eta) refer to; finite sliding can move a slave
+        # to another face, and the anchor is then re-expressed on that face.
+        self._anchor_face: Dict[int, tuple] = {p[0]: tuple(p[1]) for p in self.pairs}
+        self._face_sign = face_signs(self.master_faces, self.master_interior, self.coords, self.nid_to_idx)
+        self._locator = None
+        if self.sliding == "FINITE":
+            self._locator = MasterFaceLocator(self.master_faces, self.nid_to_idx, self.coords)
+            for s_nid in self.slave_node_ids:
+                self._lam.setdefault(s_nid, 0.0)
+                self._gate_active.setdefault(s_nid, False)
+
+    def bind_solver(self, solver: Any, dt: float = 1.0) -> None:
+        """Called by the solver before every assembly: the contact geometry
+        follows the solver's effective NLGEOM (contact_geometry.contact_mode)."""
+        self.mode = contact_mode(self.sliding, bool(getattr(solver, "nlgeom", True)))
+
+    def reproject_deformed(self, u: np.ndarray) -> None:
+        """FINITE sliding: re-pair every slave node with its closest master
+        point in the current configuration (search radius position_tolerance).
+        No-op for SMALL sliding, whose pairing is fixed at construction."""
+        if self.mode != "finite":
+            return
+        xs_all = self.coords + np.asarray(u, dtype=np.float64).reshape(-1, 3)
+        pts = np.array([xs_all[self.nid_to_idx[s]] for s in self.slave_node_ids])
+        faces_x = self._locator.current_nodes(u)
+        hits = self._locator.nearest(pts, u, faces_x)
+        old = {pp[0]: pp for pp in self.pairs}
+        new_pairs = []
+        for s_nid, xs, (face, xi, eta, dist) in zip(self.slave_node_ids, pts, hits):
+            if dist > self.position_tolerance:
+                continue
+            q = [xs_all[self.nid_to_idx[nn]] for nn in face]
+            sign = self._face_sign.get(face)
+            if sign is None:
+                prev = old.get(s_nid)
+                if prev is not None and tuple(prev[1]) == face:
+                    sign = prev[4]
+                else:
+                    N = _quad4_shape_functions(xi, eta)
+                    xm = N[0] * q[0] + N[1] * q[1] + N[2] * q[2] + N[3] * q[3]
+                    g = float(np.dot(xs - xm, _quad4_normal(q[0], q[1], q[2], q[3], xi, eta)))
+                    sign = 1.0 if g >= 0.0 else -1.0
+            if s_nid not in self._anchor_face:
+                self._anchor_face[s_nid] = face
+                self._anchor_xi[s_nid], self._anchor_eta[s_nid] = xi, eta
+            elif self._anchor_face[s_nid] != face:
+                # Re-express the friction anchor (a material point of the old
+                # face) on the new face, so stick history survives the switch.
+                qa = [xs_all[self.nid_to_idx[nn]] for nn in self._anchor_face[s_nid]]
+                Na = _quad4_shape_functions(self._anchor_xi[s_nid], self._anchor_eta[s_nid])
+                xa = Na[0] * qa[0] + Na[1] * qa[1] + Na[2] * qa[2] + Na[3] * qa[3]
+                axi, aeta, _, _ = _project_point_to_quad4(xa, q[0], q[1], q[2], q[3])
+                self._anchor_face[s_nid] = face
+                self._anchor_xi[s_nid], self._anchor_eta[s_nid] = axi, aeta
+            new_pairs.append((s_nid, face, xi, eta, sign))
+        self.pairs = new_pairs
 
     def _build_pairs(self) -> None:
         for s_nid in self.slave_node_ids:
@@ -269,7 +335,13 @@ class DeformableSurfaceContactConstraint3D:
         q = [self.coords[i] + u[3 * i: 3 * i + 3] for i in m_idx]
         N1, N2, N3, N4 = _quad4_shape_functions(xi, eta)
         xm_proj = N1 * q[0] + N2 * q[1] + N3 * q[2] + N4 * q[3]
-        n = sign * _quad4_normal(q[0], q[1], q[2], q[3], xi, eta)
+        if self.mode == "linear":
+            # SMALL sliding without NLGEOM: the contact plane stays in the
+            # reference configuration, so the gap is linear in u.
+            q0 = [self.coords[i] for i in m_idx]
+            n = sign * _quad4_normal(q0[0], q0[1], q0[2], q0[3], xi, eta)
+        else:
+            n = sign * _quad4_normal(q[0], q[1], q[2], q[3], xi, eta)
         gap = float(np.dot(xs - xm_proj, n))
         return gap, n, (N1, N2, N3, N4), s_idx, m_idx
 
@@ -329,7 +401,10 @@ class DeformableSurfaceContactConstraint3D:
         w = np.array([1.0, -N[0], -N[1], -N[2], -N[3]])
         xm = N[0] * q[0] + N[1] * q[1] + N[2] * q[2] + N[3] * q[3]
         d_g = xs - xm
-        Dn = [np.zeros((3, 3))] + _quad4_normal_derivatives(q, xi, eta, n)
+        if self.mode == "linear":
+            Dn = [np.zeros((3, 3)) for _ in range(5)]   # reference normal: constant
+        else:
+            Dn = [np.zeros((3, 3))] + _quad4_normal_derivatives(q, xi, eta, n)
 
         # d(penetration)/du_b = -(w_b n + Dn_b^T d_g)   (row vectors)
         dpen = [-(w[b] * n + Dn[b].T @ d_g) for b in range(5)]
@@ -429,6 +504,8 @@ class DeformableSurfaceContactConstraint3D:
             "_gate_active": self._gate_active.copy() if hasattr(self, "_gate_active") and self._gate_active is not None else None,
             "_anchor_xi": self._anchor_xi.copy() if hasattr(self, "_anchor_xi") and self._anchor_xi is not None else None,
             "_anchor_eta": self._anchor_eta.copy() if hasattr(self, "_anchor_eta") and self._anchor_eta is not None else None,
+            "_anchor_face": dict(getattr(self, "_anchor_face", {})),
+            "pairs": list(self.pairs),
         }
 
     def restore_state(self, state: dict) -> None:
@@ -443,6 +520,10 @@ class DeformableSurfaceContactConstraint3D:
             self._anchor_xi = state["_anchor_xi"].copy()
         if state.get("_anchor_eta") is not None:
             self._anchor_eta = state["_anchor_eta"].copy()
+        if state.get("_anchor_face") is not None:
+            self._anchor_face = dict(state["_anchor_face"])
+        if state.get("pairs") is not None:
+            self.pairs = list(state["pairs"])
 
     def assemble(self, u: np.ndarray) -> Tuple[np.ndarray, Tuple[np.ndarray, np.ndarray, np.ndarray], Dict[str, float]]:
         n_dof = len(u)

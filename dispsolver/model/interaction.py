@@ -1248,6 +1248,10 @@ class ContactPair:
                 is_2d = True
 
             if is_2d:
+                if sliding_upper == "SMALL" and getattr(model, "from_deck", False):
+                    import warnings as _w
+                    _w.warn(f"ContactPair '{self.name}': the 2D contact classes always track the contact point "
+                            f"in the current configuration (finite sliding); SMALL SLIDING is not distinguished")
                 if self.constraint_enforcement in ("DUAL_MORTAR", "STANDARD_MORTAR", "NITSCHE"):
                     m_type = "STANDARD" if self.constraint_enforcement == "STANDARD_MORTAR" else "DUAL"
                     form = "nitsche" if self.constraint_enforcement == "NITSCHE" else "dual_mortar"
@@ -1295,6 +1299,7 @@ class ContactPair:
                     master_interior=_master_face_interior_points(master_faces, mesh),
                     slave_owner=_face_owner_elements(slave_faces, mesh),
                     gamma0=50.0 * float(getattr(prop, "stiffness_scale_factor", 1.0)),
+                    sliding=sliding_upper,
                 )
 
             # S2S Mortar Dispatch (DUAL_MORTAR or STANDARD_MORTAR)
@@ -1341,6 +1346,7 @@ class ContactPair:
                 tangential_stiffness_ratio=float(k_t_ratio),
                 name=self.name,
                 master_interior=_master_face_interior_points(master_faces, mesh),
+                sliding=sliding_upper,
             )
 
         is_2d = False

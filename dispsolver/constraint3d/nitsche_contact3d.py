@@ -25,6 +25,8 @@ from typing import Any, Dict, List, Optional, Tuple, Set, Sequence
 import numpy as np
 
 from dispsolver.constraint3d.surface_tie3d import _project_point_to_quad4
+from dispsolver.constraint3d.contact_geometry import (MasterFaceLocator, contact_mode, face_signs,
+                                                      normalize_sliding)
 
 
 def _quad4_shape_functions(xi: float, eta: float) -> Tuple[float, float, float, float]:
@@ -162,8 +164,15 @@ class NitscheContactConstraint3D:
         slave_owner: Optional[Dict[tuple, int]] = None,
         gamma0: Optional[float] = None,
         consistency: bool = True,
+        sliding: str = "SMALL",
     ):
         self.master_interior = dict(master_interior or {})
+        # Contact geometry configuration (contact_geometry.contact_mode): FINITE
+        # re-tracks every quadrature point's closest master point each
+        # assembly; SMALL keeps the build-time projection, with the current
+        # master normal under NLGEOM or the reference normal without it.
+        self.sliding = normalize_sliding(sliding)
+        self.mode = "finite" if self.sliding == "FINITE" else "small"
         # Element owning each slave face: the bulk stress sigma_nn that makes
         # this Nitsche (not penalty) is evaluated in it. Bound to the solver's
         # materials by bind_solver(), called from DynamicSolver3D.assemble_system.
@@ -193,6 +202,9 @@ class NitscheContactConstraint3D:
         # Build contact face pairs with frozen reference projection (small-sliding)
         self.pairs: List[Dict[str, Any]] = []
         self._build_pairs()
+        self._face_sign = face_signs(self.master_faces, self.master_interior, self.coords, self.nid_to_idx)
+        self._locator = (MasterFaceLocator(self.master_faces, self.nid_to_idx, self.coords)
+                         if self.sliding == "FINITE" else None)
 
     def _build_pairs(self) -> None:
         """Pair slave faces with closest master faces and precompute frozen quadrature projections."""
@@ -212,7 +224,9 @@ class NitscheContactConstraint3D:
                     min_dist = dist
                     best_m = (m_face, q_m, xi_c, eta_c)
 
-            if best_m is None or min_dist > self.position_tolerance:
+            # Finite sliding: every slave face takes part (a far face is simply
+            # inactive until it comes within position_tolerance).
+            if best_m is None or (min_dist > self.position_tolerance and self.sliding != "FINITE"):
                 continue
 
             m_face, q_m, xi_c, eta_c = best_m
@@ -248,6 +262,8 @@ class NitscheContactConstraint3D:
                     "w": float(dA),
                     "n": n_contact.copy(),
                     "sign": float(sign),
+                    "m_face": tuple(m_face),   # per point: finite sliding may move it
+                    "far": False,
                 })
 
             self.pairs.append({
@@ -262,11 +278,12 @@ class NitscheContactConstraint3D:
         active_nodes: Set[int] = set()
         for pair in self.pairs:
             s_face = pair["slave_face"]
-            m_face = pair["master_face"]
             idx_s = [self.nid_to_idx[nid] for nid in s_face]
-            idx_m = [self.nid_to_idx[nid] for nid in m_face]
 
             for qp in pair["quad_points"]:
+                if qp.get("far", False):
+                    continue
+                idx_m = [self.nid_to_idx[nid] for nid in qp.get("m_face", pair["master_face"])]
                 Ns = _quad4_shape_functions(qp["xi_s"], qp["eta_s"])
                 Nm = _quad4_shape_functions(qp["xi_m"], qp["eta_m"])
 
@@ -293,6 +310,7 @@ class NitscheContactConstraint3D:
         slave side, and precompute, per quadrature point, the owning element
         and its shape-function gradients there."""
         self._dt = float(dt)
+        self.mode = contact_mode(self.sliding, bool(getattr(solver, "nlgeom", True)))
         if not self.consistency or self._solver is solver:
             return
         self._solver = solver
@@ -399,6 +417,36 @@ class NitscheContactConstraint3D:
             grad[j] = (sp - sm) / (2.0 * h)
         return sig, grad
 
+    def reproject_deformed(self, u: np.ndarray) -> None:
+        """FINITE sliding: move every quadrature point to its closest master
+        point in the current configuration. No-op for SMALL sliding."""
+        if self.mode != "finite":
+            return
+        xs_all = self.coords + np.asarray(u, dtype=np.float64).reshape(-1, 3)
+        qps, pts = [], []
+        for pair in self.pairs:
+            idx_s = [self.nid_to_idx[nid] for nid in pair["slave_face"]]
+            for qp in pair["quad_points"]:
+                Ns = _quad4_shape_functions(qp["xi_s"], qp["eta_s"])
+                pts.append(sum(Ns[a] * xs_all[idx_s[a]] for a in range(4)))
+                qps.append(qp)
+        if not qps:
+            return
+        hits = self._locator.nearest(np.array(pts), u, self._locator.current_nodes(u))
+        for qp, x, (face, xi, eta, dist) in zip(qps, pts, hits):
+            sign = self._face_sign.get(face)
+            if sign is None:
+                if face == qp["m_face"]:
+                    sign = qp["sign"]
+                else:
+                    q = [xs_all[self.nid_to_idx[nn]] for nn in face]
+                    Nm = _quad4_shape_functions(xi, eta)
+                    xm = sum(Nm[b] * q[b] for b in range(4))
+                    g = float(np.dot(x - xm, _quad4_normal(q[0], q[1], q[2], q[3], xi, eta)))
+                    sign = 1.0 if g >= 0.0 else -1.0
+            qp["m_face"], qp["xi_m"], qp["eta_m"], qp["sign"] = face, xi, eta, sign
+            qp["far"] = dist > self.position_tolerance
+
     def _current_normal(self, u: np.ndarray, idx_m: List[int], qp: Dict[str, Any]) -> np.ndarray:
         """Master normal at the paired master point in the CURRENT geometry.
         It used to be frozen at build time (qp["n"]); when the master surface
@@ -407,7 +455,11 @@ class NitscheContactConstraint3D:
         about slip x rotation, and the contact force acts in a stale
         direction. The node-to-surface penalty and the mortar already use the
         current normal."""
-        q = [self.coords[i] + u[3 * i: 3 * i + 3] for i in idx_m]
+        if self.mode == "linear":
+            # SMALL sliding without NLGEOM: reference normal (gap linear in u).
+            q = [self.coords[i] for i in idx_m]
+        else:
+            q = [self.coords[i] + u[3 * i: 3 * i + 3] for i in idx_m]
         return qp.get("sign", 1.0) * _quad4_normal(q[0], q[1], q[2], q[3], qp["xi_m"], qp["eta_m"])
 
     def _require_bound(self) -> None:
@@ -448,8 +500,10 @@ class NitscheContactConstraint3D:
 
         for pair in self.pairs:
             idx_s = [self.nid_to_idx[nid] for nid in pair["slave_face"]]
-            idx_m = [self.nid_to_idx[nid] for nid in pair["master_face"]]
             for qp in pair["quad_points"]:
+                if qp.get("far", False):
+                    continue
+                idx_m = [self.nid_to_idx[nid] for nid in qp.get("m_face", pair["master_face"])]
                 Ns = _quad4_shape_functions(qp["xi_s"], qp["eta_s"])
                 Nm = _quad4_shape_functions(qp["xi_m"], qp["eta_m"])
                 xs = sum(Ns[a] * (self.coords[idx_s[a]] + u[3 * idx_s[a]: 3 * idx_s[a] + 3]) for a in range(4))
@@ -484,7 +538,7 @@ class NitscheContactConstraint3D:
                     rows.append(np.repeat(c_dofs, len(e_dofs)))
                     cols.append(np.tile(e_dofs, len(c_dofs)))
                     data.append((-w * np.outer(c_vec, dsig)).ravel())
-                if self.consistency:
+                if self.consistency and self.mode != "linear":
                     # Rotation of the current master normal n(q_m): it enters the
                     # gap, sigma_nn = n.sigma.n and the force direction.
                     from dispsolver.constraint3d.surface_contact3d_deformable import _quad4_normal_derivatives

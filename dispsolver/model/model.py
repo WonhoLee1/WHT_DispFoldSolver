@@ -53,6 +53,27 @@ from dispsolver.model.interaction import (
 )
 
 
+class _UnimplementedConstraint:
+    """Stands in for a model constraint record that has no solver
+    implementation (no assemble(): *TIE, *RIGID BODY, *MPC records today).
+    The solver can be built and the model inspected, but the first assembly
+    raises -- the record used to be skipped silently by the 2D solver and to
+    crash with an AttributeError deep in the 3D Newton loop."""
+
+    def __init__(self, record: Any):
+        self.record = record
+        self.name = getattr(record, "name", type(record).__name__)
+
+    def assemble(self, u):
+        raise NotImplementedError(
+            f"constraint {self.name!r} of type {type(self.record).__name__} has no solver implementation "
+            f"(it cannot be enforced, so the analysis would solve a different model)")
+
+
+def _solver_constraint(c: Any) -> Any:
+    return c if callable(getattr(c, "assemble", None)) else _UnimplementedConstraint(c)
+
+
 class Model:
     """Top-level CAE Model container corresponding to Abaqus mdb.models['Model-1']."""
 
@@ -997,7 +1018,7 @@ class Model:
 
         # 2. Attach model and step constraints & interactions
         for constraint in sys.constraints:
-            solver.add_constraint(constraint)
+            solver.add_constraint(_solver_constraint(constraint))
 
         active_steps = [self.initial_step]
         if step_name is not None and step_name in self.steps:
@@ -1098,7 +1119,7 @@ class Model:
 
         # Attach model and step constraints & interactions
         for constraint in sys.constraints:
-            solver.add_constraint(constraint)
+            solver.add_constraint(_solver_constraint(constraint))
 
         active_steps = [self.initial_step]
         if step_name is not None and step_name in self.steps:

@@ -294,3 +294,13 @@ def test_2d_cload_ramps_over_a_static_step():
     st.parent_model = model
     f_half = solver._compute_step_external_loads(st, sysm, 0.5, 1.0)
     assert np.isclose(f_half.sum(), 4.0)
+
+
+def test_tie_without_solver_implementation_fails_at_solve_not_silently():
+    # *TIE has no solver implementation yet: the model can be built and
+    # inspected, but solving refuses (2D used to skip it, 3D crashed in Newton)
+    text = two_parts("*BOUNDARY\nIA.BOT, 1, 3\n*CLOAD\nIB.TOP, 1, 10.\n",
+                     asm_extra="*SURFACE, NAME=SB\nIB.SEC, S1\n*SURFACE, NAME=ST\nIA.SEC, S2\n*TIE, NAME=T1\nSB, ST\n")
+    _, _, solver, _, _ = build(text)
+    with pytest.raises(NotImplementedError, match="T1"):
+        solver.assemble_system(np.zeros(solver.num_dofs))
