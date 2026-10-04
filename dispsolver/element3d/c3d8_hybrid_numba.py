@@ -253,7 +253,8 @@ def compute_c3d8_hybrid_element_umat_numba(
     sdvs: np.ndarray,
     dt: float = 1.0,
     controls: np.ndarray = _EMPTY_CONTROLS,
-    stress_init: np.ndarray = _EMPTY_2D_CONTROLS
+    stress_init: np.ndarray = _EMPTY_2D_CONTROLS,
+    small_strain: bool = False
 ):
     """Compute 3D Co-Rotational Hybrid Hexahedral Element with mixed u-p volume-averaged pressure
     and Abaqus-compatible distortion control / anti-inversion safeguards.
@@ -277,8 +278,12 @@ def compute_c3d8_hybrid_element_umat_numba(
         coords_curr[i, 1] = coords[i, 1] + u_elem[3 * i + 1]
         coords_curr[i, 2] = coords[i, 2] + u_elem[3 * i + 2]
 
-    # 1. Extract rigid rotation
-    R = compute_element_rotation_3d(coords, coords_curr)
+    # 1. Extract rigid rotation (small_strain / NLGEOM off: R = I, see the
+    # same switch in c3d8_corotational_numba)
+    if small_strain:
+        R = np.eye(3)
+    else:
+        R = compute_element_rotation_3d(coords, coords_curr)
 
     # 2. Reference and current centroids
     Xc = np.zeros(3, dtype=np.float64)
@@ -645,7 +650,8 @@ def assemble_mesh_c3d8_hybrid_numba(
     elem_sdvs: np.ndarray,
     dt: float = 1.0,
     elem_controls: np.ndarray = _EMPTY_2D_CONTROLS,
-    elem_stress_init: np.ndarray = _EMPTY_2D_CONTROLS
+    elem_stress_init: np.ndarray = _EMPTY_2D_CONTROLS,
+    small_strain: bool = False
 ):
     """Parallel Numba assembly of all C3D8H hybrid elements in the mesh."""
     n_elems = elem_conn.shape[0]
@@ -671,7 +677,7 @@ def assemble_mesh_c3d8_hybrid_numba(
         stress_init = elem_stress_init[e] if has_stress_init else np.zeros((8, 6), dtype=np.float64)
 
         f_e, K_e, err_e = compute_c3d8_hybrid_element_umat_numba(
-            elem_coords, u_elem, mat_type, props, sdvs, dt, ctrl, stress_init
+            elem_coords, u_elem, mat_type, props, sdvs, dt, ctrl, stress_init, small_strain
         )
         f_elems[e, :] = f_e
         K_elems[e, :, :] = K_e

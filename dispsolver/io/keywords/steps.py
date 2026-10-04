@@ -16,7 +16,11 @@ if TYPE_CHECKING:
 @GLOBAL_KEYWORD_REGISTRY.register("STEP", valid_contexts={KeywordContext.GLOBAL})
 def _handle_step(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     step_name = block.params.get("name", f"Step-{len(reader.model.steps)}")
-    nlgeom = block.params.get("nlgeom", "yes").lower() == "yes"
+    prev_nlgeom = getattr(reader.current_step, "nlgeom", False) if reader.current_step is not None else False
+    if "nlgeom" in block.params:
+        nlgeom = block.params["nlgeom"].lower() in ("yes", "true", "1")
+    else:
+        nlgeom = prev_nlgeom  # Abaqus standard: default NO, or inherit YES once engaged
     time_period = float(block.params.get("time period", block.params.get("time_period", 1.0)))
 
     # Previous step

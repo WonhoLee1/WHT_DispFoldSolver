@@ -30,6 +30,11 @@ from dispsolver.solver3d.assembly_utils import (
 )
 
 
+
+# Small-strain plane kernels co-rotated under NLGEOM (element2d/cr_generic_2d):
+# 6 CPE3, 7 CPE6, 9 CPE8, 10 CPE8R, 18 T2D2.
+_CR_WRAPPED_KERNELS_2D = frozenset({6, 7, 9, 10, 18})
+
 class DynamicSolver2D:
     """Production 2D Non-Linear Newton-Raphson Finite Element Solver."""
 
@@ -220,6 +225,19 @@ class DynamicSolver2D:
         self.elem_controls[:, 3] = 1.0   # Distortion control default ON
         self.elem_controls[:, 4] = 0.02  # min_det default
 
+        self._build_kernel_groups()
+
+        self.elem_sdvs = np.zeros((n_elems, 9, 7), dtype=np.float64)
+
+    def _build_kernel_groups(self) -> None:
+        """Assign every element its kernel from its type and the CURRENT
+        self.nlgeom, then build the per-kernel connectivity and sparsity
+        pattern. Split out of _setup_numba_topology so solve() can re-run it
+        when a step's NLGEOM differs -- the 2D solver used to fix the kernels
+        at construction, so every deck run (built without a step) used the
+        NLGEOM=YES kernels whatever the step said."""
+        nid_map = self.mesh.node_id_to_index()
+        elements_list = list(self.mesh.elements.values())
         # Map element types to kernel group index k with Material- & Kinematic-Adaptive NLGEOM Dispatch
         elem_kernel_indices: Dict[int, List[int]] = {}
         for idx, elem in enumerate(elements_list):
@@ -244,6 +262,14 @@ class DynamicSolver2D:
                     raise NotImplementedError(
                         f"element type {et}: plane stress is not implemented in the 2D solver (it would run "
                         f"as plane strain); only linear elastic nu=0 material is equivalent")
+
+            if self.nlgeom and et.startswith("CAX"):
+                # The axisymmetric kernels are small strain, and a rotation in
+                # the r-z plane is not a rigid motion of the ring, so they
+                # cannot be co-rotated. They used to run unchanged.
+                raise NotImplementedError(
+                    f"element type {et}: NLGEOM=YES is not implemented for axisymmetric elements "
+                    f"(small-strain kernel only)")
 
             if self.nlgeom:
                 # NLGEOM=True: Automatically promote core elements to Large-Deformation / Corotational
@@ -275,6 +301,8 @@ class DynamicSolver2D:
                     k = 15
                 elif et in ["CAX8R", "CAX8RH"]:
                     k = 16
+                elif et in ["T2D2", "TRUSS2D", "LINK"]:
+                    k = 18
                 else:
                     # unknown names used to get a kernel by node count
                     raise NotImplementedError(f"element type {et} is not implemented in the 2D solver")
@@ -316,6 +344,8 @@ class DynamicSolver2D:
                     k = 13
                 elif et in ["CPE6M_CR"]:
                     k = 14
+                elif et in ["T2D2", "TRUSS2D", "LINK"]:
+                    k = 18
                 else:
                     # unknown names used to get a kernel by node count
                     raise NotImplementedError(f"element type {et} is not implemented in the 2D solver")
@@ -394,7 +424,6 @@ class DynamicSolver2D:
             self.csr_data = None
             self.topo_to_csr_map = None
 
-        self.elem_sdvs = np.zeros((n_elems, 9, 7), dtype=np.float64)
 
     def add_constraint(self, constraint: Any):
         """Add a constraint or surface tie object to the 2D solver."""
@@ -515,6 +544,17 @@ class DynamicSolver2D:
             sub_sdvs = self.elem_sdvs[elem_indices] if update_state else self.elem_sdvs[elem_indices].copy()
             sub_controls = self.elem_controls[elem_indices]
 
+            # NLGEOM: small-strain plane kernels run in co-rotated element
+            # frames (element2d/cr_generic_2d); they used to run unchanged.
+            cr_cs = None
+            if self.nlgeom and k in _CR_WRAPPED_KERNELS_2D:
+                from dispsolver.element2d.cr_generic_2d import corotational_local_mesh_2d
+                _cr_saved = (node_coords_all, sub_conn, u_eval)
+                node_coords_all, sub_conn, u_eval, cr_cs = corotational_local_mesh_2d(
+                    np.ascontiguousarray(node_coords_all[:, :2], dtype=np.float64),
+                    np.ascontiguousarray(sub_conn, dtype=np.int64),
+                    np.ascontiguousarray(u_eval, dtype=np.float64))
+
             if k == 0:
                 from dispsolver.element2d.cpe4_numba import assemble_mesh_cpe4_numba
                 f_sub, K_sub, err = assemble_mesh_cpe4_numba(node_coords_all, sub_conn, u_eval, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls)
@@ -580,6 +620,13 @@ class DynamicSolver2D:
 
             if err:
                 has_error = True
+
+            if cr_cs is not None:
+                from dispsolver.element2d.cr_generic_2d import corotational_to_global_2d
+                f_sub = np.ascontiguousarray(f_sub, dtype=np.float64)
+                K_sub = np.ascontiguousarray(K_sub, dtype=np.float64)
+                corotational_to_global_2d(f_sub, K_sub, cr_cs)
+                node_coords_all, sub_conn, u_eval = _cr_saved
 
             if self.has_nodal_transforms and self.node_transforms is not None:
                 from dispsolver.model.nodal_transform import apply_nodal_transforms_to_element_group
@@ -1150,6 +1197,14 @@ class DynamicSolver2D:
         verbose: bool = True
     ) -> bool:
         """Run complete incremental solve over the Step time period."""
+        # Effective NLGEOM for this step (same rule as DynamicSolver3D.solve:
+        # once on, it stays on for the rest of the analysis).
+        want = bool(getattr(step, "nlgeom", self.nlgeom)) or bool(getattr(self, "_nlgeom_engaged", False))
+        if want != self.nlgeom:
+            self.nlgeom = want
+            self._build_kernel_groups()
+        self._nlgeom_engaged = bool(getattr(self, "_nlgeom_engaged", False) or self.nlgeom)
+
         total_time = getattr(step, "time_period", 1.0)
         dt = getattr(step, "dt_init", 0.02)
         dt_min = getattr(step, "dt_min", 1e-6)

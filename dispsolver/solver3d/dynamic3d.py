@@ -196,6 +196,13 @@ def _volume_shape_integrals(X: np.ndarray, what: str = "body load") -> np.ndarra
 
 
 
+# Small-strain kernels with no large-rotation form of their own: under NLGEOM
+# they are evaluated in co-rotated element frames (element3d/cr_generic_3d).
+# 4 C3D10M, 5 C3D10, 6 C3D4, 7 C3D6, 15 C3D20.  9 (C3D4 ANP) couples elements
+# through shared nodes and is refused under NLGEOM instead.
+_CR_WRAPPED_KERNELS = frozenset({4, 5, 6, 7, 15})
+
+
 # Abaqus element types accepted by _build_kernel_groups whose kernel does not
 # carry the full formulation the type name promises.
 _ELEMENT_SUBSTITUTIONS = {
@@ -867,6 +874,7 @@ class DynamicSolver3D:
         # Classify element kernel groups with Material- & Kinematic-Adaptive NLGEOM Dispatch
         elem_kernel_indices: Dict[int, List[int]] = {}
         unknown_types: Dict[str, int] = {}
+        nlgeom_no_subst: Dict[str, str] = {}
         for idx, elem in enumerate(elements_list):
             et = elem.elem_type.upper()
             if et in ["DCOUP3D", "DCOUP2D", "MASS", "ROTARYI", "SPRING1", "SPRING2", "GAPUNI"]:
@@ -880,11 +888,17 @@ class DynamicSolver3D:
                 elif hasattr(mat_obj, "props"):
                     nu = float(mat_obj.props[1]) if len(mat_obj.props) > 1 else 0.3
             is_nearly_incompressible = (nu > 0.48)
+            mt = int(self.elem_mat_types[idx]) if getattr(self, "elem_mat_types", None) is not None else MAT_LINEAR_ELASTIC
+            lin_elastic = mt in (MAT_LINEAR_ELASTIC, MAT_CUSTOM_ELASTIC)
 
             if self.nlgeom:
                 # NLGEOM=True: Automatically promote core elements to Large-Deformation / Corotational
                 if et in ["C3D8I", "C3D8IH", "C3D8_EAS", "C3D8I_CR"]:
-                    k = 11  # C3D8I_CR (EAS-9 + Corotational)
+                    # C3D8I_CR's core takes a constant elastic C (it used to
+                    # run every material, plastic included, as linear
+                    # elastic); other materials get the material-aware
+                    # total-Lagrangian EAS kernel 0, which is objective too.
+                    k = 11 if lin_elastic else 0
                 elif et in ["C3D8H", "C3D8_HYBRID", "HYBRID", "C3D8H_CR"]:
                     k = 2   # C3D8H (u-P Mixed Hybrid + Corotational)
                 elif et in ["C3D8R", "C3D8RH", "C3D8_REDUCED", "C3D8R_CR"]:
@@ -929,15 +943,21 @@ class DynamicSolver3D:
             else:
                 # Small-strain linear geometry
                 if et in ["C3D8I", "C3D8IH", "C3D8_EAS"]:
-                    k = 0
+                    # 18: small-strain EAS (linear elastic only). Other
+                    # materials keep the total-Lagrangian EAS kernel 0 -- a
+                    # finite-strain formulation, reported as a substitution.
+                    k = 18 if lin_elastic else 0
+                    if not lin_elastic:
+                        nlgeom_no_subst[et] = ("NLGEOM=NO with a non-elastic material runs the total-Lagrangian "
+                                               "(finite-strain) EAS kernel; no small-strain EAS kernel supports it")
                 elif et in ["C3D8_CR", "C3D8_COROTATIONAL", "C3D8_FBAR_CR"]:
                     k = 1
                 elif et in ["C3D8H", "C3D8_HYBRID", "HYBRID"]:
-                    k = 2
+                    k = 17  # C3D8H core with R = I (was the co-rotational kernel 2)
                 elif et in ["C3D8_FBAR"]:
                     k = 3
                 elif et in ["C3D8"]:
-                    k = 10
+                    k = 16  # C3D8 B-bar core with R = I, any material (was linear-only kernel 10)
                 elif et in ["C3D10M", "C3D10MH", "C3D10_MODIFIED"]:
                     k = 4
                 elif et in ["C3D10", "C3D10H"]:
@@ -985,6 +1005,15 @@ class DynamicSolver3D:
         # substitution is visible instead of implied by the type name.
         subst = {et: _ELEMENT_SUBSTITUTIONS[et] for et in {e.elem_type.upper() for e in elements_list}
                  if et in _ELEMENT_SUBSTITUTIONS}
+        for et, why in nlgeom_no_subst.items():
+            subst[et] = (subst[et] + "; " if et in subst else "") + why
+        if self.nlgeom and any(gk[0] == 9 for gk in elem_kernel_indices):
+            # C3D4 ANP averages the pressure over shared nodes, so it cannot be
+            # wrapped element by element; it is a small-strain kernel and used
+            # to run unchanged under NLGEOM (not objective).
+            raise NotImplementedError(
+                "NLGEOM=YES: C3D4H / C3D4_ANP (and C3D4 with nu > 0.48) run the small-strain average-"
+                "nodal-pressure kernel, which has no large-rotation form; use C3D10M or hex elements")
         new = {et: why for et, why in subst.items() if et not in getattr(self, "element_substitutions", {})}
         self.element_substitutions = subst
         for et, why in new.items():
@@ -1005,7 +1034,7 @@ class DynamicSolver3D:
         for gk, indices in self.elem_kernel_groups.items():
             k_val, n_nodes_val = gk
             elem_subset = [elements_list[i] for i in indices]
-            if k_val in (0, 1, 2, 3, 8, 10, 11, 12, 13, 14) and n_nodes_val > 8:
+            if k_val in (0, 1, 2, 3, 8, 10, 11, 12, 13, 14, 16, 17, 18) and n_nodes_val > 8:
                 self.elem_conn_groups[gk] = np.array(
                     [[nid_map[nid] for nid in elem.node_ids[:8]] for elem in elem_subset],
                     dtype=np.int64
@@ -1080,13 +1109,38 @@ class DynamicSolver3D:
         # every element. That is only right if all of its elements share a
         # single linear-elastic material equal to it; otherwise refuse instead
         # of silently giving every element the same stiffness.
-        rows10 = [r for gk, rows in self.elem_kernel_groups.items() if gk[0] == 10 for r in rows]
-        if rows10 and getattr(self, "elem_mat_types", None) is not None:
-            bad = sorted({int(self.elem_mat_types[r]) for r in rows10} - {MAT_LINEAR_ELASTIC})
-            if bad:
-                raise NotImplementedError(
-                    "NLGEOM=NO: C3D8 elements run the small-strain linear kernel 10, which only "
-                    f"supports linear-elastic materials; found material types {bad}.")
+        # Kernels that take one constant elasticity matrix per element group
+        # (assembled per material by _elastic_C_groups): refuse other materials
+        # instead of running them as linear elastic. 5/6 used to apply
+        # self.C_mat_default to every element, whatever its material.
+        for kk, what in ((5, "C3D10"), (6, "C3D4"), (10, "C3D8 linear kernel 10"), (18, "C3D8I (NLGEOM=NO)")):
+            rows = [r for gk, rr in self.elem_kernel_groups.items() if gk[0] == kk for r in rr]
+            if rows and getattr(self, "elem_mat_types", None) is not None:
+                bad = sorted({int(self.elem_mat_types[r]) for r in rows} - {MAT_LINEAR_ELASTIC, MAT_CUSTOM_ELASTIC})
+                if bad:
+                    raise NotImplementedError(
+                        f"{what} elements run a linear-elastic-only kernel ({kk}); found material types {bad}.")
+
+    def _elastic_C_groups(self, elem_indices: np.ndarray):
+        """Yield (local selection, 6x6 C) for groups of identical linear
+        elastic materials among elem_indices: (E, nu) for MAT_LINEAR_ELASTIC,
+        the stored 36 entries for MAT_CUSTOM_ELASTIC."""
+        mts = np.asarray(self.elem_mat_types)[elem_indices]
+        props = np.asarray(self.elem_props)[elem_indices]
+        bad = sorted({int(mt) for mt in mts} - {MAT_LINEAR_ELASTIC, MAT_CUSTOM_ELASTIC})
+        if bad:
+            raise NotImplementedError(
+                f"elements run a linear-elastic-only kernel; found material types {bad}.")
+        keys = {}
+        for i, (mt, pr) in enumerate(zip(mts, props)):
+            key = (int(mt),) + tuple(np.round(pr[:36] if int(mt) == MAT_CUSTOM_ELASTIC else pr[:2], 12))
+            keys.setdefault(key, []).append(i)
+        for key, sel in keys.items():
+            if key[0] == MAT_CUSTOM_ELASTIC:
+                C = np.array(key[1:], dtype=np.float64).reshape(6, 6)
+            else:
+                C = self._linear_elastic_C(key[1], key[2])
+            yield np.asarray(sel, dtype=np.int64), C
 
     @staticmethod
     def _linear_elastic_C(E: float, nu: float) -> np.ndarray:
@@ -1327,6 +1381,18 @@ class DynamicSolver3D:
                     sub_stress_init = self.elem_stress_init[elem_indices]
                     sub_controls = self.elem_controls[elem_indices]
 
+                    # NLGEOM: small-strain-only kernels run in co-rotated
+                    # element frames (cr_generic_3d); they used to run
+                    # unchanged, so rigid rotations produced stress.
+                    cr_R = None
+                    if self.nlgeom and k in _CR_WRAPPED_KERNELS:
+                        from dispsolver.element3d.cr_generic_3d import corotational_local_mesh
+                        _cr_saved = (node_coords_all, sub_conn, u_eval)
+                        node_coords_all, sub_conn, u_eval, cr_R = corotational_local_mesh(
+                            np.ascontiguousarray(node_coords_all, dtype=np.float64),
+                            np.ascontiguousarray(sub_conn, dtype=np.int64),
+                            np.ascontiguousarray(u_eval, dtype=np.float64))
+
                     if k == 0:
                         from dispsolver.element3d.c3d8_eas_tl_numba import assemble_mesh_c3d8_eas_tl_numba
                         f_sub, K_sub, err = assemble_mesh_c3d8_eas_tl_numba(
@@ -1354,15 +1420,23 @@ class DynamicSolver3D:
                         )
                     elif k == 5:
                         from dispsolver.element3d.c3d10_numba import assemble_mesh_c3d10_numba
-                        f_sub, K_sub = assemble_mesh_c3d10_numba(
-                            node_coords_all, sub_conn, u_eval, self.C_mat_default
-                        )
+                        f_sub = np.zeros((len(elem_indices), 30))
+                        K_sub = np.zeros((len(elem_indices), 30, 30))
+                        for sel, C in self._elastic_C_groups(elem_indices):
+                            f_g, K_g = assemble_mesh_c3d10_numba(
+                                node_coords_all, np.ascontiguousarray(sub_conn[sel]), u_eval, C)
+                            f_sub[sel] = f_g
+                            K_sub[sel] = K_g
                         err = 0
                     elif k == 6:
                         from dispsolver.element3d.c3d4_numba import assemble_mesh_c3d4_numba
-                        f_sub, K_sub = assemble_mesh_c3d4_numba(
-                            node_coords_all, sub_conn, u_eval, self.C_mat_default
-                        )
+                        f_sub = np.zeros((len(elem_indices), 12))
+                        K_sub = np.zeros((len(elem_indices), 12, 12))
+                        for sel, C in self._elastic_C_groups(elem_indices):
+                            f_g, K_g = assemble_mesh_c3d4_numba(
+                                node_coords_all, np.ascontiguousarray(sub_conn[sel]), u_eval, C)
+                            f_sub[sel] = f_g
+                            K_sub[sel] = K_g
                         err = 0
                     elif k == 7:
                         from dispsolver.element3d.c3d6_numba import assemble_mesh_c3d6_numba
@@ -1389,12 +1463,9 @@ class DynamicSolver3D:
                         from dispsolver.element3d.c3d8_numba import assemble_mesh_c3d8_numba
                         f_sub = np.zeros((len(elem_indices), 24), dtype=np.float64)
                         K_sub = np.zeros((len(elem_indices), 24, 24), dtype=np.float64)
-                        props2 = np.round(self.elem_props[elem_indices, :2], 12)
-                        for key in {tuple(r) for r in props2}:
-                            sel = np.where((props2[:, 0] == key[0]) & (props2[:, 1] == key[1]))[0]
+                        for sel, C in self._elastic_C_groups(elem_indices):
                             f_g, K_g = assemble_mesh_c3d8_numba(
-                                node_coords_all, np.ascontiguousarray(sub_conn[sel]), u_eval,
-                                self._linear_elastic_C(key[0], key[1]))
+                                node_coords_all, np.ascontiguousarray(sub_conn[sel]), u_eval, C)
                             f_sub[sel] = f_g
                             K_sub[sel] = K_g
                         err = 0
@@ -1429,8 +1500,35 @@ class DynamicSolver3D:
                         f_sub, K_sub, err = assemble_mesh_c3d20_numba(
                             node_coords_all, sub_conn, u_eval, sub_mat, sub_props, sub_sdvs, dt, reduced_integration=is_reduced
                         )
+                    elif k == 16:
+                        from dispsolver.element3d.c3d8_corotational_numba import assemble_mesh_c3d8_corotational_numba
+                        f_sub, K_sub, err = assemble_mesh_c3d8_corotational_numba(
+                            node_coords_all, sub_conn, u_eval, sub_mat, sub_props, sub_sdvs, dt,
+                            elem_controls=sub_controls, elem_stress_init=sub_stress_init, small_strain=True
+                        )
+                    elif k == 17:
+                        from dispsolver.element3d.c3d8_hybrid_numba import assemble_mesh_c3d8_hybrid_numba
+                        f_sub, K_sub, err = assemble_mesh_c3d8_hybrid_numba(
+                            node_coords_all, sub_conn, u_eval, sub_mat, sub_props, sub_sdvs, dt,
+                            sub_controls, sub_stress_init, True
+                        )
+                    elif k == 18:
+                        from dispsolver.element3d.cr_generic_3d import assemble_mesh_c3d8i_small_strain_numba
+                        C_all = np.zeros((len(elem_indices), 6, 6))
+                        for sel, C in self._elastic_C_groups(elem_indices):
+                            C_all[sel] = C
+                        f_sub, K_sub = assemble_mesh_c3d8i_small_strain_numba(
+                            node_coords_all, np.ascontiguousarray(sub_conn, dtype=np.int64), u_eval, C_all)
+                        err = 0
                     else:
                         raise ValueError(f"Unknown element kernel index: {k}")
+
+                    if cr_R is not None:
+                        from dispsolver.element3d.cr_generic_3d import corotational_to_global
+                        f_sub = np.ascontiguousarray(f_sub, dtype=np.float64)
+                        K_sub = np.ascontiguousarray(K_sub, dtype=np.float64)
+                        corotational_to_global(f_sub, K_sub, cr_R)
+                        node_coords_all, sub_conn, u_eval = _cr_saved
 
                     if update_state:
                         # NumPy advanced indexing creates a copy. We must explicitly write the modified sub_sdvs back.
@@ -1683,7 +1781,8 @@ class DynamicSolver3D:
     # assembly kernel uses.
     _POINT_STRESS_KERNELS = {
         1: "C3D8 under NLGEOM (C3D8_CR: co-rotational, Hughes B-bar, small local strain)",
-        10: "C3D8 without NLGEOM (c3d8_numba: linear small strain, per-element linear-elastic C)",
+        10: "C3D8 linear small strain (c3d8_numba, per-material C)",
+        16: "C3D8 without NLGEOM (C3D8_CR core with R = I: small-strain Hughes B-bar, any material)",
     }
 
     def element_point_stress(self, row: int, X_e: np.ndarray, dNdX: np.ndarray,
@@ -1711,10 +1810,10 @@ class DynamicSolver3D:
         if kern == 10:
             sv = self._linear_elastic_C(self.elem_props[row, 0], self.elem_props[row, 1]) @ (B @ u_e.ravel())
             R = np.eye(3)
-        else:  # kern == 1
+        else:  # kern 1, or 16 (= kernel 1 with R = I)
             from dispsolver.element3d.c3d8_corotational_numba import compute_element_rotation_3d
             x_e = X_e + u_e
-            R = compute_element_rotation_3d(X_e, x_e)
+            R = np.eye(3) if kern == 16 else compute_element_rotation_3d(X_e, x_e)
             u_loc = ((x_e - x_e.mean(axis=0)) @ R - (X_e - X_e.mean(axis=0))).ravel()
             vol_std = (B[0] + B[1] + B[2]) / 3.0
             for r_ in range(3):

@@ -1,7 +1,7 @@
 # FEM Verification Report
 
-**Generated**: 2026-10-01 01:09:27
-**Runtime**: 175.3s
+**Generated**: 2026-10-05 01:31:07
+**Runtime**: 146.9s
 **Results**: 13 passed, 1 failed
 **Codebase**: dispsolver (JAX-based 2D Plane Strain FEM)
 
@@ -29,7 +29,7 @@
 | Benchmark | jax | jax_q4_bbar | jax_q4_corotational_eas | jax_q4_eas | jax_q4_simo_fs | jax_q4_up | jax_q4_visco_fs | jax_t3 | numba | numba_q4_bbar | numba_q4_corotational | numba_q4_corotational_eas | numba_q4_eas | numba_q4_up | numba_t3 | numpy_q4_bbar | numpy_q4_bbar_strain | numpy_q4_corotational_eas | numpy_q4_eas | numpy_sequential | numpy_t3 | order_fit | teardrop_1layer |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | Patch Test (Element Level) | — | 1.0989e-03 (0.000%) | 1.0989e-03 (0.000%) | 1.0989e-03 (0.000%) | 1.0989e-03 (0.000%) | 1.0989e-03 (0.000%) | 1.0989e-03 (0.000%) | 5.4945e-04 (0.000%) | — | 1.0989e-03 (0.000%) | 1.0989e-03 (0.000%) | 1.0989e-03 (0.000%) | 1.0989e-03 (0.000%) | 1.0989e-03 (0.000%) | 5.4945e-04 (0.000%) | 1.0989e-03 (0.000%) | 0.0000e+00 (0.000%) | 1.0989e-03 (0.000%) | 1.0989e-03 (0.000%) | — | 5.4945e-04 (0.000%) | — | — |
-| Patch Test (Solver Level, Irregular Mesh) | 2.5124e-11 (0.000%) | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | 2.3978e-11 (0.000%) | — | — | — |
+| Patch Test (Solver Level, Irregular Mesh) | 2.5134e-11 (0.000%) | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | 2.3978e-11 (0.000%) | — | — | — |
 | 3-Point Bending | 2.4670e-04 (4.843%) | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | 2.4670e-04 (4.843%) | — | — | — |
 | 4-Point Bending | 3.2853e-04 (3.731%) | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | 3.2853e-04 (3.731%) | — | — | — |
 | 2-Point Bending (Gulati Elastica) | 3.1943e+02 (30.172%) | — | — | — | — | — | — | — | 3.1943e+02 (30.172%) | — | — | — | — | — | — | — | — | — | — | — | — | — | — |
@@ -81,7 +81,7 @@
 
 | Backend | Value | Error (%) | Iter | Passed |
 |---------|-------|-----------|------|--------|
-| jax | 2.512438e-11 | 0.0000 | 1 | PASS |
+| jax | 2.513392e-11 | 0.0000 | 1 | PASS |
 | numpy_sequential | 2.397843e-11 | 0.0000 | 1 | PASS |
 ### 3-Point Bending — PASS
 

@@ -10,6 +10,7 @@ from dispsolver.model.section import Section, SolidSection, ShellSection, Sectio
 from dispsolver.model.part import Part, SectionAssignment
 from dispsolver.model.instance import Instance
 from dispsolver.model.assembly import Assembly, FlattenedSolverSystem
+from dispsolver.model.element_catalog import ElementCatalog, ElementDescriptor
 from dispsolver.model.step import (
     Step,
     InitialStep,
@@ -126,6 +127,8 @@ __all__ = [
     "ADAPTIVE_SOFT",
     "POWER_LAW",
     "Model",
+    "ElementCatalog",
+    "ElementDescriptor",
 ]
 
 

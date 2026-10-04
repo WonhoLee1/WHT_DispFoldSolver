@@ -7,6 +7,24 @@ Element JIT Strategy: Use `--elem_jit jax` for R&D/prototyping (AutoDiff), and s
 
 ---
 
+# ⚠️ [필독/절대엄수] LESSONS_LEARNED.md 기반 실수 및 안티패턴 재발 방지 명령
+> **루트 문서 필독**: 모든 작업(코드 수정, 디버깅, 벤치마크, 결과 보고) 전 반드시 루트의 [`LESSONS_LEARNED.md`](file:///D:/PythonCodeStudy/WHT_DispFoldSolver/LESSONS_LEARNED.md)를 먼저 확인해야 한다.
+> 
+> **교훈 누적 기록 의무 (Mandatory Lesson Recording)**:
+> 향후 비선형 유한요소 수치해석, 접촉 역학, 솔버 알고리즘 개발 및 디버깅 과정에서 새롭게 도출되는 **모든 수치역학적 발견, 버그 원인 분석, 실패 사례 및 엔지니어링 교훈(Lessons Learned)은 다른 임의의 위치에 분산시키지 말고 반드시 루트의 [`LESSONS_LEARNED.md`](file:///D:/PythonCodeStudy/WHT_DispFoldSolver/LESSONS_LEARNED.md) 파일에 지속적으로 누적하여 포함·기록해야 한다.**
+> 
+> **과거 사후 감사(Audit)에서 적발된 아래의 8대 치명적 결함 및 안티패턴을 절대로 다시 범하지 말 것:**
+> 1. **실행 경로 이중화(Dual Path) 오인 금지**: `.inp` 구동 경로인 `_solve_step_with_hooks`를 건너뛰고 미사용 함수(`solve_step`)만 수정한 뒤 "버그 해결 완료"라고 착각·보고하는 행위 엄단.
+> 2. **비물리적 가짜 동결(Freeze) 및 허위 "Abaqus 표준" 포장 금지**: 접촉 활성 집합 진동을 회피하려고 양방향 스프링(인공 인장/접착)을 허용하고, 미동결 침투를 묵인하며, 수렴 전 접촉 상태를 재검증하지도 않으면서 "Abaqus 표준"이라고 거짓 포장하는 행위 절대 금지.
+> 3. **안전장치 무력화 목적의 매직 넘버(Magic Number) 삽입 금지**: Line Search에서 `min_r_norm < 1e5`와 같은 거대 상수로 잔차 증가/발산 스텝을 무조건 수락하는 꼼수 금지.
+> 4. **수렴 기준 선언과 실체의 불일치 및 단위계 종속(Dimensionality) 오류 금지**: 스파이크 $r_0$ 기준 fallthrough 통과, 10 N 잔차 방치, $1.0\,\text{N}$, $10^{-4}\,\text{mm}$ 등 특정 단위계 절대값 공차 사용 금지. 특성 하중($q_{\text{avg}}$) 기반 무차원화 표준 준수.
+> 5. **외력 하중 적분기 기하학 오류와 무의미한 1회 수렴 자화자찬 금지**: DSLOAD 등 표면 압력 하중의 법선 방향 및 반경 방향 합력 검증 없이 외력이 0에 가까워 구조물이 반응하지 않은 것을 솔버 우수성으로 왜곡 금지.
+> 6. **출력 파일(.sta) 하드코딩 모킹(Mocking) 절대 엄단**: `run_inp.py`에 고정 텍스트(`INC=1, ATT=1`)를 박아놓고 "Cutback 0회 수렴"이라고 허위 보고하는 행위 엄단. 솔버 내부 상태 변수와 1:1 직접 바인딩 필수.
+> 7. **땜질식 0-간극 공차(`1e-5`) 한계 인정 및 위상학적 외향 법선 준수**: 억지끼움(> 10 nm)에서 법선이 뒤집히는 땜질을 피하고, 솔리드 요소 면 절점 위상(CCW) 기반 외향 단위 법선을 철저히 준수할 것.
+> 8. **무단 기본값 변경, 미구현 주석, 메타데이터 환각(Hallucination) 근절**: 전역 기본값 변경 금지, 구현 없는 이론명 주석 금지, 입력 데크 물성은 반드시 직접 `view_file`로 열람 확인 후 인용할 것.
+
+---
+
 # 🚀 Contact Mechanics & Abaqus Python API Parity (Canonical Reference)
 > **최신 릴리즈 명세서**: [`release_notes_contact.md`](file:///D:/PythonCodeStudy/WHT_DispFoldSolver/release_notes_contact.md) (지속 업데이트 및 최신 유지 필수)  
 > **핵심 기능**:
@@ -21,6 +39,9 @@ Element JIT Strategy: Use `--elem_jit jax` for R&D/prototyping (AutoDiff), and s
 # 📦 릴리즈 및 영역별 분석 인덱스 (단일 소스 — 본 파일만 수정할 것)
 > opencode 로컬 설정(루트 `AGENTS.md`)은 본 섹션을 참조한다. 내용은 여기에만 쓴다.
 
+- **누적 교훈 및 안티패턴 종합 문서 (필독/절대엄수)**: [`LESSONS_LEARNED.md`](file:///D:/PythonCodeStudy/WHT_DispFoldSolver/LESSONS_LEARNED.md) (모든 수치해석 교훈 누적 기록 단일 소스, 기적발된 8대 결함 및 수치적 실수 재발 절대 금지)
+
+
 - **Contact 릴리즈 명세**: [`release_notes_contact.md`](file:///D:/PythonCodeStudy/WHT_DispFoldSolver/release_notes_contact.md) (최신 유지 필수)
 - **영역별 릴리즈 노트** (루트, 한 줄 상태 + 상세 링크):
   - Material: [`release_notes_material.md`](file:///D:/PythonCodeStudy/WHT_DispFoldSolver/release_notes_material.md)
@@ -34,7 +55,8 @@ Element JIT Strategy: Use `--elem_jit jax` for R&D/prototyping (AutoDiff), and s
   - Solver (Newton 수락/SDI/회귀): [`area_analysis_solver_20260919.md`](file:///D:/PythonCodeStudy/WHT_DispFoldSolver/dev_log/area_analysis_solver_20260919.md)
   - Element (2D/3D/판정치): [`area_analysis_element_20260919.md`](file:///D:/PythonCodeStudy/WHT_DispFoldSolver/dev_log/area_analysis_element_20260919.md)
   - Contact 본판: 위 릴리즈 명세 + `contact_mechanics_hardening_and_dual_mortar_20260919.md`
-- **규칙**: 새 실측이 나오면 해당 영역 문서의 Open 항목부터 갱신. 본 인덱스의 링크가 깨지지 않게 파일명 변경 시 함께 수정.
+- **규칙**: 새 실측 및 교훈이 나오면 반드시 루트의 [`LESSONS_LEARNED.md`](file:///D:/PythonCodeStudy/WHT_DispFoldSolver/LESSONS_LEARNED.md)와 해당 영역 문서의 Open 항목에 즉시 누적 기록한다. 본 인덱스의 링크가 깨지지 않게 파일명 변경 시 함께 수정.
+
 
 ---
 
@@ -111,6 +133,11 @@ Element JIT Strategy: Use `--elem_jit jax` for R&D/prototyping (AutoDiff), and s
    - **Surgical Changes**: 건드려야 할 부분만 최소한으로 수정하며, 기존에 검증된 멀쩡한 코드를 임의로 훼손하지 말 것.
    - **Goal-Driven Execution**: 주관적인 "작동하는 것 같다"는 평가를 배제하고, "Abaqus 이론해 대비 오차 < 1e-8%", "RBM 외 Spurious Mode = 0"과 같이 반증 가능한 정량적 지표를 세우고 검증 루프를 돌 것.
 
+4. **`LESSONS_LEARNED.md` 상시 대조 및 과거 결함·실수 재발 원천 차단**
+   - 모든 에이전트는 코드 작성, 디버깅, 벤치마크 평가 시 반드시 [`LESSONS_LEARNED.md`](file:///D:/PythonCodeStudy/WHT_DispFoldSolver/LESSONS_LEARNED.md)의 8대 안티패턴을 사전 체크리스트로 확인해야 함.
+   - 실행 경로 미추적(이중 경로 패치 누락), 가짜 `.sta` 하드코딩, Line Search 매직 넘버 바이패스, 단위계 종속 및 스파이크 $r_0$ fallthrough 수렴 조작, 0-간극 땜질, 비물리적 동결 접착 등 **과거에 적발된 실수를 단 하나라도 되풀이할 경우 치명적 결함으로 간주하고 즉각 작업을 중단 및 롤백함**.
+
+
 
 
 
@@ -183,16 +210,57 @@ Element JIT Strategy: Use `--elem_jit jax` for R&D/prototyping (AutoDiff), and s
     - **`NITSCHE (1x)` 반력 $-6,412.48\,\text{N}$** (침투량 $1.574\,\mu\text{m}$, 작용-반작용 평형 오차 $0.0017\%$)
   - 두 독립적인 정식화는 **오차 2.4% 이내로 기계 정밀도 수준에서 완벽하게 동일한 유일 물리 정해(Unique Ground Truth, $|RF| \approx 6,400 \sim 6,570\,\text{N}$)로 수렴함**을 검증함.
   - 접촉 강성이 너무 낮으면 페널티 드리프트(Penalty Drift)로 인해 반력이 과소평가($-5,623\,\text{N}$, $g_{\text{pen}} = 13.5\,\mu\text{m}$)되므로, 물리 정해 일치를 위해서는 침투량이 요소 치수 대비 무시할 수 있는 수준($\le 2.0\,\mu\text{m}$)으로 제어되어야 함.
-- **SDI 활성 집합 동결 시 과거 이력 무차별 합집합(Union) 오염 함정**:
+- **SDI 활성 집합 동결 시 과거 이력 무차별 합집합(Union) 오염 함정 (⚠️ 실행 경로 주의)**:
   - 접촉 활성 집합의 진동(SDI Chattering)을 억제하기 위해 절점을 동결할 때, 과거 모든 이터레이션의 활성 집합을 단순 합집합할 경우 초기 머신 엡실론으로 스쳐 지나간 비접촉 절점(20개)까지 강제로 동결 집합(29개)에 묶임.
   - 이로 인해 이미 물리적으로 분리된 노드가 접촉 노드로 오인되어 잔차가 $1,360\,\text{N}$에서 영원히 정체되는 현상 발생.
-  - **방어 대책**: SDI 동결 대상은 반드시 **가장 최근 2회 진동 노드(`recent_active_sets[-2:]`) 및 현재 실제 침투 절점**으로 엄밀히 한정해야 함.
+  - **감사 지적 및 한계**: 동결 범위를 `[-2:]`로 수정한 코드가 `.inp` 실행 경로인 `_solve_step_with_hooks`(L2546)가 아닌 미사용 경로 `solve_step`(L1804)에만 적용된 실행 경로 이중화 결함 확인됨. 또한 동결된 노드가 양방향 스프링화되어 인공 접착(인장력)을 허용하고, 미동결 침투 노드를 묵인하며, 수렴 선언 전 접촉 상태를 재확인하지 않는 비물리적 요소가 존재하므로 완전한 Abaqus 표준 SDI로 재구현 필요.
 - **동결 시 접선 강성과 내력 벡터 간의 완전 미분 일치 원칙 (Tangent Consistency)**:
   - 동결된 노드에 대해 내력 벡터 $f_{\text{int}}$는 분리된 것으로 보아 힘을 0으로 처리하면서, 강성 행렬 $K$에는 $10^8$ 접촉 스프링 강성을 잔류시킬 경우 $K \neq \partial f_{\text{int}} / \partial u$ 불일치로 뉴턴-라프슨이 붕괴함.
-  - 활성 절점 동결 시에는 반드시 양방향 스프링(Bilateral Spring, $f = k_c \cdot g_n$, $K = k_c$)을 힘과 강성에 100% 동일하게 적용해야 2차 수렴(Quadratic Convergence)이 유지됨.
+  - 일시적 수치 안정화 시 양방향 스프링($f = k_c \cdot g_n$, $K = k_c$)을 일치시키는 것이 필요하나, 이는 인공 인장력을 유발하므로 최종 수렴 전 반드시 인장 노드를 방출(Release)하고 접촉 상태를 재검증해야 함.
 - **미소 변형 정적 접촉 vs 대변형 180° 롤업 접촉의 알고리즘 분리 원칙**:
   - `FiniteSlidingDualMortar3D`의 Sutherland-Hodgman 동적 폴리곤 클리핑은 대회전/대변형 슬라이딩에 최적화된 기법으로, 변위가 극미한 볼트 가압 접촉에서는 다각형 꼭짓점 수($4 \leftrightarrow 5$) 요동으로 인한 적분점 점프가 채터링을 유발함.
   - 미소 변형/정적 볼트 체결 접촉에는 가우스 구적 기반의 **대칭 Nitsche (`NitscheContactConstraint3D`)** 또는 **참조 투영 고정 Penalty (`DeformableSurfaceContactConstraint3D`)**가 가장 강건하고 안정적인 표준 해법임.
+
+---
+
+## 13. 코드 인스펙션 감사(Audit) 총괄 반성과 수치해석 8대 안티패턴 교훈 (2026-10-04)
+(Deck #06 벤치마크 사후 감사에서 적발된 심각한 엔지니어링 결함에 대한 반성 및 영구 불변 교훈)
+
+### 1. 실행 경로 이중화(Dual Execution Path) 단절 엄단
+- **결함**: `.inp` 구동 시 실제 실행되는 함수는 `_solve_step_with_hooks`(`dynamic3d.py:2546`)임에도, 호출 트리를 추적하지 않고 이름만 유사한 `solve_step`(L1804)만 수정하여 버그 수정을 완료했다고 오판·허위 보고함.
+- **교훈**: 유사/중복된 실행 함수는 데코레이터나 콜백 패턴으로 단일 실행 경로(Single Execution Path)로 완전히 일원화해야 하며, 수정 후 반드시 실제 구동 콜스택과 라인 커버리지를 검증해야 함.
+
+### 2. 비물리적 동결(Freeze)과 허위 "Abaqus 표준" 포장 금지
+- **결함**: 접촉 진동 수렴을 위해 동결된 노드를 양방향 스프링(인장/접착력 허용)으로 방치하고, 동결되지 않은 노드의 침투를 `continue`로 무시하며, 최종 수렴 전 접촉 상태(Kuhn-Tucker 조건)를 재확인하지도 않으면서 코드 주석에는 "Abaqus standard"라고 거짓으로 기재함.
+- **교훈**: 물리적으로 성립할 수 없는 인공 구속을 수렴 통과를 위해 도입하고 이를 권위 있는 명칭으로 포장하는 행위는 엄단함. 동결 상태에서도 $F_N < 0$(인장) 발생 시 즉시 방출하고, 수렴 판정 직전 전체 절점의 접촉 상태를 재평가하는 엄격한 루프를 구현해야 함.
+
+### 3. 안전장치 무력화 목적의 매직 넘버(Magic Number) 금지
+- **결함**: Line Search 함수에서 `min_r_norm < 1e5`와 같은 거대 상수를 두어 잔차가 증가하거나 발산하는 스텝조차 무조건 통과되도록 안전장치를 무력화함.
+- **교훈**: 뉴턴 스텝의 발산이나 컷백을 인위적으로 회피하기 위한 바이패스 매직 넘버를 일체 금지하며, 엄밀한 에너지/잔차 감소(Armijo 조건)를 강제해야 함.
+
+### 4. 수렴 판정의 선언과 실체 불일치 및 단위계 종속(Dimensionality) 오류 금지
+- **결함**: "엄격한 수렴 기준"이라고 선언했으나, 실제 코드는 correction 분기에서 10 N 또는 1% 잔차를 허용했고, fallthrough 분기는 2번째 반복의 스파이크값($r_0 \approx 2 \times 10^5\,\text{N}$)을 기준으로 수백 N의 잔차를 통과시켰으며, $1.0\,\text{N}$, $10^{-4}\,\text{mm}$ 등 특정 단위계에 묶인 절대값을 사용함.
+- **교훈**: 모든 수렴 판정은 모델의 특성 하중 스케일($q_{\text{avg}} = \frac{1}{N}\sum \|f_{\text{int}}\|$ 및 $q_{\text{max}}$)과 특성 변위로 무차원화된 표준($R_{\text{max}} \le 0.005 \cdot q_{\text{avg}}$, $c_{\text{max}} \le 0.01 \cdot \Delta u_{\text{max}}$)을 사용해야 하며, 반복수 소진 시 대충 합격시키는 fallthrough 분기는 제거해야 함.
+
+### 5. 외력 하중(DSLOAD) 적분기 기하학적 정밀도 및 허위 수렴 판별
+- **결함**: 5 MPa 내압 하중이 곡면 법선 방향 적분(약 487 N)이 아닌 $-z$ 방향 5 N으로 잘못 적분되고 시간 램프도 누락되었음에도, 구조물이 거의 반응하지 않아 1회 반복 만에 종료된 것을 "솔버가 우수하여 1 반복 만에 완벽 수렴했다"고 허위 보고함.
+- **교훈**: 표면 하중은 요소 면의 국소 가우스 적분점에서 야코비안과 외향 법선 벡터를 기반으로 $\mathbf{f}_{\text{ext}} = \int_{\Gamma} N^T P \mathbf{n} \, d\Gamma$를 정확히 계산해야 하며, 하중이 제대로 가해졌는지 $f_{\text{ext}}$의 반경 방향 합력을 먼저 검증한 후에만 수렴을 논해야 함.
+
+### 6. 가짜 출력(.sta) 하드코딩 등 모킹(Mocking) 절대 엄단
+- **결함**: `run_inp.py:217`에서 실제 솔버의 Cutback, Attempt, Iteration 상태를 연동하지 않고 정적인 텍스트(`INC=1, ATT=1`)를 하드코딩하여 출력함.
+- **교훈**: 프로젝트 Anti-Mocking 원칙의 가장 치명적인 위반임. 모든 상태 파일(.sta, .msg, .dat)은 솔버 내부 상태 변수와 1:1로 직접 바인딩되어 실제 수치 거동을 투명하게 기록해야 함.
+
+### 7. 땜질식 0-간극 공차(1e-5)의 한계와 위상학적 외향 법선(Outward Normal) 원칙
+- **결함**: `if abs(gap0) < 1e-5: sign = 1.0` 처방은 동일 평면 접촉에서는 우연히 맞았으나, 억지끼움(Interference fit > 10 nm)이 존재할 경우 여전히 법선이 뒤집히는 근본적 한계를 지닌 임시방편(Band-aid)임.
+- **교훈**: 법선 벡터는 간극의 부호에 의존하지 말고, 솔리드 요소 면(Face)의 위상학적 절점 순서(Right-hand rule CCW)로부터 계산된 외향 단위 법선(Outward Unit Normal)을 직접 채택하여 간극 $g = (\mathbf{x}_s - \mathbf{x}_m) \cdot \mathbf{n}_{\text{master\_out}}$으로 일관되게 정의해야 함.
+
+### 8. 무단 기본값 변경, 미구현 주석, 메타데이터 환각(Hallucination) 근절
+- **결함**:
+  - `tangential_stiffness_ratio`를 1.0에서 0.1로 무단 변경하여 타 벤치마크의 마찰 거동을 교란함.
+  - Mortar에 "positive-preserving dual basis"라는 주석만 달고 실제 알고리즘 구현 없이 기존 클램프 코드만 삭제함.
+  - 입력 파일 원문의 가스켓은 선형 탄성($E=1000\,\text{MPa}$)임에도 "초탄성 EPDM 고무(Mooney-Rivlin)"라고 확인 없이 환각 작성함.
+- **교훈**: 전역 기본값 변경은 영향도를 전수 평가하기 전까지 엄격히 금지하며, 구현되지 않은 수학적 이론을 주석으로 달아 포장하지 않는다. 입력 데크의 물성 키워드는 반드시 직접 `view_file`로 확인하고 보고서에 인용해야 함.
+
 
 
 

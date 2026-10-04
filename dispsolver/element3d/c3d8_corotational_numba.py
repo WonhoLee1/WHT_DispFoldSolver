@@ -235,7 +235,8 @@ def compute_c3d8_corotational_element_umat_numba(
     sdvs: np.ndarray,
     dt: float = 1.0,
     controls: np.ndarray = _EMPTY_CONTROLS,
-    stress_init: np.ndarray = _EMPTY_2D_CONTROLS
+    stress_init: np.ndarray = _EMPTY_2D_CONTROLS,
+    small_strain: bool = False
 ):
     """Compute 3D Co-rotational C3D8 element with B-bar kinematics and UMAT constitutive dispatch,
     with Abaqus-compatible distortion control / anti-inversion safeguards.
@@ -259,8 +260,14 @@ def compute_c3d8_corotational_element_umat_numba(
         coords_curr[i, 1] = coords[i, 1] + u_elem[3 * i + 1]
         coords_curr[i, 2] = coords[i, 2] + u_elem[3 * i + 2]
 
-    # 1. Extract rigid body rotation
-    R = compute_element_rotation_3d(coords, coords_curr)
+    # 1. Extract rigid body rotation. small_strain (NLGEOM off): R = I and no
+    # geometric stiffness, i.e. the plain small-strain B-bar element with the
+    # same material dispatch -- u_local below then only removes the rigid
+    # translation, which a small strain ignores anyway.
+    if small_strain:
+        R = np.eye(3)
+    else:
+        R = compute_element_rotation_3d(coords, coords_curr)
 
     # 2. Compute reference and current centroids
     Xc = np.zeros(3, dtype=np.float64)
@@ -414,7 +421,8 @@ def compute_c3d8_corotational_element_umat_numba(
                 dV = detJ
                 f_local += (B_bar.T @ stress_voigt) * dV
                 K_local += (B_bar.T @ C_mat @ B_bar) * dV
-                _add_geometric_stiffness_3d(K_local, dN_dX_i, dN_dY_i, dN_dZ_i, stress_voigt, dV)
+                if not small_strain:
+                    _add_geometric_stiffness_3d(K_local, dN_dX_i, dN_dY_i, dN_dZ_i, stress_voigt, dV)
                 gp_idx += 1
 
     # 5b. Viscous damping (Abaqus SectionControls VISCOUS DAMPING)
@@ -462,7 +470,8 @@ def _assemble_mesh_c3d8_corotational_umat_numba(
     elem_sdvs: np.ndarray,
     dt: float = 1.0,
     elem_controls: np.ndarray = _EMPTY_2D_CONTROLS,
-    elem_stress_init: np.ndarray = _EMPTY_2D_CONTROLS
+    elem_stress_init: np.ndarray = _EMPTY_2D_CONTROLS,
+    small_strain: bool = False
 ):
     """Parallel OpenMP mesh assembly kernel for 3D Co-rotational C3D8 elements."""
     n_elems = elem_conn.shape[0]
@@ -488,7 +497,7 @@ def _assemble_mesh_c3d8_corotational_umat_numba(
         stress_init = elem_stress_init[e] if has_stress_init else np.zeros((8, 6), dtype=np.float64)
 
         f_e, K_e, err_e = compute_c3d8_corotational_element_umat_numba(
-            elem_nodes, u_elem, mat_type, props, sdvs, dt, ctrl, stress_init
+            elem_nodes, u_elem, mat_type, props, sdvs, dt, ctrl, stress_init, small_strain
         )
         f_elems[e, :] = f_e
         K_elems[e, :, :] = K_e
@@ -510,6 +519,7 @@ def assemble_mesh_c3d8_corotational_numba(
 ):
     """Entrypoint wrapper supporting both legacy and modern UMAT signatures."""
     elem_controls = kwargs.get("elem_controls", _EMPTY_2D_CONTROLS)
+    small_strain = bool(kwargs.get("small_strain", False))
     n_elems = elem_conn.shape[0]
     elem_stress_init = kwargs.get("elem_stress_init", None)
     if elem_stress_init is None:
@@ -524,7 +534,8 @@ def assemble_mesh_c3d8_corotational_numba(
             elem_props[e, :36] = cmat_flat
         elem_sdvs = np.zeros((n_elems, 8, 0), dtype=np.float64)
         return _assemble_mesh_c3d8_corotational_umat_numba(
-            node_coords, elem_conn, u_global, elem_mat_types, elem_props, elem_sdvs, 1.0, elem_controls, elem_stress_init
+            node_coords, elem_conn, u_global, elem_mat_types, elem_props, elem_sdvs, 1.0, elem_controls, elem_stress_init,
+            small_strain
         )
     else:
         elem_mat_types = args[0]
@@ -534,5 +545,6 @@ def assemble_mesh_c3d8_corotational_numba(
         if len(args) > 4 and isinstance(args[4], np.ndarray):
             elem_controls = args[4]
         return _assemble_mesh_c3d8_corotational_umat_numba(
-            node_coords, elem_conn, u_global, elem_mat_types, elem_props, elem_sdvs, dt, elem_controls, elem_stress_init
+            node_coords, elem_conn, u_global, elem_mat_types, elem_props, elem_sdvs, dt, elem_controls, elem_stress_init,
+            small_strain
         )

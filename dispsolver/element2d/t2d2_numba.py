@@ -63,7 +63,7 @@ def assemble_mesh_t2d2_numba(
 ):
     ne = elem_conn.shape[0]
     f_sub = np.zeros((ne, 4), dtype=np.float64)
-    K_sub = np.zeros((ne, 16), dtype=np.float64)
+    K_sub = np.zeros((ne, 4, 4), dtype=np.float64)
     err_out = 0
 
     for e in prange(ne):
@@ -83,6 +83,6 @@ def assemble_mesh_t2d2_numba(
 
         fe, Ke = compute_t2d2_element_numba(coords, u_elem, E_mod, A_area)
         f_sub[e] = fe
-        K_sub[e] = Ke.ravel()
+        K_sub[e] = Ke
 
     return f_sub, K_sub, err_out
