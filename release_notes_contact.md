@@ -1,5 +1,7 @@
 # 🚀 WHT_DispFoldSolver: Contact Mechanics & Abaqus API Parity Release Notes
 
+> **⚠ 정정 (2026-10-04)**: 이 문서의 Deck #06 관련 결론 일부("2.4% 일치 = 유일 물리 정해", NITSCHE 반력 −6,412 / −6,346 N, "대칭 Nitsche", 수렴 기준·freeze·`.sta`·Step 2 내압 관련 주장)는 재검증에서 틀린 것으로 확인됐다. 올바른 내용: `dev_log/deck06_corrections_20261004.md`.
+
 > **최초 작성일**: 2026-09-19  
 > **담당 팀**: `/lucy-orcha` 팀 C (전산접촉역학 & 고성능 수치해석 아키텍처 그룹)  
 > **준수 표준**: Abaqus/Standard Python API Spec, Anti-Mocking Protocol (Zero-Mocking), Karpathy AI Engineering Guidelines  

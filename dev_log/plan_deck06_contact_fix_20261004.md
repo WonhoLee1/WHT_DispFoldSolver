@@ -266,7 +266,7 @@ P0 → P1 → P2 → P3 → P4 → P5 → P6 → P7 → P8 → P9
 | P6 | 완료 | `911d5e0` | 법선을 master 요소 바깥 방향으로(억지끼움), roundoff floor `|X+u|` |
 | P7 | 완료 | `3686fd0` | **Pardiso 대칭 판정 버그(np.bool_)**: 모든 비대칭 접선이 대칭화되어 풀렸음. NITSCHE를 진짜 Nitsche(θ=0)로 |
 | P8 | 부분 | (이번 커밋) | Mortar 법선 방향 결함 수정(평평한 접촉면에서 반올림 잡음으로 방향 결정 → 침투 0으로 인식). **deck06 미수렴은 미해결** |
-| P9 | 대기 | | 문서 정정 |
+| P9 | 완료 | (문서 커밋) | `dev_log/deck06_corrections_20261004.md`(정정 12항 + GEMINI.md 반영 문안), release_notes·handoff 경고 배너. GEMINI.md는 사용자 관리 문서라 미수정 |
 
 ### P8 미해결 내용 (시간 제한 도달)
 - 법선 수정 후 Mortar는 penalty 해 상태에서 35노드 활성, 접촉력 5,634 N을 정상 감지.
