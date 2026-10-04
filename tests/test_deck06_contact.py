@@ -25,16 +25,17 @@ from dispsolver.solver.step_executor import MultiStepExecutor
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 INP = os.path.join(ROOT, "benchmark_inp", "phase2_methodology", "06_bolt_preload_gasket_flange_3d.inp")
 
-# Step 1 bolt-seat reaction R_z [N], each method's OWN stiffness limit on this
-# mesh. There is no single reference: PENALTY is node-to-surface (35 gasket
-# nodes on a non-matching flange mesh) and NITSCHE is surface-to-surface, so
-# their discrete limits legitimately differ -- 1.5% here, shrinking under
-# refinement (plan P0-3). Mesh error itself is ~5% (m=2 NITSCHE limit is
-# -6239), so neither number is the continuum answer.
-#   NITSCHE: x10 -6548.32, x100 -6565.53, x1000 -6567.44 (converged to ~0.03%)
-#   PENALTY: x3 -6282.71, x10 -6562.18, x20 -6622.08, x30 -6636.23;
-#            R(k) = R_inf + a/k fits give -6665..-6682
-R_LIMIT = {"PENALTY": -6670.0, "NITSCHE": -6567.44}
+# Step 1 bolt-seat reaction R_z [N], each method's OWN limit on this mesh.
+# There is no single reference: PENALTY is node-to-surface (35 gasket nodes
+# on a non-matching flange mesh) and NITSCHE is surface-to-surface, so their
+# discrete limits differ (1.5%). Mesh error is ~5% (plan P0-3), so neither is
+# the continuum answer. Measured 2026-10-04 after the Pardiso symmetry fix
+# (unsymmetric tangents had been solved symmetrized) and the real Nitsche:
+#   PENALTY: x10 -6543.05, x30 -6625.60, x50 -6642.39, x100 -6655.36,
+#            x300 -6663.55 -> limit ~ -6668
+#   NITSCHE (consistent): x1 -6584.62, x10 -6568.99, x100 -6567.76 -- nearly
+#            gamma-independent, as a consistent method should be
+R_LIMIT = {"PENALTY": -6668.0, "NITSCHE": -6567.8}
 R_REF = R_LIMIT["NITSCHE"]    # force scale for residual tolerances
 RF_RTOL = {"PENALTY": 0.02,   # penalty regularization at Abaqus's default 10x k_ref measured 1.6%
            "NITSCHE": 0.01}
@@ -89,20 +90,13 @@ def _step1(method, scale=1.0):
 _xf = pytest.mark.xfail(strict=True)
 
 RF_CASES = [
-    pytest.param("PENALTY", 1.0, marks=_xf, id="penalty-default"),          # -5623.95 (-15.7%), 13.5 um penetration
-    pytest.param("PENALTY", 10.0, id="penalty-x10"),                        # -6562.18 (-1.6%)
-    pytest.param("PENALTY", 30.0, id="penalty-x30"),                        # -6636.23 (-0.5%)
-    # PENALTY x100 is not run: Newton stalls at r/q ~ 1e-3 (r ~ 3 N) and,
-    # under the relative acceptance rule, the step crawls down to dt ~ 2e-3 --
-    # more than 40 minutes before it fails (the old rules failed it fast by
-    # accepting non-descent steps). Characterized in plan P7.
-    pytest.param("NITSCHE", 1.0, marks=_xf, id="nitsche-default"),          # -6412.48 (-2.4%)
-    # -6567.44 (defines its limit) was reached only while the line search
-    # accepted residual-INCREASING steps (`min_r_norm < 1e5`). Without that, the
-    # line search finds no descent: r grows ~linearly in the step length. The
-    # contact tangent itself is exact (FD 2.5e-9 at x1000), so the likely cause is
-    # quadrature-point activation inside an already-active face -- the solver
-    # tracks Nitsche activity per face, so this kink is never seen as an SDI. P7.
+    pytest.param("PENALTY", 1.0, marks=_xf, id="penalty-default"),          # -5618.34 (-15.7%), 13.5 um penetration
+    pytest.param("PENALTY", 10.0, id="penalty-x10"),                        # -6543.05 (-1.9%)
+    pytest.param("PENALTY", 100.0, id="penalty-x100"),                      # -6655.36; stalled 40+ min before the Pardiso fix
+    pytest.param("NITSCHE", 1.0, id="nitsche-default"),                     # -6584.62 (+0.26%); was -6412.48 as a penalty
+    pytest.param("NITSCHE", 100.0, id="nitsche-x100"),                      # -6567.76
+    # gamma0 = 5e4 (x1000): fails from the first increment (all attempts cut
+    # back). Far beyond the stability threshold; not characterized further.
     pytest.param("NITSCHE", 1000.0, marks=_xf, id="nitsche-x1000"),
 ]
 
@@ -118,9 +112,8 @@ def test_step1_reaction_reaches_own_stiffness_limit(method, scale):
 @pytest.mark.parametrize("method,scale", [
     ("PENALTY", 1.0), ("PENALTY", 10.0), ("NITSCHE", 1.0),
     # PENALTY x50 used to be FALSELY accepted (ok=True, exhaustion branch,
-    # r = 90.2 N, RF_bolt=-6956.73). The exhaustion branch now uses the same
-    # residual criterion, so it is no longer accepted -- and, like x100, it
-    # crawls for minutes before failing (plan P7). Not run here.
+    # r = 90.2 N, RF_bolt=-6956.73). Now it genuinely converges (r ~ 3e-2 N).
+    ("PENALTY", 50.0),
 ])
 def test_step1_accepted_state_is_in_equilibrium_without_freeze(method, scale):
     r = _step1(method, scale)
@@ -210,12 +203,11 @@ PATCH_CASES = [
     # measured 2026-10-04, relative error vs PATCH_F (matching 2/2 | non-matching 3/2 slave/master)
     pytest.param("PENALTY", 1.0, marks=_xf, id="penalty-x1"),       # -2.7e-2 | -2.3e-2
     pytest.param("PENALTY", 10.0, id="penalty-x10"),                # -2.8e-3 | -2.4e-3
-    # NITSCHE error is exactly proportional to 1/gamma, i.e. it behaves as a
-    # penalty method: a consistent Nitsche passes this test at any stable
-    # gamma. Consistency term ineffective (plan P7).
-    pytest.param("NITSCHE", 1.0, marks=_xf, id="nitsche-x1"),       # -1.7e-1 | -2.3e-1
-    pytest.param("NITSCHE", 10.0, marks=_xf, id="nitsche-x10"),     # -2.0e-2 | -2.9e-2
-    pytest.param("NITSCHE", 1000.0, id="nitsche-x1000"),            # -4.5e-4 | -5.8e-4
+    # The former "Nitsche" (p = gamma*g only) erred exactly as 1/gamma:
+    # -1.7e-1 / -2.0e-2 / -4.5e-4 at x1 / x10 / x1000 -- a penalty. With the
+    # bulk-stress (consistency) term it reproduces the patch at default gamma.
+    pytest.param("NITSCHE", 1.0, id="nitsche-x1"),
+    pytest.param("NITSCHE", 10.0, id="nitsche-x10"),
 ]
 
 

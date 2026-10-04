@@ -1,11 +1,18 @@
 """
 test_nitsche_contact3d.py
 ==========================
-Verification and validation suite for 3D Multiplier-Free Symmetric Nitsche Contact.
+Verification suite for NitscheContactConstraint3D.
+
+Tests 1 and 3 have no volume elements, so they exercise the class in its
+explicit penalty mode (consistency=False: p = gamma * g_n, symmetric). The
+consistent (Nitsche) mode needs the slave elements' stress; it is checked
+by test 2 here and by the exact contact patch tests in
+tests/test_deck06_contact.py.
 
 Tests:
 1. test_nitsche_3d_tangent_symmetry_and_psd:
-   - Verifies exact bit-level symmetry |K - K^T| == 0.0.
+   - Verifies symmetry |K - K^T| <= 1e-14 |K| (roundoff; the solver's own
+     symmetry test uses 1e-10 relative).
    - Verifies positive semi-definiteness (all eigenvalues >= -1e-13).
    - Verifies Newton's third law (sum of interface contact forces == 0).
 2. test_nitsche_two_cube_contact_converges:
@@ -54,6 +61,7 @@ def test_nitsche_3d_tangent_symmetry_and_psd():
         nid_to_idx=nid_to_idx,
         coords=coords,
         gamma=gamma,
+        consistency=False,   # surface-only fixture (no elements): penalty mode
     )
 
     # Penetration in Z: move slave nodes down by delta = 0.05 mm
@@ -74,7 +82,7 @@ def test_nitsche_3d_tangent_symmetry_and_psd():
 
     # 3. Exact symmetry check
     asym_err = float(np.max(np.abs(K - K.T)))
-    assert asym_err == 0.0, f"Nitsche tangent matrix asymmetry: {asym_err}"
+    assert asym_err <= 1e-14 * np.abs(K).max(), f"Nitsche tangent matrix asymmetry: {asym_err}"
 
     # 4. Positive semi-definiteness check (all eigenvalues >= 0 up to machine epsilon)
     eigenvalues = np.linalg.eigvalsh(K)
@@ -227,6 +235,7 @@ def test_nitsche_patch_test_uniform_pressure():
         nid_to_idx=nid_to_idx,
         coords=mesh.coords,
         gamma=gamma,
+        consistency=False,   # surface-only fixture (no elements): penalty mode
     )
 
     # Prescribe uniform normal penetration
@@ -245,4 +254,4 @@ def test_nitsche_patch_test_uniform_pressure():
 
     # Symmetric stiffness check
     K = csc_matrix((data, (rows, cols)), shape=(mesh.num_nodes * 3, mesh.num_nodes * 3)).toarray()
-    assert float(np.max(np.abs(K - K.T))) == 0.0
+    assert float(np.max(np.abs(K - K.T))) <= 1e-14 * float(np.abs(K).max())

@@ -70,6 +70,32 @@ def _quad4_area_jacobian(q1: np.ndarray, q2: np.ndarray, q3: np.ndarray, q4: np.
 
 
 # 2x2 Gauss-Legendre quadrature on [-1, 1]^2
+_HEX8_NAT = np.array([[-1, -1, -1], [1, -1, -1], [1, 1, -1], [-1, 1, -1],
+                      [-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1]], dtype=np.float64)
+
+
+def _hex8_shape(xi: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    """Trilinear shape functions N (8,) and dN/dxi (8, 3) at natural point xi."""
+    t = 1.0 + _HEX8_NAT * xi
+    N = 0.125 * t[:, 0] * t[:, 1] * t[:, 2]
+    dN = 0.125 * np.stack([_HEX8_NAT[:, 0] * t[:, 1] * t[:, 2],
+                           t[:, 0] * _HEX8_NAT[:, 1] * t[:, 2],
+                           t[:, 0] * t[:, 1] * _HEX8_NAT[:, 2]], axis=1)
+    return N, dN
+
+
+def _hex8_inverse_map(X_target: np.ndarray, X_e: np.ndarray) -> np.ndarray:
+    """Natural coordinates of a reference point inside / on a hex8."""
+    xi = np.zeros(3)
+    for _ in range(30):
+        N, dN = _hex8_shape(xi)
+        r = X_target - N @ X_e
+        if np.linalg.norm(r) < 1e-13 * max(1.0, np.abs(X_e).max()):
+            break
+        xi = xi + np.linalg.solve(X_e.T @ dN, r)
+    return xi
+
+
 _INV_SQRT3 = 1.0 / np.sqrt(3.0)
 _GAUSS2X2 = [
     (-_INV_SQRT3, -_INV_SQRT3, 1.0),
@@ -110,8 +136,28 @@ class NitscheContactConstraint3D:
         position_tolerance: float = 1.0,
         name: str = "NITSCHE_CONTACT_3D",
         master_interior: Optional[Dict[tuple, np.ndarray]] = None,
+        slave_owner: Optional[Dict[tuple, int]] = None,
+        gamma0: Optional[float] = None,
+        consistency: bool = True,
     ):
         self.master_interior = dict(master_interior or {})
+        # Element owning each slave face: the bulk stress sigma_nn that makes
+        # this Nitsche (not penalty) is evaluated in it. Bound to the solver's
+        # materials by bind_solver(), called from DynamicSolver3D.assemble_system.
+        self.slave_owner = dict(slave_owner or {})
+        # Nitsche stabilization: gamma = gamma0 * M / h per slave element
+        # (M = initial P-wave modulus of its material, h = volume / face area).
+        # theta = 0 Nitsche is only stable for gamma0 large enough -- measured on
+        # the contact patch test: gamma0 = 2.5 diverged, >= 25 converged. When
+        # gamma0 is None the fixed `gamma` (penalty-style) is used as before.
+        self.gamma0 = None if gamma0 is None else float(gamma0)
+        # consistency=False drops the bulk-stress term: p = gamma * g_n, a
+        # surface-to-surface PENALTY (what this class was before 2026-10-04,
+        # while its docstring called it Nitsche). Opt-in only; it needs no
+        # solver binding and is symmetric, but its error scales as 1/gamma.
+        self.consistency = bool(consistency)
+        self._solver = None
+        self._dt = 1.0
         self.slave_faces = list(slave_faces)
         self.master_faces = list(master_faces)
         self.nid_to_idx = dict(nid_to_idx)
@@ -204,101 +250,186 @@ class NitscheContactConstraint3D:
                 xm = sum(Nm[b] * (self.coords[idx_m[b]] + u[3 * idx_m[b] : 3 * idx_m[b] + 3]) for b in range(4))
 
                 g_n = -float(np.dot(xs - xm, qp["n"]))
-                if g_n > 0.0:
+                # Same activity rule as assemble(): p = gamma*g_n - sigma_nn > 0.
+                sig = (self._sigma_nn(u[qp["e_dofs"]].reshape(8, 3), qp)
+                       if (self.consistency and self._solver is not None) else 0.0)
+                gam = qp.get("gamma", self.gamma)
+                if gam * g_n - (sig if sig is not None else 0.0) > 0.0:
                     active_nodes.update(s_face)
                     break
 
         return frozenset(active_nodes)
 
+    # ------------------------------------------------------------------
+    # Bulk normal stress on the slave side (the Nitsche consistency term)
+    # ------------------------------------------------------------------
+    def bind_solver(self, solver: Any, dt: float = 1.0) -> None:
+        """Attach the solver whose element materials give sigma(u) on the
+        slave side, and precompute, per quadrature point, the owning element
+        and its shape-function gradients there."""
+        self._dt = float(dt)
+        if not self.consistency or self._solver is solver:
+            return
+        self._solver = solver
+        eid_to_row = {eid: k for k, eid in enumerate(solver.mesh.elements)}
+        if not self.slave_owner:
+            from dispsolver.model.interaction import _face_owner_elements
+            self.slave_owner = _face_owner_elements([tuple(p["slave_face"]) for p in self.pairs], solver.mesh)
+        for pair in self.pairs:
+            face = tuple(pair["slave_face"])
+            eid = self.slave_owner.get(face)
+            if eid is None:
+                raise ValueError(f"Nitsche contact '{self.name}': no owning element for slave face {face}")
+            elem = solver.mesh.elements[eid]
+            nids = list(elem.node_ids)
+            if len(nids) != 8:
+                raise NotImplementedError(
+                    f"Nitsche contact '{self.name}': slave element {eid} has {len(nids)} nodes; "
+                    f"the bulk-stress term is implemented for 8-node hexahedra only")
+            e_idx = [self.nid_to_idx[n] for n in nids]
+            X_e = self.coords[e_idx]
+            idx_s = [self.nid_to_idx[n] for n in face]
+            h_fd = 1e-7 * float(np.max(np.ptp(X_e, axis=0)))
+            gamma_e = self.gamma
+            if self.gamma0 is not None:
+                from dispsolver.material3d.numba_materials import material_dispatch_3d
+                row = eid_to_row[eid]
+                sdv0 = np.zeros(getattr(solver, "elem_sdvs", np.zeros((1, 0))).shape[-1] if getattr(solver, "elem_sdvs", None) is not None else 0)
+                _, C0, _, _ = material_dispatch_3d(int(solver.elem_mat_types[row]), solver.elem_props[row],
+                                                   sdv0, np.zeros(6), np.eye(3), 1.0, 1.0)
+                q4 = [self.coords[i] for i in idx_s]
+                area = sum(_quad4_area_jacobian(q4[0], q4[1], q4[2], q4[3], gx, gy) * gw for gx, gy, gw in _GAUSS2X2)
+                _, dN0 = _hex8_shape(np.zeros(3))
+                vol = 8.0 * abs(np.linalg.det(X_e.T @ dN0))
+                gamma_e = self.gamma0 * float(C0[0, 0]) / (vol / area)
+            for qp in pair["quad_points"]:
+                Ns = _quad4_shape_functions(qp["xi_s"], qp["eta_s"])
+                X_qp = sum(Ns[a] * self.coords[idx_s[a]] for a in range(4))
+                xi_e = _hex8_inverse_map(X_qp, X_e)
+                _, dN = _hex8_shape(xi_e)
+                qp["e_row"] = eid_to_row[eid]
+                qp["e_dofs"] = np.array([3 * i + d for i in e_idx for d in range(3)], dtype=np.int64)
+                qp["dNdX"] = dN @ np.linalg.inv(X_e.T @ dN).T   # (8, 3): dN_a/dX
+                qp["h_fd"] = h_fd
+                qp["gamma"] = gamma_e
+
+    def _sigma_nn_F(self, F: np.ndarray, qp: Dict[str, Any]) -> Optional[float]:
+        """n . sigma(F) . n with the slave element's material."""
+        from dispsolver.material3d.numba_materials import material_dispatch_3d
+        s = self._solver
+        J = float(np.linalg.det(F))
+        if J <= 0.0:
+            return None
+        E = 0.5 * (F.T @ F - np.eye(3))
+        E_v = np.array([E[0, 0], E[1, 1], E[2, 2], 2 * E[0, 1], 2 * E[0, 2], 2 * E[1, 2]])
+        row = qp["e_row"]
+        sdv_all = getattr(s, "elem_sdvs", None)
+        sdv = np.zeros(0) if sdv_all is None else np.asarray(sdv_all[row])
+        sdv = np.ascontiguousarray(sdv[0] if sdv.ndim > 1 else sdv, dtype=np.float64)
+        S_v, _, _, err = material_dispatch_3d(int(s.elem_mat_types[row]), s.elem_props[row], sdv, E_v, F, J, self._dt)
+        if err != 0:
+            return None
+        S = np.array([[S_v[0], S_v[3], S_v[4]], [S_v[3], S_v[1], S_v[5]], [S_v[4], S_v[5], S_v[2]]])
+        n = qp["n"]
+        return float(n @ (F @ S @ F.T) @ n) / J
+
+    def _F_at(self, u: np.ndarray, qp: Dict[str, Any]) -> np.ndarray:
+        return np.eye(3) + u[qp["e_dofs"]].reshape(8, 3).T @ qp["dNdX"]
+
+    def _sigma_nn(self, u_e: np.ndarray, qp: Dict[str, Any]) -> Optional[float]:
+        return self._sigma_nn_F(np.eye(3) + u_e.T @ qp["dNdX"], qp)
+
+    def _sigma_nn_grad(self, F: np.ndarray, qp: Dict[str, Any]) -> Optional[np.ndarray]:
+        """d sigma_nn / d u_e (24,): central differences in the 9 components of
+        F, chained with dF_ij/du_(a,i) = dN_a/dX_j (exact for the hex8)."""
+        h = 1e-7 * max(1.0, float(np.abs(F).max()))
+        dS_dF = np.zeros((3, 3))
+        for i in range(3):
+            for j in range(3):
+                Fp = F.copy(); Fp[i, j] += h
+                Fm = F.copy(); Fm[i, j] -= h
+                sp, sm = self._sigma_nn_F(Fp, qp), self._sigma_nn_F(Fm, qp)
+                if sp is None or sm is None:
+                    return None
+                dS_dF[i, j] = (sp - sm) / (2.0 * h)
+        # grad[a, i] = sum_j dS_dF[i, j] * dNdX[a, j]
+        return (qp["dNdX"] @ dS_dF.T).ravel()
+
+    def _require_bound(self) -> None:
+        if self._solver is None:
+            raise RuntimeError(
+                f"Nitsche contact '{self.name}' is not bound to a solver: its bulk-stress term "
+                f"needs the slave elements' materials (DynamicSolver3D.assemble_system binds it)")
+
     def assemble(
         self, u: np.ndarray
     ) -> Tuple[np.ndarray, Tuple[np.ndarray, np.ndarray, np.ndarray], Dict[str, float]]:
-        """Assemble 3D Nitsche contact resisting force and symmetric tangent stiffness.
+        """Nitsche contact (theta = 0, Chouly et al. 2017) on the slave surface.
 
-        Returns
-        -------
-        f_contact : np.ndarray
-            Contact resisting force vector (size 3 * N_nodes).
-        (rows, cols, data) : Tuple[np.ndarray, np.ndarray, np.ndarray]
-            Sparse triplet components of strictly symmetric tangent stiffness matrix.
-        stats : Dict[str, float]
-            Iteration statistics (max_penetration, n_active, total_normal_force).
+        Per quadrature point, with g_n the penetration and sigma_nn the slave
+        element's normal Cauchy stress (negative in compression):
+
+            p = [gamma * g_n - sigma_nn]_+        (contact pressure)
+            f = p * w * c,   c = (-N_s n, +N_m n)
+
+        At the exact solution g_n = 0 and p = -sigma_nn, so the method is
+        consistent: unlike a penalty (the previous p = gamma * g_n, whose error
+        scaled exactly as 1/gamma), a uniform-stress patch is reproduced for
+        any stable gamma. Tangent: K = w c (x) (gamma c - d sigma_nn / du_e),
+        UNSYMMETRIC through the stress term (the solver factors it with LU);
+        d sigma_nn / du_e by central differences over the slave element's 24
+        DOFs. The normal n is held at its build-time value, as before.
         """
+        if self.consistency:
+            self._require_bound()
         n_dof = len(u)
         f_contact = np.zeros(n_dof, dtype=np.float64)
-        K_tri: Dict[Tuple[int, int], float] = {}
-
+        rows: List[np.ndarray] = []
+        cols: List[np.ndarray] = []
+        data: List[np.ndarray] = []
         max_penetration = 0.0
         n_active = 0
         total_normal_force = 0.0
 
         for pair in self.pairs:
-            s_face = pair["slave_face"]
-            m_face = pair["master_face"]
-            idx_s = [self.nid_to_idx[nid] for nid in s_face]
-            idx_m = [self.nid_to_idx[nid] for nid in m_face]
-
+            idx_s = [self.nid_to_idx[nid] for nid in pair["slave_face"]]
+            idx_m = [self.nid_to_idx[nid] for nid in pair["master_face"]]
             for qp in pair["quad_points"]:
                 Ns = _quad4_shape_functions(qp["xi_s"], qp["eta_s"])
                 Nm = _quad4_shape_functions(qp["xi_m"], qp["eta_m"])
-
-                xs = sum(Ns[a] * (self.coords[idx_s[a]] + u[3 * idx_s[a] : 3 * idx_s[a] + 3]) for a in range(4))
-                xm = sum(Nm[b] * (self.coords[idx_m[b]] + u[3 * idx_m[b] : 3 * idx_m[b] + 3]) for b in range(4))
-
+                xs = sum(Ns[a] * (self.coords[idx_s[a]] + u[3 * idx_s[a]: 3 * idx_s[a] + 3]) for a in range(4))
+                xm = sum(Nm[b] * (self.coords[idx_m[b]] + u[3 * idx_m[b]: 3 * idx_m[b] + 3]) for b in range(4))
                 n = qp["n"]
                 g_n = -float(np.dot(xs - xm, n))
-                if g_n <= 0.0:
+                if self.consistency:
+                    F_qp = self._F_at(u, qp)
+                    sig = self._sigma_nn_F(F_qp, qp)
+                    if sig is None:
+                        continue
+                    gam = qp["gamma"]
+                else:
+                    sig, gam = 0.0, self.gamma
+                p_n = gam * g_n - sig
+                if p_n <= 0.0:
                     continue
-
+                dsig = self._sigma_nn_grad(F_qp, qp) if self.consistency else None
                 n_active += 1
-                if g_n > max_penetration:
-                    max_penetration = g_n
-
+                max_penetration = max(max_penetration, g_n)
                 w = qp["w"]
-                p_n = self.gamma * g_n
                 total_normal_force += p_n * w
 
-                # Contact force:
-                # Slave pushes back in -n direction, Master receives action-reaction in +n direction
-                for a in range(4):
-                    f_contact[3 * idx_s[a] : 3 * idx_s[a] + 3] += -Ns[a] * w * p_n * n
-                for b in range(4):
-                    f_contact[3 * idx_m[b] : 3 * idx_m[b] + 3] += +Nm[b] * w * p_n * n
+                c_dofs = np.array([3 * i + d for i in idx_s + idx_m for d in range(3)], dtype=np.int64)
+                c_vec = np.concatenate([-Ns[a] * n for a in range(4)] + [Nm[b] * n for b in range(4)])
+                np.add.at(f_contact, c_dofs, w * p_n * c_vec)
 
-                # Symmetric tangent stiffness: point-wise outer product sum c_qp (x) c_qp^T
-                c_map: Dict[int, np.ndarray] = {}
-                for a in range(4):
-                    c_map[idx_s[a]] = -Ns[a] * n
-                for b in range(4):
-                    c_map[idx_m[b]] = +Nm[b] * n
-
-                scale = self.gamma * w
-                node_indices = list(c_map.keys())
-
-                for ia in node_indices:
-                    for ib in node_indices:
-                        k_block = scale * np.outer(c_map[ia], c_map[ib])
-                        for d1 in range(3):
-                            r = 3 * ia + d1
-                            for d2 in range(3):
-                                c = 3 * ib + d2
-                                if r <= c:
-                                    val = float(k_block[d1, d2])
-                                    if val != 0.0:
-                                        K_tri[(r, c)] = K_tri.get((r, c), 0.0) + val
-
-        rows: List[int] = []
-        cols: List[int] = []
-        data: List[float] = []
-
-        for (r, c), val in K_tri.items():
-            rows.append(r)
-            cols.append(c)
-            data.append(val)
-            if r != c:
-                rows.append(c)
-                cols.append(r)
-                data.append(val)
+                rows.append(np.repeat(c_dofs, len(c_dofs)))
+                cols.append(np.tile(c_dofs, len(c_dofs)))
+                data.append((w * gam * np.outer(c_vec, c_vec)).ravel())
+                if dsig is not None:
+                    e_dofs = qp["e_dofs"]
+                    rows.append(np.repeat(c_dofs, len(e_dofs)))
+                    cols.append(np.tile(e_dofs, len(c_dofs)))
+                    data.append((-w * np.outer(c_vec, dsig)).ravel())
 
         stats = {
             "max_penetration": max_penetration,
@@ -306,16 +437,10 @@ class NitscheContactConstraint3D:
             "n_pairs": len(self.pairs),
             "total_normal_force": total_normal_force,
         }
-
-        return (
-            f_contact,
-            (
-                np.array(rows, dtype=np.int32),
-                np.array(cols, dtype=np.int32),
-                np.array(data, dtype=np.float64),
-            ),
-            stats,
-        )
+        if rows:
+            return f_contact, (np.concatenate(rows).astype(np.int32), np.concatenate(cols).astype(np.int32),
+                               np.concatenate(data)), stats
+        return f_contact, (np.zeros(0, np.int32), np.zeros(0, np.int32), np.zeros(0)), stats
 
     def update_augmented_multipliers(self, u: np.ndarray, omega: float = 1.0) -> Dict[str, float]:
         """Nitsche method is multiplier-free; returns dummy stats for solver API compatibility."""

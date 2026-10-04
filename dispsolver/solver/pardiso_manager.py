@@ -75,7 +75,10 @@ def _resolve_mtype(
     
     spec = str(mtype_spec).strip().lower()
     if spec in ("auto", "default"):
-        if is_symmetric is False:
+        # `not is_symmetric`, not `is False`: callers pass numpy.bool_
+        # (np.False_ is not False), which silently mapped unsymmetric
+        # matrices to the SPD path.
+        if is_symmetric is not None and not is_symmetric:
             return 11
         return -2 if has_lagrange_multipliers else 2
     elif spec in ("spd", "positive_definite", "cholesky", "2"):

@@ -507,7 +507,12 @@ class DynamicSolver3D:
         scale = abs(off).max() if off.nnz else 0.0
         if scale == 0.0:
             return True
-        return abs(K - K.T).max() <= 1e-10 * scale
+        # bool(): this used to return numpy.bool_, and the Pardiso mtype
+        # resolver tests `is_symmetric is False` -- never true for np.False_,
+        # so every UNSYMMETRIC tangent was sent to the SPD path, failed
+        # Cholesky (error -4) and was silently refactored as symmetric
+        # indefinite (mtype -2) from its upper triangle only.
+        return bool(abs(K - K.T).max() <= 1e-10 * scale)
 
     def close(self):
         """Release the Pardiso solver's native MKL memory (factorization
@@ -1364,6 +1369,8 @@ class DynamicSolver3D:
                 data_all = [data_topo]
 
                 for constraint in self.constraints:
+                    if hasattr(constraint, "bind_solver"):
+                        constraint.bind_solver(self, dt)
                     if hasattr(constraint, "reproject_deformed"):
                         constraint.reproject_deformed(u_eval)
                     f_c, (rows_c, cols_c, data_c), _ = constraint.assemble(u_eval)

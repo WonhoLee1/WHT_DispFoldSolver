@@ -625,25 +625,34 @@ _TRI2D_EDGE_LOCAL_NODES = {
 }
 
 
-def _master_face_interior_points(master_faces, mesh) -> Dict[tuple, np.ndarray]:
-    """Centroid of the element owning each master face. Contact constraints
-    orient the face normal AWAY from this point (outward), instead of from the
-    sign of the initial gap -- that rule flips the normal of any pair that
-    starts overclosed (an interference fit) and reads it as open."""
+def _face_owner_elements(faces, mesh) -> Dict[tuple, int]:
+    """Element id owning each face (the unique element containing all of
+    its nodes); faces with no unique owner are left out."""
     node_elems: Dict[int, list] = {}
     for eid, elem in mesh.elements.items():
         for nid in elem.node_ids:
             node_elems.setdefault(nid, []).append(eid)
     out = {}
-    for face in master_faces:
+    for face in faces:
         face = tuple(face)
         cands = set(node_elems.get(face[0], []))
         for nid in face[1:]:
             cands &= set(node_elems.get(nid, []))
         if len(cands) == 1:
-            elem = mesh.elements[next(iter(cands))]
-            out[face] = np.mean([[mesh.nodes[n].x, mesh.nodes[n].y, getattr(mesh.nodes[n], "z", 0.0)]
-                                 for n in elem.node_ids], axis=0)
+            out[face] = next(iter(cands))
+    return out
+
+
+def _master_face_interior_points(master_faces, mesh) -> Dict[tuple, np.ndarray]:
+    """Centroid of the element owning each master face. Contact constraints
+    orient the face normal AWAY from this point (outward), instead of from the
+    sign of the initial gap -- that rule flips the normal of any pair that
+    starts overclosed (an interference fit) and reads it as open."""
+    out = {}
+    for face, eid in _face_owner_elements(master_faces, mesh).items():
+        elem = mesh.elements[eid]
+        out[face] = np.mean([[mesh.nodes[n].x, mesh.nodes[n].y, getattr(mesh.nodes[n], "z", 0.0)]
+                             for n in elem.node_ids], axis=0)
     return out
 
 
@@ -1279,6 +1288,8 @@ class ContactPair:
                     gamma=float(k_hard_for_augmented),
                     name=self.name,
                     master_interior=_master_face_interior_points(master_faces, mesh),
+                    slave_owner=_face_owner_elements(slave_faces, mesh),
+                    gamma0=50.0 * float(getattr(prop, "stiffness_scale_factor", 1.0)),
                 )
 
             # S2S Mortar Dispatch (DUAL_MORTAR or STANDARD_MORTAR)
