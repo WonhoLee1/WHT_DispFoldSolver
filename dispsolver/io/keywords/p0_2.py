@@ -33,8 +33,7 @@ def _handle_density(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     mat = reader.current_material
     if mat is None:
         msg = "*DENSITY outside *MATERIAL scope — skipped"
-        warnings.warn(msg)
-        reader.warnings.append(msg)
+        reader.report("error", "bad-context", msg, block)
         return
     rows = _parse_data_rows(block.data_lines, dtype=float)
     if rows and len(rows[0]) >= 1 and rows[0][0] is not None:
@@ -55,8 +54,7 @@ def _handle_trs(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     mat = reader.current_material
     if mat is None:
         msg = "*TRS outside *MATERIAL scope — skipped"
-        warnings.warn(msg)
-        reader.warnings.append(msg)
+        reader.report("error", "bad-context", msg, block)
         return
     defn = block.params.get("definition", "WLF").upper()
     rows = _parse_data_rows(block.data_lines, dtype=float)
@@ -88,8 +86,7 @@ def _handle_amplitude(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     name = block.params.get("name", "")
     if not name:
         msg = "*AMPLITUDE without NAME — skipped"
-        warnings.warn(msg)
-        reader.warnings.append(msg)
+        reader.report("error", "missing-param", msg, block)
         return
     defn = block.params.get("definition", "TABULAR").upper().replace(" ", "")
     if defn not in ("TABULAR", "SMOOTHSTEP"):
@@ -173,8 +170,7 @@ def _handle_dload(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
         if entry is not None and entry.entity.region in reader.current_step.step_nsets:
             msg = (f"*DLOAD {lname}: step-overlay region; solver load path "
                    f"resolves global sets only (P2)")
-            warnings.warn(msg)
-            reader.warnings.append(msg)
+            reader.report("info", "step-overlay-region", msg, block)
 
 
 @GLOBAL_KEYWORD_REGISTRY.register(
@@ -238,8 +234,7 @@ def _handle_mpc(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
                      firstPoint=nodes[0] if nodes else None,
                      secondPoint=nodes[1] if len(nodes) > 1 else None)
     msg = f"*MPC {name} parsed and stored; solver assembly not connected"
-    warnings.warn(msg)
-    reader.warnings.append(msg)
+    reader.report("gap", "mpc-not-connected", msg, block)
 
 
 @GLOBAL_KEYWORD_REGISTRY.register(
@@ -284,8 +279,7 @@ def _handle_initial_conditions(reader: AbaqusInputReader, block: AbaqusKeywordBl
                                              values=vals[0] if len(vals) == 1 else vals)
         msg = (f"*INITIAL CONDITIONS, TYPE={ictype}: parsed and stored; "
                "solver consumption not connected")
-        warnings.warn(msg)
-        reader.warnings.append(msg)
+        reader.report("gap", "initial-condition-not-connected", msg, block)
     else:
         raise _AbortParse(f"*INITIAL CONDITIONS, TYPE={ictype} has no internal landing")
 
@@ -316,8 +310,7 @@ def _finalize_coupling(reader: AbaqusInputReader, block: AbaqusKeywordBlock, kin
         name = reader.current_coupling.get("name")
     if name is None or name not in reader.model.constraints:
         msg = f"*{kind} without a preceding *COUPLING — skipped"
-        warnings.warn(msg)
-        reader.warnings.append(msg)
+        reader.report("error", "bad-context", msg, block)
         return
     prev = reader.model.constraints[name]
     dofs = []
@@ -420,8 +413,7 @@ def _direct_coupling(reader: AbaqusInputReader, block: AbaqusKeywordBlock, kind:
         reader.model.DistributingCoupling(name=name, refPoint=ref, surface=surf)
     reader.current_coupling = {"name": name}
     msg = f"*{kind} COUPLING {name} parsed and stored (ref={ref}, surf={surf})"
-    warnings.warn(msg)
-    reader.warnings.append(msg)
+    reader.report("info", "coupling-parsed", msg, block)
 
 
 @GLOBAL_KEYWORD_REGISTRY.register(
@@ -444,8 +436,7 @@ def _handle_friction(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     target = reader.current_interaction
     if target is None or target not in reader.model.contact_properties:
         msg = "*FRICTION outside *SURFACE INTERACTION scope — skipped"
-        warnings.warn(msg)
-        reader.warnings.append(msg)
+        reader.report("error", "bad-context", msg, block)
         return
     reader.model.contact_properties[target].friction = float(rows[0][0])
 
@@ -508,8 +499,7 @@ def _handle_equation(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
         nterms = int(float(cells[0]))
     except ValueError:
         msg = f"*EQUATION at {block.location}: bad term count — skipped"
-        warnings.warn(msg)
-        reader.warnings.append(msg)
+        reader.report("error", "bad-row", msg, block)
         return
     triples: List[Tuple[Any, int, float]] = []
     pos = 1
@@ -526,8 +516,7 @@ def _handle_equation(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
         if dof < 0 or dof > 5:
             msg = (f"*EQUATION at {block.location}: dof {dof + 1} out of "
                    "range 1..6 — equation skipped")
-            warnings.warn(msg)
-            reader.warnings.append(msg)
+            reader.report("error", "bad-row", msg, block)
             triples = []
             break
         if ref_raw.lstrip("-").isdigit():
@@ -537,10 +526,8 @@ def _handle_equation(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
             if not members:
                 msg = (f"*EQUATION at {block.location}: set '{ref_raw}' "
                        "unresolvable — equation skipped")
-                warnings.warn(msg)
-                reader.warnings.append(msg)
-                if "EQUATION" not in reader.unsupported_keywords:
-                    reader.unsupported_keywords.append(f"EQUATION set {ref_raw}")
+                reader.report("error", "unresolved-ref", msg, block)
+                reader.unsupported_keyword(f"EQUATION set {ref_raw}", block)
                 triples = []
                 break
             for nid in members:
@@ -550,14 +537,12 @@ def _handle_equation(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     if len(triples) != nterms:
         msg = (f"*EQUATION at {block.location}: term count {len(triples)} "
                f"!= declared {nterms} — kept as parsed")
-        warnings.warn(msg)
-        reader.warnings.append(msg)
+        reader.report("error", "bad-row", msg, block)
     name = f"EQ_{len(reader.model.constraints) + 1}"
     reader.model.Equation(name, terms=triples)
     msg = (f"*EQUATION {name}: {len(triples)} terms parsed; "
            "penalty assembly connected")
-    warnings.warn(msg)
-    reader.warnings.append(msg)
+    reader.report("info", "equation-parsed", msg, block)
 
 
 def _resolve_equation_nodes(reader: AbaqusInputReader, ref: str) -> List[int]:

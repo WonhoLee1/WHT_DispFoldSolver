@@ -64,19 +64,20 @@ def print_preflight_summary(reader: AbaqusInputReader, model: Any, dim: int, out
     print(f" Contact Pairs     : {num_cp}")
     print(f" Nodal Transforms  : {list(model.transforms.keys())}")
 
-    gaps = reader.physics_gaps()
-    if reader.unsupported_keywords or reader.warnings:
-        print(f" Warnings          : {len(reader.warnings)} warning(s)")
-        print(f" Unsupported KWs   : {list(reader.unsupported_keywords)}")
-    if gaps:
-        # Not "100% handled": these change the model being solved.
+    d = reader.diagnostics
+    counts = {lv: len(d.of(lv)) for lv in ("error", "gap", "warning", "info")}
+    print(f" Diagnostics       : {counts['error']} error, {counts['gap']} gap, "
+          f"{counts['warning']} warning, {counts['info']} info")
+    blocking = d.of("error", "gap")
+    if blocking:
+        # Not "100% handled": errors and gaps change the model being solved.
         print(" " + "!" * 98)
-        print(f" MODEL GAPS        : {len(gaps)} item(s) NOT represented in this solve "
+        print(f" MODEL GAPS        : {len(blocking)} item(s) NOT represented in this solve "
               f"(rerun with --strict to refuse):")
-        for g in gaps[:20]:
-            print(f"   - {g}")
+        for g in blocking[:20]:
+            print(f"   - [{g.level}] {g.message}")
         print(" " + "!" * 98)
-    elif not reader.warnings:
+    elif not counts["warning"]:
         print(" Compatibility     : 100% Keywords Handled")
     print("-" * 100)
 
@@ -160,7 +161,7 @@ def run_inp_file(
     logger = CAELogger(job_name=inp_name, out_dir=out_dir, dim=actual_dim)
 
     executor = MultiStepExecutor(model, verbose=verbose)
-    executor.initialize_solver(notices=reader.warnings)
+    executor.initialize_solver(notices=reader.diagnostics.notice_sink())
     
     # Configure element JIT backend if solver supports it
     if hasattr(executor.solver, "elem_jit"):

@@ -64,9 +64,7 @@ def _check_step_amplitude(reader: AbaqusInputReader, procedure: str, applied: st
     be accepted and ignored)."""
     want = str(getattr(reader.current_step, "_amplitude_param", "") or "").upper()
     if want and want != applied:
-        entry = ("STEP", f"AMPLITUDE={want} (with *{procedure})", "unsupported")
-        if entry not in reader.unsupported_params:
-            reader.unsupported_params.append(entry)
+        reader.unsupported_param("STEP", f"AMPLITUDE={want} (with *{procedure})", "unsupported")
 
 
 @GLOBAL_KEYWORD_REGISTRY.register(
@@ -229,8 +227,7 @@ def _handle_boundary(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
         if any(kwargs.get(k) is not None for k in ("ur1", "ur2", "ur3")):
             msg = (f"*BOUNDARY {bc_name}: rotational DOFs stored but continuum nodes "
                    f"have no rotation target in the solver; translational part applied")
-            warnings.warn(msg)
-            reader.warnings.append(msg)
+            reader.report("info", "rotation-dofs-ignored", msg, block)
 
 
 @GLOBAL_KEYWORD_REGISTRY.register(
@@ -279,8 +276,7 @@ def _handle_cload(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
             if region in reader.current_step.step_nsets:
                 msg = (f"*CLOAD {load_name}: step-overlay region; solver load path "
                        f"resolves global sets only (P2)")
-                warnings.warn(msg)
-                reader.warnings.append(msg)
+                reader.report("info", "step-overlay-region", msg, block)
 
 
 @GLOBAL_KEYWORD_REGISTRY.register(

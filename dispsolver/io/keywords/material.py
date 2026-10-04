@@ -118,8 +118,7 @@ def _handle_plastic(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
                             T_room=float(r0[5]) if len(r0) > 5 else 293.15)
             msg = (f"*PLASTIC HARDENING=JOHNSON_COOK {mat.name}: quasi-static "
                    "isothermal landing (C=0, dispatcher carries no rate)")
-            warnings.warn(msg)
-            reader.warnings.append(msg)
+            reader.report("gap", "rate-effect-dropped", msg, block)
         elif "dependencies" in block.params:
             mat.Plastic(table=tuple(table), hardening=hardening,
                         field_table=tuple(table))
@@ -498,14 +497,8 @@ def _handle_mullins(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
 
 
 def _record_unsupported(reader: AbaqusInputReader, block, label: str) -> None:
-    if label not in reader.unsupported_keywords:
-        reader.unsupported_keywords.append(label)
-        if block is not None:
-            reader.unsupported_locations[label] = block.location
-    line = getattr(block, "location", "?") if block is not None else "?"
-    msg = f"*{label} at {line} - no internal landing, recorded as unsupported"
-    warnings.warn(msg)
-    reader.warnings.append(msg)
+    """A material option with no internal landing: a physics gap with location."""
+    reader.unsupported_keyword(label, block)
 
 
 @GLOBAL_KEYWORD_REGISTRY.register(
@@ -557,8 +550,7 @@ def _handle_orientation(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     if frame is None or system != "RECTANGULAR" or definition == "NODES":
         msg = (f"*ORIENTATION {name}: parsed and stored; material-kernel "
                "consumption not connected")
-        warnings.warn(msg)
-        reader.warnings.append(msg)
+        reader.report("gap", "orientation-not-connected", msg, block)
 
 
 def _section_part(reader, elset: str, kind: str):

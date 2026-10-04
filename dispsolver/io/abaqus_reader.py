@@ -15,6 +15,7 @@ from typing import Dict, List, Optional, Tuple, Any, Union, Set
 import numpy as np
 
 from dispsolver.io.abaqus_lexer import AbaqusKeywordBlock, tokenize, tokenize_string
+from dispsolver.io.diagnostics import Diagnostics, Loc
 from dispsolver.io.keyword_registry import (
     KeywordContext,
     KeywordSpec,
@@ -42,6 +43,8 @@ OUTPUT_ONLY_KEYWORDS = frozenset({
     "SURFACE OUTPUT", "RADIATION OUTPUT", "RADIATION PRINT", "RADIATION FILE", "ELEMENT MATRIX OUTPUT",
     "NODAL ENERGY RATE", "PRINT CONTROLS", "OUTPUT CONTROLS",
 })
+# Registered output-request keywords (no effect on the solution).
+OUTPUT_REQUEST_KEYWORDS = frozenset({"OUTPUT", "NODE OUTPUT", "ELEMENT OUTPUT", "RESTART"})
 # Solution-technique controls: they change how the answer is reached
 # (tolerances, line search, cutback policy), not the model being solved.
 SOLUTION_CONTROL_KEYWORDS = frozenset({"CONTROLS", "SOLVER CONTROLS"})
@@ -50,45 +53,67 @@ SOLUTION_CONTROL_KEYWORDS = frozenset({"CONTROLS", "SOLVER CONTROLS"})
 class AbaqusInputReader:
     """Production reader converting Abaqus keyword blocks into a complete dispsolver.model.Model."""
 
+    # ------------------------------------------------------------------ diagnostics
+    # Every problem the reader finds goes into self.diagnostics (io/diagnostics.py):
+    # error = the deck is wrong / unreadable, gap = valid input this solver does
+    # not represent, warning = represented with a caveat, info = no effect.
+    # `warnings`, `physics_gaps()` and `require_complete()` are views of it.
+
+    @property
+    def warnings(self) -> List[str]:
+        """All diagnostic messages, in input order (legacy view)."""
+        return [d.message for d in self.diagnostics]
+
+    def report(self, level: str, code: str, message: str, block: Optional[AbaqusKeywordBlock] = None) -> None:
+        self.diagnostics.add(level, code, message, Loc.of(block))
+
+    def _keyword_is_inert(self, kw: str) -> bool:
+        base = kw.split(" table rejected")[0].strip()
+        spec = self.registry.get_handler(base)
+        return (base in OUTPUT_ONLY_KEYWORDS | SOLUTION_CONTROL_KEYWORDS
+                or (spec is not None and spec.support in ("IGNORED", "STUB")))
+
+    def unsupported_keyword(self, label: str, block: Optional[AbaqusKeywordBlock] = None) -> None:
+        """A keyword (or a keyword option, e.g. 'CONCRETE ... table rejected')
+        the reader has no landing for."""
+        if label not in self.unsupported_keywords:
+            self.unsupported_keywords.append(label)
+            loc = block.location if block is not None else None
+            if loc:
+                self.unsupported_locations[label] = loc
+            text = f"*{label} (unsupported" + (f", {loc})" if loc else ")")
+            if self._keyword_is_inert(label):
+                self.report("info", "ignored-keyword", text, block)
+            else:
+                self.report("gap", "unsupported-keyword", text, block)
+
+    def unsupported_param(self, kw: str, param: str, kind: str, block: Optional[AbaqusKeywordBlock] = None) -> None:
+        """kind: 'unknown' (not in the schema), 'unsupported' (in the schema,
+        not implemented) or 'control' (solution control, not implemented)."""
+        entry = (kw, param, kind)
+        if entry in self.unsupported_params:
+            return
+        self.unsupported_params.append(entry)
+        loc = block.location if block is not None else None
+        text = f"*{kw}, {param.upper()} ({kind} parameter" + (f", {loc})" if loc else ")")
+        if kind == "control" or self._keyword_is_inert(kw):
+            self.report("info", f"{kind}-param-ignored", text, block)
+        else:
+            self.report("gap", f"{kind}-param", text, block)
+
     def physics_gaps(self) -> List[str]:
-        """Everything in the deck this reader could not turn into model data
-        that may change the solution: unsupported keywords other than pure
-        output/diagnostic ones, unsupported/unknown parameters on non-output keywords,
-        and keyword handlers that raised. A run that ignores these solves a different model
-        than the deck describes."""
-        gaps = []
-        for kw in self.unsupported_keywords:
-            base_kw = kw.split(" table rejected")[0].strip()
-            spec = self.registry.get_handler(base_kw)
-            if spec is not None and spec.support in ("IGNORED", "STUB"):
-                continue
-            if base_kw in OUTPUT_ONLY_KEYWORDS | SOLUTION_CONTROL_KEYWORDS:
-                continue
-            loc = self.unsupported_locations.get(kw)
-            gaps.append(f"*{kw} (unsupported" + (f", {loc})" if loc else ")"))
-
-        for kw, p, kind in self.unsupported_params:
-            if kind == "control":
-                continue   # solution control (incrementation, storage), not the model
-            base_kw = kw.split(" table rejected")[0].strip()
-            spec = self.registry.get_handler(base_kw)
-            if spec is not None and spec.support in ("IGNORED", "STUB"):
-                continue
-            if base_kw in OUTPUT_ONLY_KEYWORDS | SOLUTION_CONTROL_KEYWORDS:
-                continue
-            gaps.append(f"*{kw}, {p.upper()} ({kind} parameter)")
-
-        gaps += [w for w in self.warnings if w.startswith("Error processing keyword")]
-        return gaps
+        """Everything that makes the solved model differ from the deck: errors
+        (the deck is wrong or unreadable) and gaps (valid input this solver
+        does not represent). Output-only keywords and solution controls are
+        recorded as info and are not listed."""
+        return [d.message for d in self.diagnostics.of("error", "gap")]
 
     def require_complete(self) -> None:
-        """Raise if physics_gaps() is not empty (strict execution)."""
-        gaps = self.physics_gaps()
-        if gaps:
-            raise UnsupportedDeckError(
-                "deck uses features this solver does not implement or could not read; refusing to "
-                "solve a different model than the deck describes:\n  " + "\n  ".join(gaps[:30])
-                + ("" if len(gaps) <= 30 else f"\n  ... and {len(gaps) - 30} more"))
+        """Raise UnsupportedDeckError if any error or gap was recorded (strict run)."""
+        self.diagnostics.raise_if_blocking(
+            True, UnsupportedDeckError,
+            "deck uses features this solver does not implement or could not read; refusing to "
+            "solve a different model than the deck describes:")
 
     def __init__(self, dim: int = 3, model_name: str = "AbaqusModel", strict: bool = True):
         self.dim = int(dim)
@@ -115,7 +140,7 @@ class AbaqusInputReader:
         self.unsupported_keywords: List[str] = []
         self.unsupported_params: List[Tuple[str, str, str]] = []
         self.unsupported_locations: Dict[str, str] = {}   # keyword -> first file:line
-        self.warnings: List[str] = []
+        self.diagnostics = Diagnostics()
 
     def _stamp_locations(self, location: str) -> None:
         """Give every model object created by the keyword just handled the
@@ -213,8 +238,9 @@ class AbaqusInputReader:
                            f"at {block.location} - skipped")
                     if self.strict:
                         raise ValueError(msg)
-                    warnings.warn(msg)
-                    self.warnings.append(msg)
+                    # an output request in the wrong place changes no physics
+                    inert = kw in OUTPUT_REQUEST_KEYWORDS or self._keyword_is_inert(kw)
+                    self.report("info" if inert else "error", "bad-context", msg, block)
                     continue
 
                 # Parameter validation against spec
@@ -232,32 +258,19 @@ class AbaqusInputReader:
                                 for k in block.params.keys()
                             )
                             if not has_p:
-                                msg = f"Error processing keyword *{kw} at {block.location}: missing required parameter '{p_spec.name}'"
-                                warnings.warn(msg)
-                                self.warnings.append(msg)
+                                self.report("error", "missing-param",
+                                            f"Error processing keyword *{kw} at {block.location}: "
+                                            f"missing required parameter '{p_spec.name}'", block)
 
                     # 2. Check for unknown or unsupported parameters
                     for p_key in block.params.keys():
                         p_norm = normalize_param_name(p_key)
                         if p_norm not in spec.params:
-                            msg = f"*{kw} at {block.location}: unknown parameter '{p_key}'"
-                            entry = (kw, p_key, "unknown")
-                            if entry not in self.unsupported_params:
-                                self.unsupported_params.append(entry)
-                            if self.strict:
-                                warnings.warn(msg)
-                            self.warnings.append(msg)
+                            self.unsupported_param(kw, p_key, "unknown", block)
                         else:
                             p_spec = spec.params[p_norm]
                             if not p_spec.supported:
-                                kind = "control" if p_spec.control else "unsupported"
-                                msg = f"*{kw} at {block.location}: {kind} parameter '{p_key}' not implemented"
-                                entry = (kw, p_key, kind)
-                                if entry not in self.unsupported_params:
-                                    self.unsupported_params.append(entry)
-                                if self.strict:
-                                    warnings.warn(msg)
-                                self.warnings.append(msg)
+                                self.unsupported_param(kw, p_key, "control" if p_spec.control else "unsupported", block)
 
                 try:
                     spec.handler(self, block)
@@ -265,13 +278,13 @@ class AbaqusInputReader:
                 except _AbortParse:
                     raise
                 except Exception as e:
-                    msg = f"Error processing keyword *{kw} at {block.location}: {e}"
-                    warnings.warn(msg)
-                    self.warnings.append(msg)
+                    # NotImplementedError: valid input this solver does not
+                    # represent (gap); anything else: the deck is wrong (error).
+                    self.report("gap" if isinstance(e, NotImplementedError) else "error",
+                                "unsupported-feature" if isinstance(e, NotImplementedError) else "bad-input",
+                                f"Error processing keyword *{kw} at {block.location}: {e}", block)
             else:
-                if kw not in self.unsupported_keywords:
-                    self.unsupported_keywords.append(kw)
-                    self.unsupported_locations[kw] = block.location
+                self.unsupported_keyword(kw, block)
 
         # If non-assembly deck was loaded, bind the default instance
         if not self.has_assembly and self._default_part is not None:
@@ -346,14 +359,15 @@ def _execute_single_step(model: Model, target_step: Optional[str],
                          dt: Optional[float], verbose: bool, dim: int,
                          reader: Optional[AbaqusInputReader] = None) -> Any:
     """Run one step with a single solve_step call (legacy smoke path)."""
-    notices = reader.warnings if reader is not None else None
+    notices = reader.diagnostics.notice_sink() if reader is not None else None
     step_obj = model.steps.get(target_step) if target_step else None
     if step_obj is not None and (step_obj.get_active_loads() or step_obj.get_active_interactions()):
         msg = (f"Smoke path ignores step loads/interactions on Step '{target_step}'; "
                f"use execute_inp (full path) for load-driven steps")
-        warnings.warn(msg)
         if reader is not None:
-            reader.warnings.append(msg)
+            reader.report("gap", "smoke-path-ignores-loads", msg)
+        else:
+            warnings.warn(msg)
     if dim == 3:
         solver, sys = model.create_solver(step_name=target_step, notices=notices)
     else:
@@ -467,7 +481,7 @@ def execute_inp(
                 model.steps[sname].dt_init = float(dt)
 
     executor = MultiStepExecutor(model, verbose=verbose, dim=dim)
-    executor.initialize_solver(notices=reader.warnings)
+    executor.initialize_solver(notices=reader.diagnostics.notice_sink())
     ok_all = True
     n_iter, n_inc, max_inc_iter = 0, 0, 0
     for sname in targets:

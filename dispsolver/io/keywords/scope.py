@@ -132,14 +132,12 @@ def _handle_instance(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
             angle_deg = float(rot_row[6])
             if float(np.linalg.norm(axis)) < 1e-12:
                 msg = f"*INSTANCE {inst_name}: degenerate rotation axis - rotation ignored"
-                warnings.warn(msg)
-                reader.warnings.append(msg)
+                reader.report("error", "bad-instance-rotation", msg, block)
             else:
                 if reader.dim == 2 and (abs(float(axis[0])) > 1e-12 or abs(float(axis[1])) > 1e-12):
                     msg = (f"*INSTANCE {inst_name}: in-plane rotation axis in 2D - "
                            f"in-plane rotation applied about the axis point")
-                    warnings.warn(msg)
-                    reader.warnings.append(msg)
+                    reader.report("info", "instance-2d-rotation", msg, block)
                 inst.rotate(axis=axis, angle_deg=angle_deg, center=p_a)
 
 
