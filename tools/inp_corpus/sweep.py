@@ -84,16 +84,21 @@ def sweep_one_deck(full_path: str) -> Dict[str, Any]:
         record["element_types"] = _extract_element_types(model)
         record["nlgeom_steps"] = _extract_nlgeom(model)
 
-        # Diagnostics / Gaps / Warnings
-        if hasattr(reader, "diagnostics") and reader.diagnostics:
-            # S0 Diagnostics object support
-            diag_codes = collections.Counter(d.code for d in reader.diagnostics)
-            record["diagnostics"] = dict(sorted(diag_codes.items()))
+        # Diagnostics (S0)
+        if hasattr(reader, "diagnostics") and reader.diagnostics is not None:
+            diag_counts = collections.Counter()
+            diag_levels = {}
+            for d in reader.diagnostics:
+                diag_counts[d.code] += 1
+                diag_levels[d.code] = d.level
+            record["diagnostics"] = dict(sorted(diag_counts.items()))
+            record["diagnostic_levels"] = {k: diag_levels[k] for k in sorted(diag_levels)}
+            record["error_codes"] = sorted(set(d.code for d in reader.diagnostics if d.level == "error"))
+            record["gap_codes"] = sorted(set(d.code for d in reader.diagnostics if d.level == "gap"))
         else:
             gaps = reader.physics_gaps() if hasattr(reader, "physics_gaps") else []
             record["gaps"] = sorted(str(g) for g in gaps)
             warns = getattr(reader, "warnings", [])
-            # Extract unique warning summaries
             clean_warns = set()
             for w in warns:
                 w_str = str(w)

@@ -89,12 +89,20 @@ def _assert_no_regression(rel_path: str, current: Dict[str, Any], baseline: Dict
         f"Regression in {rel_path}: Element types missing compared to baseline: {missing_elems}"
     )
 
-    # 3. New gaps checking
-    base_gaps = set(baseline.get("gaps", []))
-    curr_gaps = set(current.get("gaps", []))
+    # 3. Diagnostic error codes (no new error codes allowed)
+    base_errors = set(baseline.get("error_codes", []))
+    curr_errors = set(current.get("error_codes", []))
+    new_errors = curr_errors - base_errors
+    assert not new_errors, (
+        f"Regression in {rel_path}: New diagnostic error codes introduced: {new_errors}"
+    )
+
+    # 4. Diagnostic gap codes (no new gap codes allowed)
+    base_gaps = set(baseline.get("gap_codes", []))
+    curr_gaps = set(current.get("gap_codes", []))
     new_gaps = curr_gaps - base_gaps
     assert not new_gaps, (
-        f"Regression in {rel_path}: New gaps introduced compared to baseline: {new_gaps}"
+        f"Regression in {rel_path}: New diagnostic gap codes introduced: {new_gaps}"
     )
 
 
