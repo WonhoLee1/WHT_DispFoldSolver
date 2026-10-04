@@ -2656,6 +2656,7 @@ class DynamicSolver3D:
         consecutive_r_growth = 0
         prev_r_norm = float("inf")
         is_sdi = False
+        self._last_n_sdi = 0
 
         while sdi["equil_iters"] < max_iters and raw_iter < max_raw_iters:
             raw_iter += 1
@@ -2690,6 +2691,8 @@ class DynamicSolver3D:
 
             current_active_set = self._contact_full_state(u_k)
             is_sdi = self._sdi_update(sdi, current_active_set, u_k, freeze_window=2)
+            if is_sdi:
+                self._last_n_sdi += 1
             q = self._force_scale(f_int, f_ext, free_dof_mask)
             if getattr(self, "debug_sdi", False) or (iter_count <= 5 or iter_count % 5 == 0):
                 print(f"      [Iter {iter_count:2d}] r={r_norm:.2e} r/q={r_norm / max(q, 1e-300):.2e} q={q:.2e} sdi={is_sdi} act={len(current_active_set)}", flush=True)
@@ -2843,6 +2846,11 @@ class DynamicSolver3D:
 
         max_step_iters = getattr(step, "max_iters", 80 if len(self.constraints) > 0 else 50)
 
+        # One record per increment ATTEMPT, Abaqus .sta style: `inc` counts
+        # converged increments (a cutback retries the same inc with att+1).
+        self.increment_log = []
+        inc_no, att_no = 1, 1
+
         while t < T_total - 1e-12:
 
             dt = min(dt_ctrl.dt, T_total - t)
@@ -2871,6 +2879,15 @@ class DynamicSolver3D:
             )
 
             total_iters += iters
+            self.increment_log.append({
+                "inc": inc_no, "att": att_no, "n_sdi": int(getattr(self, "_last_n_sdi", 0)),
+                "n_iter": int(iters), "dt": float(dt), "t_step": float(t_next if converged else t),
+                "converged": bool(converged),
+            })
+            if converged:
+                inc_no, att_no = inc_no + 1, 1
+            else:
+                att_no += 1
 
             if converged:
                 t = t_next

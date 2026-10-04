@@ -261,3 +261,19 @@ def test_step2_pressure_load_vector():
         f = s._compute_step_external_loads(step, sys_, t, 1.0)
         sums = np.array([f[0::3].sum(), f[1::3].sum(), f[2::3].sum()])
         np.testing.assert_allclose(sums, [t * expect, t * expect, 0.0], rtol=1e-6, atol=1e-6 * expect)
+
+
+def test_increment_log_records_real_increments():
+    """The .sta used to get one hard-coded INC=1/ATT=1 row per step. The
+    solver now keeps one record per attempt; with *STATIC 0.25 the preload
+    step needs at least four converged increments ending at step time 1.0."""
+    model, ex = _build("PENALTY", 10.0)
+    with warnings.catch_warnings(), contextlib.redirect_stdout(io.StringIO()):
+        warnings.simplefilter("ignore")
+        assert ex.execute_step(model.steps["BOLT_PRELOAD"], from_parent_checkpoint=True)
+    log = ex.solver.increment_log
+    done = [r for r in log if r["converged"]]
+    assert len(done) >= 4
+    assert [r["inc"] for r in done] == list(range(1, len(done) + 1))
+    assert abs(done[-1]["t_step"] - 1.0) < 1e-12
+    assert all(r["n_iter"] > 0 for r in log)

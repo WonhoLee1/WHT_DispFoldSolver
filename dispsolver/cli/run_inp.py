@@ -214,16 +214,29 @@ def run_inp_file(
             step_wall = time.time() - step_start_t
             t_accum_current += time_period
 
-            logger.log_increment(
-                step_idx=s_idx,
-                inc_idx=1,
-                att_num=1,
-                n_iters=getattr(executor.solver, "last_iterations", 1),
-                t_total=t_accum_current if ok else 0.0,
-                t_step=1.0 if ok else 0.0,
-                dt=getattr(step_obj, "dt_init", 1.0),
-                status_str="CONVERGED" if ok else "FAILED"
-            )
+            # One .sta row per converged increment and one cutback line per
+            # failed attempt, from the solver's own per-attempt record (this
+            # used to write a single hard-coded INC=1/ATT=1 row per step,
+            # whatever actually happened).
+            t_step_start = t_accum_current - time_period
+            inc_log = getattr(executor.solver, "increment_log", None) or []
+            for k, rec in enumerate(inc_log):
+                logger.total_iters += rec["n_iter"]
+                logger.total_sdis += rec["n_sdi"]
+                if rec["converged"]:
+                    logger.log_increment(
+                        step_idx=s_idx, inc_idx=rec["inc"], att_num=rec["att"],
+                        n_iters=rec["n_iter"], n_sdis=rec["n_sdi"],
+                        t_total=t_step_start + rec["t_step"], t_step=rec["t_step"],
+                        dt=rec["dt"], status_str="CONVERGED",
+                    )
+                else:
+                    logger.log_cutback(step_idx=s_idx, inc_idx=rec["inc"], old_dt=rec["dt"],
+                                       new_dt=inc_log[k + 1]["dt"] if k + 1 < len(inc_log) else 0.0,
+                                       reason=f"inc {rec['inc']} att {rec['att']} not converged in {rec['n_iter']} iters")
+            if not ok:
+                logger.log_increment(step_idx=s_idx, inc_idx=0, att_num=0, n_iters=0,
+                                     t_total=0.0, t_step=0.0, dt=0.0, status_str="FAILED")
 
             step_results.append({
                 "step_name": sname,
