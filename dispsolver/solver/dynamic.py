@@ -1866,6 +1866,7 @@ class DynamicSolver:
         took. See `_solve_step_impl` for the algorithm itself.
         """
         t_wall_start = time.time()
+        self.last_failure_reason = None
         result = self._solve_step_impl(dt)
         if result >= 0:
             self.cutback_count = 0
