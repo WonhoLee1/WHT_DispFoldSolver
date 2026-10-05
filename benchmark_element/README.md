@@ -84,10 +84,11 @@ silently running the other's code, not that both formulations happen to
 agree. Check the dispatch table before concluding the "advanced" variant
 provides no benefit.
 
-**Known constraint this suite works around**: `dynamic3d.py`'s
-linear-geometry (`nlgeom=False`) assembly path was removed (raises
-`NotImplementedError`, see `dev_log/3d_element_defects_and_kernel_renovation_plan.md`).
-All mechanics tests here run with `nlgeom=True`; at the small prescribed
+**NLGEOM in this suite**: since the element catalog (commit 627ce14) the
+linear-geometry path exists again (small-strain kernels). The mechanics tests
+run with `nlgeom=True` except `C3D4_ANP`, which is small-strain by catalog
+contract (NLGEOM=YES is refused for it) and runs `nlgeom=False`, as does the
+C3D4 / C3D4_ANP checkerboard pair so the two run the same setting. For the rest, at the small prescribed
 strains these tests use (`1e-3`), this is mathematically equivalent to a
 linear solve reached via the nonlinear Newton path, not a formulation
 change — but it does mean a genuinely broken NL Newton path could produce

@@ -188,4 +188,6 @@ def test_dynamic3d_nlgeom_auto_promotion():
 
     solver_linear = DynamicSolver3D(mesh, nlgeom=False)
     ks_linear = [k[0] if isinstance(k, tuple) else k for k in solver_linear.elem_kernel_groups.keys()]
-    assert 0 in ks_linear
+    # an elastic C3D8I under NLGEOM=NO runs the small-strain EAS kernel 18
+    # (element_catalog); kernel 0 (TL EAS) is used only for inelastic materials
+    assert 18 in ks_linear

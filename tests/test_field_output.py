@@ -73,7 +73,12 @@ def _exact_displacement(x, y, z):
 
 def _run_patch_and_recover(elem_type: str):
     mesh, b_nodes, _ = make_distorted_patch_mesh(elem_type, distort_amplitude=0.08)
-    solver = DynamicSolver3D(mesh, {"E": E, "nu": NU}, nlgeom=True)
+    # NLGEOM=NO: the linear patch then has an exact solution, so the bound below
+    # checks the stress RECOVERY to round-off. Under NLGEOM=YES the tets and the
+    # wedge run co-rotated (element_catalog cr_wrap), which differs from the SVK
+    # target by O(eps^2) (1e-5..1.3e-4 measured) -- a formulation property, not
+    # a recovery error.
+    solver = DynamicSolver3D(mesh, {"E": E, "nu": NU}, nlgeom=False)
     for nid in b_nodes:
         node = mesh.nodes[nid]
         u_ex = _exact_displacement(node.x, node.y, node.z)

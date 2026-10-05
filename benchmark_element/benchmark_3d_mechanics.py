@@ -55,6 +55,13 @@ ALL_3D_ELEMENTS = [
 # Suite 1: Irons 3D Distorted Patch Test
 # =========================================================================
 
+def _nlgeom_for(elem_type: str) -> bool:
+    """NLGEOM for a benchmark run: C3D4_ANP is small-strain by catalog contract
+    (element_catalog kernel 9 has no large-deformation formulation; NLGEOM=YES
+    is refused for it); every other element runs with NLGEOM on as before."""
+    return elem_type.upper() != "C3D4_ANP"
+
+
 def run_irons_patch_test(
     elem_type: str,
     mode: str = "tension",
@@ -75,7 +82,7 @@ def run_irons_patch_test(
 
     mesh, b_nodes, i_nodes = make_distorted_patch_mesh(elem_type, distort_amplitude=distort_amplitude)
     nid_map = mesh.node_id_to_index()
-    solver = DynamicSolver3D(mesh, {"E": E, "nu": nu}, nlgeom=True)
+    solver = DynamicSolver3D(mesh, {"E": E, "nu": nu}, nlgeom=_nlgeom_for(elem_type))
 
     def exact_displacement(x, y, z):
         if mode == "tension":
@@ -173,7 +180,7 @@ def run_abaqus_official_patch_test(
 
     mesh, b_nodes, i_nodes = make_distorted_patch_mesh(elem_type, distort_amplitude=distort_amplitude)
     nid_map = mesh.node_id_to_index()
-    solver = DynamicSolver3D(mesh, {"E": E, "nu": nu}, nlgeom=True)
+    solver = DynamicSolver3D(mesh, {"E": E, "nu": nu}, nlgeom=_nlgeom_for(elem_type))
 
     def exact_displacement(x, y, z):
         return np.array([
@@ -390,7 +397,9 @@ def run_anp_checkerboard_test(
     E = 200000.0
     mesh, faces = make_confined_compression_mesh(elem_type, n=n, L=L, distort_amplitude=0.06)
     nid_map = mesh.node_id_to_index()
-    solver = DynamicSolver3D(mesh, {"E": E, "nu": nu_val}, nlgeom=True)
+    # NLGEOM=NO for both elements of the C3D4 / C3D4_ANP comparison: ANP is
+    # small-strain by catalog contract, and the pair must run the same setting.
+    solver = DynamicSolver3D(mesh, {"E": E, "nu": nu_val}, nlgeom=False)
 
     for nid in faces["bottom"]:
         solver.fix_dof(nid, 2, 0.0)

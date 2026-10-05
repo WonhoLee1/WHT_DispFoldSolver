@@ -176,7 +176,9 @@ def test_c3d4_anp_dynamicsolver3d_solve():
         conn = [elem_conn[e, a] + 1 for a in range(4)]
         mesh.add_element(e + 1, conn, elem_type="C3D4_ANP")
 
-    solver = DynamicSolver3D(mesh, {"E": 200000.0, "nu": 0.3})
+    # C3D4_ANP is small-strain by catalog contract (element_catalog kernel 9:
+    # no large-deformation formulation), so NLGEOM=YES is refused for it.
+    solver = DynamicSolver3D(mesh, {"E": 200000.0, "nu": 0.3}, nlgeom=False)
 
     # Fix bottom face Z = 0
     for node in mesh.nodes.values():
