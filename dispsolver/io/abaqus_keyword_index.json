@@ -4702,6 +4702,7 @@
       },
       {
        "name": "INTERCEPT",
+       "flag": true,
        "applies": "This parameter applies only to Abaqus/Standard analyses."
       }
      ],
@@ -15373,6 +15374,7 @@
      "optional": [
       {
        "name": "LOW FREQUENCY CUTOFF",
+       "flag": true,
        "applies": "This parameter is relevant for transient modal analysis only."
       },
       {
@@ -21070,6 +21072,7 @@
      "optional": [
       {
        "name": "GENERATE",
+       "flag": true,
        "applies": "If this parameter is included, each data line should give a first element, e 1 ;"
       },
       {
@@ -21080,6 +21083,7 @@
       },
       {
        "name": "UNSORTED",
+       "flag": true,
        "applies": "If this parameter is included, the elements in this element set will be assigned to the set (or added to the set if it already exists) in t…"
       }
      ],
@@ -22247,6 +22251,7 @@
       },
       {
        "name": "FIELD",
+       "flag": true,
        "applies": "This parameter applies only to Abaqus/Standard analyses."
       },
       {
@@ -23161,6 +23166,7 @@
       },
       {
        "name": "UNSORTED",
+       "flag": true,
        "applies": "If this parameter is omitted, the connectivity of the fastening points is defined by the relative positions of their associated surfaces al…"
       },
       {
@@ -25922,7 +25928,8 @@
        "name": "TOLERANCE"
       },
       {
-       "name": "UNSTABLE GROWTH TOLERANCE"
+       "name": "UNSTABLE GROWTH TOLERANCE",
+       "flag": true
       },
       {
        "name": "VISCOSITY",
@@ -28856,7 +28863,8 @@
        "name": "N"
       },
       {
-       "name": "POISSON"
+       "name": "POISSON",
+       "flag": true
       },
       {
        "name": "TEST DATA INPUT",
@@ -36689,6 +36697,7 @@
       },
       {
        "name": "GENERATE",
+       "flag": true,
        "applies": "If this parameter is included, each data line should give a first node, n 1 ;"
       },
       {
@@ -36702,6 +36711,7 @@
       },
       {
        "name": "UNSORTED",
+       "flag": true,
        "applies": "If this parameter is included, the nodes in this node set will be assigned to the set (or added to the set if it already exists) in the ord…"
       }
      ],
@@ -42128,6 +42138,7 @@
       },
       {
        "name": "END STEP",
+       "flag": true,
        "condition": "Optional parameters if the READ parameter is used"
       },
       {
@@ -43580,6 +43591,7 @@
       },
       {
        "name": "GENERATE",
+       "flag": true,
        "applies": "If this parameter is included, each data line should give a first mode, n 1 ;"
       }
      ],
@@ -47699,6 +47711,7 @@
       },
       {
        "name": "MAX RATIO",
+       "flag": true,
        "condition": "Additional optional parameters used for contact pair analyses in Abaqus/Explicit"
       },
       {
@@ -49708,6 +49721,7 @@
      "optional": [
       {
        "name": "GENERATE",
+       "flag": true,
        "applies": "If this parameter is included, each data line should give a starting time point, t 1 ;"
       },
       {

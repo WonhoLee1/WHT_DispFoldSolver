@@ -53,6 +53,7 @@ class PartKw(Keyword):
     """Begin a part definition."""
 
     refuse_on_gap = False
+    closes_with = "END PART"
 
     class Params(Schema):
         name: Optional[str] = None
@@ -79,6 +80,7 @@ class AssemblyKw(Keyword):
     """Begin the root assembly definition."""
 
     refuse_on_gap = False
+    closes_with = "END ASSEMBLY"
 
     class Params(Schema):
         name: Optional[str] = None
@@ -126,6 +128,12 @@ def _apply_scope(reader: AbaqusInputReader, rec: ScopeRecord):
     elif rec.action == "END_ASSEMBLY":
         reader.context = KeywordContext.GLOBAL
     elif rec.action == "END_INSTANCE":
+        inst = reader.current_instance
+        if inst is not None and getattr(inst, "_auto_part", False) and not inst.part.elements:
+            # PART= named nothing and the instance brought no mesh of its own
+            reader.diagnostics.add("error", "undefined-part",
+                                   f"*INSTANCE {inst.name}: PART={inst.part.name} is not defined and the "
+                                   f"instance defines no elements", rec.loc)
         reader.current_instance = None
         reader.context = KeywordContext.ASSEMBLY
     else:
@@ -142,9 +150,12 @@ class InstanceRecord(Record):
 
 @keyword("INSTANCE", support="FULL")
 class InstanceKw(Keyword):
-    """Part instance with an optional translation line and rotation line."""
+    """Part instance with an optional translation line and rotation line.
+    A bad transform line is reported and the transform dropped; the instance
+    itself is kept so the scope stays intact."""
 
     refuse_on_gap = False
+    closes_with = "END INSTANCE"
 
     class Params(Schema):
         name: str
@@ -154,37 +165,49 @@ class InstanceKw(Keyword):
         v: Tuple[float, ...] = ()
 
     def to_records(self, p, rows, ctx):
-        if len(rows) > 2:
-            raise InputError(f"*INSTANCE {p.name} at {ctx.loc}: at most a translation and a rotation line, "
-                             f"got {len(rows)} data lines")
+        def bad(loc, msg):
+            return Note("error", "bad-instance-transform", f"*INSTANCE {p.name} at {loc}: {msg}", loc=loc)
+
+        if p.part is None:
+            yield Note("error", "missing-param",
+                       f"*INSTANCE {p.name} at {ctx.loc}: missing required parameter 'PART' "
+                       f"(the part named {p.name!r} is used)", loc=ctx.loc)
         trans = rot = None
-        if rows:
-            t = [x or 0.0 for x in rows[0].v]
-            if not 2 <= len(t) <= 3:
-                raise InputError(f"*INSTANCE {p.name} at {rows[0].loc}: translation needs 2 or 3 values")
-            trans = (t[0], t[1], t[2] if len(t) == 3 else 0.0)
-        if len(rows) == 2:
-            r = [x or 0.0 for x in rows[1].v]
-            if len(r) != 7:
-                # used to be ignored without a word
-                raise InputError(f"*INSTANCE {p.name} at {rows[1].loc}: rotation needs 7 values "
-                                 f"(axis point a, axis point b, angle), got {len(r)}")
-            rot = ((r[0], r[1], r[2]), (r[3], r[4], r[5]), r[6])
+        if len(rows) > 2:
+            yield bad(ctx.loc, f"at most a translation and a rotation line, got {len(rows)} data lines; "
+                               f"transform ignored")
+        else:
+            if rows:
+                t = [x or 0.0 for x in rows[0].v]
+                if 2 <= len(t) <= 3:
+                    trans = (t[0], t[1], t[2] if len(t) == 3 else 0.0)
+                else:
+                    yield bad(rows[0].loc, "translation needs 2 or 3 values; translation ignored")
+            if len(rows) == 2:
+                r = [x or 0.0 for x in rows[1].v]
+                if len(r) == 7:
+                    rot = ((r[0], r[1], r[2]), (r[3], r[4], r[5]), r[6])
+                else:
+                    # used to be ignored without a word
+                    yield bad(rows[1].loc, f"rotation needs 7 values (axis point a, axis point b, angle), "
+                                           f"got {len(r)}; rotation ignored")
         yield InstanceRecord(p.name, p.part or p.name, trans, rot, loc=ctx.loc)
 
 
 @applies(InstanceRecord)
 def _apply_instance(reader: AbaqusInputReader, rec: InstanceRecord):
-    if rec.part in reader.model.parts:
-        part = reader.model.parts[rec.part]
-    else:
-        # An instance may carry its own mesh (instance-level *NODE / *ELEMENT);
-        # a PART= nobody defines is otherwise a typo, so say so.
-        part = reader.model.Part(rec.part, dim=reader.dim)
-        reader.diagnostics.add("warning", "undefined-part",
-                               f"*INSTANCE {rec.name}: PART={rec.part} is not defined; an empty part was "
-                               f"created (expected only for an instance that defines its own mesh)", rec.loc)
+    # Labels are case-insensitive and blanks on a keyword line are ignored, so
+    # PART=PART -1 names part PART-1 (Abaqus verification decks write it so;
+    # the legacy lookup created an empty part "PART -1" and lost the mesh).
+    key = rec.part.replace(" ", "").upper()
+    hits = [n for n in reader.model.parts if n.replace(" ", "").upper() == key]
+    name = rec.part if rec.part in reader.model.parts else (hits[0] if len(hits) == 1 else None)
+    auto = name is None
+    # An instance may carry its own mesh (instance-level *NODE / *ELEMENT), so
+    # an undefined PART= is checked at *END INSTANCE, not here.
+    part = reader.model.Part(rec.part, dim=reader.dim) if auto else reader.model.parts[name]
     inst = reader.model.root_assembly.Instance(rec.name, part=part)
+    inst._auto_part = auto
     reader.current_instance = inst
     reader.context = KeywordContext.INSTANCE
     if rec.translation is not None:

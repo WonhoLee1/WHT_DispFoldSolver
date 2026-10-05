@@ -345,22 +345,22 @@ def _store_set(reader: AbaqusInputReader, kind: str, name: str, members):
 # Legacy defects closed here: a missing face label became S1 (Abaqus uses all
 # free faces of the elements), unresolved element / node / surface names were
 # skipped without a word, a SEGMENTS surface kept only its first START and
-# last LINE (CIRCL ignored), and COMBINE=INTERSECTION / DIFFERENCE fell
-# through to the element path.
+# last LINE (CIRCL ignored), COMBINE=INTERSECTION / DIFFERENCE fell through to
+# the element path, and at assembly level an element set without a face label
+# became "all nodes of those elements".
+#
+# What a data-line name means (a surface to merge, an element set to take
+# faces of, a node set) is only known against the model, so to_records keeps
+# the lines as written and the applier resolves each name.
 
 _FACE_RE = re.compile(r"^S([1-6])$")
 
 
 @dataclass(frozen=True)
-class ElementSurfaceRecord(Record):
+class SurfaceRecord(Record):
     name: str
-    items: Tuple[Tuple[str, int], ...]          # (element number or element set, face 1..6)
-
-
-@dataclass(frozen=True)
-class NodeSurfaceRecord(Record):
-    name: str
-    targets: Tuple[str, ...]                    # node numbers or node sets
+    type: str                                   # ELEMENT / NODE
+    items: Tuple[Tuple[str, Optional[int]], ...]   # (name or label, face 1..6 / None)
 
 
 @dataclass(frozen=True)
@@ -368,12 +368,6 @@ class SegmentSurfaceRecord(Record):
     name: str
     start: Tuple[float, float]
     end: Tuple[float, float]
-
-
-@dataclass(frozen=True)
-class UnionSurfaceRecord(Record):
-    name: str
-    members: Tuple[str, ...]                    # surface / set names, INSTANCE.NAME allowed
 
 
 @keyword("SURFACE", support="PARTIAL")
@@ -391,32 +385,31 @@ class SurfaceKw(Keyword):
     Row = _Members
 
     def to_records(self, p, rows, ctx):
-        lines = [_tokens(r) for r in rows]
-        if p.combine == "UNION" or (ctx.context == "ASSEMBLY" and p.type == "ELEMENT"
-                                    and all(len(t) == 1 and not t[0].lstrip("-").isdigit() for t in lines)):
-            yield UnionSurfaceRecord(p.name, tuple(t for ln in lines for t in ln), loc=ctx.loc)
-            return
         if p.type == "SEGMENTS":
             yield _segments(p.name, rows, ctx)
             return
-        if p.type == "NODE":
-            # data line: node or node set[, area] -- the area (default 1.0) only
-            # matters for node-based contact pressure output
-            yield NodeSurfaceRecord(p.name, tuple(t[0] for t in lines if t), loc=ctx.loc)
-            return
+        lines = [(r, _tokens(r)) for r in rows]
+        lines = [(r, t) for r, t in lines if t]
+        if not lines:
+            raise InputError(f"*SURFACE {p.name} at {ctx.loc}: no data lines")
         items = []
-        for r, t in zip(rows, lines):
-            if not t:
+        for r, t in lines:
+            if p.type == "NODE":
+                # "node or node set[, area]": the area weights node-based contact
+                if len(t) > 1 and float(t[1]) != 1.0:
+                    raise Unsupported(f"*SURFACE {p.name} at {r.loc}: node area {t[1]} is not implemented "
+                                      f"(1.0 only)")
+                items.append((t[0], None))
                 continue
             if len(t) == 1:
-                raise Unsupported(f"*SURFACE {p.name} at {r.loc}: {t[0]} without a face label (all free "
-                                  f"faces of the elements) is not implemented")
+                items.append((t[0], None))      # a surface to merge, or an element set's free faces
+                continue
             m = _FACE_RE.match(t[1].upper())
             if m is None:
                 raise Unsupported(f"*SURFACE {p.name} at {r.loc}: face label {t[1]!r} is not implemented "
                                   f"(solid faces S1-S6 only)")
             items.append((t[0], int(m.group(1))))
-        yield ElementSurfaceRecord(p.name, tuple(items), loc=ctx.loc)
+        yield SurfaceRecord(p.name, p.type, tuple(items), loc=ctx.loc)
 
 
 def _segments(name: str, rows, ctx) -> SegmentSurfaceRecord:
@@ -455,83 +448,169 @@ def _apply_segment_surface(reader: AbaqusInputReader, rec: SegmentSurfaceRecord)
         reader.model.root_assembly.surfaces[rec.name] = rigid_surf
 
 
-@applies(NodeSurfaceRecord)
-def _apply_node_surface(reader: AbaqusInputReader, rec: NodeSurfaceRecord):
-    part = reader.get_active_part()   # the instance's own part inside *INSTANCE
-    nodes = []
-    for target in rec.targets:
-        if target in part.sets:
-            nodes.extend(part.sets[target].node_ids or [])
-        elif target in part.node_sets:
-            nodes.extend(part.node_sets[target].node_ids)
-        elif target.isdigit():
-            nodes.append(int(target))
-        else:
-            raise KeyError(f"*SURFACE {rec.name}: {target!r} is neither a node number nor a node set")
-    part.create_set(rec.name, nodes=nodes)
+def _face_pairs(surf):
+    out = []
+    for ef in getattr(surf, "faces", None) or []:
+        out.append((ef.element_id, ef.face_id) if hasattr(ef, "element_id") else (ef[0], ef[1]))
+    return out
 
 
-@applies(ElementSurfaceRecord)
-def _apply_element_surface(reader: AbaqusInputReader, rec: ElementSurfaceRecord):
-    part = reader.get_active_part()   # the instance's own part inside *INSTANCE
-    faces = []
-    for target, fid in rec.items:
-        if target in part.element_sets:
-            faces += [(eid, fid) for eid in part.element_sets[target].element_ids]
-        elif target in part.sets and part.sets[target].element_ids:
-            faces += [(eid, fid) for eid in part.sets[target].element_ids]
-        elif target.isdigit():
-            faces.append((int(target), fid))
-        else:
-            raise KeyError(f"*SURFACE {rec.name}: {target!r} is neither an element number nor an element set")
-    part.create_surface(rec.name, faces=faces)
+def _free_faces_gap(rec, tok):
+    return NotImplementedError(f"*SURFACE {rec.name}: {tok!r} without a face label (all free faces of the "
+                               f"elements) is not implemented")
 
 
-def _surface_nodes_faces(p, sub_name):
-    """(node ids, (element, face) pairs) of a part surface or set, or None."""
-    if hasattr(p, "surfaces") and sub_name in p.surfaces:
-        surf = p.surfaces[sub_name]
-        nids = surf.get_nodes(p) if hasattr(surf, "get_nodes") else list(getattr(surf, "node_ids", []))
-        faces = []
-        for ef in getattr(surf, "faces", None) or []:
-            eid = ef.element_id if hasattr(ef, "element_id") else ef[0]
-            fid = ef.face_id if hasattr(ef, "face_id") else ef[1]
-            faces.append((eid, fid))
-        return list(nids), faces
-    if hasattr(p, "sets") and sub_name in p.sets:
-        return list(p.sets[sub_name].get_nodes(include_elements=True)), []
-    if hasattr(p, "node_sets") and sub_name in p.node_sets:
-        return list(p.node_sets[sub_name].node_ids), []
+def _part_element_ids(part, tok):
+    for table in (part.element_sets, part.sets):
+        if tok in table and getattr(table[tok], "element_ids", None):
+            return list(table[tok].element_ids)
     return None
 
 
-@applies(UnionSurfaceRecord)
-def _apply_union_surface(reader: AbaqusInputReader, rec: UnionSurfaceRecord):
-    from dispsolver.model.set import SetScope, Surface
-    assembly = reader.model.root_assembly
-    collected_nids, collected_inst_nids, collected_faces = set(), [], []
-    for tok in rec.members:
-        hit = None
-        if "." in tok:
-            inst_name, sub_name = tok.split(".", 1)
-            if inst_name in assembly.instances:
-                hit = _surface_nodes_faces(assembly.instances[inst_name].part, sub_name)
-                if hit is not None:
-                    collected_inst_nids += [(inst_name, n) for n in hit[0]]
-                    collected_faces += [(inst_name, e, f) for e, f in hit[1]]
+def _part_node_ids(part, tok):
+    for table in (part.node_sets, part.sets):
+        if tok in table and getattr(table[tok], "node_ids", None):
+            return list(table[tok].node_ids)
+    return None
+
+
+@applies(SurfaceRecord)
+def _apply_surface(reader: AbaqusInputReader, rec: SurfaceRecord):
+    if _assembly_scope(reader):
+        _apply_assembly_surface(reader, rec)
+        return
+    part = reader.get_active_part()   # the instance's own part inside *INSTANCE
+    if rec.type == "NODE":
+        nodes = []
+        for tok, _ in rec.items:
+            ids = _part_node_ids(part, tok)
+            if ids is not None:
+                nodes += ids
+            elif tok.isdigit():
+                nodes.append(int(tok))
+            else:
+                raise KeyError(f"*SURFACE {rec.name}: {tok!r} is neither a node number nor a node set")
+        part.create_set(rec.name, nodes=nodes)
+        return
+    faces = []
+    for tok, fid in rec.items:
+        if fid is None:
+            if tok in getattr(part, "surfaces", {}):
+                pairs = _face_pairs(part.surfaces[tok])           # a surface of surfaces
+                if not pairs:
+                    raise NotImplementedError(f"*SURFACE {rec.name}: member surface {tok!r} has no element "
+                                              f"faces (analytical or node surface); merging it is not implemented")
+                faces += pairs
+                continue
+            if _part_element_ids(part, tok) is not None or tok.isdigit():
+                raise _free_faces_gap(rec, tok)
+            raise KeyError(f"*SURFACE {rec.name}: {tok!r} is neither a surface nor an element set")
+        eids = _part_element_ids(part, tok)
+        if eids is not None:
+            faces += [(e, fid) for e in eids]
+        elif tok.isdigit():
+            faces.append((int(tok), fid))
         else:
-            for p in reader.model.parts.values():
-                got = _surface_nodes_faces(p, tok)
-                if got is not None:
-                    hit = got
-                    collected_nids.update(got[0])
-                    collected_faces += [(None, e, f) for e, f in got[1]]
-        if hit is None:
-            raise KeyError(f"*SURFACE {rec.name}: member {tok!r} is not a defined surface or set")
-    surf_obj = Surface(name=rec.name, node_ids=collected_nids, scope=SetScope.ASSEMBLY)
-    surf_obj.inst_nodes = collected_inst_nids
-    surf_obj.inst_faces = collected_faces
-    assembly.surfaces[rec.name] = surf_obj
+            raise KeyError(f"*SURFACE {rec.name}: {tok!r} is neither an element number nor an element set")
+    part.create_surface(rec.name, faces=faces)
+
+
+def _apply_assembly_surface(reader: AbaqusInputReader, rec: SurfaceRecord):
+    """An assembly surface lists instance-local faces / nodes: (instance,
+    element, face) in inst_faces and (instance, node) in inst_nodes."""
+    from dispsolver.model.set import SetScope, Surface
+    asm = reader.model.root_assembly
+    inst_faces, inst_nodes = [], []
+
+    def qualified(tok):
+        """(instance, local name) of INST.NAME / ASSEMBLY.INST.NAME, or None."""
+        pieces = tok.split(".")
+        if len(pieces) == 3 and pieces[0].upper() == str(asm.name).upper():
+            pieces = pieces[1:]
+        if len(pieces) >= 2 and ".".join(pieces[:-1]) in asm.instances:
+            return asm.instances[".".join(pieces[:-1])], pieces[-1]
+        return None
+
+    def _by_instance(rec, tok, aset):
+        """{instance: [labels]} of an assembly set. Every member must belong to
+        a defined instance and the set must not be empty -- dropping members
+        here built an empty surface without a word (a *DSLOAD on it then
+        loaded nothing)."""
+        by_inst = {}
+        for inst_name, label in getattr(aset, "members", None) or []:
+            if inst_name is None:
+                raise NotImplementedError(f"*SURFACE {rec.name}: set {tok!r} lists assembly-level labels "
+                                          f"(no INSTANCE=); assembly-level nodes/elements are not implemented")
+            if inst_name not in asm.instances:
+                raise KeyError(f"*SURFACE {rec.name}: set {tok!r} refers to undefined instance {inst_name!r}")
+            by_inst.setdefault(inst_name, []).append(label)
+        if not by_inst:
+            raise KeyError(f"*SURFACE {rec.name}: set {tok!r} is empty")
+        return by_inst
+
+    def add_faces(inst_name, part, pairs):
+        inst_faces.extend((inst_name, e, f) for e, f in pairs)
+        tmp = Surface(name=rec.name, faces=[])
+        for e, f in pairs:
+            tmp.add_face(e, f)
+        inst_nodes.extend((inst_name, n) for n in tmp.get_nodes(part))
+
+    def elements_of(tok):
+        """[(instance name, part, [element ids])] of an assembly or qualified element set."""
+        aset = asm.element_sets.get(tok)
+        if aset is not None:
+            return [(n, asm.instances[n].part, ids) for n, ids in _by_instance(rec, tok, aset).items()]
+        q = qualified(tok)
+        if q is not None:
+            ids = _part_element_ids(q[0].part, q[1])
+            if ids is not None:
+                return [(q[0].name, q[0].part, ids)]
+        return None
+
+    def nodes_of(tok):
+        aset = asm.node_sets.get(tok)
+        if aset is not None:
+            return [(n, i) for n, ids in _by_instance(rec, tok, aset).items() for i in ids]
+        q = qualified(tok)
+        if q is not None:
+            ids = _part_node_ids(q[0].part, q[1])
+            if ids is not None:
+                return [(q[0].name, i) for i in ids]
+        return None
+
+    for tok, fid in rec.items:
+        if rec.type == "NODE":
+            got = nodes_of(tok)
+            if got is None:
+                raise KeyError(f"*SURFACE {rec.name}: {tok!r} is not an assembly or instance node set")
+            inst_nodes += got
+            continue
+        if fid is None:
+            other = asm.surfaces.get(tok)
+            if other is not None and (getattr(other, "inst_faces", None) or getattr(other, "inst_nodes", None)):
+                inst_faces += list(getattr(other, "inst_faces", []) or [])
+                inst_nodes += list(getattr(other, "inst_nodes", []) or [])
+                continue
+            q = qualified(tok)
+            if q is not None and tok.split(".")[-1] in getattr(q[0].part, "surfaces", {}):
+                surf = q[0].part.surfaces[tok.split(".")[-1]]
+                if _face_pairs(surf):
+                    add_faces(q[0].name, q[0].part, _face_pairs(surf))
+                else:
+                    inst_nodes += [(q[0].name, n) for n in getattr(surf, "node_ids", None) or []]
+                continue
+            if elements_of(tok) is not None:
+                raise _free_faces_gap(rec, tok)
+            raise KeyError(f"*SURFACE {rec.name}: {tok!r} is not a defined surface")
+        groups = elements_of(tok)
+        if groups is None:
+            raise KeyError(f"*SURFACE {rec.name}: {tok!r} is not an assembly or instance element set")
+        for inst_name, part, ids in groups:
+            add_faces(inst_name, part, [(e, fid) for e in ids])
+    surf_obj = Surface(name=rec.name, node_ids=set(), scope=SetScope.ASSEMBLY)
+    surf_obj.inst_nodes = inst_nodes
+    surf_obj.inst_faces = inst_faces
+    asm.surfaces[rec.name] = surf_obj
 
 
 @GLOBAL_KEYWORD_REGISTRY.register(

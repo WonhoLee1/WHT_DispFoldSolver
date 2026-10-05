@@ -110,7 +110,7 @@ def test_handler_errors_and_unsupported_keywords_cite_file_line(tmp_path):
         reader, _ = _parse_source(main, dim=3, strict=False)
     gaps = reader.physics_gaps()
     unknown = [d for d in reader.diagnostics if d.code == "unknown-keyword"]
-    assert len(unknown) == 1 and unknown[0].level == "error" and str(unknown[0].loc) == "deck.inp:16"
+    assert len(unknown) == 1 and unknown[0].level == "gap" and str(unknown[0].loc) == "deck.inp:16"
     assert any("*RADIATION VIEW FACTOR (unsupported, deck.inp:18)" == g for g in gaps), gaps
     assert any("SOLID SECTION at deck.inp:19" in g for g in gaps), gaps
 

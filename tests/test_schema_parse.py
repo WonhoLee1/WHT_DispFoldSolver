@@ -65,7 +65,7 @@ def test_param_policy_codes():
     recs, d = parse_text("*BOUNDARY, FIXED\nN, 1\n")
     assert recs == [] and _codes(d, "gap") == ["unsupported-param"]   # Abaqus defines it; not declared
     recs, d = parse_text("*BOUNDARY, OPX=NEW\nN, 1\n")
-    assert recs == [] and _codes(d, "error") == ["unknown-param"]     # Abaqus does not define it
+    assert recs == [] and _codes(d, "gap") == ["unknown-param"]       # not in the Keywords Guide
     recs, d = parse_text("*AMPLITUDE\n0, 0\n")
     assert recs == [] and _codes(d, "error") == ["missing-param"]
     recs, d = parse_text("*BOUNDARY, TYPE=VELOCITY\nN, 1, 1, 1.\n")
@@ -243,7 +243,7 @@ def test_nset_elset_records():
     with pytest.raises(InputError, match="whole number"):
         parse_text("*NSET, NSET=A, GENERATE\n1, 10, 2\n", context="PART")
     recs, d = parse_text("*ELSET, ELSET=E, UNSORTED\n5, 3, 1\n", context="PART")
-    assert _codes(d) == [] and recs[0].code == "set-order-sorted"
+    assert _codes(d) == ["set-order-sorted"] and recs[0].tokens == ("5", "3", "1")
 
 
 def test_nset_of_elset_and_set_redefinition_adds():
@@ -254,20 +254,77 @@ def test_nset_of_elset_and_set_redefinition_adds():
 
 
 def test_surface_records_and_refusals():
-    from dispsolver.io.keywords.mesh import ElementSurfaceRecord, NodeSurfaceRecord, SegmentSurfaceRecord
-    recs, d = parse_text("*SURFACE, NAME=S\nE, S2\n7, S6\n", context="PART")
-    assert recs == [ElementSurfaceRecord("S", (("E", 2), ("7", 6)))]
+    from dispsolver.io.keywords.mesh import SegmentSurfaceRecord, SurfaceRecord
+    recs, d = parse_text("*SURFACE, NAME=S\nE, S2\n7, S6\nOTHER\n", context="PART")
+    assert recs == [SurfaceRecord("S", "ELEMENT", (("E", 2), ("7", 6), ("OTHER", None)))]
     recs, _ = parse_text("*SURFACE, NAME=N, TYPE=NODE\nNS, 1.\n", context="PART")
-    assert recs == [NodeSurfaceRecord("N", ("NS",))]
+    assert recs == [SurfaceRecord("N", "NODE", (("NS", None),))]
     recs, _ = parse_text("*SURFACE, NAME=R, TYPE=SEGMENTS\nSTART, 0., 0.\nLINE, 1., 0.\n", context="PART")
     assert recs == [SegmentSurfaceRecord("R", (0.0, 0.0), (1.0, 0.0))]
-    for text in ("*SURFACE, NAME=S\nE\n",                                     # free faces (was: S1)
-                 "*SURFACE, NAME=S\nE, SPOS\n",
+    for text in ("*SURFACE, NAME=S\nE, SPOS\n",
+                 "*SURFACE, NAME=N, TYPE=NODE\nNS, 2.5\n",                  # area weights contact
                  "*SURFACE, NAME=R, TYPE=SEGMENTS\nSTART, 0., 0.\nLINE, 1., 0.\nLINE, 1., 1.\n"):
         with pytest.raises(NotImplementedError):
             parse_text(text, context="PART")
+    with pytest.raises(InputError, match="no data lines"):
+        parse_text("*SURFACE, NAME=S\n", context="ASSEMBLY")
     recs, d = parse_text("*SURFACE, NAME=S, COMBINE=INTERSECTION\nA\nB\n", context="ASSEMBLY")
     assert recs == [] and _codes(d, "gap") == ["unsupported-value"]
+
+
+def test_surface_free_faces_is_a_gap_in_part():
+    reader, _ = _read(CUBE + "*SURFACE, NAME=S\nE\n")                        # used to be S1
+    assert [d.code for d in reader.diagnostics if d.level == "gap"] == ["unsupported-feature"]
+
+
+ASSEMBLY_SURFACES = """*PART, NAME=P
+*NODE
+1,0,0,0
+2,1,0,0
+3,1,1,0
+4,0,1,0
+5,0,0,1
+6,1,0,1
+7,1,1,1
+8,0,1,1
+*ELEMENT, TYPE=C3D8, ELSET=E
+1,1,2,3,4,5,6,7,8
+*SURFACE, NAME=PS
+E, S2
+*END PART
+*ASSEMBLY, NAME=A
+*INSTANCE, NAME=P-1, PART=P
+*END INSTANCE
+*ELSET, ELSET=_S_S2, INSTANCE=P-1, INTERNAL
+1
+*SURFACE, TYPE=ELEMENT, NAME=S1
+_S_S2, S2
+*SURFACE, NAME=S2
+P-1.PS
+*NSET, NSET=NS, INSTANCE=P-1
+1, 2
+*SURFACE, TYPE=NODE, NAME=S4
+NS, 1.
+*SURFACE, NAME=S3
+P-1.E
+*END ASSEMBLY
+"""
+
+
+def test_assembly_surfaces_resolve_names_against_the_model():
+    # Abaqus/CAE writes "_Surf_S2, S2" with an assembly element set: that used
+    # to be a bad-input error plus a phantom PART_DEFAULT; a face-less element
+    # set used to become "all nodes of those elements" without a word
+    reader, model = _read(ASSEMBLY_SURFACES)
+    a = model.root_assembly
+    top = sorted(("P-1", n) for n in (5, 6, 7, 8))
+    assert a.surfaces["S1"].inst_faces == [("P-1", 1, 2)] and sorted(a.surfaces["S1"].inst_nodes) == top
+    assert a.surfaces["S2"].inst_faces == [("P-1", 1, 2)] and sorted(a.surfaces["S2"].inst_nodes) == top
+    assert sorted(a.surfaces["S4"].inst_nodes) == [("P-1", 1), ("P-1", 2)]
+    assert "S3" not in a.surfaces
+    probs = [(d.level, d.code) for d in reader.diagnostics if d.level in ("error", "gap")]
+    assert probs == [("gap", "unsupported-feature")]                          # S3: free faces
+    assert list(model.parts) == ["P"]
 
 
 def test_surface_unresolved_member_is_an_error():
@@ -297,8 +354,10 @@ def test_scope_and_instance():
     recs, _ = parse_text("*INSTANCE, NAME=I1, PART=P\n1., 2.\n0., 0., 0., 0., 0., 1., 90.\n",
                          context="ASSEMBLY")
     assert recs == [InstanceRecord("I1", "P", (1.0, 2.0, 0.0), ((0.0, 0.0, 0.0), (0.0, 0.0, 1.0), 90.0))]
-    with pytest.raises(InputError, match="rotation needs 7"):
-        parse_text("*INSTANCE, NAME=I1, PART=P\n0., 0., 0.\n0., 0., 0., 1.\n", context="ASSEMBLY")
+    # a bad transform is reported and dropped; the instance itself is kept
+    recs, d = parse_text("*INSTANCE, NAME=I1, PART=P\n0., 0., 0.\n0., 0., 0., 1.\n", context="ASSEMBLY")
+    assert recs[-1] == InstanceRecord("I1", "P", (0.0, 0.0, 0.0), None)
+    assert _codes(d) == ["bad-instance-transform"]
     # materials are model data: outside the *PART
     mesh, rest = CUBE.split("*MATERIAL")
     material, section = ("*MATERIAL" + rest).split("*SOLID SECTION")
@@ -306,7 +365,7 @@ def test_scope_and_instance():
                           "*ASSEMBLY, NAME=A\n*INSTANCE, NAME=I1, PART=P\n5., 0., 0.\n*END INSTANCE\n"
                           "*INSTANCE, NAME=I2, PART=TYPO\n*END INSTANCE\n*END ASSEMBLY\n")
     assert model.root_assembly.name == "A" and "I1" in model.root_assembly.instances
-    assert any(d.code == "undefined-part" for d in reader.diagnostics)
+    assert [d.level for d in reader.diagnostics if d.code == "undefined-part"] == ["error"]
 
 
 def test_migrated_keywords_read_no_raw_params():
@@ -321,3 +380,74 @@ def test_migrated_keywords_read_no_raw_params():
         cls = GLOBAL_KEYWORD_REGISTRY.get_handler(name).schema
         assert cls is not None, name
         assert "params.get" not in inspect.getsource(cls), name
+
+
+# ── reviewer findings (A2 review) ───────────────────────────────────────────
+
+def test_refused_instance_does_not_abort_the_parse():
+    # used to raise "Keyword *END INSTANCE illegal in context ASSEMBLY" and lose
+    # every diagnostic
+    reader, model = _read("*PART, NAME=P\n*END PART\n*ASSEMBLY, NAME=A\n*INSTANCE, PART=P\n"
+                          "*NODE\n1, 0., 0., 0.\n*END INSTANCE\n*INSTANCE, NAME=I2, PART=P\n"
+                          "0., 0., 0.\n0., 0., 0., 0., 0., 1.\n*END INSTANCE\n*END ASSEMBLY\n")
+    codes = [d.code for d in reader.diagnostics if d.level == "error"]
+    assert "missing-param" in codes and "refused-scope-skipped" in codes
+    assert "bad-instance-transform" in codes and "I2" in model.root_assembly.instances
+
+
+def test_nlgeom_stays_on_once_switched_on():
+    reader, model = _read(CUBE + "*STEP, NLGEOM=YES\n*STATIC\n1., 1.\n*END STEP\n"
+                                 "*STEP, NLGEOM=NO\n*STATIC\n1., 1.\n*END STEP\n")
+    steps = [model.steps[s] for s in model.steps if s != "Initial"]
+    assert [s.nlgeom for s in steps] == [True, True]
+    assert any(d.code == "nlgeom-stays-on" for d in reader.diagnostics)
+
+
+def test_composite_layer_angle_is_a_gap():
+    with pytest.raises(NotImplementedError, match="angle"):
+        parse_text("*SOLID SECTION, ELSET=E, COMPOSITE\n1., 3, M, 45.\n", context="PART")
+
+
+def test_yasymm_splits_into_contiguous_dof_runs():
+    recs, _ = parse_text("*BOUNDARY\nN, YASYMM\n")
+    assert [(r.dofs, r.label) for r in recs] == [((1,), "DOF1_1"), ((3,), "DOF3_3")]
+
+
+def test_unknown_parameter_is_a_gap_on_both_paths():
+    # undocumented is not proof of wrong: Abaqus's own verification decks use
+    # *VISCOELASTIC, FORMULATION=, which the Keywords Guide does not list
+    reader, _ = _read(CUBE + "*MATERIAL, NAME=M2\n*DENSITY, BOGUS=1\n7.8e-9\n"
+                             "*STEP\n*STATIC\n1., 1.\n*CLOAD, BOGUS=1\n7, 1, 1.\n*END STEP\n")
+    assert [d.level for d in reader.diagnostics if d.code == "unknown-param"] == ["gap", "gap"]
+
+
+def test_notes_survive_a_refused_block():
+    with pytest.raises(InputError):
+        parse_text("*ELSET, ELSET=E, UNSORTED, GENERATE\n1, 10, 2\n", context="PART")
+
+
+# ── reviewer findings, second pass ──────────────────────────────────────────
+
+def test_assembly_set_without_instance_is_not_an_empty_surface():
+    # members (None, label) used to be filtered out: a surface with zero faces
+    # and no diagnostic, so a *DSLOAD on it loaded nothing
+    deck = ASSEMBLY_SURFACES.replace("*SURFACE, NAME=S3\nP-1.E\n", "*ELSET, ELSET=X\n1\n"
+                                     "*SURFACE, TYPE=ELEMENT, NAME=S5\nX, S2\n")
+    reader, model = _read(deck)
+    assert "S5" not in model.root_assembly.surfaces
+    assert [(d.level, d.code) for d in reader.diagnostics if d.level in ("error", "gap")] == \
+        [("gap", "unsupported-feature")]
+
+
+def test_unclosed_refused_scope_is_reported():
+    reader, model = _read("*PART, NAME=P\n*END PART\n*ASSEMBLY, NAME=A\n*INSTANCE, PART=P\n"
+                          "*STEP\n*STATIC\n1., 1.\n*END STEP\n")
+    msgs = [d.message for d in reader.diagnostics if d.code == "refused-scope-skipped"]
+    assert len(msgs) == 1 and "never came" in msgs[0]
+
+
+def test_faceless_member_surface_is_a_gap():
+    reader, _ = _read(CUBE + "*SURFACE, NAME=R, TYPE=SEGMENTS\nSTART, 0., 0.\nLINE, 1., 0.\n"
+                             "*SURFACE, NAME=U\nR\n")
+    assert [d.code for d in reader.diagnostics if d.level == "gap"] == ["unsupported-feature"]
+

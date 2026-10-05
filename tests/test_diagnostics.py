@@ -48,7 +48,7 @@ def test_collector_levels_dedupe_and_policy():
 
 def test_reader_levels():
     text = CUBE + ("*EL PRINT\nS\n"                              # output only     -> info
-                   "*FOOBAR\n1\n"                                # not Abaqus       -> error
+                   "*FOOBAR\n1\n"                                # undocumented     -> gap
                    "*RADIATION VIEW FACTOR\n"                    # Abaqus, unhandled -> gap
                    "*STEP, UNSYMM=YES\n*STATIC, DIRECT\n0.1, 1.\n"   # controls -> info
                    "*BOUNDARY, TYPE=VELOCITY\nE, 1, 1\n"         # unimplemented choice -> gap
@@ -58,7 +58,7 @@ def test_reader_levels():
     by = {lv: [x.code for x in reader.diagnostics.of(lv)] for lv in ("error", "gap", "warning", "info")}
     assert "ignored-keyword" in by["info"] and "control-param-ignored" in by["info"]
     assert "unsupported-keyword" in by["gap"] and "unsupported-value" in by["gap"]
-    assert "unknown-keyword" in by["error"] and "bad-input" in by["error"]
+    assert "unknown-keyword" in by["gap"] and "bad-input" in by["error"]
     gaps = reader.physics_gaps()
     assert any("*FOOBAR" in g for g in gaps) and not any("EL PRINT" in g for g in gaps)
     assert all(x.loc is not None for x in reader.diagnostics.of("error", "gap"))

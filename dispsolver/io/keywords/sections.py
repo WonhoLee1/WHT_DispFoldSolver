@@ -93,7 +93,17 @@ class SolidSection(Keyword):
             if len(c) < 3 or not c[2]:
                 raise InputError(f"*SOLID SECTION, COMPOSITE at {r.loc}: a layer needs thickness, "
                                  f"integration points and material")
-            layers.append((c[2], (c[3] if len(c) > 3 and c[3] else None) or p.orientation))
+            ori = c[3] if len(c) > 3 and c[3] else None
+            if ori is not None:
+                try:
+                    float(ori)
+                except ValueError:
+                    pass
+                else:
+                    # an angle relative to the section orientation, not a name
+                    raise Unsupported(f"*SOLID SECTION, COMPOSITE at {r.loc}: layer orientation angle {ori} "
+                                      f"is not implemented")
+            layers.append((c[2], ori or p.orientation))
         if not layers:
             raise InputError(f"*SOLID SECTION, COMPOSITE, ELSET={p.elset} at {ctx.loc}: no layers")
         if len(set(layers)) > 1:

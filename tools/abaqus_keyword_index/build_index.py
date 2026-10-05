@@ -78,7 +78,9 @@ def _param_entry(dt, dd) -> dict:
         if default is None and nxt_txt.lstrip().startswith("(default)"):
             default = v
     text = _txt(dd)
-    flag = bool(re.search(r"\bInclude this parameter\b", text, re.I))
+    # a parameter that stands alone: "Include this parameter ..." or
+    # "If this parameter is included, ..."
+    flag = bool(re.search(r"\bInclude this parameter\b|\bIf this parameter is included\b", text, re.I))
     out = {"name": name}
     if values:
         out["values"] = values

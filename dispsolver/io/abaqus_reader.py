@@ -100,6 +100,9 @@ class AbaqusInputReader:
         if kind == "control" or self._keyword_is_inert(kw):
             self.report("info", f"{kind}-param-ignored", text, block)
         else:
+            # "unknown" (not in the Keywords Guide) is a gap too: official
+            # verification decks use undocumented parameters Abaqus accepts
+            # (*VISCOELASTIC, FORMULATION=), so it is not proof the deck is wrong
             self.report("gap", f"{kind}-param", text, block)
 
     def physics_gaps(self) -> List[str]:
@@ -125,6 +128,7 @@ class AbaqusInputReader:
 
         # Parsing states
         self.context: KeywordContext = KeywordContext.GLOBAL
+        self._skipping: Optional[dict] = None      # body of a refused scope opener
         self.current_part: Optional[Part] = None
         self.current_instance: Optional[Instance] = None
         self.current_step: Optional[Step] = None
@@ -220,9 +224,27 @@ class AbaqusInputReader:
         "CONCRETE TENSION DAMAGE", "MULLINS EFFECT",
     })
 
-    # Keywords outside the Abaqus Keywords Guide that are still reported as a
-    # gap rather than an error (none so far; add with a reason).
-    _INERT_NON_ABAQUS: frozenset = frozenset()
+    def skip_scope(self, opener: str, closer: str, block: AbaqusKeywordBlock) -> None:
+        """A scope-opening keyword was refused: skip its body up to `closer`."""
+        self._skipping = {"opener": opener, "closer": closer, "loc": block.location, "count": 0}
+
+    def _skip_block(self, block: AbaqusKeywordBlock, index) -> bool:
+        """True while inside the body of a refused scope (that block is skipped)."""
+        kw = block.keyword
+        if self.registry.get_handler(kw) is None:
+            try:
+                kw = index.resolve_keyword(kw) or kw
+            except AmbiguousName:
+                pass
+        sk = self._skipping
+        if kw != sk["closer"]:
+            sk["count"] += 1
+            return True
+        self._skipping = None
+        self.report("error", "refused-scope-skipped",
+                    f"*{sk['opener']} at {sk['loc']} was refused; its {sk['count']} keyword(s) up to "
+                    f"*{sk['closer']} at {block.location} were not read", block)
+        return True
 
     def _resolve_keyword(self, block: AbaqusKeywordBlock, index):
         """(spec, canonical keyword) for a block, or (None, kw) when it was
@@ -245,13 +267,13 @@ class AbaqusInputReader:
                 return spec, canon
             self.unsupported_keyword(canon, block)
             return None, canon
-        if kw in self._INERT_NON_ABAQUS:
-            self.unsupported_keyword(kw, block)
-        else:
-            self.report("error", "unknown-keyword",
-                        f"*{kw} at {block.location}: not an Abaqus keyword", block)
-            if kw not in self.unsupported_keywords:
-                self.unsupported_keywords.append(kw)
+        # Not in the Keywords Guide: a gap, like an undocumented parameter --
+        # Abaqus accepts some undocumented input, so this is not proof the deck
+        # is wrong (it still blocks a strict run).
+        self.report("gap", "unknown-keyword",
+                    f"*{kw} at {block.location}: not a documented Abaqus keyword", block)
+        if kw not in self.unsupported_keywords:
+            self.unsupported_keywords.append(kw)
         return None, kw
 
     @staticmethod
@@ -283,6 +305,8 @@ class AbaqusInputReader:
         """Parse all keyword blocks into the internal Model."""
         index = abaqus_index()
         for block in blocks:
+            if self._skipping is not None and self._skip_block(block, index):
+                continue
             spec, kw = self._resolve_keyword(block, index)
             if spec is None:
                 continue
@@ -355,6 +379,13 @@ class AbaqusInputReader:
                     self.report("gap" if isinstance(e, NotImplementedError) else "error",
                                 "unsupported-feature" if isinstance(e, NotImplementedError) else "bad-input",
                                 f"Error processing keyword *{kw} at {block.location}: {e}", block)
+
+        if self._skipping is not None:
+            # the refused scope was never closed: the rest of the deck was skipped
+            sk, self._skipping = self._skipping, None
+            self.report("error", "refused-scope-skipped",
+                        f"*{sk['opener']} at {sk['loc']} was refused and *{sk['closer']} never came; "
+                        f"the remaining {sk['count']} keyword(s) of the deck were not read")
 
         # If non-assembly deck was loaded, bind the default instance
         if not self.has_assembly and self._default_part is not None:

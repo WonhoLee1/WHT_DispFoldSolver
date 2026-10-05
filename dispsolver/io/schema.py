@@ -36,7 +36,7 @@ prefix; '_' / '-' / blanks are equivalent). Then:
     declared, Param(unsupported=)  -> gap  'unsupported-param'   (block skipped)
     declared, Param(control=True)  -> info 'control-param-ignored' (ignored)
     not declared, in the index     -> gap  'unsupported-param'   (block skipped)
-    in neither                     -> error 'unknown-param'     (block skipped)
+    in neither (undocumented)      -> gap  'unknown-param'      (block skipped)
     ambiguous abbreviation         -> error 'ambiguous-param'
     required field missing         -> error 'missing-param'     (block skipped)
     bad value / not a choice       -> error 'bad-value'         (block skipped)
@@ -289,6 +289,11 @@ class Keyword:
     # a gap or an error: refusing it would push every following keyword out of
     # its context. The problem is still reported; the parameter keeps its default.
     refuse_on_gap: ClassVar[bool] = True
+    # A keyword that opens a scope names the keyword that closes it. If the
+    # opener is refused anyway (a missing required parameter, a bad data line),
+    # the reader skips the scope's body up to that keyword with one diagnostic
+    # instead of reading it in the wrong context.
+    closes_with: ClassVar[Optional[str]] = None
 
     def to_records(self, p: Schema, rows: list, ctx: KeywordCtx) -> Iterable[Record]:
         raise NotImplementedError
@@ -319,7 +324,10 @@ def parse_params(kw: str, schema: Type[Schema], params: Dict[str, str], report: 
             ok = False if refuse else ok
             continue
         if abq is None:
-            report("error", "unknown-param", f"*{kw}{at}: {key.upper()} is not an Abaqus parameter of *{kw}",
+            # not in the Keywords Guide; Abaqus accepts some undocumented
+            # parameters (*VISCOELASTIC, FORMULATION= in its own verification
+            # decks), so this is a gap, not proof the deck is wrong
+            report("gap", "unknown-param", f"*{kw}{at}: {key.upper()} is not a documented parameter of *{kw}",
                    param=key.upper())
             ok = False if refuse else ok
             continue
@@ -480,7 +488,17 @@ def run_keyword(cls: Type[Keyword], block, ctx: KeywordCtx, report: Report) -> L
         if any(ln.strip() for ln in block.data_lines):
             raise InputError(f"*{cls.name} at {block.location}: takes no data lines")
         rows = []
-    return list(cls().to_records(p, rows, ctx))
+    out: List[Record] = []
+    try:
+        for rec in cls().to_records(p, rows, ctx):
+            out.append(rec)
+    except Exception:
+        # the block is refused, but what it had already decided to report stands
+        for rec in out:
+            if isinstance(rec, Note):
+                report(rec.level, rec.code, rec.message)
+        raise
+    return out
 
 
 # ── registration ────────────────────────────────────────────────────────────
@@ -537,7 +555,15 @@ def keyword(name: str, *, support: str = "FULL", contexts=None, aliases=(), desc
                     if (cls.name, param, kind) not in reader.unsupported_params:
                         reader.unsupported_params.append((cls.name, param, kind))
 
-            for rec in run_keyword(cls, block, ctx, report):
+            try:
+                records = run_keyword(cls, block, ctx, report)
+            except Exception:
+                if cls.closes_with:
+                    reader.skip_scope(cls.name, cls.closes_with, block)
+                raise
+            if cls.closes_with and not any(not isinstance(r, Note) for r in records):
+                reader.skip_scope(cls.name, cls.closes_with, block)
+            for rec in records:
                 apply_record(reader, rec)
 
         GLOBAL_KEYWORD_REGISTRY.register(cls.name, valid_contexts=ctxs, aliases=list(aliases),
@@ -551,7 +577,8 @@ def keyword(name: str, *, support: str = "FULL", contexts=None, aliases=(), desc
 
 def parse_text(text: str, context: str = "STEP", step: Optional[str] = "Step-1", dim: int = 3):
     """Test helper: PARSE every block of `text` with its schema keyword, no
-    reader. Returns (records, [(level, code, message)])."""
+    reader. Returns (records, [(level, code, message)]); Note records are
+    returned as diagnostics, as the reader would report them."""
     from dispsolver.io.abaqus_lexer import tokenize_string
     diags: List[Tuple[str, str, str]] = []
     recs: List[Record] = []
@@ -560,5 +587,9 @@ def parse_text(text: str, context: str = "STEP", step: Optional[str] = "Step-1",
         if cls is None:
             raise KeyError(f"*{b.keyword} has no schema")
         ctx = KeywordCtx(cls.name, context, step, dim, Loc.of(b))
-        recs += run_keyword(cls, b, ctx, lambda lv, c, m, param=None: diags.append((lv, c, m)))
+        for rec in run_keyword(cls, b, ctx, lambda lv, c, m, param=None: diags.append((lv, c, m))):
+            if isinstance(rec, Note):           # what the Note applier would report
+                diags.append((rec.level, rec.code, rec.message))
+            else:
+                recs.append(rec)
     return recs, diags

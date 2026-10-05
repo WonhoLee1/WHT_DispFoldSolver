@@ -35,6 +35,7 @@ class StepKw(Keyword):
     """Begin an analysis step."""
 
     refuse_on_gap = False                 # see Keyword.refuse_on_gap
+    closes_with = "END STEP"
     Data = Lines()                        # optional subheading line
 
     class Params(Schema):
@@ -56,7 +57,15 @@ class StepKw(Keyword):
 @applies(StepRecord)
 def _apply_step(reader: AbaqusInputReader, rec: StepRecord):
     prev = reader.current_step
-    nlgeom = rec.nlgeom if rec.nlgeom is not None else bool(getattr(prev, "nlgeom", False))
+    was_on = bool(getattr(prev, "nlgeom", False))
+    nlgeom = rec.nlgeom if rec.nlgeom is not None else was_on
+    if was_on and rec.nlgeom is False:
+        # "Once the NLGEOM option has been switched on, it will be active during
+        # all subsequent steps in the analysis." (Keywords Guide, *STEP)
+        nlgeom = True
+        reader.diagnostics.add("warning", "nlgeom-stays-on",
+                               f"*STEP {rec.name or ''}: NLGEOM=NO after a step with NLGEOM=YES; "
+                               f"Abaqus keeps geometric nonlinearity on", rec.loc)
     reader.current_step = reader.model.Step(
         name=rec.name or f"Step-{len(reader.model.steps)}",
         previous=prev.name if prev is not None else None,
@@ -222,9 +231,21 @@ class Boundary(Keyword):
             if named in _NAMED_BC:
                 if r.last is not None or r.value is not None:
                     raise InputError(f"*BOUNDARY {r.region}, {named}: a named type takes no further values")
-                dofs, value = _NAMED_BC[named], 0.0
-                lo, hi = dofs[0], dofs[-1]
-                label = f"DOF{lo}_{hi}" if dofs == tuple(range(lo, hi + 1)) else named
+                # one condition per contiguous dof run (YASYMM -> dofs 1 and 3), so
+                # a later "N, 1, 1, v" replaces the dof-1 condition instead of
+                # sitting next to it with a conflicting value
+                runs, cur = [], [_NAMED_BC[named][0]]
+                for d in _NAMED_BC[named][1:]:
+                    if d == cur[-1] + 1:
+                        cur.append(d)
+                    else:
+                        runs.append(cur)
+                        cur = [d]
+                runs.append(cur)
+                for run in runs:
+                    yield BoundaryRecord(ctx.step, r.region, tuple(run), 0.0, p.amplitude, p.op,
+                                         f"DOF{run[0]}_{run[-1]}", loc=r.loc)
+                continue
             else:
                 try:
                     first = int(r.first)
