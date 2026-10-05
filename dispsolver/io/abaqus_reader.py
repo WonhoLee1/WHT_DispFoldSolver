@@ -21,6 +21,7 @@ from dispsolver.io.keyword_registry import (
     normalize_param_name,
 )
 from dispsolver.io.keyword_base import _AbortParse
+from dispsolver.model.bind import bind_model
 from dispsolver.model.model import Model
 from dispsolver.model.part import Part
 from dispsolver.model.instance import Instance
@@ -140,6 +141,7 @@ class AbaqusInputReader:
         self.unsupported_params: List[Tuple[str, str, str]] = []
         self.unsupported_locations: Dict[str, str] = {}   # keyword -> first file:line
         self.diagnostics = Diagnostics()
+        self.symbols = None                    # SymbolTable, built by bind_model at the end of parse_blocks
 
     def _stamp_locations(self, location: str) -> None:
         """Give every model object created by the keyword just handled the
@@ -384,6 +386,10 @@ class AbaqusInputReader:
         # If non-assembly deck was loaded, bind the default instance
         if not self.has_assembly and self._default_part is not None:
             self.ensure_default_instance()
+
+        # BIND: every name the deck refers to must resolve (forward references are legal, so
+        # this runs once, after the last block). An internal failure here is a bug: not swallowed.
+        self.symbols = bind_model(self.model, self.diagnostics)
 
         return self.model
 

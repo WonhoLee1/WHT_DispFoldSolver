@@ -752,6 +752,8 @@ class Model:
             gamma=float(kwargs.get("gamma", kwargs.get("penalty_stiffness", 1.0e8))),
             skin=float(kwargs.get("skin", 0.05)),
         )
+        # the unresolved reference as written: the BIND pass (model/bind.py) checks it
+        gc.interaction_property_ref = interactionProperty if isinstance(interactionProperty, str) else None
         self.interactions[str(name)] = gc
         step = self.steps.get(str(createStepName), self.initial_step)
         step.add_interaction(gc)
@@ -783,6 +785,8 @@ class Model:
             constraint_enforcement=str(kwargs.get("constraint_enforcement", kwargs.get("constraintEnforcement", "PENALTY"))).upper(),
             adjust=bool(kwargs.get("adjust", True))
         )
+        # the unresolved reference as written: the BIND pass (model/bind.py) checks it
+        cp.interaction_property_ref = interactionProperty if isinstance(interactionProperty, str) else None
         self.interactions[str(name)] = cp
         step = self.steps.get(str(createStepName), self.initial_step)
         step.add_interaction(cp)
