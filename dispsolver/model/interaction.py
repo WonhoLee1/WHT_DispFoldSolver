@@ -65,6 +65,7 @@ from dataclasses import dataclass, field
 from typing import Optional, Union, Any, Sequence, Dict, List, Tuple, Set
 import warnings
 import numpy as np
+from dispsolver.model.contact_catalog import resolve_contact
 
 
 # ===========================================================================
@@ -1173,7 +1174,6 @@ class ContactPair:
         if len(slave_node_ids) == 0:
             raise ValueError(f"ContactPair '{self.name}': slave region resolved to zero nodes.")
 
-        from dispsolver.constraint3d.surface_contact3d import SurfaceContactConstraint3D
         from dispsolver.constraint3d.contact_stiffness import (
             representative_element_stiffness,
             representative_element_length,
@@ -1316,12 +1316,13 @@ class ContactPair:
                     import warnings as _w
                     _w.warn(f"ContactPair '{self.name}': the 2D contact classes always track the contact point "
                             f"in the current configuration (finite sliding); SMALL SLIDING is not distinguished")
-                if self.constraint_enforcement in ("DUAL_MORTAR", "STANDARD_MORTAR", "NITSCHE"):
+                spec2 = resolve_contact(2, self.constraint_enforcement, sliding_upper,
+                                        bool(kwargs.get("nlgeom", True)))
+                if spec2.family == "mortar2d":
                     m_type = "STANDARD" if self.constraint_enforcement == "STANDARD_MORTAR" else "DUAL"
                     form = "nitsche" if self.constraint_enforcement == "NITSCHE" else "dual_mortar"
                     slave_faces = _resolve_master_faces(self.slave, mesh, model=model, sys=sys_obj)
-                    from dispsolver.constraint.dual_mortar_contact import DualMortarContactConstraint2D
-                    return DualMortarContactConstraint2D(
+                    return spec2.load()(
                         slave_segments=slave_faces,
                         master_segments=master_faces,
                         nid_to_idx=nid_to_idx,
@@ -1332,8 +1333,7 @@ class ContactPair:
                         name=self.name,
                     )
                 else:
-                    from dispsolver.constraint.surface_contact2d_deformable import DeformableSurfaceContactConstraint2D
-                    return DeformableSurfaceContactConstraint2D(
+                    return spec2.load()(
                         slave_node_ids=slave_node_ids,
                         master_segments=master_faces,
                         nid_to_idx=nid_to_idx,
@@ -1349,11 +1349,12 @@ class ContactPair:
                         name=self.name,
                     )
 
+            spec3 = resolve_contact(3, self.constraint_enforcement, sliding_upper,
+                                    bool(kwargs.get("nlgeom", True)))
             # S2S Nitsche Dispatch
-            if self.constraint_enforcement == "NITSCHE":
+            if spec3.family == "nitsche3d":
                 slave_faces = _resolve_master_faces(self.slave, mesh, model=model, sys=sys_obj)
-                from dispsolver.constraint3d.nitsche_contact3d import NitscheContactConstraint3D
-                return NitscheContactConstraint3D(
+                return spec3.load()(
                     slave_faces=slave_faces,
                     master_faces=master_faces,
                     nid_to_idx=nid_to_idx,
@@ -1367,13 +1368,12 @@ class ContactPair:
                 )
 
             # S2S Mortar Dispatch (DUAL_MORTAR or STANDARD_MORTAR)
-            if self.constraint_enforcement in ("DUAL_MORTAR", "STANDARD_MORTAR"):
+            if spec3.family in ("mortar3d_finite", "mortar3d_small"):
                 m_type = "STANDARD" if self.constraint_enforcement == "STANDARD_MORTAR" else "DUAL"
                 slave_faces = _resolve_master_faces(self.slave, mesh, model=model, sys=sys_obj)
 
-                if sliding_upper == "FINITE":
-                    from dispsolver.constraint3d.finite_sliding_mortar3d import FiniteSlidingDualMortar3D
-                    return FiniteSlidingDualMortar3D(
+                if spec3.family == "mortar3d_finite":
+                    return spec3.load()(
                         slave_faces=slave_faces,
                         master_faces=master_faces,
                         nid_to_idx=nid_to_idx,
@@ -1384,8 +1384,7 @@ class ContactPair:
                         master_interior=_master_face_interior_points(master_faces, mesh),
                     )
                 else:
-                    from dispsolver.constraint3d.dual_mortar_clipping3d import DualMortarClippedContactConstraint3D
-                    return DualMortarClippedContactConstraint3D(
+                    return spec3.load()(
                         slave_faces=slave_faces,
                         master_faces=master_faces,
                         nid_to_idx=nid_to_idx,
@@ -1395,8 +1394,7 @@ class ContactPair:
                         name=self.name,
                     )
 
-            from dispsolver.constraint3d.surface_contact3d_deformable import DeformableSurfaceContactConstraint3D
-            return DeformableSurfaceContactConstraint3D(
+            return spec3.load()(
                 slave_node_ids=slave_node_ids,
                 master_faces=master_faces,
                 nid_to_idx=nid_to_idx,
@@ -1419,8 +1417,9 @@ class ContactPair:
         elif hasattr(mesh, "dim") and mesh.dim == 2:
             is_2d = True
 
+        spec_r = resolve_contact(2 if is_2d else 3, self.constraint_enforcement, sliding_upper,
+                                 bool(kwargs.get("nlgeom", True)), master="rigid")
         if is_2d:
-            from dispsolver.constraint.surface_contact2d import SurfaceContactConstraint2D
             m_pt = np.asarray(self.master.point, dtype=np.float64)[:2] if hasattr(self.master, "point") else np.zeros(2)
             m_n = self.master.unit_normal()[:2] if hasattr(self.master, "unit_normal") else np.array([0.0, 1.0])
             ref_n = getattr(self.master, "reference_node", None)
@@ -1435,7 +1434,7 @@ class ContactPair:
                 elif sys_obj is not None and hasattr(sys_obj, "global_nsets") and str(ref_n) in sys_obj.global_nsets:
                     ref_idx = int(sys_obj.global_nsets[str(ref_n)][0])
 
-            return SurfaceContactConstraint2D(
+            return spec_r.load()(
                 slave_node_ids=slave_node_ids,
                 rigid_line_point=m_pt,
                 rigid_line_normal=m_n,
@@ -1454,7 +1453,7 @@ class ContactPair:
                 name=self.name,
             )
 
-        return SurfaceContactConstraint3D(
+        return spec_r.load()(
             slave_node_ids=slave_node_ids,
             rigid_plane_point=np.asarray(self.master.point, dtype=np.float64),
             rigid_plane_normal=self.master.unit_normal(),
@@ -1603,7 +1602,6 @@ class GeneralContact:
         3. Enforcement mapping to Nitsche, Dual-Mortar, Penalty, or Augmented Lagrange.
         4. Application of harmonic modulus scaling E_eff = 2*E1*E2/(E1+E2).
         """
-        from dispsolver.contact.general_contact3d import GeneralContact3D
         from dispsolver.constraint3d.pressure_overclosure import (
             HardLaw, LinearSoftLaw, ExponentialSoftLaw, TabularSoftLaw, AdaptivePowerSoftLaw
         )
@@ -1620,15 +1618,16 @@ class GeneralContact:
 
         # Early fast dispatch for explicit included_pairs (Mortar surface-to-surface)
         if self.contact_enforcement in ("DUAL_MORTAR", "STANDARD_MORTAR") and self.included_pairs is not None:
-            from dispsolver.constraint3d.dual_mortar_clipping3d import DualMortarClippedContactConstraint3D
             m_type = "STANDARD" if self.contact_enforcement == "STANDARD_MORTAR" else "DUAL"
+            mortar_cls = resolve_contact(3, self.contact_enforcement, "SMALL", scope="general",
+                                         explicit_pairs=True).load()
             for p_pair in self.included_pairs:
                 if len(p_pair) == 2:
                     reg_s, reg_m = p_pair
                     s_faces = _resolve_master_faces(reg_s, mesh, model=model, sys=sys_obj)
                     m_faces = _resolve_master_faces(reg_m, mesh, model=model, sys=sys_obj)
                     if s_faces and m_faces:
-                        return DualMortarClippedContactConstraint3D(
+                        return mortar_cls(
                             slave_faces=s_faces,
                             master_faces=m_faces,
                             nid_to_idx=nid_to_idx,
@@ -1757,15 +1756,16 @@ class GeneralContact:
         # 4. Routing based on Contact Enforcement
         if self.contact_enforcement in ("DUAL_MORTAR", "STANDARD_MORTAR") and self.included_pairs is not None:
             # If explicit pairs of surfaces are provided, wire directly to DualMortarClippedContactConstraint3D
-            from dispsolver.constraint3d.dual_mortar_clipping3d import DualMortarClippedContactConstraint3D
             m_type = "STANDARD" if self.contact_enforcement == "STANDARD_MORTAR" else "DUAL"
+            mortar_cls = resolve_contact(3, self.contact_enforcement, "SMALL", scope="general",
+                                         explicit_pairs=True).load()
             for p_pair in self.included_pairs:
                 if len(p_pair) == 2:
                     reg_s, reg_m = p_pair
                     s_faces = _resolve_master_faces(reg_s, mesh, model=model, sys=sys_obj)
                     m_faces = _resolve_master_faces(reg_m, mesh, model=model, sys=sys_obj)
                     if s_faces and m_faces:
-                        return DualMortarClippedContactConstraint3D(
+                        return mortar_cls(
                             slave_faces=s_faces,
                             master_faces=m_faces,
                             nid_to_idx=nid_to_idx,
@@ -1776,7 +1776,8 @@ class GeneralContact:
                         )
 
         # Default GeneralContact3D with full Nitsche / Pure SPD / Harmonic Scaling
-        return GeneralContact3D(
+        gc_cls = resolve_contact(3, self.contact_enforcement, "SMALL", scope="general", explicit_pairs=False).load()
+        return gc_cls(
             faces=faces,
             coords=coords,
             nid_to_idx=nid_to_idx,
