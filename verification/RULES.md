@@ -3,7 +3,10 @@
 ## Mandatory Post-Change Verification
 
 **After ANY change to the following code, you MUST run the verification suite
-and ensure all benchmarks PASS before committing:**
+(`--changed` selects the affected benchmarks) and ensure they PASS before
+committing. Every benchmark builds a legacy 2D mesh and so runs the legacy JAX
+solver; the modern solver2d / solver3d / model / io stack is verified by pytest
+(see AGENTS.md section 3), not here:**
 
 - `dispsolver/solver/` — DynamicSolver, assembly, linear solver, time integration
 - `dispsolver/element/` — Q4, Q4_EAS, Q4_UP, Q4_jax, T3, any element kernel
@@ -14,7 +17,12 @@ and ensure all benchmarks PASS before committing:**
 ## How to Run
 
 ```bash
-# Full suite (all 12 benchmarks, all backends)
+# Before a commit: only the benchmarks the change can affect (diff against
+# HEAD plus untracked files; `--changed REF` for another base). Runs nothing
+# when no changed file is on the legacy 2D path this suite exercises.
+python -m verification.run_all --changed
+
+# Full suite (all benchmarks, all backends) -- before a merge to master
 python -m verification.run_all
 
 # Run with speed benchmarks (opt-in, informational only)

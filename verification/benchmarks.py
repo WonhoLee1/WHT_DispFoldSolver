@@ -28,7 +28,7 @@ Benchmark list
 from __future__ import annotations
 
 import numpy as np
-from typing import Dict, Any, List, Callable
+from typing import Dict, Any, List, Callable, Optional
 
 from .mesh_utils import (
     build_block_mesh, build_beam_mesh,
@@ -895,10 +895,12 @@ from .convergence import ALL_CONVERGENCE_BENCHMARKS
 ALL_BENCHMARKS += ALL_CONVERGENCE_BENCHMARKS
 
 
-def run_all_benchmarks(verbose: bool = True) -> List[dict]:
-    """Run all benchmarks and return a list of results."""
+def run_all_benchmarks(verbose: bool = True, names: Optional[List[str]] = None) -> List[dict]:
+    """Run all benchmarks (or only those named in `names`) and return a list of results."""
     results = []
     for bm in ALL_BENCHMARKS:
+        if names is not None and bm['name'] not in names:
+            continue
         if verbose:
             print(f"\n{'='*70}")
             print(f"  Running: {bm['name']}")

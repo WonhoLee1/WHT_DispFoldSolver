@@ -40,6 +40,59 @@ from .benchmarks import ALL_BENCHMARKS, run_benchmark, run_all_benchmarks
 RESULTS_DIR = os.path.join(os.path.dirname(__file__), "results")
 
 
+# ── which benchmarks a change can affect ────────────────────────────────────
+#
+# Every benchmark here builds a LEGACY 2D mesh (dispsolver.mesh.mesh.Mesh), so
+# dispsolver.solver.DynamicSolver routes it to the legacy JAX solver
+# (solver/dynamic.py). The modern stack -- solver2d/, solver3d/, element2d/,
+# element3d/, model/, io/, loads/, material/catalog.py -- is never executed by
+# this suite; it is verified by pytest (AGENTS.md section 3). Path prefixes,
+# repo-relative, '/' separators.
+_LEGACY_CORE = (
+    "dispsolver/solver/", "dispsolver/element/", "dispsolver/material/",
+    "dispsolver/mesh/", "dispsolver/constraint/", "verification/",
+)
+_DEPS: Dict[str, tuple] = {
+    # element-level: element kernels + materials + the JAX element backend only
+    "patch_test_element": ("dispsolver/element/", "dispsolver/material/",
+                           "dispsolver/solver/dynamic_jax.py", "verification/"),
+    "single_layer_teardrop": _LEGACY_CORE + ("dispsolver/fold_model_config.py",),
+}
+# Files under the prefixes above that the legacy stack does not use: a change
+# to them alone does not select any benchmark.
+_NOT_USED = (
+    "dispsolver/material/catalog.py",      # numba material ids (solver2d / solver3d)
+    "dispsolver/material/resolve.py",
+    "dispsolver/solver/traction.py",       # 2D SurfaceTraction (solver2d)
+    "verification/results/",               # outputs of this suite
+    "verification/abaqus_benchmarks/",     # separate scripts, not run here
+)
+
+
+def changed_files(ref: str) -> List[str]:
+    """Repo-relative paths changed against `ref` (committed, staged, unstaged)
+    plus untracked files."""
+    import subprocess
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    def git(*a):
+        out = subprocess.run(["git", *a], cwd=root, capture_output=True, text=True, check=True).stdout
+        return [ln.strip().replace("\\", "/") for ln in out.splitlines() if ln.strip()]
+
+    return sorted(set(git("diff", "--name-only", ref) + git("ls-files", "--others", "--exclude-standard")))
+
+
+def select_benchmarks(files: List[str]) -> List[str]:
+    """Names of the benchmarks whose code paths intersect `files`."""
+    relevant = [f for f in files if not f.startswith(_NOT_USED)]
+    picked = []
+    for bm in ALL_BENCHMARKS:
+        deps = _DEPS.get(bm["name"], _LEGACY_CORE)
+        if any(f.startswith(deps) for f in relevant):
+            picked.append(bm["name"])
+    return picked
+
+
 def _warmup_jax():
     """Pre-compile JAX kernels to avoid measuring JIT compilation time."""
     print("Warming up JAX JIT compilation...", flush=True)
@@ -317,14 +370,30 @@ def main():
                         help="Suppress per-benchmark progress output")
     parser.add_argument('--include-speed', action='store_true',
                         help="Also run speed benchmarks (opt-in, informational only)")
+    parser.add_argument('--changed', nargs='?', const='HEAD', default=None, metavar='REF',
+                        help="Run only the benchmarks whose code paths a change touches "
+                             "(files changed against REF, default HEAD, plus untracked files)")
     args = parser.parse_args()
+
+    selected = None
+    if args.changed is not None:
+        files = changed_files(args.changed)
+        selected = select_benchmarks(files)
+        if not selected:
+            print(f"verification.run_all --changed {args.changed}: none of the {len(files)} changed "
+                  f"file(s) is on the legacy 2D path this suite exercises -- nothing to run.")
+            return
+        print(f"verification.run_all --changed {args.changed}: {len(selected)}/{len(ALL_BENCHMARKS)} "
+              f"benchmark(s) selected: {', '.join(selected)}")
 
     if not args.no_jit_warmup:
         _warmup_jax()
 
     t0 = time.time()
 
-    if args.benchmark:
+    if selected is not None:
+        results = run_all_benchmarks(verbose=not args.quiet, names=selected)
+    elif args.benchmark:
         print(f"\nRunning single benchmark: {args.benchmark}")
         result = run_benchmark(args.benchmark)
         results = [result]

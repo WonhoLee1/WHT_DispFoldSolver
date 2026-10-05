@@ -346,13 +346,20 @@ pytest tests/test_3d_c3d8r.py tests/test_3d_c3d4_anp.py tests/test_3d_c3d10m.py 
   were. When you change solver code, A/B the failing set with
   `git stash` rather than assuming a failure is pre-existing.
 
-- **Mandatory**: `verification/RULES.md` requires running
-  `python -m verification.run_all` (9 benchmarks, ~75s) after **any**
-  change to `dispsolver/solver/`, `/element/`, `/material/`,
-  `/constraint/`, or `/mesh/`. This is easy to forget — it was missed
-  for most of the 2026-07-26 session and only caught late (result was
-  9/9 PASS, no harm done). Run it before committing solver-side changes,
-  not after.
+- **Mandatory, scoped to what the change touches**: run
+  `python -m verification.run_all --changed` before committing. It diffs
+  the working tree against HEAD (`--changed REF` for another base) and runs
+  only the benchmarks whose code paths the changed files are on; it runs
+  nothing when none are. The suite (14 benchmarks, ~2 min in full) builds
+  only LEGACY 2D meshes, so it exercises only the legacy JAX stack:
+  `dispsolver/solver/` (`dynamic.py`), `/element/`, `/material/`,
+  `/mesh/`, `/constraint/`, plus `fold_model_config.py` for the teardrop
+  benchmark. It never runs `solver2d/`, `solver3d/`, `element2d/`,
+  `element3d/`, `model/`, `io/`, `loads/` or `material/catalog.py` -- those
+  are verified by pytest: the element contract suite, `tests/test_step_plan.py`,
+  `tests/test_material_wiring.py`, `tests/test_contact_catalog.py`, deck06 /
+  Hertz / reader tests and the corpus (`tests/inp_corpus`). Run the full
+  suite (no flag) before a merge to master.
 
 ### 3.0.0 Result persistence — re-analyze a finished run without re-solving
 
