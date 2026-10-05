@@ -53,27 +53,19 @@ def test_param_spec_aliases_and_normalization():
     assert normalize_param_name("REF_NODE") == "REF NODE"
     assert normalize_param_name("  ref   node  ") == "REF   NODE" or normalize_param_name(" ref_node ") == "REF NODE"
 
-    # *SOLID SECTION: MAT alias for MATERIAL, ORIENT for ORIENTATION
-    sec_spec = GLOBAL_KEYWORD_REGISTRY.get_handler("SOLID SECTION")
-    assert sec_spec is not None
-    assert "MATERIAL" in sec_spec.params
-    assert "MAT" in sec_spec.params
-    assert sec_spec.params["MAT"] == sec_spec.params["MATERIAL"]
-    assert "ORIENTATION" in sec_spec.params
-    assert "ORIENT" in sec_spec.params
-    assert "ORI" in sec_spec.params
-
-    # *NSET: GEN alias for GENERATE
-    nset_spec = GLOBAL_KEYWORD_REGISTRY.get_handler("NSET")
-    assert nset_spec is not None
-    assert "GENERATE" in nset_spec.params
-    assert "GEN" in nset_spec.params
-
-    # *CLOAD: AMP alias for AMPLITUDE
-    cload_spec = GLOBAL_KEYWORD_REGISTRY.get_handler("CLOAD")
-    assert cload_spec is not None
-    assert "AMPLITUDE" in cload_spec.params
-    assert "AMP" in cload_spec.params
+    # Abbreviations (MAT, ORI, GEN, AMP) are resolved by Abaqus's rule -- any
+    # unambiguous prefix -- against the keyword index (dispsolver/io/
+    # keyword_index.py), no longer by per-keyword alias entries.
+    from dispsolver.io.keyword_index import abaqus_index
+    ix = abaqus_index()
+    for kw, full, abbreviations in (("SOLID SECTION", "MATERIAL", ("MAT",)),
+                                    ("SOLID SECTION", "ORIENTATION", ("ORIENT", "ORI")),
+                                    ("NSET", "GENERATE", ("GEN",)),
+                                    ("CLOAD", "AMPLITUDE", ("AMP",))):
+        spec = GLOBAL_KEYWORD_REGISTRY.get_handler(kw)
+        assert spec is not None and full in spec.params
+        for ab in abbreviations:
+            assert ix.get(kw).resolve_param(ab) == full, (kw, ab)
 
 
 def test_blank_column_preservation_in_parse_data_rows():

@@ -12,7 +12,7 @@ from dispsolver.io.keyword_registry import (
     RowSpec,
 )
 from dispsolver.io.keyword_base import _parse_data_rows
-from dispsolver.io.schema import InputError, Keyword, Param, Record, RowSchema, Schema, applies, keyword
+from dispsolver.io.schema import InputError, Keyword, Lines, Param, Record, RowSchema, Schema, applies, keyword
 from dispsolver.model.step import PredefinedField
 
 if TYPE_CHECKING:
@@ -20,40 +20,51 @@ if TYPE_CHECKING:
 
 # ─── STEPS, BCS & LOADS ──────────────────────────────────────────────────────
 
-@GLOBAL_KEYWORD_REGISTRY.register(
-    "STEP",
-    valid_contexts={KeywordContext.GLOBAL},
-    support="FULL",
-    params={
-        "NAME": ParamSpec("NAME"),
-        "NLGEOM": ParamSpec("NLGEOM", default="NO", choices=["YES", "NO"]),
-        "INC": ParamSpec("INC", type=int, default=100),
-        "AMPLITUDE": ParamSpec("AMPLITUDE", default="STEP", choices=["STEP", "RAMP"], aliases=["AMP"]),
-        "PERTURBATION": ParamSpec("PERTURBATION", supported=False, aliases=["PERT"]),
-        "UNSYMM": ParamSpec("UNSYMM", supported=False, control=True, aliases=["UNSYM"]),
-        "SOLVER": ParamSpec("SOLVER", supported=False),
-    },
-    description="Begin an analysis step",
-)
-def _handle_step(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
-    step_name = block.params.get("name", f"Step-{len(reader.model.steps)}")
-    prev_nlgeom = getattr(reader.current_step, "nlgeom", False) if reader.current_step is not None else False
-    if "nlgeom" in block.params:
-        nlgeom = block.params["nlgeom"].lower() in ("yes", "true", "1")
-    else:
-        nlgeom = prev_nlgeom  # Abaqus standard: default NO, or inherit YES once engaged
-    time_period = float(block.params.get("time period", block.params.get("time_period", 1.0)))
+# ── *STEP / *STATIC / *DYNAMIC / *END STEP ─────────────────────────────────
 
-    # Previous step
-    prev_step = reader.current_step.name if reader.current_step is not None else None
+@dataclass(frozen=True)
+class StepRecord(Record):
+    name: Optional[str]
+    subheading: Optional[str]
+    nlgeom: Optional[bool]                # None: inherit (Abaqus: once YES, stays YES)
+    amplitude: Optional[str]              # requested default load variation (STEP / RAMP)
+
+
+@keyword("STEP", support="FULL")
+class StepKw(Keyword):
+    """Begin an analysis step."""
+
+    refuse_on_gap = False                 # see Keyword.refuse_on_gap
+    Data = Lines()                        # optional subheading line
+
+    class Params(Schema):
+        name: Optional[str] = None
+        nlgeom: Optional[bool] = None
+        amplitude: Optional[Literal["STEP", "RAMP"]] = None
+        # solution technique only: the increment cap, the unsymmetric matrix
+        # switch, the initial-guess extrapolation and the SDI conversion
+        inc: int = Param(100, control=True)
+        unsymm: Optional[bool] = Param(None, control=True)
+        extrapolation: Optional[Literal["LINEAR", "PARABOLIC", "VELOCITY PARABOLIC", "NO"]] = Param(
+            None, control=True)
+        convert_sdi: Optional[bool] = Param(None, control=True)
+
+    def to_records(self, p, rows, ctx):
+        yield StepRecord(p.name, rows[0] if rows else None, p.nlgeom, p.amplitude, loc=ctx.loc)
+
+
+@applies(StepRecord)
+def _apply_step(reader: AbaqusInputReader, rec: StepRecord):
+    prev = reader.current_step
+    nlgeom = rec.nlgeom if rec.nlgeom is not None else bool(getattr(prev, "nlgeom", False))
     reader.current_step = reader.model.Step(
-        name=step_name,
-        previous=prev_step,
+        name=rec.name or f"Step-{len(reader.model.steps)}",
+        previous=prev.name if prev is not None else None,
         procedure="STATIC",
-        time_period=time_period,
-        nlgeom=nlgeom
-    )
-    reader.current_step._amplitude_param = block.params.get("amplitude", block.params.get("amp", None))
+        time_period=1.0,                  # set by the procedure's data line
+        nlgeom=nlgeom)
+    reader.current_step._amplitude_param = rec.amplitude
+    reader.current_step.subheading = rec.subheading
     reader.context = KeywordContext.STEP
     reader.current_interaction = None
 
@@ -68,78 +79,85 @@ def _check_step_amplitude(reader: AbaqusInputReader, procedure: str, applied: st
         reader.unsupported_param("STEP", f"AMPLITUDE={want} (with *{procedure})", "unsupported")
 
 
-@GLOBAL_KEYWORD_REGISTRY.register(
-    "STATIC",
-    valid_contexts={KeywordContext.STEP},
-    support="FULL",
-    params={
-        "DIRECT": ParamSpec("DIRECT", type=bool, default=False, supported=False, control=True),
-        "ADIABATIC": ParamSpec("ADIABATIC", supported=False),
-        "RIKS": ParamSpec("RIKS", supported=False),
-        "STABILIZE": ParamSpec("STABILIZE", supported=False),
-        "LONG TERM": ParamSpec("LONG TERM", supported=False, aliases=["LONG_TERM"]),
-    },
-    rows=RowSpec(column_types=[float, float, float, float], min_columns=1, max_columns=4, repeating=False),
-    description="Static stress/displacement analysis procedure",
-)
-def _handle_static(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
-    if reader.current_step is not None:
-        reader.current_step.procedure = "STATIC"
-        _check_step_amplitude(reader, "STATIC", "RAMP")
-        if block.data_lines:
-            rows = _parse_data_rows(block.data_lines, dtype=float)
-            if rows and len(rows[0]) >= 1:
-                r = rows[0]
-                if r[0] is not None and r[0] != "":
-                    reader.current_step.dt_init = float(r[0])
-                if len(r) >= 2 and r[1] is not None and r[1] != "":
-                    reader.current_step.time_period = float(r[1])
-                if len(r) >= 3 and r[2] is not None and r[2] != "":
-                    reader.current_step.dt_min = float(r[2])
-                if len(r) >= 4 and r[3] is not None and r[3] != "":
-                    reader.current_step.dt_max = float(r[3])
+@dataclass(frozen=True)
+class ProcedureRecord(Record):
+    step: str
+    procedure: str                        # STATIC / DYNAMIC
+    dt_init: Optional[float]
+    time_period: Optional[float]
+    dt_min: Optional[float]
+    dt_max: Optional[float]
 
 
-@GLOBAL_KEYWORD_REGISTRY.register(
-    "DYNAMIC",
-    valid_contexts={KeywordContext.STEP},
-    support="FULL",
-    params={
-        "DIRECT": ParamSpec("DIRECT", supported=False, control=True),
-        "ALPHA": ParamSpec("ALPHA", supported=False),
-        "HAFT": ParamSpec("HAFT", supported=False, control=True, aliases=["HAFTOL"]),
-        "APPLICATION": ParamSpec("APPLICATION", supported=False),
-        "EXPLICIT": ParamSpec("EXPLICIT", supported=False),
-        "ELEMENT BY ELEMENT": ParamSpec("ELEMENT BY ELEMENT", supported=False),
-        "NOHAF": ParamSpec("NOHAF", supported=False),
-        "IMPROVED DT METHOD": ParamSpec("IMPROVED DT METHOD", supported=False),
-    },
-    rows=RowSpec(column_types=[float, float], min_columns=1, max_columns=2, repeating=False),
-    description="Implicit/explicit dynamic analysis procedure",
-)
-def _handle_dynamic(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
-    if reader.current_step is not None:
-        reader.current_step.procedure = "DYNAMIC"
-        _check_step_amplitude(reader, "DYNAMIC", "STEP")
-        if block.data_lines:
-            rows = _parse_data_rows(block.data_lines, dtype=float)
-            if rows and len(rows[0]) >= 1:
-                r = rows[0]
-                if r[0] is not None and r[0] != "":
-                    reader.current_step.dt_init = float(r[0])
-                if len(r) >= 2 and r[1] is not None and r[1] != "":
-                    reader.current_step.time_period = float(r[1])
+class _IncrementRow(RowSchema):
+    dt_init: Optional[float] = None
+    time_period: Optional[float] = None
+    dt_min: Optional[float] = None
+    dt_max: Optional[float] = None
 
 
-@GLOBAL_KEYWORD_REGISTRY.register(
-    "END STEP",
-    valid_contexts={KeywordContext.STEP},
-    aliases=["ENDSTEP"],
-    support="FULL",
-    params={},
-    description="End step definition",
-)
-def _handle_end_step(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
+def _procedure(proc: str, rows, ctx):
+    if len(rows) > 1:
+        raise InputError(f"*{proc} at {ctx.loc}: one data line expected, got {len(rows)}")
+    r = rows[0] if rows else _IncrementRow()
+    yield ProcedureRecord(ctx.step, proc, r.dt_init, r.time_period, r.dt_min, r.dt_max, loc=ctx.loc)
+
+
+@keyword("STATIC", support="FULL")
+class Static(Keyword):
+    """Static stress/displacement procedure."""
+
+    class Params(Schema):
+        direct: bool = Param(False, control=True)   # fixed increments: a solution technique
+
+    Row = _IncrementRow
+
+    def to_records(self, p, rows, ctx):
+        return _procedure("STATIC", rows, ctx)
+
+
+@keyword("DYNAMIC", support="FULL")
+class Dynamic(Keyword):
+    """Implicit dynamic procedure (Abaqus/Standard)."""
+
+    class Params(Schema):
+        direct: bool = Param(False, control=True)
+        haftol: Optional[float] = Param(None, control=True)
+
+    Row = _IncrementRow
+
+    def to_records(self, p, rows, ctx):
+        return _procedure("DYNAMIC", rows, ctx)
+
+
+@applies(ProcedureRecord)
+def _apply_procedure(reader: AbaqusInputReader, rec: ProcedureRecord):
+    step = reader.model.steps[rec.step]
+    step.procedure = rec.procedure
+    _check_step_amplitude(reader, rec.procedure, "RAMP" if rec.procedure == "STATIC" else "STEP")
+    for attr in ("dt_init", "time_period", "dt_min", "dt_max"):
+        v = getattr(rec, attr)
+        if v is not None:
+            setattr(step, attr, float(v))
+
+
+@dataclass(frozen=True)
+class EndStepRecord(Record):
+    pass
+
+
+@keyword("END STEP", support="FULL", contexts={KeywordContext.STEP})
+class EndStep(Keyword):
+    """End of the step definition."""
+
+    refuse_on_gap = False
+
+    def to_records(self, p, rows, ctx):
+        yield EndStepRecord(loc=ctx.loc)
+
+
+@applies(EndStepRecord)
+def _apply_end_step(reader: AbaqusInputReader, rec: EndStepRecord):
     reader.context = KeywordContext.GLOBAL
 
 
@@ -246,55 +264,6 @@ def _apply_boundary(reader: AbaqusInputReader, rec: BoundaryRecord):
         reader.diagnostics.add("info", "rotation-dofs-ignored",
                                f"*BOUNDARY {bc_name}: rotational DOFs stored but continuum nodes have no "
                                f"rotation target in the solver; translational part applied", rec.loc)
-
-
-@GLOBAL_KEYWORD_REGISTRY.register(
-    "CLOAD",
-    valid_contexts={KeywordContext.STEP},
-    support="FULL",
-    params={
-        "OP": ParamSpec("OP", default="MOD", choices=["MOD", "NEW"]),
-        "AMPLITUDE": ParamSpec("AMPLITUDE", aliases=["AMP"]),
-        "FOLLOWER": ParamSpec("FOLLOWER", supported=False),
-        "LOAD CASE": ParamSpec("LOAD CASE", supported=False),
-    },
-    rows=RowSpec(column_types=[str, int, float], min_columns=3, max_columns=3),
-    description="Concentrated force applied at nodes",
-)
-def _handle_cload(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
-    if reader.current_step is None:
-        return
-    amp = block.params.get("amplitude", None)
-    op = block.params.get("op", "MOD").upper()
-    if op == "NEW":
-        for load_name in list(reader.current_step.loads.keys()):
-            reader.current_step.deactivate_load(load_name)
-    rows = _parse_data_rows(block.data_lines, dtype=str)
-    for r in rows:
-        if len(r) < 3:
-            raise ValueError(f"*CLOAD line {r!r}: expected 'region, dof, magnitude'")
-        if len(r) >= 3:
-            region = str(r[0])
-            dof = int(r[1])
-            mag = float(r[2])
-            if dof not in (1, 2, 3):
-                # moments etc. used to be accepted and then dropped
-                raise NotImplementedError(f"*CLOAD {region}: degree of freedom {dof} is not implemented "
-                                          f"(continuum nodes carry dofs 1-3)")
-            load_name = f"CLOAD_{region}_DOF{dof}"
-            cf_kwargs = {}
-            if dof == 1:
-                cf_kwargs["cf1"] = mag
-            elif dof == 2:
-                cf_kwargs["cf2"] = mag
-            elif dof == 3:
-                cf_kwargs["cf3"] = mag
-            reader.model.ConcentratedForce(name=load_name, createStepName=reader.current_step.name, region=region, amplitude=amp, **cf_kwargs)
-            reader.current_step.loads[load_name].modified_params["op"] = op
-            if region in reader.current_step.step_nsets:
-                msg = (f"*CLOAD {load_name}: step-overlay region; solver load path "
-                       f"resolves global sets only (P2)")
-                reader.report("info", "step-overlay-region", msg, block)
 
 
 @GLOBAL_KEYWORD_REGISTRY.register(

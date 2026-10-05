@@ -1,10 +1,14 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
+import re
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union
 import numpy as np
 
 from dispsolver.io.abaqus_lexer import AbaqusKeywordBlock
 from dispsolver.io.keyword_base import _parse_data_rows
+from dispsolver.io.schema import (InputError, Keyword, Note, Param, Record, RowSchema, Schema, Unsupported,
+                                  applies, keyword)
 from dispsolver.io.keyword_registry import (
     GLOBAL_KEYWORD_REGISTRY,
     KeywordContext,
@@ -114,26 +118,106 @@ def _handle_element(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
         part.create_set(elset_name, elements=added_eids)
 
 
-@GLOBAL_KEYWORD_REGISTRY.register(
-    "NSET",
-    valid_contexts={KeywordContext.PART, KeywordContext.GLOBAL, KeywordContext.ASSEMBLY, KeywordContext.INSTANCE, KeywordContext.STEP},
-    support="FULL",
-    params={
-        "NSET": ParamSpec("NSET", required=True),
-        "GENERATE": ParamSpec("GENERATE", type=bool, default=False, aliases=["GEN"]),
-        "INSTANCE": ParamSpec("INSTANCE"),
-        "ELSET": ParamSpec("ELSET"),
-        "INTERNAL": ParamSpec("INTERNAL", type=bool, default=False),
-        "UNSORTED": ParamSpec("UNSORTED", type=bool, default=False),
-    },
-    rows=RowSpec(column_types=[int], min_columns=1),
-    description="Define a set of nodes",
-)
-def _handle_nset(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
-    name = block.params.get("nset", "")
-    if not name:
-        return
-    _store_set(reader, "node", name, _set_members(reader, block, "node", name))
+# ── *NSET / *ELSET (schema; member resolution stays here until the BIND pass) ──
+
+@dataclass(frozen=True)
+class SetRecord(Record):
+    kind: str                                   # node / element
+    name: str
+    instance: Optional[str]                     # INSTANCE= (assembly level only)
+    tokens: Tuple[str, ...] = ()                # labels and set names, as written
+    ranges: Tuple[Tuple[int, int, int], ...] = ()   # GENERATE: (first, last, increment)
+    of_elset: Optional[str] = None              # *NSET, ELSET=: the nodes of these elements
+
+
+class _Members(RowSchema):
+    items: Tuple[str, ...] = ()
+
+
+def _tokens(row) -> list:
+    """Members of one data line; blank-separated members are tolerated as
+    the legacy reader did (Abaqus itself requires commas)."""
+    return [t for item in row.items if item for t in item.split()]
+
+
+def _ranges(kw: str, name: str, rows) -> Tuple[Tuple[int, int, int], ...]:
+    """GENERATE data lines 'first, last[, increment]'; (last - first) / increment
+    must be a whole number (Abaqus Keywords Guide, *NSET / *ELSET)."""
+    out = []
+    for r in rows:
+        vals = _tokens(r)
+        try:
+            nums = [int(v) for v in vals]
+        except ValueError:
+            raise InputError(f"*{kw} {name} at {r.loc}: GENERATE line must hold integers, got {vals}") from None
+        if not 2 <= len(nums) <= 3:
+            raise InputError(f"*{kw} {name} at {r.loc}: GENERATE line is 'first, last[, increment]', got {vals}")
+        a, b, inc = nums[0], nums[1], (nums[2] if len(nums) == 3 else 1)
+        if inc == 0 or (b - a) % inc:
+            raise InputError(f"*{kw} {name} at {r.loc}: ({b} - {a}) / {inc} is not a whole number")
+        out.append((a, b, inc))
+    return tuple(out)
+
+
+def _set_records(kw: str, kind: str, name: str, p, rows, ctx):
+    if p.unsorted:
+        # the model stores sets sorted; an order-dependent consumer (*EQUATION
+        # node-set terms) then pairs the nodes in ascending order
+        yield Note("warning", "set-order-sorted",
+                         f"*{kw} {name} at {ctx.loc}: UNSORTED order is not kept (sets are stored sorted)",
+                         loc=ctx.loc)
+    if p.generate:
+        yield SetRecord(kind, name, p.instance, ranges=_ranges(kw, name, rows), loc=ctx.loc)
+    else:
+        yield SetRecord(kind, name, p.instance, tokens=tuple(t for r in rows for t in _tokens(r)), loc=ctx.loc)
+
+
+@keyword("NSET", support="FULL")
+class NSet(Keyword):
+    """Node set: node numbers / node sets, GENERATE ranges, or the nodes of an element set."""
+
+    class Params(Schema):
+        nset: str
+        elset: Optional[str] = None
+        generate: bool = False
+        instance: Optional[str] = None
+        internal: bool = False                  # Abaqus/CAE bookkeeping; no effect on the model
+        unsorted: bool = False
+
+    Row = _Members
+
+    def to_records(self, p, rows, ctx):
+        if p.elset is not None:
+            # legacy: ELSET was declared supported and ignored -> an empty set
+            if p.generate:
+                raise InputError(f"*NSET {p.nset} at {ctx.loc}: ELSET and GENERATE are mutually exclusive")
+            if rows:
+                raise InputError(f"*NSET {p.nset} at {ctx.loc}: no data lines with ELSET")
+            yield SetRecord("node", p.nset, p.instance, of_elset=p.elset, loc=ctx.loc)
+            return
+        yield from _set_records("NSET", "node", p.nset, p, rows, ctx)
+
+
+@keyword("ELSET", support="FULL")
+class ElSet(Keyword):
+    """Element set: element numbers / element sets, or GENERATE ranges."""
+
+    class Params(Schema):
+        elset: str
+        generate: bool = False
+        instance: Optional[str] = None
+        internal: bool = False
+        unsorted: bool = False
+
+    Row = _Members
+
+    def to_records(self, p, rows, ctx):
+        yield from _set_records("ELSET", "element", p.elset, p, rows, ctx)
+
+
+@applies(SetRecord)
+def _apply_set(reader: AbaqusInputReader, rec: SetRecord):
+    _store_set(reader, rec.kind, rec.name, _set_members(reader, rec))
 
 
 def _assembly_scope(reader: AbaqusInputReader) -> bool:
@@ -144,7 +228,7 @@ def _assembly_scope(reader: AbaqusInputReader) -> bool:
             or (reader.context == KeywordContext.GLOBAL and getattr(reader, "has_assembly", False)))
 
 
-def _set_members(reader: AbaqusInputReader, block: AbaqusKeywordBlock, kind: str, name: str):
+def _set_members(reader: AbaqusInputReader, rec: SetRecord):
     """Members of a *NSET/*ELSET as (instance name or None, label) pairs.
 
     Labels are instance-local; the instance is None outside the assembly.
@@ -152,74 +236,79 @@ def _set_members(reader: AbaqusInputReader, block: AbaqusKeywordBlock, kind: str
     a set of the INSTANCE= instance, or an instance-qualified set INST.SET
     (also written ASSEMBLY.INST.SET). Qualified names used to be rejected
     (and before that silently dropped)."""
+    kind, name = rec.kind, rec.name
     ids_attr = "node_ids" if kind == "node" else "element_ids"
     part_sets = "node_sets" if kind == "node" else "element_sets"
     kw = "*NSET" if kind == "node" else "*ELSET"
     asm = reader.model.root_assembly
     in_asm = _assembly_scope(reader)
-    inst_param = block.params.get("instance", None)
     inst_key = None
-    if in_asm and inst_param:
-        if inst_param not in asm.instances:
-            raise KeyError(f"{kw} {name}: instance {inst_param!r} is not defined")
-        inst_key = asm.instances[inst_param].name
+    if in_asm and rec.instance:
+        if rec.instance not in asm.instances:
+            raise KeyError(f"{kw} {name}: instance {rec.instance!r} is not defined")
+        inst_key = asm.instances[rec.instance].name
 
-    def part_set(part, tok):
-        for table in (getattr(part, part_sets), part.sets):
+    def part_set(part, tok, attr=ids_attr, tables=part_sets):
+        for table in (getattr(part, tables), part.sets):
             if tok in table:
-                return list(getattr(table[tok], ids_attr))
+                return list(getattr(table[tok], attr) or [])
         return None
 
-    generate = ("generate" in block.params or "gen" in block.params)
-    out = []
-    if generate:
-        for line in block.data_lines:
-            vals = [int(v) for v in line.replace(",", " ").split() if v.strip()]
-            if len(vals) >= 2:
-                step = vals[2] if len(vals) >= 3 else 1
-                out += [(inst_key, i) for i in range(vals[0], vals[1] + 1, step)]
-        return out
+    if rec.ranges:
+        return [(inst_key, i) for a, b, inc in rec.ranges for i in range(a, b + (1 if inc > 0 else -1), inc)]
+
+    if rec.of_elset is not None:
+        # the nodes of the elements of a previously defined element set
+        if in_asm:
+            raise NotImplementedError(f"*NSET {name}, ELSET={rec.of_elset} at assembly level is not implemented")
+        part = reader.get_active_part()
+        eids = part_set(part, rec.of_elset, "element_ids", "element_sets")
+        if eids is None:
+            raise KeyError(f"*NSET {name}: element set {rec.of_elset!r} is not defined")
+        return [(None, n) for n in sorted({n for e in eids for n in part.elements[int(e)][1]})]
 
     part_ctx = None if in_asm else reader.get_active_part()
-    for line in block.data_lines:
-        for tok in (t.strip() for t in line.replace(",", " ").split() if t.strip()):
-            if tok.lstrip("-").isdigit():
-                out.append((inst_key, int(tok)))
+    out = []
+    for tok in rec.tokens:
+        if tok.lstrip("-").isdigit():
+            out.append((inst_key, int(tok)))
+            continue
+        if not in_asm:
+            ids = part_set(part_ctx, tok) if part_ctx is not None else None
+            if ids is None:
+                raise KeyError(f"{kw} {name}: member {tok!r} is neither a {kind} number nor a defined {kind} set")
+            out += [(None, i) for i in ids]
+            continue
+        # assembly level
+        aset = getattr(asm, part_sets).get(tok)
+        if aset is not None:
+            mem = getattr(aset, "members", None)
+            out += list(mem) if mem is not None else [(None, int(i)) for i in getattr(aset, ids_attr)]
+            continue
+        if inst_key is not None:
+            ids = part_set(asm.instances[inst_key].part, tok)
+            if ids is not None:
+                out += [(inst_key, i) for i in ids]
                 continue
-            if not in_asm:
-                ids = part_set(part_ctx, tok) if part_ctx is not None else None
-                if ids is None:
-                    raise KeyError(f"{kw} {name}: member {tok!r} is neither a {kind} number nor a defined {kind} set")
-                out += [(None, i) for i in ids]
-                continue
-            # assembly level
-            aset = getattr(asm, part_sets).get(tok)
-            if aset is not None:
-                mem = getattr(aset, "members", None)
-                out += list(mem) if mem is not None else [(None, int(i)) for i in getattr(aset, ids_attr)]
-                continue
-            if inst_key is not None:
-                ids = part_set(asm.instances[inst_key].part, tok)
+        pieces = tok.split(".")
+        if len(pieces) >= 2:
+            if len(pieces) == 3 and pieces[0].upper() == str(asm.name).upper():
+                pieces = pieces[1:]
+            iname, sname = ".".join(pieces[:-1]), pieces[-1]
+            if iname in asm.instances:
+                inst = asm.instances[iname]
+                ids = part_set(inst.part, sname)
                 if ids is not None:
-                    out += [(inst_key, i) for i in ids]
+                    out += [(inst.name, i) for i in ids]
                     continue
-            pieces = tok.split(".")
-            if len(pieces) >= 2:
-                if len(pieces) == 3 and pieces[0].upper() == str(asm.name).upper():
-                    pieces = pieces[1:]
-                iname, sname = ".".join(pieces[:-1]), pieces[-1]
-                if iname in asm.instances:
-                    inst = asm.instances[iname]
-                    ids = part_set(inst.part, sname)
-                    if ids is not None:
-                        out += [(inst.name, i) for i in ids]
-                        continue
-            raise KeyError(f"{kw} {name}: member {tok!r} is neither a {kind} number, an assembly {kind} set "
-                           f"nor an instance-qualified set (INSTANCE.SET)")
+        raise KeyError(f"{kw} {name}: member {tok!r} is neither a {kind} number, an assembly {kind} set "
+                       f"nor an instance-qualified set (INSTANCE.SET)")
     return out
 
 
 def _store_set(reader: AbaqusInputReader, kind: str, name: str, members):
+    """Abaqus adds to a set that already exists ("assigned to the set, or added
+    to the set if it already exists"); a part-level set used to be replaced."""
     asm = reader.model.root_assembly
     labels = [i for _, i in members]
     if _assembly_scope(reader):
@@ -240,175 +329,209 @@ def _store_set(reader: AbaqusInputReader, kind: str, name: str, members):
         # own part there; the set keeps its deck name so sections and
         # INST.SET references find it -- it used to be renamed INST__SET).
         part = reader.get_active_part()
+        legacy = part.node_sets if kind == "node" else part.element_sets
+        if name in legacy:
+            old = list(getattr(legacy[name], "node_ids" if kind == "node" else "element_ids") or [])
+            seen = set(old)
+            labels = old + [i for i in labels if i not in seen]
         if kind == "node":
             part.create_set(name, nodes=labels)
         else:
             part.create_set(name, elements=labels)
 
 
-@GLOBAL_KEYWORD_REGISTRY.register(
-    "ELSET",
-    valid_contexts={KeywordContext.PART, KeywordContext.GLOBAL, KeywordContext.ASSEMBLY, KeywordContext.INSTANCE, KeywordContext.STEP},
-    support="FULL",
-    params={
-        "ELSET": ParamSpec("ELSET", required=True),
-        "GENERATE": ParamSpec("GENERATE", type=bool, default=False, aliases=["GEN"]),
-        "INSTANCE": ParamSpec("INSTANCE"),
-        "INTERNAL": ParamSpec("INTERNAL", type=bool, default=False),
-    },
-    rows=RowSpec(column_types=[int], min_columns=1),
-    description="Define a set of elements",
-)
-def _handle_elset(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
-    name = block.params.get("elset", "")
-    if not name:
-        return
-    _store_set(reader, "element", name, _set_members(reader, block, "element", name))
+# ── *SURFACE (schema) ───────────────────────────────────────────────────────
+#
+# Legacy defects closed here: a missing face label became S1 (Abaqus uses all
+# free faces of the elements), unresolved element / node / surface names were
+# skipped without a word, a SEGMENTS surface kept only its first START and
+# last LINE (CIRCL ignored), and COMBINE=INTERSECTION / DIFFERENCE fell
+# through to the element path.
+
+_FACE_RE = re.compile(r"^S([1-6])$")
 
 
-@GLOBAL_KEYWORD_REGISTRY.register(
-    "SURFACE",
-    valid_contexts={KeywordContext.PART, KeywordContext.GLOBAL, KeywordContext.ASSEMBLY, KeywordContext.INSTANCE},
-    support="FULL",
-    params={
-        "NAME": ParamSpec("NAME", required=True),
-        "TYPE": ParamSpec("TYPE", default="ELEMENT", choices=["ELEMENT", "NODE", "SEGMENTS", "CYLINDER"]),
-        "COMBINE": ParamSpec("COMBINE"),
-        "TRIM": ParamSpec("TRIM", supported=False),
-        "REGION TYPE": ParamSpec("REGION TYPE", aliases=["REGION_TYPE"], supported=False),
-    },
-    rows=RowSpec(column_types=[str, str], min_columns=1, max_columns=2),
-    description="Define a geometry or element surface",
-)
-def _handle_surface(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
-    name = block.params.get("name", "")
-    stype = block.params.get("type", "ELEMENT").upper()
-    if stype == "SEGMENTS":
-        # Parse 2D analytical rigid line segments (START, x, y / LINE, x, y)
-        start_pt = None
-        end_pt = None
-        for line in block.data_lines:
-            tokens = [t.strip().upper() for t in line.split(",") if t.strip()]
-            if not tokens:
+@dataclass(frozen=True)
+class ElementSurfaceRecord(Record):
+    name: str
+    items: Tuple[Tuple[str, int], ...]          # (element number or element set, face 1..6)
+
+
+@dataclass(frozen=True)
+class NodeSurfaceRecord(Record):
+    name: str
+    targets: Tuple[str, ...]                    # node numbers or node sets
+
+
+@dataclass(frozen=True)
+class SegmentSurfaceRecord(Record):
+    name: str
+    start: Tuple[float, float]
+    end: Tuple[float, float]
+
+
+@dataclass(frozen=True)
+class UnionSurfaceRecord(Record):
+    name: str
+    members: Tuple[str, ...]                    # surface / set names, INSTANCE.NAME allowed
+
+
+@keyword("SURFACE", support="PARTIAL")
+class SurfaceKw(Keyword):
+    """Element-face, node, single-line SEGMENTS and UNION surfaces."""
+
+    class Params(Schema):
+        name: str
+        type: Literal["ELEMENT", "NODE", "SEGMENTS", "CYLINDER", "REVOLUTION", "CUTTING SURFACE",
+                      "EULERIAN MATERIAL", "USER", "XFEM"] = Param(
+            "ELEMENT", supported=("ELEMENT", "NODE", "SEGMENTS"))
+        combine: Optional[Literal["UNION", "INTERSECTION", "DIFFERENCE"]] = Param(None, supported=("UNION",))
+        internal: bool = False                  # Abaqus/CAE bookkeeping; no effect on the model
+
+    Row = _Members
+
+    def to_records(self, p, rows, ctx):
+        lines = [_tokens(r) for r in rows]
+        if p.combine == "UNION" or (ctx.context == "ASSEMBLY" and p.type == "ELEMENT"
+                                    and all(len(t) == 1 and not t[0].lstrip("-").isdigit() for t in lines)):
+            yield UnionSurfaceRecord(p.name, tuple(t for ln in lines for t in ln), loc=ctx.loc)
+            return
+        if p.type == "SEGMENTS":
+            yield _segments(p.name, rows, ctx)
+            return
+        if p.type == "NODE":
+            # data line: node or node set[, area] -- the area (default 1.0) only
+            # matters for node-based contact pressure output
+            yield NodeSurfaceRecord(p.name, tuple(t[0] for t in lines if t), loc=ctx.loc)
+            return
+        items = []
+        for r, t in zip(rows, lines):
+            if not t:
                 continue
-            cmd = tokens[0]
-            if cmd == "START" and len(tokens) >= 3:
-                start_pt = np.array([float(tokens[1]), float(tokens[2])], dtype=np.float64)
-            elif cmd == "LINE" and len(tokens) >= 3:
-                end_pt = np.array([float(tokens[1]), float(tokens[2])], dtype=np.float64)
+            if len(t) == 1:
+                raise Unsupported(f"*SURFACE {p.name} at {r.loc}: {t[0]} without a face label (all free "
+                                  f"faces of the elements) is not implemented")
+            m = _FACE_RE.match(t[1].upper())
+            if m is None:
+                raise Unsupported(f"*SURFACE {p.name} at {r.loc}: face label {t[1]!r} is not implemented "
+                                  f"(solid faces S1-S6 only)")
+            items.append((t[0], int(m.group(1))))
+        yield ElementSurfaceRecord(p.name, tuple(items), loc=ctx.loc)
 
-        if start_pt is not None and end_pt is not None:
-            tangent = end_pt - start_pt
-            norm_t = np.linalg.norm(tangent)
-            if norm_t > 1e-12:
-                t_hat = tangent / norm_t
-                normal = np.array([-t_hat[1], t_hat[0]], dtype=np.float64)
-            else:
-                normal = np.array([0.0, 1.0], dtype=np.float64)
 
-            from dispsolver.model.interaction import AnalyticalRigidSurface
-            ref_nid = None
-            if hasattr(reader, "pending_analytical_surfaces") and name in reader.pending_analytical_surfaces:
-                ref_nid = reader.pending_analytical_surfaces[name]
-            rigid_surf = AnalyticalRigidSurface(name=name, point=start_pt, normal=normal, reference_node=ref_nid)
-            if hasattr(reader.model, "analytical_rigid_surfaces"):
-                reader.model.analytical_rigid_surfaces[name] = rigid_surf
-            part = reader.get_active_part()
-            if part is not None:
-                part.surfaces[name] = rigid_surf
-            if hasattr(reader.model, "root_assembly") and hasattr(reader.model.root_assembly, "surfaces"):
-                reader.model.root_assembly.surfaces[name] = rigid_surf
-        return
+def _segments(name: str, rows, ctx) -> SegmentSurfaceRecord:
+    """A 2D analytical rigid surface of ONE straight segment: START, x, y then
+    LINE, x, y. More segments or a CIRCL is a different surface -> gap."""
+    cmds = [_tokens(r) for r in rows]
+    cmds = [[c[0].upper()] + c[1:] for c in cmds if c]
+    if [c[0] for c in cmds] != ["START", "LINE"]:
+        raise Unsupported(f"*SURFACE {name}, TYPE=SEGMENTS at {ctx.loc}: only a single START + LINE segment "
+                          f"is implemented, got {[c[0] for c in cmds]}")
+    try:
+        pts = [(float(c[1]), float(c[2])) for c in cmds]
+    except (IndexError, ValueError):
+        raise InputError(f"*SURFACE {name}, TYPE=SEGMENTS at {ctx.loc}: START/LINE need x, y") from None
+    return SegmentSurfaceRecord(name, pts[0], pts[1], loc=ctx.loc)
 
-    if reader.context == KeywordContext.ASSEMBLY or block.params.get("combine", "").upper() == "UNION":
-        assembly = reader.model.root_assembly
-        from dispsolver.model.set import Surface, SetScope, NodeSet
-        collected_nids = set()
-        collected_inst_nids = []
-        collected_faces = []
-        for line in block.data_lines:
-            tokens = [p.strip() for p in line.replace(",", " ").split() if p.strip()]
-            for tok in tokens:
-                if "." in tok:
-                    inst_name, sub_name = tok.split(".", 1)
-                    if inst_name in assembly.instances:
-                        inst = assembly.instances[inst_name]
-                        p = inst.part
-                        sub_nids = []
-                        if hasattr(p, "surfaces") and sub_name in p.surfaces:
-                            surf = p.surfaces[sub_name]
-                            sub_nids = surf.get_nodes(p) if hasattr(surf, "get_nodes") else list(getattr(surf, "node_ids", []))
-                            if hasattr(surf, "faces"):
-                                for ef in surf.faces:
-                                    eid = ef.element_id if hasattr(ef, "element_id") else ef[0]
-                                    fid = ef.face_id if hasattr(ef, "face_id") else ef[1]
-                                    collected_faces.append((inst_name, eid, fid))
-                        elif hasattr(p, "sets") and sub_name in p.sets:
-                            sub_nids = p.sets[sub_name].get_nodes(include_elements=True)
-                        elif hasattr(p, "node_sets") and sub_name in p.node_sets:
-                            sub_nids = p.node_sets[sub_name].node_ids
-                        for nid in sub_nids:
-                            collected_inst_nids.append((inst_name, nid))
-                else:
-                    for p in reader.model.parts.values():
-                        sub_nids = []
-                        if hasattr(p, "surfaces") and tok in p.surfaces:
-                            surf = p.surfaces[tok]
-                            sub_nids = surf.get_nodes(p) if hasattr(surf, "get_nodes") else list(getattr(surf, "node_ids", []))
-                            if hasattr(surf, "faces"):
-                                for ef in surf.faces:
-                                    eid = ef.element_id if hasattr(ef, "element_id") else ef[0]
-                                    fid = ef.face_id if hasattr(ef, "face_id") else ef[1]
-                                    collected_faces.append((None, eid, fid))
-                        elif hasattr(p, "sets") and tok in p.sets:
-                            sub_nids = p.sets[tok].get_nodes(include_elements=True)
-                        elif hasattr(p, "node_sets") and tok in p.node_sets:
-                            sub_nids = p.node_sets[tok].node_ids
-                        for nid in sub_nids:
-                            collected_nids.add(nid)
-        surf_obj = Surface(name=name, node_ids=collected_nids, scope=SetScope.ASSEMBLY)
-        surf_obj.inst_nodes = collected_inst_nids
-        surf_obj.inst_faces = collected_faces
-        assembly.surfaces[name] = surf_obj
-        return
 
+@applies(SegmentSurfaceRecord)
+def _apply_segment_surface(reader: AbaqusInputReader, rec: SegmentSurfaceRecord):
+    from dispsolver.model.interaction import AnalyticalRigidSurface
+    start_pt = np.array(rec.start, dtype=np.float64)
+    tangent = np.array(rec.end, dtype=np.float64) - start_pt
+    norm_t = np.linalg.norm(tangent)
+    if norm_t <= 1e-12:
+        raise ValueError(f"*SURFACE {rec.name}: START and LINE points coincide")
+    t_hat = tangent / norm_t
+    normal = np.array([-t_hat[1], t_hat[0]], dtype=np.float64)
+    ref_nid = getattr(reader, "pending_analytical_surfaces", {}).get(rec.name)
+    rigid_surf = AnalyticalRigidSurface(name=rec.name, point=start_pt, normal=normal, reference_node=ref_nid)
+    if hasattr(reader.model, "analytical_rigid_surfaces"):
+        reader.model.analytical_rigid_surfaces[rec.name] = rigid_surf
+    part = reader.get_active_part()
+    if part is not None:
+        part.surfaces[rec.name] = rigid_surf
+    if hasattr(reader.model.root_assembly, "surfaces"):
+        reader.model.root_assembly.surfaces[rec.name] = rigid_surf
+
+
+@applies(NodeSurfaceRecord)
+def _apply_node_surface(reader: AbaqusInputReader, rec: NodeSurfaceRecord):
     part = reader.get_active_part()   # the instance's own part inside *INSTANCE
-
-    faces = []
     nodes = []
-
-    for line in block.data_lines:
-        parts = [p.strip() for p in line.replace(",", " ").split() if p.strip()]
-        if not parts:
-            continue
-        if stype == "NODE":
-            # Node set or node ID
-            target = parts[0]
-            if target in part.sets:
-                nodes.extend(part.sets[target].node_ids)
-            elif target in part.node_sets:
-                nodes.extend(part.node_sets[target].node_ids)
-            elif target.isdigit():
-                nodes.append(int(target))
+    for target in rec.targets:
+        if target in part.sets:
+            nodes.extend(part.sets[target].node_ids or [])
+        elif target in part.node_sets:
+            nodes.extend(part.node_sets[target].node_ids)
+        elif target.isdigit():
+            nodes.append(int(target))
         else:
-            # Element face definition: ELSET_NAME, S1..S6 or EID, S1..S6
-            target = parts[0]
-            face_id_str = parts[1] if len(parts) >= 2 else "S1"
-            # S1 -> face index 1
-            fid = int(face_id_str.upper().replace("S", "")) if face_id_str.upper().startswith("S") else 1
-            if target in part.element_sets:
-                for eid in part.element_sets[target].element_ids:
-                    faces.append((eid, fid))
-            elif target in part.sets:
-                for eid in part.sets[target].element_ids:
-                    faces.append((eid, fid))
-            elif target.isdigit():
-                faces.append((int(target), fid))
+            raise KeyError(f"*SURFACE {rec.name}: {target!r} is neither a node number nor a node set")
+    part.create_set(rec.name, nodes=nodes)
 
-    if stype == "NODE":
-        part.create_set(name, nodes=nodes)
-    else:
-        part.create_surface(name, faces=faces)
+
+@applies(ElementSurfaceRecord)
+def _apply_element_surface(reader: AbaqusInputReader, rec: ElementSurfaceRecord):
+    part = reader.get_active_part()   # the instance's own part inside *INSTANCE
+    faces = []
+    for target, fid in rec.items:
+        if target in part.element_sets:
+            faces += [(eid, fid) for eid in part.element_sets[target].element_ids]
+        elif target in part.sets and part.sets[target].element_ids:
+            faces += [(eid, fid) for eid in part.sets[target].element_ids]
+        elif target.isdigit():
+            faces.append((int(target), fid))
+        else:
+            raise KeyError(f"*SURFACE {rec.name}: {target!r} is neither an element number nor an element set")
+    part.create_surface(rec.name, faces=faces)
+
+
+def _surface_nodes_faces(p, sub_name):
+    """(node ids, (element, face) pairs) of a part surface or set, or None."""
+    if hasattr(p, "surfaces") and sub_name in p.surfaces:
+        surf = p.surfaces[sub_name]
+        nids = surf.get_nodes(p) if hasattr(surf, "get_nodes") else list(getattr(surf, "node_ids", []))
+        faces = []
+        for ef in getattr(surf, "faces", None) or []:
+            eid = ef.element_id if hasattr(ef, "element_id") else ef[0]
+            fid = ef.face_id if hasattr(ef, "face_id") else ef[1]
+            faces.append((eid, fid))
+        return list(nids), faces
+    if hasattr(p, "sets") and sub_name in p.sets:
+        return list(p.sets[sub_name].get_nodes(include_elements=True)), []
+    if hasattr(p, "node_sets") and sub_name in p.node_sets:
+        return list(p.node_sets[sub_name].node_ids), []
+    return None
+
+
+@applies(UnionSurfaceRecord)
+def _apply_union_surface(reader: AbaqusInputReader, rec: UnionSurfaceRecord):
+    from dispsolver.model.set import SetScope, Surface
+    assembly = reader.model.root_assembly
+    collected_nids, collected_inst_nids, collected_faces = set(), [], []
+    for tok in rec.members:
+        hit = None
+        if "." in tok:
+            inst_name, sub_name = tok.split(".", 1)
+            if inst_name in assembly.instances:
+                hit = _surface_nodes_faces(assembly.instances[inst_name].part, sub_name)
+                if hit is not None:
+                    collected_inst_nids += [(inst_name, n) for n in hit[0]]
+                    collected_faces += [(inst_name, e, f) for e, f in hit[1]]
+        else:
+            for p in reader.model.parts.values():
+                got = _surface_nodes_faces(p, tok)
+                if got is not None:
+                    hit = got
+                    collected_nids.update(got[0])
+                    collected_faces += [(None, e, f) for e, f in got[1]]
+        if hit is None:
+            raise KeyError(f"*SURFACE {rec.name}: member {tok!r} is not a defined surface or set")
+    surf_obj = Surface(name=rec.name, node_ids=collected_nids, scope=SetScope.ASSEMBLY)
+    surf_obj.inst_nodes = collected_inst_nids
+    surf_obj.inst_faces = collected_faces
+    assembly.surfaces[rec.name] = surf_obj
 
 
 @GLOBAL_KEYWORD_REGISTRY.register(

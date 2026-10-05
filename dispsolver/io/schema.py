@@ -53,12 +53,14 @@ to override, with a reason) -- the schema cannot drift from Abaqus.
 
 Field types: str, int, float, bool (a flag: present -> True; YES/NO accepted),
 Literal[...] (choices, resolved by abbreviation), Optional[X]. Row fields are
-positional; a final `Tuple[X, ...]` field takes the remaining columns.
+positional; a final `Tuple[X, ...]` field takes the remaining columns (a blank
+cell is None there, so positions are kept).
 `Data = Flat(float, group=2)` instead of `Row` reads all data values as one
 sequence in groups (e.g. *AMPLITUDE time/value pairs, up to four per line).
 
 Inside `to_records`: raise `Unsupported(msg)` for valid input this solver does
-not represent (gap) and `InputError(msg)` for wrong input (error). `ctx` is a
+not represent (gap) and `InputError(msg)` for wrong input (error); both refuse
+the whole block. To report without refusing, yield `Note(level, code, msg)`. `ctx` is a
 frozen `KeywordCtx` -- the reader itself is not reachable from here.
 """
 
@@ -66,7 +68,7 @@ from __future__ import annotations
 
 import typing
 from dataclasses import dataclass, field
-from typing import Any, Callable, ClassVar, Dict, Iterable, List, Optional, Tuple, Type
+from typing import Any, Callable, ClassVar, Dict, Iterable, List, Optional, Tuple, Type, Union
 
 from dispsolver.io.diagnostics import Loc
 from dispsolver.io.keyword_index import AmbiguousName, IndexKeyword, abaqus_index, norm, resolve_name
@@ -238,6 +240,22 @@ def applies(record_type: type):
     return deco
 
 
+@dataclass(frozen=True)
+class Note(Record):
+    """A diagnostic decided while parsing, landed in input order with the
+    other records (to_records cannot report directly: it never sees the reader)."""
+    level: str
+    code: str
+    message: str
+
+
+def _apply_note(reader, rec: Note) -> None:
+    reader.diagnostics.add(rec.level, rec.code, rec.message, rec.loc)
+
+
+_APPLIERS[Note] = _apply_note
+
+
 def apply_record(reader, rec: Record) -> None:
     fn = _APPLIERS.get(type(rec))
     if fn is None:
@@ -257,23 +275,34 @@ class KeywordCtx:
     loc: Optional[Loc] = None
 
 
+@dataclass(frozen=True)
+class Lines:
+    """The data lines as text, stripped (e.g. the *STEP subheading)."""
+
+
 class Keyword:
     name: ClassVar[str] = ""
     Params: ClassVar[Type[Schema]] = NoParams
     Row: ClassVar[Optional[Type[RowSchema]]] = None
-    Data: ClassVar[Optional[Flat]] = None
+    Data: ClassVar[Optional[Union[Flat, Lines]]] = None
+    # A scope keyword (*STEP, *PART, ...) is applied even when a parameter is
+    # a gap or an error: refusing it would push every following keyword out of
+    # its context. The problem is still reported; the parameter keeps its default.
+    refuse_on_gap: ClassVar[bool] = True
 
     def to_records(self, p: Schema, rows: list, ctx: KeywordCtx) -> Iterable[Record]:
         raise NotImplementedError
 
 
-Report = Callable[[str, str, str], None]     # (level, code, message)
+Report = Callable[..., None]     # (level, code, message, param=<Abaqus name> for parameter problems)
 
 
 def parse_params(kw: str, schema: Type[Schema], params: Dict[str, str], report: Report,
-                 where: str = "", entry: Optional[IndexKeyword] = None) -> Optional[Schema]:
+                 where: str = "", entry: Optional[IndexKeyword] = None,
+                 refuse: bool = True) -> Optional[Schema]:
     """Parameters of one keyword line -> a Schema instance, or None when the
-    block must be skipped (an error, or a choice this solver does not implement)."""
+    block must be skipped (an error, or a choice this solver does not implement).
+    With refuse=False only a missing required parameter skips the block."""
     if entry is None:
         entry = abaqus_index().get(kw)
     by_abq = {s.abq: s for s in schema._fields}
@@ -286,43 +315,45 @@ def parse_params(kw: str, schema: Type[Schema], params: Dict[str, str], report: 
         try:
             abq = resolve_name(key, names)
         except AmbiguousName as e:
-            report("error", "ambiguous-param", f"*{kw}{at}: parameter {e}")
-            ok = False
+            report("error", "ambiguous-param", f"*{kw}{at}: parameter {e}", param=key.upper())
+            ok = False if refuse else ok
             continue
         if abq is None:
-            report("error", "unknown-param", f"*{kw}{at}: {key.upper()} is not an Abaqus parameter of *{kw}")
-            ok = False
+            report("error", "unknown-param", f"*{kw}{at}: {key.upper()} is not an Abaqus parameter of *{kw}",
+                   param=key.upper())
+            ok = False if refuse else ok
             continue
         if abq in given:
             report("warning", "duplicate-param", f"*{kw}{at}: {abq} given more than once; the last setting is used")
         given.append(abq)
         s = by_abq.get(abq)
         if s is None:
-            report("gap", "unsupported-param", f"*{kw}, {abq}{at} (unsupported parameter)")
-            ok = False
+            report("gap", "unsupported-param", f"*{kw}, {abq}{at} (unsupported parameter)", param=abq)
+            ok = False if refuse else ok
             continue
         if s.unsupported:
-            report("gap", "unsupported-param", f"*{kw}, {abq}{at} (unsupported parameter: {s.unsupported})")
-            ok = False
+            report("gap", "unsupported-param", f"*{kw}, {abq}{at} (unsupported parameter: {s.unsupported})",
+                   param=abq)
+            ok = False if refuse else ok
             continue
         if s.control:
-            report("info", "control-param-ignored", f"*{kw}, {abq}{at} (solution control, ignored)")
+            report("info", "control-param-ignored", f"*{kw}, {abq}{at} (solution control, ignored)", param=abq)
             continue
         try:
             v = _convert(s, raw)
         except (ValueError, AmbiguousName) as e:
             report("error", "bad-value", f"*{kw}{at}: {abq}={raw}: {e}")
-            ok = False
+            ok = False if refuse else ok
             continue
         if s.kind == "choice" and s.supported is not None and v not in s.supported:
             report("gap", "unsupported-value", f"*{kw}{at}: {abq}={v} is not implemented "
                                                f"(supported: {', '.join(s.supported)})")
-            ok = False
+            ok = False if refuse else ok
             continue
         values[s.attr] = v
     for s in schema._fields:
         if s.required and s.attr not in values and not (s.unsupported or s.control):
-            report("error", "missing-param", f"*{kw}{at}: missing required parameter {s.abq}")
+            report("error", "missing-param", f"*{kw}{at}: missing required parameter '{s.abq}'")
             ok = False
     if not ok:
         return None
@@ -370,8 +401,11 @@ def _split(line: str) -> List[str]:
     return parts
 
 
-def parse_rows(kw: str, row: Type[RowSchema], lines: List[str], locs: List[Any]) -> list:
-    """Data lines -> RowSchema instances. Raises InputError on a bad line."""
+def parse_rows(kw: str, row: Type[RowSchema], lines: List[str], locs: List[Any],
+               report: Optional[Report] = None) -> list:
+    """Data lines -> RowSchema instances. Raises InputError on a bad line.
+    Values beyond the documented items are reported (warning) and ignored --
+    official Abaqus verification decks carry such lines and Abaqus runs them."""
     out = []
     fields_ = row._fields
     for text, loc in zip(lines, locs):
@@ -382,7 +416,11 @@ def parse_rows(kw: str, row: Type[RowSchema], lines: List[str], locs: List[Any])
         rest = fields_ and fields_[-1].kind == "rest"
         fixed = fields_[:-1] if rest else fields_
         if not rest and len(cols) > len(fixed):
-            raise InputError(f"*{kw} at {loc}: {len(cols)} values, at most {len(fixed)} expected: {text!r}")
+            if report is None:
+                raise InputError(f"*{kw} at {loc}: {len(cols)} values, at most {len(fixed)} expected: {text!r}")
+            report("warning", "extra-data-items",
+                   f"*{kw} at {loc}: {len(cols)} values, {len(fixed)} expected; extra ignored: {text!r}")
+            cols = cols[:len(fixed)]
         for s, c in zip(fixed, cols):
             if c == "":
                 continue
@@ -393,7 +431,8 @@ def parse_rows(kw: str, row: Type[RowSchema], lines: List[str], locs: List[Any])
         if rest:
             s = fields_[-1]
             try:
-                vals[s.attr] = tuple(_scalar(s.elem, c) for c in cols[len(fixed):] if c != "")
+                # a blank cell keeps its position (None): '..., 9.81, , -1.' is (9.81, None, -1.)
+                vals[s.attr] = tuple(None if c == "" else _scalar(s.elem, c) for c in cols[len(fixed):])
             except ValueError as e:
                 raise InputError(f"*{kw} at {loc}: {s.attr}: {e}") from None
         missing = [s.attr for s in fixed if s.required and s.attr not in vals]
@@ -426,15 +465,20 @@ def _data_locs(block) -> List[Optional[Loc]]:
 def run_keyword(cls: Type[Keyword], block, ctx: KeywordCtx, report: Report) -> List[Record]:
     """PARSE one block: parameters, data, to_records. Pure; returns the records
     (empty when the block was refused, with the reason reported)."""
-    p = parse_params(cls.name, cls.Params, block.params, report, str(block.location or ""))
+    p = parse_params(cls.name, cls.Params, block.params, report, str(block.location or ""),
+                     refuse=cls.refuse_on_gap)
     if p is None:
         return []
     locs = _data_locs(block)
     if cls.Row is not None:
-        rows = parse_rows(cls.name, cls.Row, block.data_lines, locs)
+        rows = parse_rows(cls.name, cls.Row, block.data_lines, locs, report)
+    elif isinstance(cls.Data, Lines):
+        rows = [ln.strip() for ln in block.data_lines if ln.strip()]
     elif cls.Data is not None:
         rows = parse_flat(cls.name, cls.Data, block.data_lines, str(block.location or ""))
     else:
+        if any(ln.strip() for ln in block.data_lines):
+            raise InputError(f"*{cls.name} at {block.location}: takes no data lines")
         rows = []
     return list(cls().to_records(p, rows, ctx))
 
@@ -451,6 +495,17 @@ def check_against_index(cls: Type[Keyword]) -> List[str]:
         return [f"*{cls.name} is not an Abaqus keyword"]
     return [f"*{cls.name}, {s.abq}" for s in cls.Params._fields
             if s.abq not in entry.params and not s.undocumented]
+
+
+def _param_specs(schema: Type[Schema]) -> list:
+    """Registry ParamSpecs mirroring the schema, for introspection only: the
+    reader validates a schema keyword with the schema itself."""
+    from dispsolver.io.keyword_registry import ParamSpec
+    types = {"str": str, "int": int, "float": float, "bool": bool, "choice": str, "rest": tuple}
+    return [ParamSpec(s.abq, type=types[s.kind], default=None if s.default is _MISSING else s.default,
+                      required=s.required, choices=list(s.choices) or None,
+                      supported=not s.unsupported, control=s.control)
+            for s in schema._fields]
 
 
 def keyword(name: str, *, support: str = "FULL", contexts=None, aliases=(), description: str = ""):
@@ -474,13 +529,21 @@ def keyword(name: str, *, support: str = "FULL", contexts=None, aliases=(), desc
             ctx = KeywordCtx(cls.name, reader.context.name,
                              reader.current_step.name if reader.current_step is not None else None,
                              reader.dim, Loc.of(block))
-            for rec in run_keyword(cls, block, ctx,
-                                   lambda lv, code, msg: reader.report(lv, code, msg, block)):
+            def report(level, code, msg, param=None):
+                reader.report(level, code, msg, block)
+                if param is not None:             # legacy view: reader.unsupported_params
+                    kind = {"unknown-param": "unknown", "ambiguous-param": "unknown",
+                            "unsupported-param": "unsupported", "control-param-ignored": "control"}[code]
+                    if (cls.name, param, kind) not in reader.unsupported_params:
+                        reader.unsupported_params.append((cls.name, param, kind))
+
+            for rec in run_keyword(cls, block, ctx, report):
                 apply_record(reader, rec)
 
         GLOBAL_KEYWORD_REGISTRY.register(cls.name, valid_contexts=ctxs, aliases=list(aliases),
                                          description=description or (cls.__doc__ or ""),
-                                         support=support, schema=cls)(handler)
+                                         support=support, schema=cls,
+                                         params=_param_specs(cls.Params))(handler)
         SCHEMA_KEYWORDS[cls.name] = cls
         return cls
     return deco
@@ -497,5 +560,5 @@ def parse_text(text: str, context: str = "STEP", step: Optional[str] = "Step-1",
         if cls is None:
             raise KeyError(f"*{b.keyword} has no schema")
         ctx = KeywordCtx(cls.name, context, step, dim, Loc.of(b))
-        recs += run_keyword(cls, b, ctx, lambda lv, c, m: diags.append((lv, c, m)))
+        recs += run_keyword(cls, b, ctx, lambda lv, c, m, param=None: diags.append((lv, c, m)))
     return recs, diags
