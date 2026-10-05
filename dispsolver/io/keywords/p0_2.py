@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import re
-import warnings
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union
+from typing import TYPE_CHECKING, List, Literal, Tuple
 
 from dispsolver.io.abaqus_lexer import AbaqusKeywordBlock
 from dispsolver.io.keyword_registry import (
@@ -14,7 +12,6 @@ from dispsolver.io.keyword_registry import (
 )
 from dispsolver.io.keyword_base import _AbortParse, _parse_data_rows
 from dispsolver.io.schema import Flat, Keyword, Param, Record, Schema, applies, keyword
-from dispsolver.model.step import PredefinedField
 
 if TYPE_CHECKING:
     from dispsolver.io.abaqus_reader import AbaqusInputReader
@@ -375,7 +372,6 @@ def _handle_transform(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     pts = tuple(tuple(float(x) for x in r if x is not None) for r in rows) if rows else ()
     name = f"TRF_{nset}_{len(reader.model.transforms) + 1}" if nset else f"TRF_{len(reader.model.transforms) + 1}"
     reader.model.Transform(name, nset=nset, transform_type=ttype, points=pts)
-    msg = f"*TRANSFORM {name}: parsed and stored; connected to solver"
 
 
 @GLOBAL_KEYWORD_REGISTRY.register(

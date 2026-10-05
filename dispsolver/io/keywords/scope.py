@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-import warnings
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Optional, Tuple
 
 import numpy as np
 
@@ -10,14 +9,11 @@ from dispsolver.io.abaqus_lexer import AbaqusKeywordBlock
 from dispsolver.io.keyword_registry import (
     GLOBAL_KEYWORD_REGISTRY,
     KeywordContext,
-    ParamSpec,
-    RowSpec,
 )
 
 if TYPE_CHECKING:
     from dispsolver.io.abaqus_reader import AbaqusInputReader
-from dispsolver.io.keyword_base import _parse_data_rows
-from dispsolver.io.schema import InputError, Keyword, Note, Record, RowSchema, Schema, applies, keyword
+from dispsolver.io.schema import Keyword, Note, Record, RowSchema, Schema, applies, keyword
 
 # KEYWORD HANDLERS IMPLEMENTATION (Standard Abaqus Keywords)
 # ─────────────────────────────────────────────────────────────────────────────

@@ -9,29 +9,23 @@ supporting both Part/Assembly hierarchies and Non-Assembly (flat) decks.
 from __future__ import annotations
 
 import os
-import re
 import warnings
-from typing import Dict, List, Optional, Tuple, Any, Union, Set
-import numpy as np
+from typing import Dict, List, Optional, Tuple, Any, Union
 
 from dispsolver.io.abaqus_lexer import AbaqusKeywordBlock, tokenize, tokenize_string
 from dispsolver.io.diagnostics import Diagnostics, Loc
-from dispsolver.io.keyword_index import AmbiguousName, abaqus_index, norm, resolve_name
+from dispsolver.io.keyword_index import AmbiguousName, abaqus_index, resolve_name
 from dispsolver.io.keyword_registry import (
     KeywordContext,
-    KeywordSpec,
-    KeywordRegistry,
     GLOBAL_KEYWORD_REGISTRY,
     normalize_param_name,
 )
-from dispsolver.io.keyword_base import _AbortParse, _parse_data_rows
+from dispsolver.io.keyword_base import _AbortParse
 from dispsolver.model.model import Model
 from dispsolver.model.part import Part
 from dispsolver.model.instance import Instance
 from dispsolver.model.material import Material
-from dispsolver.model.section import SolidSection, ShellSection
-from dispsolver.model.step import Step, PredefinedField
-from dispsolver.model.set import GeneralSet, SetScope
+from dispsolver.model.step import Step
 
 
 # Keywords that only request printed/file output, restart files or solver
