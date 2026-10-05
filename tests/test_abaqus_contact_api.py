@@ -1280,6 +1280,45 @@ def test_general_contact_enforcements_and_normal_behaviors():
     assert c3.contact_enforcement == "AUGMENTED_LAGRANGE"
 
 
+def test_contact_control_penetration_tolerance():
+    """Verify ContactControl penetrationTolerance and approach API."""
+    model = Model(name="TestModelPenTol", dim=3)
+    p = model.Part(name="P1")
+    for nid, (x, y, z) in enumerate([
+        (0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (1.0, 1.0, 0.0), (0.0, 1.0, 0.0),
+        (0.0, 0.0, 1.0), (1.0, 0.0, 1.0), (1.0, 1.0, 1.0), (0.0, 1.0, 1.0),
+    ]):
+        p.Node(nid + 1, x, y, z)
+    p.Element(1, "C3D8", [1, 2, 3, 4, 5, 6, 7, 8])
+    model.root_assembly.Instance(name="Inst1", part=p)
+    model.Step(name="Step-1")
+
+    ctrl = model.ContactControl(
+        name="PenCtrl",
+        penetrationTolerance=0.08,
+        approach=True,
+    )
+    assert ctrl.penetration_tolerance == 0.08
+    assert ctrl.approach is True
+
+    model.ContactStd(
+        name="GC_PenTol",
+        createStepName="Step-1",
+        normalBehavior="ADAPTIVE",
+        contactControls="PenCtrl",
+    )
+    solver, _ = model.create_solver3d("Step-1")
+    gc = next(c for c in solver.constraints if isinstance(c, GeneralContact3D))
+    assert gc.law is not None
+    assert gc.law.delta == 0.08
+    # Quantitative mechanics check: at h=0.04 (within 0.08), contact stiffness is buffered
+    p, dp_dh = gc.law.evaluate(0.04)
+    assert p > 0.0
+    assert dp_dh > 0.0
+    assert dp_dh < gc.law.k_target
+
+
+
 
 
 

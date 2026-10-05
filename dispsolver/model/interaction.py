@@ -129,6 +129,8 @@ class ContactControl:
     tangent_fraction: float = 0.0
     ramp_down_factor: float = 0.0
     clearance: Optional[float] = None
+    penetration_tolerance: Optional[float] = None
+    approach: bool = False
 
     def __init__(
         self,
@@ -142,6 +144,10 @@ class ContactControl:
         rampDownFactor: float = 0.0,
         ramp_down_factor: float = 0.0,
         clearance: Optional[float] = None,
+        penetrationTolerance: Optional[float] = None,
+        penetration_tolerance: Optional[float] = None,
+        allowablePenetration: Optional[float] = None,
+        approach: bool = False,
         **kwargs,
     ):
         self.name = str(name)
@@ -154,6 +160,12 @@ class ContactControl:
         rf = rampDownFactor if rampDownFactor != 0.0 else ramp_down_factor
         self.ramp_down_factor = float(rf)
         self.clearance = float(clearance) if clearance is not None else None
+
+        pen_tol = penetrationTolerance if penetrationTolerance is not None else penetration_tolerance
+        if pen_tol is None:
+            pen_tol = allowablePenetration if allowablePenetration is not None else kwargs.get("allowable_penetration")
+        self.penetration_tolerance = float(pen_tol) if pen_tol is not None else None
+        self.approach = bool(kwargs.get("approach", approach))
 
 
 @dataclass
@@ -1061,6 +1073,9 @@ class ContactPair:
         if self.main is None or self.secondary is None:
             raise ValueError("ContactPair requires both 'main' (or 'master') and 'secondary' (or 'slave').")
 
+        ctrl = kwargs.get("contact_controls", kwargs.get("contactControls", None))
+        self.contact_controls = ctrl
+
     @property
     def contact_enforcement(self) -> str:
         return self.constraint_enforcement
@@ -1199,6 +1214,12 @@ class ContactPair:
         k_default_hard = 10.0 * k_ref
 
         def _resolve_delta() -> float:
+            if getattr(self, "contact_controls", None) is not None:
+                ctrl = self.contact_controls
+                if isinstance(ctrl, str) and model is not None and hasattr(model, "contact_controls"):
+                    ctrl = model.contact_controls.get(ctrl)
+                if getattr(ctrl, "penetration_tolerance", None) is not None:
+                    return float(ctrl.penetration_tolerance)
             return prop.allowable_penetration if prop.allowable_penetration is not None else 0.01 * L_char
 
         def _warn_if_absolute_and_scale_both_set(scale_default_ok: bool):
@@ -1723,6 +1744,9 @@ class GeneralContact:
                 damping_clearance = ctrl.clearance
             if getattr(ctrl, "tangent_fraction", 0.0) > 0.0:
                 tangent_fraction = ctrl.tangent_fraction
+            if getattr(ctrl, "penetration_tolerance", None) is not None:
+                if law is not None and hasattr(law, "delta"):
+                    law.delta = float(ctrl.penetration_tolerance)
 
         materials = kwargs.get("materials", None)
         if materials is None and model is not None and hasattr(model, "materials"):

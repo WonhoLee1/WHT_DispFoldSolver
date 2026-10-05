@@ -57,7 +57,8 @@ def run_abaqus_inp_folding(inp_path: str = None, before_png_name: str = "ex12_be
                             max_steps: int = None,
                             elem_jit: str = "jax",
                             threads: int = None,
-                            config: FoldModelConfig = None):
+                            config: FoldModelConfig = None,
+                            preset: str = "ADAPTIVE"):
     """Run the folding solve from a given .inp deck."""
     if config is None:
         config = make_teardrop_config()
@@ -79,7 +80,8 @@ def run_abaqus_inp_folding(inp_path: str = None, before_png_name: str = "ex12_be
     res_dict = run_folding_from_result(result, before_png_name, after_png_name,
                                         case_name=os.path.basename(inp_path),
                                         result_name=result_name, max_steps=max_steps,
-                                        elem_jit=elem_jit, threads=threads, config=config)
+                                        elem_jit=elem_jit, threads=threads, config=config,
+                                        preset=preset)
     if isinstance(res_dict, dict) and "solver" in res_dict:
         res_dict["solver"].t_preprocess = t_pre
     return res_dict
@@ -92,7 +94,8 @@ def run_folding_from_result(result, before_png_name: str = "ex12_before_folding_
                              max_steps: int = None,
                              elem_jit: str = "jax",
                              threads: int = None,
-                             config: FoldModelConfig = None):
+                             config: FoldModelConfig = None,
+                             preset: str = "ADAPTIVE"):
     """Shared solve loop, driven by any object exposing the same fields as
     `dispsolver.io.model_builder.ModelBuilderResult` (`.mesh`, `.materials`,
     `.material_params`, `.solver_config`, `.rbe2_constraints`,
@@ -223,6 +226,7 @@ def run_folding_from_result(result, before_png_name: str = "ex12_before_folding_
                              else result.penalty_constraints),
         elem_jit=elem_jit,
         verbose=True,
+        solution_controls=preset,
     )
 
 
@@ -310,6 +314,18 @@ def run_folding_from_result(result, before_png_name: str = "ex12_before_folding_
             print(f"  [MAX STEPS] stopping after {step} steps as requested.")
             break
         dt = dt_ctrl.dt
+
+        # Kinematic dt modulation: cap rotation increment per step <= 0.20 deg
+        # to prevent element inversion in the 30 um adhesive layer during maximum rotation speed
+        s_cur = solver.time / t_total
+        d_amp_dt = 30.0 * (s_cur ** 2) * ((1.0 - s_cur) ** 2) / t_total
+        omega_deg_s = 90.0 * d_amp_dt
+        if omega_deg_s > 1e-3:
+            max_dtheta_deg = 0.20
+            dt_omega = max_dtheta_deg / omega_deg_s
+            dt = min(dt, dt_omega)
+        dt = max(dt, dt_ctrl.dt_min)
+
         if solver.time + dt > t_total:
             dt = t_total - solver.time
 
@@ -386,7 +402,7 @@ def run_folding_from_result(result, before_png_name: str = "ex12_before_folding_
             _al_iters = 0
             _al_max_iters = 8
             _al_gap_tol_mm = 0.02
-            if result.penalty_constraints:
+            if result.penalty_constraints and _tie_method != "kinematic":
                 _al_max_gap = max(
                     (check_tie_gap(solver.u, solver.coords, tc, nid_to_idx)["max_gap_mm"]
                      for tc in result.penalty_constraints), default=0.0
@@ -466,16 +482,17 @@ def run_folding_from_result(result, before_png_name: str = "ex12_before_folding_
                 f"Iters: {conv_code:2d} | dt: {dt:.5f}s | Tie: {n_tie_active} active"
             )
 
-            # Live update final PNG image on every converged step
-            plot_and_save_deformed_shape_png(
-                mesh=mesh,
-                u=solver.u,
-                tie_constraints=result.penalty_constraints,
-                rbe2_elements=result.rbe2_elements,
-        rbe2_constraints=result.rbe2_constraints,
-                save_path=after_png_path,
-                monitor_text=monitor_text
-            )
+            # Live update final PNG image periodically (every 5 steps or at completion)
+            if step % 5 == 0 or solver.time >= t_total - 1e-6:
+                plot_and_save_deformed_shape_png(
+                    mesh=mesh,
+                    u=solver.u,
+                    tie_constraints=result.penalty_constraints,
+                    rbe2_elements=result.rbe2_elements,
+                    rbe2_constraints=result.rbe2_constraints,
+                    save_path=after_png_path,
+                    monitor_text=monitor_text
+                )
 
             dt = dt_ctrl.update(n_iter=conv_code, converged=True)
         else:
@@ -548,10 +565,11 @@ if __name__ == "__main__":
     parser.add_argument("--elem_jit", type=str, default="numba", choices=["jax", "numba"], help="Element JIT backend")
     parser.add_argument("--threads", type=int, default=None, help="Number of CPU threads")
     parser.add_argument("--max_steps", type=int, default=None, help="Maximum solve steps")
+    parser.add_argument("--sol_preset", type=str, default="ADAPTIVE", choices=["STANDARD", "RELAXED", "CONCEPTUAL", "ADAPTIVE"], help="Abaqus solution control preset")
     add_config_cli_args(parser)
 
     args = parser.parse_args()
-    config = apply_cli_overrides(DEFAULT_CONFIG, args)
+    config = apply_cli_overrides(make_teardrop_config(), args)
 
     run_abaqus_inp_folding(
         inp_path=args.inp,
@@ -559,4 +577,5 @@ if __name__ == "__main__":
         threads=args.threads,
         max_steps=args.max_steps,
         config=config,
+        preset=args.sol_preset,
     )

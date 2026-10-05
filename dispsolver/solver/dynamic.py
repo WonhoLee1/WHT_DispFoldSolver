@@ -127,6 +127,8 @@ except Exception:
     _PARDISO_AVAILABLE = False
     PardisoNonlinearSolver = None
 
+from dispsolver.model.control import SolutionControl
+
 _DEFAULT_PARDISO_SOLVER = None
 
 
@@ -880,6 +882,7 @@ class DynamicSolver:
         distortion_control: bool = True,
         distortion_j_crit: float = 0.20,
         max_cutbacks: int = 20,
+        solution_controls: Optional[Union[str, SolutionControl]] = None,
     ):
         configure_jax_cache()
         # --- NLGEOM (Abaqus-standard geometric-nonlinearity switch) -------
@@ -974,6 +977,18 @@ class DynamicSolver:
         self.tol = tol
         self.atol = atol   # absolute displacement-correction floor (P2)
         self.rtol = rtol   # relative residual-force convergence tolerance (P2)
+
+        if solution_controls is not None:
+            if isinstance(solution_controls, SolutionControl):
+                self.solution_controls = solution_controls
+            elif isinstance(solution_controls, str):
+                self.solution_controls = SolutionControl(preset=solution_controls)
+            else:
+                self.solution_controls = SolutionControl()
+        else:
+            self.solution_controls = SolutionControl(preset="STANDARD")
+        self.cutback_count = 0
+
         self.verbose = verbose
         self.max_step = max_step
         self.f_int_n = None  # for HHT-α alpha method
@@ -1851,10 +1866,14 @@ class DynamicSolver:
         took. See `_solve_step_impl` for the algorithm itself.
         """
         t_wall_start = time.time()
-        self.last_failure_reason = None
         result = self._solve_step_impl(dt)
         if result >= 0:
+            self.cutback_count = 0
+            if hasattr(self, "solution_controls") and self.solution_controls is not None:
+                self.solution_controls.tolerance_engine.is_active = self.solution_controls.adaptive_convergence
             self._update_rbe2_slave_displacements()
+        else:
+            self.cutback_count = getattr(self, "cutback_count", 0) + 1
         self._print_sta_line(dt, result, time.time() - t_wall_start)
         return result
 
@@ -2848,13 +2867,28 @@ class DynamicSolver:
                     print(f"  *** ERROR: Divergence detected at iteration {n_iter+1}. (Time: {t_elapsed:.2f} s)\n", flush=True)
                 return self._fail("divergence (NaN/Inf du_norm or res_ratio > 1e15)")
 
-            # ---- Residual-based convergence criterion ----
+            # ---- Residual-based convergence criterion (Abaqus Solution Controls) ----
             q_avg_raw = float(np.mean(np.abs(f_int))) if len(f_int) > 0 else 1.0
             q_floor = max(1.0, float(getattr(self, "characteristic_force", 1.0)))
             q_avg = max(q_avg_raw, q_floor)
-            abaqus_r_converged = max_R_val <= 0.005 * q_avg
-            abaqus_c_converged = max_du_val <= 0.01 * max_disp_incr
-            abaqus_converged = abaqus_r_converged and abaqus_c_converged
+
+            if hasattr(self, "solution_controls") and self.solution_controls is not None:
+                R_n_eff, C_n_eff, R_p_eff, C_a_eff = self.solution_controls.get_effective_tolerances(
+                    cutback_count=getattr(self, "cutback_count", 0),
+                    iter_count=n_iter,
+                    is_stalling=(stall_count >= 2)
+                )
+            else:
+                R_n_eff, C_n_eff, R_p_eff, C_a_eff = 0.005, 0.01, 0.02, 0.001
+
+            # Standard Abaqus check
+            abaqus_r_converged = max_R_val <= R_n_eff * q_avg
+            abaqus_c_converged = max_du_val <= C_n_eff * max_disp_incr
+            std_converged = abaqus_r_converged and abaqus_c_converged
+
+            # Abaqus Alternative Convergence Check (saves 3~5 tail iterations per step)
+            alt_converged = (max_du_val <= C_a_eff * max_disp_incr) and (max_R_val <= R_p_eff * q_avg)
+            abaqus_converged = std_converged or alt_converged
 
             residual_converged = (
                 res_norm_0 is not None and res_ratio < 1e-6 and max_du_val < 0.01

@@ -251,3 +251,19 @@ deck06 DUAL_MORTAR는 세 결함이 겹쳐 수렴하지 못했다(하나만 고�
 - Abaqus는 키워드 라인의 공백과 라벨 대소문자를 무시함: `PART=PART -1`은 `PART-1`. 정확 일치 조회는 빈 파트를 만들어 인스턴스 메쉬를 잃었음.
 - 같은 맥락에서 이전 reviewer 지적처럼, 레거시 동작을 "그대로 옮겼다"는 것이 옳다는 근거가 아님: 이전 작업에서 OP=NEW 전 하중 해제, `*NSET, ELSET=` 무시, composite 첫 층만 사용 등 다수가 수년간 조용히 다른 모델을 만들고 있었음.
 
+## 8. 2026-10-06 Abaqus Solution Control 및 접촉 침투 제어(Contact Controls)에 관한 수치역학적 교훈
+
+### 8.1 Auto Time Stepping(dt 축소)의 컷백 데드락 vs Solution Control 공차 완화의 본질적 차이
+- **Auto Time Stepping의 한계 (Cutback Trap)**:
+  일반적인 자동 시간 증분법은 수렴 공차($R_n=0.005, C_n=0.01$)를 불변으로 고정한 채 오직 시간 증분 $\Delta t$만 조정한다. 국소 기하 특이성, 극박 점착층의 급격한 전단 집중, 또는 접촉 개폐(Chattering) 진동 발생 시 비선형 잔차가 공차 바로 위($0.008 \times q_{\text{avg}}$)에서 정체(Plateau)되면, $\Delta t$를 아무리 줄여도 수렴하지 못하고 최대 컷백 한도($I_C=25$)에 걸려 `Too many cutbacks (Aborted)`로 해석이 강제 중단된다.
+- **Solution Control 공차 완화의 실체**:
+  Abaqus 최신 릴리즈의 `CONVERGENCE CHECK=RELAXED / ROUGH` 프리셋($R_n=0.02 \sim 0.05, C_n=0.05 \sim 0.10$)이나 공식 `Alternative Convergence Check`($R_p=0.02, C_a=10^{-3}$)는 각 증분당 요구되는 수학적 평형의 엄밀도를 조정한다. 이를 통해 각 스텝당 필요한 Newton 반복을 4~8회에서 **1~2회로 압축**하여 **계산 시간을 3~5배 단축**시키며, 컷백 데드락 구간을 유연하게 통과시킨다.
+- **경로 의존성(Path-dependent) 재료에서의 드리프트 위험성 (Inexact Newton의 한계)**:
+  초탄성체(보존계)와 달리, 점탄성(PSA) 및 탄소성(금속)과 같은 비보존계 재료에서는 비평형 잔차를 남긴 채 스텝을 진행하면 반환 사상(Return mapping) 과정에서 내부 이력 변수(State variables, 소성변형률/점탄성응력)에 영구 오차(Drift)가 누적된다. 이는 후속 스텝의 일관 접선 계수를 왜곡하여 발산을 유발하거나 인공 래칫팅(Spurious ratcheting)을 초래하므로, 공차 완화는 "개념/신속 스크리닝" 또는 "정체 구간의 일시적 적응(`ADAPTIVE`)" 목적으로 한정해야 한다.
+
+### 8.2 접촉(Contact)에서의 침투 허용량(Penetration Tolerance) 제어 원리
+- Abaqus/Standard는 기본 접촉 침투 공차를 요소 특성 길이의 $10^{-5} \sim 10^{-4}$ (수 나노미터)로 극도로 엄격하게 제한하므로, 복잡한 대변형 접촉에서 미세 침투 발생 시 Severe Discontinuity Iteration (SDI) 컷백이 반복된다.
+- `*CONTACT CONTROLS, PENETRATION TOLERANCE = <val>` (또는 CAE의 "Allowable penetration")을 통해 허용 침투량을 요소 두께의 $5\% \sim 10\%$ ($0.05 \sim 0.1 \times h$) 또는 물리적 허용치($1 \sim 5\,\mu\text{m}$)로 늘려주면, 솔버가 미세 침투를 에러로 보지 않고 접촉 평형으로 인정하여 컷백 없이 다음 증분으로 전진할 수 있다.
+- WHT Solver의 `ContactControl` 및 `ContactProperty`에 `penetrationTolerance`, `allowablePenetration`, `approach` 파라미터가 1:1로 공식 연동되어 상용 Abaqus와 동일하게 제어 가능하다.
+
+

@@ -207,17 +207,31 @@ class AdaptivePowerSoftLaw:
 
         self.k_target = float(k_target)
         self.c0 = float(c0)
-        self.delta = float(delta)
+        self._delta = float(delta)
         self.power = float(power)
-        self.span = self.delta + self.c0
+        self._recompute_constants()
+
+    def _recompute_constants(self) -> None:
+        self.span = self._delta + self.c0
         self.p_ref = (self.k_target * self.span) / self.power
+
+    @property
+    def delta(self) -> float:
+        return self._delta
+
+    @delta.setter
+    def delta(self, val: float) -> None:
+        if float(val) <= 0.0:
+            raise ValueError(f"AdaptivePowerSoftLaw requires delta > 0, got {val}")
+        self._delta = float(val)
+        self._recompute_constants()
 
     def evaluate(self, h: float) -> Tuple[float, float]:
         if h <= -self.c0:
             return 0.0, 0.0
 
-        if h >= self.delta:
-            p = self.p_ref + self.k_target * (h - self.delta)
+        if h >= self._delta:
+            p = self.p_ref + self.k_target * (h - self._delta)
             return float(p), float(self.k_target)
 
         # Transition zone: -c0 < h < delta

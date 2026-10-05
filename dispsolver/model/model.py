@@ -9,6 +9,7 @@ from dispsolver.model.names import CaseInsensitiveDict
 
 from dispsolver.model.part import Part
 from dispsolver.model.material import Material
+from dispsolver.model.control import SolutionControl
 from dispsolver.model.section import Section, SolidSection, ShellSection, SectionControls, MaterialOrientation
 from dispsolver.model.assembly import Assembly, FlattenedSolverSystem
 from dispsolver.model.step import Step, InitialStep, PredefinedField
@@ -96,6 +97,8 @@ class Model:
 
         # Abaqus API parity aliases
         self.interactionProperties = self.contact_properties
+        self.solution_controls: Dict[str, SolutionControl] = CaseInsensitiveDict()
+        self.solutionControls = self.solution_controls
 
         self.initial_step: InitialStep = InitialStep(name="Initial")
         self.steps: Dict[str, Step] = {"Initial": self.initial_step}
@@ -295,6 +298,39 @@ class Model:
             dt_min=dt_min,
             dt_max=dt_max
         )
+
+    def StaticStep(
+        self,
+        name: str,
+        previous: Optional[Union[str, Step]] = "Initial",
+        time_period: float = 1.0,
+        dt_init: float = 0.02,
+        dt_min: float = 1e-5,
+        dt_max: float = 0.05,
+        **kwargs
+    ) -> Step:
+        """Create and register a StaticStep in this Model (Abaqus Python API parity)."""
+        return self.Step(
+            name=name,
+            previous=previous,
+            procedure="STATIC",
+            time_period=time_period,
+            dt_init=dt_init,
+            dt_min=dt_min,
+            dt_max=dt_max,
+            **kwargs
+        )
+
+    def SolutionControl(
+        self,
+        name: str,
+        preset: str = "STANDARD",
+        **kwargs
+    ) -> SolutionControl:
+        """Create and register a SolutionControl in this Model (Abaqus Python API parity)."""
+        ctrl = SolutionControl(name=str(name), preset=preset, **kwargs)
+        self.solution_controls[str(name)] = ctrl
+        return ctrl
 
     def PredefinedField(self, name: str, field_type: str, region: str, values: Any) -> PredefinedField:
         """Create and assign a Predefined Field (Initial Stress, Velocity, SDVs) to InitialStep."""
@@ -612,7 +648,6 @@ class Model:
         terms: Any = None,
         constant: float = 0.0,
         penalty_stiffness: float = 1e6,
-        pair_index: Optional[int] = None,
     ) -> EquationConstraint:
         """Create and register a linear equation constraint (*EQUATION in Abaqus)."""
         eq = EquationConstraint(
@@ -620,7 +655,6 @@ class Model:
             terms=[(t[0], int(t[1]), float(t[2])) for t in (terms or [])],
             constant=float(constant),
             penalty_stiffness=float(penalty_stiffness),
-            pair_index=pair_index,
         )
         self.constraints[str(name)] = eq
         return eq

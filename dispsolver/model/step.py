@@ -20,6 +20,7 @@ from dispsolver.model.amplitude import Amplitude, TabularAmplitude, SmoothStepAm
 from dispsolver.model.bc import BoundaryCondition, DisplacementBC, VelocityBC, UserFunctionBC
 from dispsolver.model.load import Load, ConcentratedForce, ConcentratedLoad, Pressure, Gravity, BodyForce
 from dispsolver.model.sensor import Sensor, SensorManager, IterationHook, ControlAction
+from dispsolver.model.control import SolutionControl
 
 
 
@@ -84,6 +85,9 @@ class Step:
         self.field_output_requests: Dict[str, Any] = {}
         self.history_output_requests: Dict[str, Any] = {}
 
+        # Abaqus Solution Controls
+        self.control: SolutionControl = SolutionControl()
+
         # Abaqus Parity: Default Output Requests on creation
         if self.procedure != "INITIAL":
             self._init_default_output_requests()
@@ -91,6 +95,20 @@ class Step:
         # If created from a parent step, propagate active entities from parent
         if parent_step is not None:
             self.propagate_from_parent(parent_step)
+
+    def setValues(self, **kwargs) -> None:
+        """Set step parameters and solution controls with Abaqus API parity."""
+        if "solutionControls" in kwargs:
+            val = kwargs.pop("solutionControls")
+            if isinstance(val, SolutionControl):
+                self.control = val
+            elif isinstance(val, str):
+                self.control.apply_preset(val)
+        if any(k in kwargs for k in ("preset", "adaptiveConvergence", "maxRelaxFactor", "displacementField", "timeIncrementation", "lineSearch")):
+            self.control.setValues(**kwargs)
+        for k, v in kwargs.items():
+            if hasattr(self, k):
+                setattr(self, k, v)
 
     def propagate_from_parent(self, parent: Step) -> None:
         """Propagate active BCs, Loads, and Interactions from parent step as PROPAGATED, and inactive as DEACTIVATED."""
