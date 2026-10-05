@@ -302,8 +302,8 @@ class SolverTuningConfig:
     #                 RBE2 condensation, so the tied display DOFs are a closed-
     #                 form function of theta and are prescribed directly. Zero
     #                 gap by construction, no penalty parameter.
-    tie_method: str = "penalty"
-    psa_element_type: str = "CPE4I"   # accurate at coarse mesh (1.01x @ AR 8.3); CPE4H needs >=2 rows + fine dx, see the node-id-overflow assert in gen_ex12_inp.py
+    tie_method: str = "kinematic"  # Abaqus-standard MPC elimination (0 gap by construction, no penalty stiffness)
+    psa_element_type: str = "Q4_VISCO_SIMO"   # Simo-Taylor F-bar visco (robust under extreme >700% shear slip; avoids EAS local solve stalling)
     glass_element_type: str = "Q4_COROTATIONAL_SRI"
     # PARDISO linear solver options:
     # "auto" (default: detects SPD vs Indefinite vs Nonsymmetric based on constraints),
@@ -312,7 +312,7 @@ class SolverTuningConfig:
     # "nonsymmetric" (mtype=11, LU, general fallback)
     pardiso_mtype: str = "auto"
     pardiso_phase_reuse: bool = True  # Reuse Phase 11 (symbolic analysis) across Newton iters
-    max_displacement_corr: Optional[float] = 0.03  # Cap trial step correction to 0.03 mm (1 PSA element thickness)
+    max_displacement_corr: Optional[float] = None  # None = no artificial clipping during large-rotation folding
     # Abaqus-grade Distortion Control (*SECTION CONTROLS, DISTORTION CONTROL=YES/NO)
     distortion_control: bool = True  # Enable distortion control for 14-layer viscoelastic PSA
     distortion_j_crit: float = 0.20  # Critical volume ratio threshold
@@ -655,6 +655,8 @@ def make_teardrop_config(n_layer_pairs: int = 3, dt_max: float = 0.01) -> FoldMo
     cfg.drive.dt_min = 1e-5
     cfg.solver.integration_mode = "moderate-4"
     cfg.solver.ul_mode = True
+    cfg.solver.tie_method = "kinematic"
+    cfg.solver.psa_element_type = "Q4_VISCO_SIMO"
     cfg.solver.max_displacement_corr = None
     cfg.solver.distortion_control = True
     cfg.solver.distortion_j_crit = 0.20
