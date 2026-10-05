@@ -253,7 +253,7 @@ def test_step2_pressure_load_vector():
     step.parent_model = model   # as MultiStepExecutor.execute_step does
     expect = PIPE_P * PIPE_R * PIPE_H
     for t in (0.5, 1.0):
-        f = s._compute_step_external_loads(step, sys_, t, 1.0)
+        f = s._lower_step(step, sys_, 1.0).f_ext(t, s.u)
         sums = np.array([f[0::3].sum(), f[1::3].sum(), f[2::3].sum()])
         np.testing.assert_allclose(sums, [t * expect, t * expect, 0.0], rtol=1e-6, atol=1e-6 * expect)
 

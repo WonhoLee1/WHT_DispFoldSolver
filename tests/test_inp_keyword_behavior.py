@@ -78,8 +78,9 @@ def at_end(text):
     reader, model, solver, sysm, st = build(text)
     T = st.time_period
     solver._u_step_start = solver.u.copy()
-    solver._update_step_bcs(st, sysm, T, T)
-    f = solver._compute_step_external_loads(st, sysm, T, T)
+    plan = solver._lower_step(st, sysm, T)
+    solver._apply_plan_bcs(plan, T)
+    f = plan.f_ext(T, solver.u)
     fixed = {(int(d) // 3 + 1, int(d) % 3 + 1): float(v) for d, v in solver.fixed_dofs.items()}
     return fixed, f.reshape(-1, 3), solver, reader
 
@@ -292,7 +293,7 @@ def test_2d_cload_ramps_over_a_static_step():
         solver, sysm = model.create_solver(dim=2)
     st = model.steps[[s for s in model.steps if s != "Initial"][-1]]
     st.parent_model = model
-    f_half = solver._compute_step_external_loads(st, sysm, 0.5, 1.0)
+    f_half = solver._lower_step(st, sysm, 1.0).f_ext(0.5, solver.u)
     assert np.isclose(f_half.sum(), 4.0)
 
 

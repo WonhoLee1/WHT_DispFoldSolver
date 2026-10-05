@@ -128,7 +128,7 @@ def test_model_objects_carry_their_deck_location_into_solver_errors(tmp_path):
     assert model.sections[next(iter(model.sections))].source_location == "deck.inp:15"
     solver._u_step_start = solver.u.copy()
     with pytest.raises(RegionError, match=r"deck\.inp:19"):
-        solver._update_step_bcs(st, sysm, 1.0, 1.0)
+        solver._lower_step(st, sysm, 1.0)
 
 
 def test_surface_behavior_reads_its_law_and_data():

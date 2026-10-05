@@ -15,7 +15,6 @@ import time
 from typing import Dict, List, Tuple, Optional, Any
 import numpy as np
 
-from dispsolver.model.regions import describe as _describe
 from scipy.sparse import csc_matrix, csr_matrix, coo_matrix
 
 try:
@@ -967,143 +966,17 @@ class DynamicSolver2D:
 
         return False, max_augment_iters, inner_iters
 
-    def _update_step_bcs(self, step: Any, sys: Optional[Any], t: float, total_time: float) -> None:
-        """Evaluate active BCs for 2D Model."""
+    def _lower_step(self, step: Any, sys: Optional[Any], total_time: Optional[float] = None):
+        """The step's BCs and loads, resolved once (dispsolver.model.step_plan)."""
+        from dispsolver.model.step_plan import lower_step
+        return lower_step(step, sys, self.mesh, 2, self.nlgeom, total_time=total_time)
+
+    def _apply_plan_bcs(self, plan: Any, t: float) -> None:
+        """Replace the Dirichlet set by the plan's prescribed DOFs at time t."""
         self.fixed_dofs.clear()
-        if not hasattr(step, "get_active_bcs"):
-            return
-
-        active_bcs = step.get_active_bcs()
-        node_coords_all = self.mesh.nodes_array()
-        nid_map = self.mesh.node_id_to_index()
-
-        for bc_name, bc in active_bcs.items():
-            region_nodes = self._resolve_region_nodes(bc.region, sys, step, _describe(bc, f"BC {bc_name}"))
-
-            if hasattr(bc, "evaluate_node"):
-                for gid in region_nodes:
-                    n_idx = nid_map[gid]
-                    coords = node_coords_all[n_idx]
-                    res = bc.evaluate_node(coords, t, step_time=t)
-                    if res is not None:
-                        u1, u2 = res[0], res[1]
-                        if u1 is not None:
-                            self.fix_dof(gid, 0, float(u1))
-                        if u2 is not None:
-                            self.fix_dof(gid, 1, float(u2))
-
-            elif hasattr(bc, "u1") or hasattr(bc, "u2"):
-                amp_val = None
-                if bc.amplitude is not None and hasattr(bc.amplitude, "evaluate"):
-                    amp_val = bc.amplitude.evaluate(t, step_time=t, total_time=total_time)
-                elif bc.amplitude is not None and isinstance(bc.amplitude, str):
-                    # No parent model to resolve the name against raises too
-                    # (same as 3D); it used to be ignored.
-                    pm = getattr(step, "parent_model", None)
-                    amp_obj = (pm.amplitudes.get(bc.amplitude, None)
-                               if pm is not None and hasattr(pm, "amplitudes") else None)
-                    if amp_obj is None:
-                        raise ValueError(f"{_describe(bc, 'BC ' + bc_name)}: amplitude {bc.amplitude!r} is not defined")
-                    amp_val = amp_obj.evaluate(t, step_time=t, total_time=total_time)
-
-                is_ramp = False
-                ramp_scale = 1.0
-                if amp_val is None:
-                    proc = str(getattr(step, "procedure", "STATIC")).upper()
-                    if proc in ("STATIC", "QUASISTATIC"):
-                        ramp_scale = min(max(t / max(total_time, 1e-12), 0.0), 1.0)
-                        is_ramp = True
-                    else:
-                        amp_val = 1.0
-
-                u_step_start = getattr(self, "_u_step_start", None)
-                for gid in region_nodes:
-                    n_idx = nid_map.get(gid, None)
-                    for d, val in enumerate([getattr(bc, "u1", None), getattr(bc, "u2", None)]):
-                        if val is not None:
-                            target_val = float(val)
-                            if is_ramp:
-                                u0 = float(u_step_start[2 * n_idx + d]) if (u_step_start is not None and n_idx is not None) else 0.0
-                                u_prescribed = u0 + (target_val - u0) * ramp_scale
-                            else:
-                                u_prescribed = target_val * amp_val
-                            self.fix_dof(gid, d, u_prescribed)
-
-    def _static_ramp(self, vec: np.ndarray, load: Any, step: Any, t: float) -> np.ndarray:
-        """Abaqus default amplitude: ramp over a STATIC step, step otherwise."""
-        if getattr(load, "amplitude", None) is None:
-            proc = str(getattr(step, "procedure", "STATIC")).upper()
-            if proc in ("STATIC", "QUASISTATIC"):
-                period = float(getattr(step, "time_period", 1.0))
-                return vec * min(max(t / max(period, 1e-12), 0.0), 1.0)
-        return vec
-
-    def _resolve_region_nodes(self, region: Any, sys: Optional[Any], step: Any, what: str) -> List[int]:
-        """Global node ids of a BC/load region; raises if it does not resolve."""
-        if sys is not None and hasattr(sys, "global_nsets"):
-            from dispsolver.model.regions import resolve_node_region, node_ids_of
-            return node_ids_of(sys, resolve_node_region(sys, region, step, what=what))
-        if isinstance(region, str) and region.upper() == "ALL":
-            return list(self.mesh.nodes.keys())
-        for attr in ("node_sets", "sets"):
-            for k, v in (getattr(self.mesh, attr, {}) or {}).items():
-                if str(k).upper() == str(region).upper():
-                    return list(v.node_ids)
-        if region in self.mesh.nodes:
-            return [region]
-        if isinstance(region, str) and region.isdigit() and int(region) in self.mesh.nodes:
-            return [int(region)]
-        raise ValueError(f"{what}: node region {region!r} does not resolve")
-
-    def _compute_step_external_loads(self, step: Any, sys: Optional[Any], t: float, total_time: float) -> np.ndarray:
-        """Compute external load vector f_ext from active loads in step at time t."""
-        f_ext = np.zeros(self.num_dofs, dtype=np.float64)
-        if not hasattr(step, "get_active_loads"):
-            return f_ext
-
-        active_loads = step.get_active_loads()
-        nid_map = self.mesh.node_id_to_index()
-
-        for load_name, load in active_loads.items():
-            if hasattr(load, "get_acceleration_vector") or type(load).__name__ == "BodyForce" or hasattr(load, "b1"):
-                # Used to fall through every branch and be ignored.
-                raise NotImplementedError(f"load {load_name}: body/gravity loads are not implemented "
-                                          f"in the 2D solver")
-            if hasattr(load, "get_force_vector"):
-                f_vec = np.asarray(load.get_force_vector(t=t, step_time=t, model=getattr(step, "parent_model", None)),
-                                   dtype=np.float64)
-                # Abaqus STATIC default amplitude is a ramp (3D already did this;
-                # 2D applied the full load from the first increment).
-                f_vec = self._static_ramp(f_vec, load, step, t)
-                for gid in self._resolve_region_nodes(load.region, sys, step, _describe(load, f"load {load_name}")):
-                    n_idx = nid_map[gid]
-                    f_ext[2 * n_idx + 0] += f_vec[0]
-                    f_ext[2 * n_idx + 1] += f_vec[1]
-
-            elif (hasattr(load, "magnitude") or type(load).__name__ == "Pressure") and hasattr(load, "region"):
-                from dispsolver.solver.traction import SurfaceTraction
-                # get_magnitude applies the load's amplitude whether it is an
-                # object or a *AMPLITUDE name (the name used to be ignored).
-                if hasattr(load, "get_magnitude"):
-                    p_mag = float(load.get_magnitude(t=t, step_time=t, model=getattr(step, "parent_model", None)))
-                else:
-                    p_mag = float(getattr(load, "magnitude", 0.0))
-                p_mag = float(self._static_ramp(np.array([p_mag]), load, step, t)[0])
-
-                load_name = getattr(load, "name", "")
-                # The face comes from the load's own `face` (DLOAD P1..P4);
-                # it used to be guessed from substrings of the load / region
-                # name when the face was the default "P1".
-                face_name = getattr(load, "face", getattr(load, "face_name", None))
-                if not face_name:
-                    raise ValueError(_describe(load, f"pressure load {load_name!r}")
-                                     + ": element face is not specified (expected P1..P4 / S1..S4)")
-
-                st = SurfaceTraction(elset_name=load.region, face=face_name, pressure=p_mag)
-                f_press, _ = st.assemble_forces_and_stiffness(self.mesh, self.u, p_mag)
-                f_ext += f_press
-
-        return f_ext
+        dofs, vals = plan.prescribed(t, getattr(self, "_u_step_start", None))
+        for d, v in zip(dofs.tolist(), vals.tolist()):
+            self.set_dirichlet_bc(d, v)
 
     def solve(
         self,
@@ -1158,14 +1031,16 @@ class DynamicSolver2D:
                             )
                             self.add_constraint(rc)
 
+        plan = self._lower_step(step, sys, total_time)
+
         while t_curr < total_time - 1e-9:
             inc_count += 1
             if t_curr + dt > total_time:
                 dt = total_time - t_curr
 
             t_next = t_curr + dt
-            self._update_step_bcs(step, sys, t_next, total_time)
-            f_ext = self._compute_step_external_loads(step, sys, t_next, total_time)
+            self._apply_plan_bcs(plan, t_next)
+            f_ext = plan.f_ext(t_next, self.u)
 
             u_prev = self.u.copy()
             sdvs_prev = self.elem_sdvs.copy()

@@ -19,14 +19,15 @@ dt_min = 1e-6
 t_curr = 0.0
 inc = 0
 
+plan = solver._lower_step(step, sys2d, total_time)
 while t_curr < total_time - 1e-9:
     inc += 1
     if t_curr + dt > total_time:
         dt = total_time - t_curr
 
     t_next = t_curr + dt
-    solver._update_step_bcs(step, sys2d, t_next, total_time)
-    f_ext = solver._compute_step_external_loads(step, sys2d, t_next, total_time)
+    solver._apply_plan_bcs(plan, t_next)
+    f_ext = plan.f_ext(t_next, solver.u)
 
     u_prev = solver.u.copy()
     sdvs_prev = solver.elem_sdvs.copy()
