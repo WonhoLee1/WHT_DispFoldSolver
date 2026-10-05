@@ -77,9 +77,19 @@ def _handle_rigid_body(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     if analytical_surf:
         # Link reference node to analytical rigid surface if present
         ref_nid = int(rp) if rp is not None and str(rp).isdigit() else None
+        if rp is None:
+            # (a non-numeric REF NODE may be a one-node node set defined later)
+            reader.report("error", "rigid-body-ref-node",
+                          f"*RIGID BODY {name}: ANALYTICAL SURFACE={analytical_surf} needs a REF NODE; "
+                          f"the surface is not tied to a reference point", block)
         if not hasattr(reader, "pending_analytical_surfaces"):
             reader.pending_analytical_surfaces = {}
         reader.pending_analytical_surfaces[analytical_surf] = ref_nid
+        # Whether the surface exists is only known once the deck is read
+        # (it may be defined after this keyword): checked at end of parse.
+        if not hasattr(reader, "pending_analytical_blocks"):
+            reader.pending_analytical_blocks = {}
+        reader.pending_analytical_blocks[analytical_surf] = block
 
         if hasattr(reader.model, "analytical_rigid_surfaces") and analytical_surf in reader.model.analytical_rigid_surfaces:
             reader.model.analytical_rigid_surfaces[analytical_surf].reference_node = ref_nid

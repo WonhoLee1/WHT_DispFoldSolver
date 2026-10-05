@@ -52,8 +52,11 @@ class ConcentratedForce(Load):
         if self.amplitude is not None:
             if hasattr(self.amplitude, "evaluate"):
                 scale = float(self.amplitude.evaluate(t, step_time))
-            elif isinstance(self.amplitude, str) and model is not None and hasattr(model, "amplitudes"):
-                amp_obj = model.amplitudes.get(self.amplitude)
+            elif isinstance(self.amplitude, str):
+                # No model to resolve the name against is an error too: the
+                # amplitude used to be ignored (scale 1.0) in that case.
+                amp_obj = (model.amplitudes.get(self.amplitude)
+                           if model is not None and hasattr(model, "amplitudes") else None)
                 if amp_obj is None:
                     raise ValueError(f"load {self.name}"
                                      + (f" [{self.source_location}]" if getattr(self, "source_location", None) else "")
@@ -86,8 +89,11 @@ class Pressure(Load):
         if self.amplitude is not None:
             if hasattr(self.amplitude, "evaluate"):
                 scale = float(self.amplitude.evaluate(t, step_time))
-            elif isinstance(self.amplitude, str) and model is not None and hasattr(model, "amplitudes"):
-                amp_obj = model.amplitudes.get(self.amplitude)
+            elif isinstance(self.amplitude, str):
+                # No model to resolve the name against is an error too: the
+                # amplitude used to be ignored (scale 1.0) in that case.
+                amp_obj = (model.amplitudes.get(self.amplitude)
+                           if model is not None and hasattr(model, "amplitudes") else None)
                 if amp_obj is None:
                     raise ValueError(f"load {self.name}"
                                      + (f" [{self.source_location}]" if getattr(self, "source_location", None) else "")
@@ -115,8 +121,11 @@ class Gravity(Load):
         if self.amplitude is not None:
             if hasattr(self.amplitude, "evaluate"):
                 scale = float(self.amplitude.evaluate(t, step_time))
-            elif isinstance(self.amplitude, str) and model is not None and hasattr(model, "amplitudes"):
-                amp_obj = model.amplitudes.get(self.amplitude)
+            elif isinstance(self.amplitude, str):
+                # No model to resolve the name against is an error too: the
+                # amplitude used to be ignored (scale 1.0) in that case.
+                amp_obj = (model.amplitudes.get(self.amplitude)
+                           if model is not None and hasattr(model, "amplitudes") else None)
                 if amp_obj is None:
                     raise ValueError(f"load {self.name}"
                                      + (f" [{self.source_location}]" if getattr(self, "source_location", None) else "")
@@ -141,8 +150,11 @@ class BodyForce(Load):
         if self.amplitude is not None:
             if hasattr(self.amplitude, "evaluate"):
                 scale = float(self.amplitude.evaluate(t, step_time))
-            elif isinstance(self.amplitude, str) and model is not None and hasattr(model, "amplitudes"):
-                amp_obj = model.amplitudes.get(self.amplitude)
+            elif isinstance(self.amplitude, str):
+                # No model to resolve the name against is an error too: the
+                # amplitude used to be ignored (scale 1.0) in that case.
+                amp_obj = (model.amplitudes.get(self.amplitude)
+                           if model is not None and hasattr(model, "amplitudes") else None)
                 if amp_obj is None:
                     raise ValueError(f"load {self.name}"
                                      + (f" [{self.source_location}]" if getattr(self, "source_location", None) else "")

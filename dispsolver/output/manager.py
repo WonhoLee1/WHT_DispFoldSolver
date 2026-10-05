@@ -10,6 +10,7 @@ OutputManager는 FieldOutputRequest, HistoryOutputRequest, 실시간 VTKHDF 기�
 
 from __future__ import annotations
 from typing import Dict, List, Optional, Any, Tuple
+import warnings
 import numpy as np
 
 from dispsolver.output.variables import FieldPosition, FieldType
@@ -375,6 +376,16 @@ class OutputManager:
                 nids = solver.mesh.node_sets[region]
                 if nids:
                     target_idx = solver.mesh.node_id_to_index()[nids[0]]
+            elif region is not None:
+                # Used to record node 0's value under this request's name.
+                warned = self.__dict__.setdefault("_warned_history_regions", set())
+                if region not in warned:
+                    warned.add(region)
+                    warnings.warn(
+                        f"history output: node set {region!r} is not defined; "
+                        f"no {var_name} data is recorded for it",
+                        stacklevel=2)
+                return None
             if target_idx < len(u_nodes):
                 return float(u_nodes[target_idx, comp_idx])
 

@@ -60,6 +60,15 @@ class AbaqusInputReader:
         """All diagnostic messages, in input order (legacy view)."""
         return [d.message for d in self.diagnostics]
 
+    def _surface_defined(self, name: str) -> bool:
+        """Any *SURFACE of this name (a type the reader cannot build as an analytical
+        surface is reported by its own keyword, not here)."""
+        try:
+            self.symbols.resolve("surface", name)
+            return True
+        except Exception:
+            return False
+
     def report(self, level: str, code: str, message: str, block: Optional[AbaqusKeywordBlock] = None) -> None:
         self.diagnostics.add(level, code, message, Loc.of(block))
 
@@ -390,6 +399,18 @@ class AbaqusInputReader:
         # BIND: every name the deck refers to must resolve (forward references are legal, so
         # this runs once, after the last block). An internal failure here is a bug: not swallowed.
         self.symbols = bind_model(self.model, self.diagnostics)
+
+        # *RIGID BODY, ANALYTICAL SURFACE= must name a surface the deck defined. A *SURFACE
+        # of an unimplemented TYPE (CYLINDER ...) was refused and already reported as a gap
+        # and may be this one: that gap is the diagnostic, so no second report then.
+        defined = getattr(self.model, "analytical_rigid_surfaces", {}) or {}
+        refused_surface = any(d.level == "gap" and d.message.startswith("*SURFACE") for d in self.diagnostics)
+        for surf_name, blk in getattr(self, "pending_analytical_blocks", {}).items():
+            if (not refused_surface and not self._surface_defined(surf_name)
+                    and not any(k.upper() == str(surf_name).upper() for k in defined)):
+                self.report("error", "rigid-body-analytical-surface",
+                            f"*RIGID BODY: ANALYTICAL SURFACE={surf_name} is not an analytical surface "
+                            f"defined in the deck", blk)
 
         return self.model
 

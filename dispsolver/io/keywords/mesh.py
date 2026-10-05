@@ -641,7 +641,10 @@ def _handle_ngen(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
             n_end = int(parts_space[1])
             n_inc = int(parts_space[2]) if len(parts_space) >= 3 else 1
 
-            if n_start in part.nodes and n_end in part.nodes:
+            missing = [n for n in (n_start, n_end) if n not in part.nodes]
+            if missing:
+                raise KeyError(f"*NGEN: end node(s) {missing} are not defined in part {part.name!r}")
+            if True:
                 coords_start = np.array(part.nodes[n_start], dtype=float)
                 coords_end = np.array(part.nodes[n_end], dtype=float)
 
@@ -653,10 +656,12 @@ def _handle_ngen(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
                         if len(parts_comma) >= 4 and parts_comma[3]:
                             try:
                                 c_nid = int(parts_comma[3])
-                                if c_nid in part.nodes:
-                                    center = np.array(part.nodes[c_nid], dtype=float)
                             except ValueError:
-                                pass
+                                c_nid = None
+                            if c_nid:                      # 0 / blank: centre given by coordinates instead
+                                if c_nid not in part.nodes:
+                                    raise KeyError(f"*NGEN: circle-centre node {c_nid} is not defined in part {part.name!r}")
+                                center = np.array(part.nodes[c_nid], dtype=float)
                         if center is None and len(parts_comma) >= 6 and parts_comma[4] and parts_comma[5]:
                             cx = float(parts_comma[4])
                             cy = float(parts_comma[5])
@@ -748,15 +753,21 @@ def _handle_nfill(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
             n_intervals = int(parts[2])
             n_inc = int(parts[3]) if len(parts) >= 4 else None
 
-            s1_nids = sorted(list(part.node_sets[s1_name].node_ids if s1_name in part.node_sets else (part.sets[s1_name].node_ids if s1_name in part.sets else [])))
-            s2_nids = sorted(list(part.node_sets[s2_name].node_ids if s2_name in part.node_sets else (part.sets[s2_name].node_ids if s2_name in part.sets else [])))
+            for _sn in (s1_name, s2_name):
+                if _sn not in part.node_sets and _sn not in part.sets:
+                    raise KeyError(f"*NFILL: node set {_sn!r} is not defined in part {part.name!r}")
+            s1_nids = sorted(list(part.node_sets[s1_name].node_ids if s1_name in part.node_sets else part.sets[s1_name].node_ids))
+            s2_nids = sorted(list(part.node_sets[s2_name].node_ids if s2_name in part.node_sets else part.sets[s2_name].node_ids))
             bounding_nids.extend(s1_nids)
             bounding_nids.extend(s2_nids)
 
             if s1_nids and s2_nids and len(s1_nids) == len(s2_nids) and n_intervals > 0:
                 for nid1, nid2 in zip(s1_nids, s2_nids):
                     cur_inc = n_inc if n_inc is not None else (nid2 - nid1) // n_intervals
-                    if nid1 in part.nodes and nid2 in part.nodes:
+                    _miss = [n for n in (nid1, nid2) if n not in part.nodes]
+                    if _miss:
+                        raise KeyError(f"*NFILL: node(s) {_miss} of sets {s1_name!r}/{s2_name!r} are not defined in part {part.name!r}")
+                    if True:
                         c1 = np.array(part.nodes[nid1], dtype=float)
                         c2 = np.array(part.nodes[nid2], dtype=float)
                         for i in range(1, n_intervals):
@@ -798,11 +809,12 @@ def _handle_ncopy(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     new_set = block.params.get("new set", block.params.get("new_set", block.params.get("newset", None)))
     change_num = int(block.params.get("change number", block.params.get("change_number", block.params.get("changenumber", 0))))
 
-    old_nids = []
     if old_set in part.node_sets:
         old_nids = part.node_sets[old_set].node_ids
     elif old_set in part.sets:
         old_nids = part.sets[old_set].node_ids
+    else:
+        raise KeyError(f"*NCOPY: OLD SET {old_set!r} is not defined in part {part.name!r}")
 
     if not old_nids:
         return
@@ -819,8 +831,11 @@ def _handle_ncopy(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
             shift[:min(len(vals), part.dim)] = vals[:part.dim]
 
     new_nids = []
+    _miss = [n for n in old_nids if n not in part.nodes]
+    if _miss:
+        raise KeyError(f"*NCOPY: node(s) {sorted(_miss)} of set {old_set!r} are not defined in part {part.name!r}")
     for nid in old_nids:
-        if nid in part.nodes:
+        if True:
             coords = np.array(part.nodes[nid], dtype=float) + shift
             new_nid = nid + change_num
             part.Node(new_nid, *coords[:part.dim])
@@ -857,7 +872,9 @@ def _handle_elgen(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
             node_inc_row = int(parts[5]) if len(parts) >= 6 else 0
             elem_inc_row = int(parts[6]) if len(parts) >= 7 else node_inc_row
 
-            if master_eid in part.elements:
+            if master_eid not in part.elements:
+                raise KeyError(f"*ELGEN: master element {master_eid} is not defined in part {part.name!r}")
+            if True:
                 etype, master_conn = part.elements[master_eid]
                 for r in range(n_row):
                     for c in range(n_col):

@@ -103,6 +103,23 @@ class Model:
 
 
 
+    def _require_step(self, name: Any) -> Any:
+        """Step named `name` (case-insensitive); the initial step for its own name.
+
+        An unknown name raises KeyError -- it used to attach silently to the
+        Initial step, i.e. a misspelled createStepName changed the model.
+        """
+        key = str(name)
+        if key in self.steps:
+            return self.steps[key]
+        folded = key.upper()
+        for k, st in self.steps.items():
+            if k.upper() == folded:
+                return st
+        if folded == str(self.initial_step.name).upper():
+            return self.initial_step
+        raise KeyError(f"Step '{key}' does not exist in model '{self.name}' (defined: {list(self.steps)}).")
+
     # ─── FACTORY & REGISTRATION METHODS ────────────────────────────────
 
     def Part(self, name: str, dim: Optional[int] = None) -> Part:
@@ -241,7 +258,7 @@ class Model:
             if isinstance(previous, Step):
                 parent = previous
             elif isinstance(previous, str):
-                parent = self.steps.get(previous, self.initial_step)
+                parent = self._require_step(previous)
             else:
                 parent = self.initial_step
 
@@ -343,7 +360,7 @@ class Model:
             ur3=ur3,
             amplitude=amp_name
         )
-        step = self.steps.get(str(createStepName), self.initial_step)
+        step = self._require_step(createStepName)
         step.add_boundary_condition(bc)
         return bc
 
@@ -362,7 +379,7 @@ class Model:
             py_func=py_func,
             numba_func=numba_func
         )
-        step = self.steps.get(str(createStepName), self.initial_step)
+        step = self._require_step(createStepName)
         step.add_boundary_condition(bc)
         return bc
 
@@ -728,7 +745,7 @@ class Model:
         """
         prop = interactionProperty
         if isinstance(prop, str):
-            prop = self.contact_properties.get(prop, None)
+            prop = self.contact_properties.get(prop, None)   # forward references are legal in a deck; build_runtime_constraint resolves *_ref or raises
 
         ctrl = contactControls if contactControls is not None else kwargs.get("contact_controls")
         if ctrl is None:
@@ -755,7 +772,7 @@ class Model:
         # the unresolved reference as written: the BIND pass (model/bind.py) checks it
         gc.interaction_property_ref = interactionProperty if isinstance(interactionProperty, str) else None
         self.interactions[str(name)] = gc
-        step = self.steps.get(str(createStepName), self.initial_step)
+        step = self._require_step(createStepName)
         step.add_interaction(gc)
         return gc
 
@@ -772,7 +789,7 @@ class Model:
         """Create and register a Surface-to-Surface Contact Pair (*CONTACT PAIR in Abaqus)."""
         prop = interactionProperty
         if isinstance(prop, str):
-            prop = self.contact_properties.get(prop, None)
+            prop = self.contact_properties.get(prop, None)   # forward references are legal in a deck; build_runtime_constraint resolves *_ref or raises
         elif prop is None:
             prop = ContactProperty(name=f"{name}_Prop", normal_behavior="HARD")
 
@@ -788,7 +805,7 @@ class Model:
         # the unresolved reference as written: the BIND pass (model/bind.py) checks it
         cp.interaction_property_ref = interactionProperty if isinstance(interactionProperty, str) else None
         self.interactions[str(name)] = cp
-        step = self.steps.get(str(createStepName), self.initial_step)
+        step = self._require_step(createStepName)
         step.add_interaction(cp)
         return cp
 
@@ -823,7 +840,7 @@ class Model:
             cm1=cm1, cm2=cm2, cm3=cm3,
             amplitude=amp_name
         )
-        step = self.steps.get(str(createStepName), self.initial_step)
+        step = self._require_step(createStepName)
         step.add_load(load)
         return load
 
@@ -848,7 +865,7 @@ class Model:
             distribution=str(distribution).upper(),
             face=kwargs.get("face", "P1")
         )
-        step = self.steps.get(str(createStepName), self.initial_step)
+        step = self._require_step(createStepName)
         step.add_load(load)
         return load
 
@@ -874,7 +891,7 @@ class Model:
             amplitude=amp_name,
             region=region
         )
-        step = self.steps.get(str(createStepName), self.initial_step)
+        step = self._require_step(createStepName)
         step.add_load(load)
         return load
 
@@ -898,7 +915,7 @@ class Model:
             b1=float(b1), b2=float(b2), b3=float(b3),
             amplitude=amp_name
         )
-        step = self.steps.get(str(createStepName), self.initial_step)
+        step = self._require_step(createStepName)
         step.add_load(load)
         return load
 

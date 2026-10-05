@@ -62,25 +62,36 @@ _T3_FACE_NODES_STR: Dict[str, List[int]] = {
 }
 
 
+def _face_lookup(table: Dict[str, List[int]], face: str, elem_type: str) -> List[int]:
+    """Face label -> local node indices; an unknown label raises (it used to
+    silently become face 1)."""
+    try:
+        return table[face.upper()]
+    except KeyError:
+        raise ValueError(
+            f"pressure face {face!r} is not a face of element type {elem_type!r} "
+            f"(valid: {sorted(table)})") from None
+
+
 def _resolve_face_indices(face: str | int, elem_type: str) -> List[int]:
     """Return element-local node indices for the given face."""
     et_upper = elem_type.upper()
     if et_upper in ("CPE8", "CPS8", "CAX8", "CPE8R", "CPS8R", "CAX8R", "CPE8H", "CPS8H", "CAX8H", "Q8", "Q8R"):
         if isinstance(face, str):
-            return _Q8_FACE_NODES_STR.get(face.upper(), [0, 1, 4])
+            return _face_lookup(_Q8_FACE_NODES_STR, face, elem_type)
         return [0, 1, 4]
     elif et_upper in ("QUAD4", "CPE4", "CPS4", "CAX4", "CPE4R", "CPS4R", "CAX4R", "CPE4I", "CPS4I", "CPE4H", "CPS4H", "S4R", "S4", "CPE4_CR", "CPE4I_CR", "CPE4R_CR", "CPE4H_CR", "Q4", "Q4_EAS", "Q4_REDUCED"):
         if isinstance(face, str):
-            return _Q4_FACE_NODES_STR.get(face.upper(), _Q4_FACE_NODES.get(1, [0, 1]))
+            return _face_lookup(_Q4_FACE_NODES_STR, face, elem_type)
         return _Q4_FACE_NODES.get(face, [0, 1])
     elif et_upper in ("TRIA3", "CPE3", "CPS3", "CAX3", "T3", "CST", "CPE3H", "CPS3H"):
         if isinstance(face, str):
-            return _T3_FACE_NODES_STR.get(face.upper(), _T3_FACE_NODES.get(1, [0, 1]))
+            return _face_lookup(_T3_FACE_NODES_STR, face, elem_type)
         return _T3_FACE_NODES.get(face, [0, 1])
     else:
         # Fallback based on 4-node quad default
         if isinstance(face, str):
-            return _Q4_FACE_NODES_STR.get(face.upper(), [0, 1])
+            return _face_lookup(_Q4_FACE_NODES_STR, face, elem_type)
         return _Q4_FACE_NODES.get(face, [0, 1])
 
 
@@ -242,14 +253,20 @@ class SurfaceTraction:
 
         # Get element IDs in this set or single element ID
         elem_ids = set()
+        found = False
         if self.elset_name in mesh.element_sets:
             elem_ids = mesh.element_sets[self.elset_name]
+            found = True
         elif isinstance(self.elset_name, int) or (isinstance(self.elset_name, str) and self.elset_name.isdigit()):
             eid = int(self.elset_name)
             if eid in mesh.elements:
                 elem_ids = {eid}
-        if not elem_ids:
-            elem_ids = set(mesh.elements.keys())
+                found = True
+        if not found:
+            # Used to apply the pressure to EVERY element of the mesh.
+            raise ValueError(
+                f"SurfaceTraction: region {self.elset_name!r} is not an element set (or element id) "
+                f"of the mesh; the pressure cannot be placed on the model")
 
         f_global = np.zeros(n_dofs, dtype=np.float64)
         # For stiffness, we use a dict-based sparse approach

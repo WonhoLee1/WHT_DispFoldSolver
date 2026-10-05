@@ -936,6 +936,28 @@ def _gather_untied_exterior_faces_3d(
     )
 
 
+def _resolve_contact_property(owner: Any, name: str, model: Any) -> "ContactProperty":
+    """Resolve an interaction-property NAME through `model.contact_properties`.
+
+    A name that does not resolve raises (it used to fall back to a default
+    HARD frictionless property, silently building a different model).
+    """
+    from dispsolver.model.regions import describe
+
+    table = getattr(model, "contact_properties", None) if model is not None else None
+    prop = table.get(name, None) if table is not None else None
+    if prop is None:
+        known = sorted(table.keys()) if table is not None else []
+        raise ValueError(
+            describe(
+                owner,
+                f"{type(owner).__name__} '{getattr(owner, 'name', '?')}': interaction property "
+                f"'{name}' is not defined in the model (defined: {known})",
+            )
+        )
+    return prop
+
+
 # ===========================================================================
 # ContactPair / SurfaceToSurfaceContactStd
 # ===========================================================================
@@ -1078,8 +1100,12 @@ class ContactPair:
         is_rigid_master = isinstance(self.master, AnalyticalRigidSurface)
 
         prop = self.interaction_property
-        if isinstance(prop, str) and model is not None and hasattr(model, "interaction_properties"):
-            prop = model.interaction_properties.get(prop, None)
+        if isinstance(prop, str):
+            prop = _resolve_contact_property(self, prop, model)
+        elif prop is None and getattr(self, "interaction_property_ref", None):
+            # Named in the deck but not yet defined when the pair was created
+            # (a forward reference): resolve it now or raise, never default.
+            prop = _resolve_contact_property(self, self.interaction_property_ref, model)
         if prop is None:
             prop = ContactProperty(name="DEFAULT", normal_behavior="HARD", penalty_form="LINEAR")
 
@@ -1600,8 +1626,10 @@ class GeneralContact:
 
         # 2. Resolve Contact Law
         prop = self.interaction_property
-        if isinstance(prop, str) and model is not None and hasattr(model, "contact_properties"):
-            prop = model.contact_properties.get(prop, None)
+        if isinstance(prop, str):
+            prop = _resolve_contact_property(self, prop, model)
+        elif prop is None and getattr(self, "interaction_property_ref", None):
+            prop = _resolve_contact_property(self, self.interaction_property_ref, model)
 
         law = None
         damping_coeff = None

@@ -996,8 +996,12 @@ class DynamicSolver2D:
                 amp_val = None
                 if bc.amplitude is not None and hasattr(bc.amplitude, "evaluate"):
                     amp_val = bc.amplitude.evaluate(t, step_time=t, total_time=total_time)
-                elif bc.amplitude is not None and isinstance(bc.amplitude, str) and hasattr(step, "parent_model") and hasattr(step.parent_model, "amplitudes"):
-                    amp_obj = step.parent_model.amplitudes.get(bc.amplitude, None)
+                elif bc.amplitude is not None and isinstance(bc.amplitude, str):
+                    # No parent model to resolve the name against raises too
+                    # (same as 3D); it used to be ignored.
+                    pm = getattr(step, "parent_model", None)
+                    amp_obj = (pm.amplitudes.get(bc.amplitude, None)
+                               if pm is not None and hasattr(pm, "amplitudes") else None)
                     if amp_obj is None:
                         raise ValueError(f"{_describe(bc, 'BC ' + bc_name)}: amplitude {bc.amplitude!r} is not defined")
                     amp_val = amp_obj.evaluate(t, step_time=t, total_time=total_time)
@@ -1087,12 +1091,13 @@ class DynamicSolver2D:
                 p_mag = float(self._static_ramp(np.array([p_mag]), load, step, t)[0])
 
                 load_name = getattr(load, "name", "")
-                face_name = getattr(load, "face", getattr(load, "face_name", "P1"))
-                if not face_name or face_name == "P1":
-                    for f_tag in ["P1", "P2", "P3", "P4", "S1", "S2", "S3", "S4"]:
-                        if f_tag in load_name or f_tag in str(getattr(load, "region", "")):
-                            face_name = f_tag
-                            break
+                # The face comes from the load's own `face` (DLOAD P1..P4);
+                # it used to be guessed from substrings of the load / region
+                # name when the face was the default "P1".
+                face_name = getattr(load, "face", getattr(load, "face_name", None))
+                if not face_name:
+                    raise ValueError(_describe(load, f"pressure load {load_name!r}")
+                                     + ": element face is not specified (expected P1..P4 / S1..S4)")
 
                 st = SurfaceTraction(elset_name=load.region, face=face_name, pressure=p_mag)
                 f_press, _ = st.assemble_forces_and_stiffness(self.mesh, self.u, p_mag)

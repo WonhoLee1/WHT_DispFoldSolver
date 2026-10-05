@@ -219,7 +219,12 @@ def build_nodal_transforms(sys: Any, model: Any) -> Tuple[np.ndarray, bool]:
                     node_indices = g_indices
                     break
 
-        if node_indices is None or len(node_indices) == 0:
+        if node_indices is None:
+            # Used to skip the transform silently (nodes stayed in the global frame).
+            loc = spec.get("source_location")
+            raise ValueError(f"transform {spec_name!r}" + (f" [{loc}]" if loc else "")
+                             + f": node set {nset_name!r} is not defined")
+        if len(node_indices) == 0:
             continue
 
         for idx in node_indices:
