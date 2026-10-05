@@ -494,6 +494,31 @@ capture.
 
 ---
 
+### 3.2 Several agents, one branch: hand off, do not commit directly
+
+Since 2026-10-06 one integrating session (the user designates it) is the
+only one that commits to `feat/solver-element-abaqus-surpass-20260830`.
+Every other agent works in its OWN git worktree / branch and hands off.
+
+Why: on 2026-10-05/06 two commits made straight onto the shared branch from
+a stale copy of a file deleted lines other agents had committed in between
+(`Model.Equation(pair_index=)` -- every *EQUATION node-set deck failed;
+`DynamicSolver.last_failure_reason` reset -- stale CUTBACK reasons). And an
+A/B check with `git stash` in a shared tree stashes other agents'
+uncommitted work.
+
+A hand-off is: branch + commit hash, the exact list of files changed, the
+tests run with their counts, and any behaviour change. The integrator then:
+1. rebases / cherry-picks onto the current HEAD;
+2. reviews every REMOVED line (`git diff HEAD~1 -- <file> | grep '^-'`) and
+   restores anything the change did not mean to delete;
+3. runs the targeted tests, `tests/inp_corpus`, and
+   `python -m verification.run_all --changed`;
+4. commits only the handed-off files.
+
+In a shared working tree: never `git stash`, never `git checkout -- <file>`
+on files you did not change, never `git add -A`; stage files by name.
+
 ## 4. Numerical obstacles solved this session (2026-07-25) — don't re-break these
 
 ### 4.1 The "38° wall" & Q4_EAS vs Q4_COROTATIONAL Shear Locking
