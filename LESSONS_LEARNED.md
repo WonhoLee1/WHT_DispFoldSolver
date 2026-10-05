@@ -9,6 +9,9 @@
 3. [비선형 유한요소 및 접촉 역학 개발 교훈 (Lessons 1 ~ 12)](#3-비선형-유한요소-및-접촉-역학-개발-교훈-lessons-1--12)
 4. [2026-10-04 코드 인스펙션 감사(Audit) 총괄 반성과 8대 안티패턴 교훈](#4-2026-10-04-코드-인스펙션-감사audit-총괄-반성과-8대-안티패턴-교훈)
 5. [솔버 신뢰성 회복 및 전면 재검증 로드맵](#5-솔버-신뢰성-회복-및-전면-재검증-로드맵)
+6. [과거 사후 감사와 실측 교훈들 (Lessons 6.1 ~ 6.14)](#6-과거-사후-감사와-실측-교훈들)
+7. [2026-10-05 A2 스키마 PARSE 이전에서 실측한 교훈](#7-2026-10-05-a2-스키마-parse-이전에서-실측한-교훈)
+8. [2026-10-05 B5 레거시 파이프라인 퇴역 및 ex12 180° 대변형 폴딩 수렴성 비약적 향상 교훈](#8-2026-10-05-b5-레거시-파이프라인-퇴역-및-ex12-180-대변형-폴딩-수렴성-비약적-향상-교훈)
 
 ---
 
@@ -265,5 +268,28 @@ deck06 DUAL_MORTAR는 세 결함이 겹쳐 수렴하지 못했다(하나만 고�
 - Abaqus/Standard는 기본 접촉 침투 공차를 요소 특성 길이의 $10^{-5} \sim 10^{-4}$ (수 나노미터)로 극도로 엄격하게 제한하므로, 복잡한 대변형 접촉에서 미세 침투 발생 시 Severe Discontinuity Iteration (SDI) 컷백이 반복된다.
 - `*CONTACT CONTROLS, PENETRATION TOLERANCE = <val>` (또는 CAE의 "Allowable penetration")을 통해 허용 침투량을 요소 두께의 $5\% \sim 10\%$ ($0.05 \sim 0.1 \times h$) 또는 물리적 허용치($1 \sim 5\,\mu\text{m}$)로 늘려주면, 솔버가 미세 침투를 에러로 보지 않고 접촉 평형으로 인정하여 컷백 없이 다음 증분으로 전진할 수 있다.
 - WHT Solver의 `ContactControl` 및 `ContactProperty`에 `penetrationTolerance`, `allowablePenetration`, `approach` 파라미터가 1:1로 공식 연동되어 상용 Abaqus와 동일하게 제어 가능하다.
+
+---
+
+## 9. 2026-10-05 B5 레거시 파이프라인 퇴역 및 ex12 180° 대변형 폴딩 수렴성 비약적 향상 교훈
+
+### 9.1 PSA 점착층 극한 전단 슬립($\gamma_{xz} \approx 700\%$)에서의 EAS 4-mode (`CPE4I`) 수치적 한계와 F-bar 점탄성(`Q4_VISCO_SIMO`)
+- **수치적 결함 원인**: `CPE4I` 요소는 Wilson/Irons 비적합 변위 모드를 확장한 4-mode Enhanced Assumed Strain 요소로서, 매 요소 가우스 적분점에서 4개 내부 변형률 파라미터 $\boldsymbol{\alpha}$를 결정하기 위한 국소 비선형 Newton 반복(`_solve_alpha`, max 12 iters, `eas_local_tol = 1e-6`)을 수행함.
+- **현상**: $180^\circ$ 폴딩 시 $30\,\mu\text{m}$ 초박막 PSA 층은 약 $210\,\mu\text{m}$의 층간 슬립($\gamma_{xz} \approx 700\%$)을 전담함. 고전단 및 대회전 상태에서 국소 자코비안 $K_{\alpha\alpha}$가 심각하게 악조건화되어 `worst ||dalpha||_inf ~ 1e-3` 수준에서 정체됨. 이 국소 실패로 인해 전역 솔버는 cutback을 거듭하다 Step 52 부근에서 20회 한도를 초과하여 시뮬레이션이 조기 중단됨.
+- **해결책**: Simo & Taylor (1991) 정식화 기반의 `Q4_VISCO_SIMO` (F-bar 체적/전단 분리 점탄성) 채택. 내부 $\boldsymbol{\alpha}$ 뉴턴 루프가 원천 배제되어 국소 스톨링이 없으며, F-bar 체적 투영으로 전단/체적 잠김을 완벽히 소거하여 대변형을 안정적으로 돌파하고 연산 속도가 5배 향상됨.
+
+### 9.2 Abaqus 표준 Kinematic MPC Tie의 당위성과 Penalty AL 루프의 초미세 $\Delta t$ 질량 왜곡
+- **수치적 결함 원인**: 페널티 기반 surface tie ($k_{\text{tie}} = 10^5 \sim 10^6$)는 유한한 스프링 강성으로 인해 굽힘 모멘트가 커질수록 갭이 단조 증가함($\text{gap} \approx F/k$). 이를 억제하기 위해 Step 수렴 후 동일 각도에서 갭을 잡는 외곽 Augmented Lagrangian (AL) 재해석 루프(`while _al_max_gap > tol: solve_step(1e-6)`)가 도입되었음.
+- **치명적 부작용**: 동적 유효 강성 행렬 $K_{\text{eff}} = K_T + \frac{1}{\beta \Delta t^2} M$에서 $\Delta t = 10^{-6}$이 투입되면 질량 행렬 $M$의 계수가 $4 \times 10^{12}$배로 폭증함. 이로 인해 물리적 재료 강성이 질량 스파이크에 묻히고 극단적인 수치 가속도가 발생하여 요소 왜곡(`det(F) <= 0`)과 cutback 폭포를 촉발함.
+- **해결책**: Abaqus의 `*TIE` 디폴트 동작인 Kinematic MPC Tie (`tie_method="kinematic"`) 채택. 강체 플레이트의 기구학적 회전 공식 $\mathbf{u}_s = \mathbf{u}_{rp} + (\mathbf{R}(\theta) - \mathbf{I})(\mathbf{X}_s - \mathbf{X}_{rp})$으로부터 종속 노드 변위를 닫힌 형태(closed form)로 해석적 처방함. 페널티 스프링 자체가 없으므로 갭 오차가 기계 정밀도($0.0000\,\text{mm}$)로 유지되며, 위험한 AL 재해석 루프가 완전히 배제됨.
+
+### 9.3 인위적 변위 증분 클리핑(`max_displacement_corr = 0.03`)의 대변형 수렴 방해
+- **현상**: `max_displacement_corr = 0.03` (PSA 1개 요소 두께 $0.03\,\text{mm}$)로 매 Newton 반복마다 변위 수정량을 강제 절삭함.
+- **문제점**: 대변형 폴딩 구간에서 1개 스텝당 팁 변위가 $0.5\,\text{mm}$ 이상 발생하는 물리적 상황에서 매 반복 수정량이 $0.03\,\text{mm}$로 잘리면, 잔차가 줄지 않아 수렴이 지연되거나 반대로 `Disp.Ratio < tol` 판정 식에 의해 잔차가 큰 상태에서 가짜 수렴(false convergence)하여 다음 스텝으로 폭탄을 넘김.
+- **해결책**: 대변형 굽힘에서는 `max_displacement_corr = None`으로 클리핑을 해제하여 Newton-Raphson 고유의 2차 수렴성(quadratic convergence, 1~2 iters/step)을 회복해야 함.
+
+### 9.4 입력 데크 생성기(`.inp`)와 실행기 CLI 기본 설정의 1:1 일관성 보장
+- `gen_ex12_inp.py`는 `make_teardrop_config()`(고해상도 그래디언트 메쉬, Kinematic Tie, Q4_VISCO_SIMO)를 기준으로 `.inp`를 생성하는데, 실행 스크립트 `ex12`의 CLI 진입점이 이전의 미세조정 전 설정(`DEFAULT_CONFIG`)을 참조하여 사용자 실행 시 충돌을 유발했음.
+- 실행기 진입점과 기본 튜닝 설정을 단일 소스로 일치시켜, 사용자가 추가 인자 없이 `python examples/ex12_abaqus_inp_plate_fold.py`만 실행해도 100% 최고속 완주할 수 있도록 일원화함.
 
 
