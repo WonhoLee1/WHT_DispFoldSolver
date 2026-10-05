@@ -421,12 +421,13 @@ def pack_props(material: Any, dim: int = 3) -> np.ndarray:
         return props
 
     if mid == MAT_DRUCKER_PRAGER:
+        dp = extra.get("drucker_prager", {}) if isinstance(extra.get("drucker_prager"), dict) else {}
         props[0] = E_val
         props[1] = nu_val
-        props[2] = float(extra.get("d0", 100.0))
-        props[3] = float(extra.get("H", 0.0))
-        props[4] = float(extra.get("beta", 20.0))
-        props[5] = float(extra.get("psi", 20.0))
+        props[2] = float(dp.get("d0", extra.get("d0", 100.0)))
+        props[3] = float(dp.get("H", extra.get("H", 0.0)))
+        props[4] = float(dp.get("beta", extra.get("beta", 20.0)))
+        props[5] = float(dp.get("psi", extra.get("psi", 20.0)))
         return props
 
     if mid == MAT_CONCRETE_DP:

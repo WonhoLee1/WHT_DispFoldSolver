@@ -229,6 +229,8 @@ class Material:
             elif type.upper() in ["JOHNSON_COOK", "JOHNSON-COOK"]:
                 rd_dict["C"] = float(row[0])
                 rd_dict["eps_dot_0"] = float(row[1])
+            else:
+                rd_dict["table"] = tuple(tuple(float(v) for v in r) for r in table) if isinstance(table[0], (list, tuple)) else (tuple(float(v) for v in table),)
         self.extra_params["rate_dependent"] = rd_dict
 
     def JohnsonCook(

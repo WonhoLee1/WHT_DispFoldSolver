@@ -17,54 +17,6 @@ from dispsolver.io.schema import Flat, Keyword, Param, Record, Schema, applies, 
 if TYPE_CHECKING:
     from dispsolver.io.abaqus_reader import AbaqusInputReader
 
-# ─── P0-2 MATERIAL SUBOPTIONS, LOADS, CONSTRAINTS ───────────────────────────
-
-@GLOBAL_KEYWORD_REGISTRY.register(
-    "DENSITY",
-    valid_contexts={KeywordContext.MATERIAL, KeywordContext.GLOBAL},
-    support="FULL",
-    params={
-        "DEPENDENCIES": ParamSpec("DEPENDENCIES", type=int, default=0, aliases=["DEP", "DEPE"], supported=False),
-    },
-    rows=RowSpec(column_types=[float], min_columns=1, max_columns=2),
-    description="Define material mass density",
-)
-def _handle_density(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
-    mat = reader.current_material
-    if mat is None:
-        msg = "*DENSITY outside *MATERIAL scope — skipped"
-        reader.report("error", "bad-context", msg, block)
-        return
-    rows = _parse_data_rows(block.data_lines, dtype=float)
-    if rows and len(rows[0]) >= 1 and rows[0][0] is not None:
-        mat.density = float(rows[0][0])
-
-
-@GLOBAL_KEYWORD_REGISTRY.register(
-    "TRS",
-    valid_contexts={KeywordContext.MATERIAL, KeywordContext.GLOBAL},
-    support="PARTIAL",
-    params={
-        "DEFINITION": ParamSpec("DEFINITION", default="WLF", choices=["WLF", "ARRHENIUS", "USER"], aliases=["DEF"]),
-    },
-    rows=RowSpec(column_types=[float], min_columns=3, max_columns=3),
-    description="Define temperature-time shift for viscoelastic materials",
-)
-def _handle_trs(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
-    mat = reader.current_material
-    if mat is None:
-        msg = "*TRS outside *MATERIAL scope — skipped"
-        reader.report("error", "bad-context", msg, block)
-        return
-    defn = block.params.get("definition", "WLF").upper()
-    rows = _parse_data_rows(block.data_lines, dtype=float)
-    vals = rows[0] if rows else []
-    if len(vals) >= 3 and vals[0] is not None and vals[1] is not None and vals[2] is not None:
-        mat.extra_params["trs"] = {"definition": defn, "T_ref": float(vals[0]),
-                                   "C1": float(vals[1]), "C2": float(vals[2])}
-    else:
-        mat.extra_params["trs"] = {"definition": defn, "values": tuple(float(v) for v in vals if v is not None)}
-
 
 # ── *AMPLITUDE: schema reference migration (see dispsolver/io/schema.py) ──
 

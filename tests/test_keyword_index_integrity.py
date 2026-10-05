@@ -13,20 +13,7 @@ from dispsolver.io.keyword_registry import GLOBAL_KEYWORD_REGISTRY
 from dispsolver.io.schema import SCHEMA_KEYWORDS, check_against_index
 
 # Known, owned, not yet fixed: (keyword, declared name) -> reason
-ALLOWED = {
-    # material keywords move to schema classes in B4 (agent B, after sync S2);
-    # these are data-line items declared as parameters
-    ("ELASTIC", "TEMPERATURE"): "B4: data item",
-    ("ELASTIC", "TEMP"): "B4: data item",
-    ("DRUCKER PRAGER", "ANGLE"): "B4: data item",
-    ("DRUCKER PRAGER", "DILATION ANGLE"): "B4: data item",
-    ("CONCRETE DAMAGED PLASTICITY", "ANGLE"): "B4: data item",
-    ("CONCRETE DAMAGED PLASTICITY", "ECCENTRICITY"): "B4: data item",
-    ("CONCRETE DAMAGED PLASTICITY", "FB0/FC0"): "B4: data item",
-    ("CONCRETE DAMAGED PLASTICITY", "FB0 FC0"): "B4: data item",
-    ("CONCRETE DAMAGED PLASTICITY", "K"): "B4: data item",
-    ("CONCRETE DAMAGED PLASTICITY", "VISCOSITY"): "B4: data item",
-}
+ALLOWED: dict[tuple[str, str], str] = {}
 
 
 def test_every_registered_keyword_is_an_abaqus_keyword():
