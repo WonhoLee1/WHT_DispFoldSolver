@@ -35,6 +35,7 @@ from dispsolver.solver3d.assembly_utils import (
 # Small-strain plane kernels co-rotated under NLGEOM (element2d/cr_generic_2d):
 # 6 CPE3, 7 CPE6, 9 CPE8, 10 CPE8R, 18 T2D2.
 from dispsolver.model.element_catalog import cr_wrapped_kernels as _cr_wrapped_kernels
+from dispsolver.material.catalog import is_linear_elastic
 _CR_WRAPPED_KERNELS_2D = _cr_wrapped_kernels(2)
 
 class DynamicSolver2D:
@@ -153,73 +154,24 @@ class DynamicSolver2D:
         self.elem_props[:, 1] = 0.3
 
         self.elem_density = np.zeros(n_elems, dtype=np.float64)
-        default_rho = self.density if getattr(self, "density", None) is not None else 7.85e-9
 
+        # Material id + props come from the catalog only (A5, audit O7): an
+        # unmapped material raises, it is never turned into linear elastic.
+        from dispsolver.material.resolve import resolve_material
+        resolved: Dict[Any, Any] = {}
         for e, elem in enumerate(elements_list):
             pid = getattr(elem, "pid", 0)
             mat_obj = self.materials.get(pid, None) if isinstance(self.materials, dict) else None
             if mat_obj is None and isinstance(self.materials, dict) and ("E" in self.materials or "density" in self.materials):
                 mat_obj = self.materials
-            
-            rho_val = default_rho
-            if mat_obj is not None:
-                if hasattr(mat_obj, "to_numba_props"):
-                    mat_obj = mat_obj.to_numba_props()
-                if hasattr(mat_obj, "mat_type") and hasattr(mat_obj, "props"):
-                    self.elem_mat_types[e] = int(mat_obj.mat_type)
-                    p = np.asarray(mat_obj.props, dtype=np.float64)
-                    self.elem_props[e, :min(64, len(p))] = p[:64]
-                    if hasattr(mat_obj, "density"):
-                        rho_val = float(getattr(mat_obj, "density"))
-                elif isinstance(mat_obj, dict):
-                    mtype = mat_obj.get("mat_type", mat_obj.get("type", 1))
-                    E_val = float(mat_obj.get("E", 4000.0))
-                    nu_val = float(mat_obj.get("nu", 0.3))
-                    rho_val = float(mat_obj.get("density", mat_obj.get("rho", default_rho)))
-
-                    if mtype in [12, "TABULAR_PLASTIC", "RADIOSS_LAW36"] or "tabular" in mat_obj or "tabular_plastic" in mat_obj:
-                        self.elem_mat_types[e] = 12  # MAT_J2_PLASTICITY_TABULAR
-                        table = mat_obj.get("tabular", mat_obj.get("tabular_plastic", []))
-                        eps_fail = float(mat_obj.get("eps_fail", 1e9))
-                        sigma_fail = float(mat_obj.get("sigma_fail", 0.0))
-                        n_pts = min(len(table), 10)
-                        self.elem_props[e, 0] = E_val
-                        self.elem_props[e, 1] = nu_val
-                        self.elem_props[e, 2] = float(n_pts)
-                        self.elem_props[e, 3] = eps_fail
-                        self.elem_props[e, 4] = sigma_fail
-                        for p_idx in range(n_pts):
-                            self.elem_props[e, 5 + 2 * p_idx] = float(table[p_idx][0])
-                            self.elem_props[e, 6 + 2 * p_idx] = float(table[p_idx][1])
-                    elif mtype in [7, "J2_PLASTICITY_NONLINEAR"] or "R_inf" in mat_obj or "b_exp" in mat_obj:
-                        self.elem_mat_types[e] = 7  # MAT_J2_PLASTICITY_NONLINEAR
-                        sy_val = float(mat_obj.get("yield_stress", mat_obj.get("sigma_y0", 400.0)))
-                        H_val = float(mat_obj.get("hardening_modulus", mat_obj.get("H", 0.0)))
-                        R_inf = float(mat_obj.get("R_inf", 100.0))
-                        b_exp = float(mat_obj.get("b_exp", 10.0))
-                        self.elem_props[e, :6] = [E_val, nu_val, sy_val, H_val, R_inf, b_exp]
-                    elif mtype in [2, "J2_PLASTICITY", "PLASTIC"] or str(mtype).lower() in ["j2", "plasticity", "j2_plasticity"] or "sigma_y0" in mat_obj or "yield_stress" in mat_obj:
-                        self.elem_mat_types[e] = 2  # MAT_J2_PLASTICITY
-                        sy_val = float(mat_obj.get("yield_stress", mat_obj.get("sigma_y0", 400.0)))
-                        H_val = float(mat_obj.get("hardening_modulus", mat_obj.get("H", 0.0)))
-                        self.elem_props[e, :4] = [E_val, nu_val, sy_val, H_val]
-                    else:
-                        self.elem_mat_types[e] = 0  # MAT_LINEAR_ELASTIC (id 1 is Neo-Hookean)
-                        self.elem_props[e, 0] = E_val
-                        self.elem_props[e, 1] = nu_val
-                elif hasattr(mat_obj, "props"):
-                    p = np.asarray(mat_obj.props, dtype=np.float64)
-                    self.elem_props[e, :min(64, len(p))] = p[:64]
-                    if hasattr(mat_obj, "density"):
-                        rho_val = float(getattr(mat_obj, "density"))
-                else:
-                    self.elem_mat_types[e] = 0
-                    self.elem_props[e, 0] = 4000.0
-                    self.elem_props[e, 1] = 0.3
-            else:
-                self.elem_mat_types[e] = 0
-                self.elem_props[e, 0] = 4000.0
-                self.elem_props[e, 1] = 0.3
+                pid = None
+            if mat_obj is None:
+                continue  # no material for this pid: the E=4000/nu=0.3 defaults above stay
+            if pid not in resolved:
+                resolved[pid] = resolve_material(mat_obj, 2, f"material of pid {pid}" if pid is not None else "material")
+            mid, props = resolved[pid]
+            self.elem_mat_types[e] = mid
+            self.elem_props[e, :] = props
 
         # SectionControls array: (n_elems, 8)
         self.elem_controls = np.zeros((n_elems, 8), dtype=np.float64)
@@ -257,7 +209,7 @@ class DynamicSolver2D:
                     nu = float(mat_obj.get("nu", 0.3))
                 elif hasattr(mat_obj, "props"):
                     nu = float(mat_obj.props[1]) if len(mat_obj.props) > 1 else 0.3
-            linear_elastic = int(self.elem_mat_types[idx]) == 0
+            linear_elastic = is_linear_elastic(int(self.elem_mat_types[idx]))
             try:
                 k, notes = ElementCatalog.resolve(et, 2, bool(self.nlgeom), nu=nu, linear_elastic=linear_elastic)
             except NotImplementedError as exc:

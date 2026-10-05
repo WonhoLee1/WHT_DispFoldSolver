@@ -36,31 +36,11 @@ from dispsolver.solver3d.assembly_utils import (
 )
 from dispsolver.material3d.numba_materials import (
     MAT_LINEAR_ELASTIC,
-    MAT_NEO_HOOKEAN,
-    MAT_J2_PLASTICITY,
-    MAT_J2_PLASTICITY_NONLINEAR,
-    MAT_VISCOELASTIC_PRONY,
-    MAT_HYPERELASTIC_ARRUDA_BOYCE,
-    MAT_ARRUDA_BOYCE,
-    MAT_HYPERELASTIC_YEOH,
-    MAT_YEOH,
-    MAT_HYPERELASTIC_MOONEY_RIVLIN,
-    MAT_MOONEY_RIVLIN,
-    MAT_HYPERELASTIC_OGDEN,
-    MAT_OGDEN,
-    MAT_HYPERELASTIC_POLYNOMIAL,
-    MAT_POLYNOMIAL,
-    MAT_HYPERELASTIC_MARLOW,
-    MAT_MARLOW,
-    MAT_J2_PLASTICITY_TABULAR,
-    MAT_RADIOSS_LAW36,
-    MAT_J2_DUCTILE_DAMAGE,
-    MAT_DRUCKER_PRAGER,
-    MAT_CONCRETE_DP,
-    MAT_HYPER_VISCOELASTIC,
     MAT_CUSTOM_ELASTIC,
+    MAT_ORTHOTROPIC_CYLINDRICAL,
     get_default_sdv_count,
 )
+from dispsolver.material.catalog import is_linear_elastic
 
 _HEX20_FACES = {
     "P1": ([0, 1, 2, 3], [8, 9, 10, 11]),
@@ -613,21 +593,39 @@ class DynamicSolver3D:
         self.elem_density = np.zeros(n_elems, dtype=np.float64)
         default_rho = self.density if getattr(self, "density", None) is not None else 7.85e-9
 
-        # Populate multimaterial properties per element
+        # Populate multimaterial properties per element.  Material id + props
+        # come from the catalog only (A5, audit O7): an unmapped material
+        # raises NotImplementedError instead of silently becoming linear
+        # elastic.  A pid with NO material keeps the constructor C_mat default.
+        from dispsolver.material.resolve import resolve_material
         cmat_flat = self.C_mat_default.ravel()
+        resolved = {}
         for e, elem in enumerate(elements_list):
             pid = getattr(elem, "pid", 0)
             mat_obj = self.materials.get(pid, None) if hasattr(self, "materials") and isinstance(self.materials, dict) else None
             rho_val = default_rho
             if mat_obj is not None:
-                if hasattr(mat_obj, "to_numba_props"):
-                    mat_obj = mat_obj.to_numba_props()
-                if isinstance(mat_obj, dict):
-                    rho_val = float(mat_obj.get("density", mat_obj.get("rho", default_rho)))
-                elif hasattr(mat_obj, "density"):
-                    rho_val = float(getattr(mat_obj, "density"))
-                elif hasattr(mat_obj, "rho"):
-                    rho_val = float(getattr(mat_obj, "rho"))
+                if pid not in resolved:
+                    md = mat_obj.to_numba_props() if hasattr(mat_obj, "to_numba_props") else mat_obj
+                    extra = md if isinstance(md, dict) else (getattr(md, "extra_params", None) or {})
+                    if "engineering_constants" in extra:
+                        # KEPT outside the catalog on purpose: id 17 is a C3D20-kernel
+                        # private path (it reads the 9 raw constants from props); the
+                        # catalog has no id 17 and resolves this to 99 (reported to B).
+                        ec = extra["engineering_constants"]
+                        props17 = np.zeros(64, dtype=np.float64)
+                        props17[:len(ec)] = ec
+                        resolved[pid] = (md, MAT_ORTHOTROPIC_CYLINDRICAL, props17)
+                    else:
+                        mid, props = resolve_material(mat_obj, 3, f"material of pid {pid}")
+                        resolved[pid] = (md, mid, props)
+                md, mid, props = resolved[pid]
+                if isinstance(md, dict):
+                    rho_val = float(md.get("density", md.get("rho", default_rho)))
+                elif hasattr(md, "density"):
+                    rho_val = float(getattr(md, "density"))
+                elif hasattr(md, "rho"):
+                    rho_val = float(getattr(md, "rho"))
             # Zero/negative density is never valid dynamics mass; Material's
             # default density is 0.0, which must not override the solver-level
             # default (previously zeroed M_global and reduced dynamics to
@@ -637,196 +635,8 @@ class DynamicSolver3D:
             self.elem_density[e] = rho_val
 
             if mat_obj is not None:
-                if hasattr(mat_obj, "extra_params") and "engineering_constants" in getattr(mat_obj, "extra_params", {}):
-                    self.elem_mat_types[e] = 17  # MAT_ORTHOTROPIC_CYLINDRICAL
-                    ec = mat_obj.extra_params["engineering_constants"]
-                    self.elem_props[e, :len(ec)] = ec
-                elif isinstance(mat_obj, dict) and "engineering_constants" in mat_obj:
-                    self.elem_mat_types[e] = 17  # MAT_ORTHOTROPIC_CYLINDRICAL
-                    ec = mat_obj["engineering_constants"]
-                    self.elem_props[e, :len(ec)] = ec
-                elif hasattr(mat_obj, "mat_type") and hasattr(mat_obj, "props"):
-                    self.elem_mat_types[e] = int(mat_obj.mat_type)
-                    p = np.asarray(mat_obj.props, dtype=np.float64)
-                    self.elem_props[e, :min(64, len(p))] = p[:64]
-                elif hasattr(mat_obj, "C_mat"):
-                    self.elem_mat_types[e] = MAT_CUSTOM_ELASTIC
-                    self.elem_props[e, :36] = np.asarray(mat_obj.C_mat, dtype=np.float64).ravel()[:36]
-                elif isinstance(mat_obj, dict):
-                    mtype = mat_obj.get("mat_type", mat_obj.get("type", ""))
-                    if mtype in [MAT_J2_PLASTICITY_TABULAR, "TABULAR_PLASTIC", "RADIOSS_LAW36"] or "tabular" in mat_obj or "tabular_plastic" in mat_obj:
-                        self.elem_mat_types[e] = MAT_J2_PLASTICITY_TABULAR
-                        E_val = float(mat_obj.get("E", 200000.0))
-                        nu_val = float(mat_obj.get("nu", 0.3))
-                        table = mat_obj.get("tabular", mat_obj.get("tabular_plastic", []))
-                        eps_fail = float(mat_obj.get("eps_fail", 1e9))
-                        sigma_fail = float(mat_obj.get("sigma_fail", 0.0))
-                        n_pts = min(len(table), 10)
-                        self.elem_props[e, 0] = E_val
-                        self.elem_props[e, 1] = nu_val
-                        self.elem_props[e, 2] = float(n_pts)
-                        self.elem_props[e, 3] = eps_fail
-                        self.elem_props[e, 4] = sigma_fail
-                        for p_idx in range(n_pts):
-                            self.elem_props[e, 5 + 2 * p_idx] = float(table[p_idx][0])
-                            self.elem_props[e, 6 + 2 * p_idx] = float(table[p_idx][1])
-                    elif mtype == MAT_J2_DUCTILE_DAMAGE or "damage_init_type" in mat_obj:
-                        self.elem_mat_types[e] = MAT_J2_DUCTILE_DAMAGE
-                        dp = list(mat_obj.get("damage_init_p", [0.05, 0, 0, 0, 0]))
-                        self.elem_props[e, :17] = [
-                            float(mat_obj.get("E", 200000.0)),
-                            float(mat_obj.get("nu", 0.3)),
-                            float(mat_obj.get("yield_stress", 250.0)),
-                            float(mat_obj.get("hardening_modulus", 0.0)),
-                            float(mat_obj.get("damage_init_type", 0)),
-                            float(dp[0]), float(dp[1]), float(dp[2]),
-                            float(dp[3]), float(dp[4]),
-                            float(mat_obj.get("damage_Gf", 1.0)),
-                            float(mat_obj.get("damage_L", 1.0)),
-                            float(mat_obj.get("damage_evol", 0)),
-                            float(mat_obj.get("damage_T", 20.0)),
-                            float(mat_obj.get("damage_Troom", 20.0)),
-                            float(mat_obj.get("damage_Tmelt", 1000.0)),
-                            float(mat_obj.get("damage_eps0", 1.0)),
-                        ]
-                    elif mtype == MAT_DRUCKER_PRAGER or "d0" in mat_obj and "beta" in mat_obj:
-                        self.elem_mat_types[e] = MAT_DRUCKER_PRAGER
-                        self.elem_props[e, :6] = [
-                            float(mat_obj.get("E", 200000.0)),
-                            float(mat_obj.get("nu", 0.3)),
-                            float(mat_obj.get("d0", 100.0)),
-                            float(mat_obj.get("H", 0.0)),
-                            float(mat_obj.get("beta", 20.0)),
-                            float(mat_obj.get("psi", 20.0)),
-                        ]
-                    elif mtype == MAT_CONCRETE_DP or "cdp_tables" in mat_obj:
-                        self.elem_mat_types[e] = MAT_CONCRETE_DP
-                        tabs = mat_obj.get("cdp_tables", {})
-                        flat = [float(mat_obj.get("E", 30000.0)),
-                                float(mat_obj.get("nu", 0.2)),
-                                float(mat_obj.get("beta", 20.0)),
-                                float(mat_obj.get("psi", 15.0))]
-                        for key in ("compression", "tension", "dt_table", "dc_table"):
-                            rows = list(tabs.get(key, [(0.0, 0.0)]))[:6]
-                            flat.append(float(len(rows)))
-                            for (a, b) in rows:
-                                flat.append(float(a))
-                                flat.append(float(b))
-                        n = min(len(flat), 64)
-                        self.elem_props[e, :n] = flat[:n]
-                    elif mtype == MAT_J2_PLASTICITY_NONLINEAR or "R_inf" in mat_obj or "b_exp" in mat_obj:
-                        self.elem_mat_types[e] = MAT_J2_PLASTICITY_NONLINEAR
-                        E_val = float(mat_obj.get("E", 200000.0))
-                        nu_val = float(mat_obj.get("nu", 0.3))
-                        sy_val = float(mat_obj.get("yield_stress", mat_obj.get("sigma_y0", 400.0)))
-                        H_val = float(mat_obj.get("hardening_modulus", mat_obj.get("H", 0.0)))
-                        R_inf = float(mat_obj.get("R_inf", 100.0))
-                        b_exp = float(mat_obj.get("b_exp", 10.0))
-                        self.elem_props[e, :6] = [E_val, nu_val, sy_val, H_val, R_inf, b_exp]
-                    elif mtype == MAT_J2_PLASTICITY or str(mtype).lower() in ["j2", "plasticity", "j2_plasticity"] or "sigma_y0" in mat_obj or "yield_stress" in mat_obj:
-                        self.elem_mat_types[e] = MAT_J2_PLASTICITY
-                        E_val = float(mat_obj.get("E", 200000.0))
-                        nu_val = float(mat_obj.get("nu", 0.3))
-                        sy_val = float(mat_obj.get("yield_stress", mat_obj.get("sigma_y0", 400.0)))
-                        H_val = float(mat_obj.get("hardening_modulus", mat_obj.get("H", 0.0)))
-                        self.elem_props[e, :4] = [E_val, nu_val, sy_val, H_val]
-                    elif mtype in [MAT_HYPERELASTIC_MOONEY_RIVLIN] or str(mtype).lower() in ["mooney_rivlin", "mooney-rivlin", "mooney"]:
-                        self.elem_mat_types[e] = MAT_HYPERELASTIC_MOONEY_RIVLIN
-                        self.elem_props[e, 0] = float(mat_obj.get("c10", 0.1))
-                        self.elem_props[e, 1] = float(mat_obj.get("c01", 0.05))
-                        self.elem_props[e, 2] = float(mat_obj.get("d1", 0.01))
-                    elif mtype in [MAT_HYPERELASTIC_OGDEN] or str(mtype).lower() in ["ogden"]:
-                        self.elem_mat_types[e] = MAT_HYPERELASTIC_OGDEN
-                        mu_list = mat_obj.get("mu_list", [0.2])
-                        alpha_list = mat_obj.get("alpha_list", [2.0])
-                        d_list = mat_obj.get("d_list", [0.01])
-                        n_terms = min(len(mu_list), 6)
-                        self.elem_props[e, 0] = float(n_terms)
-                        d1_val = float(d_list[0] if len(d_list) > 0 else 0.01)
-                        self.elem_props[e, 1] = d1_val
-                        for p in range(n_terms):
-                            self.elem_props[e, 2 + 2 * p] = float(mu_list[p])
-                            self.elem_props[e, 3 + 2 * p] = float(alpha_list[p])
-                    elif mtype in [MAT_HYPERELASTIC_POLYNOMIAL] or str(mtype).lower() in ["polynomial"]:
-                        self.elem_mat_types[e] = MAT_HYPERELASTIC_POLYNOMIAL
-                        self.elem_props[e, 0] = float(mat_obj.get("c10", 0.1))
-                        self.elem_props[e, 1] = float(mat_obj.get("c01", 0.0))
-                        self.elem_props[e, 2] = float(mat_obj.get("c20", 0.0))
-                        self.elem_props[e, 3] = float(mat_obj.get("c11", 0.0))
-                        self.elem_props[e, 4] = float(mat_obj.get("c02", 0.0))
-                        self.elem_props[e, 5] = float(mat_obj.get("d1", 0.01))
-                        self.elem_props[e, 6] = float(mat_obj.get("d2", 0.0))
-                    elif mtype in [MAT_HYPERELASTIC_MARLOW] or str(mtype).lower() in ["marlow"]:
-                        self.elem_mat_types[e] = MAT_HYPERELASTIC_MARLOW
-                        self.elem_props[e, 0] = float(mat_obj.get("c10", 0.1))
-                        self.elem_props[e, 1] = float(mat_obj.get("c20", 0.0))
-                        self.elem_props[e, 2] = float(mat_obj.get("c30", 0.0))
-                        self.elem_props[e, 3] = float(mat_obj.get("d1", 0.01))
-                        self.elem_props[e, 4] = float(mat_obj.get("d2", 0.0))
-                        self.elem_props[e, 5] = float(mat_obj.get("d3", 0.0))
-                    elif mtype in [MAT_HYPERELASTIC_ARRUDA_BOYCE, MAT_ARRUDA_BOYCE] or str(mtype).lower() in ["arruda_boyce", "arruda-boyce", "arruda"]:
-                        self.elem_mat_types[e] = MAT_HYPERELASTIC_ARRUDA_BOYCE
-                        mu = float(mat_obj.get("mu", 0.16785))
-                        lambda_m = float(mat_obj.get("lambda_m", 3.0))
-                        K = float(mat_obj.get("K", 8.3333))
-                        self.elem_props[e, 0] = mu
-                        self.elem_props[e, 1] = lambda_m
-                        self.elem_props[e, 2] = K
-                    elif mtype in [MAT_HYPERELASTIC_YEOH, MAT_YEOH] or str(mtype).lower() in ["yeoh"]:
-                        self.elem_mat_types[e] = MAT_HYPERELASTIC_YEOH
-                        self.elem_props[e, 0] = float(mat_obj.get("c10", mat_obj.get("C10", 0.1)))
-                        self.elem_props[e, 1] = float(mat_obj.get("c20", mat_obj.get("C20", 0.0)))
-                        self.elem_props[e, 2] = float(mat_obj.get("c30", mat_obj.get("C30", 0.0)))
-                        self.elem_props[e, 3] = float(mat_obj.get("d1", mat_obj.get("D1", 0.01)))
-                        self.elem_props[e, 4] = float(mat_obj.get("d2", mat_obj.get("D2", 0.0)))
-                        self.elem_props[e, 5] = float(mat_obj.get("d3", mat_obj.get("D3", 0.0)))
-                    elif mtype == MAT_NEO_HOOKEAN or str(mtype).lower() in ["neohookean", "neo_hookean"] or "c10" in mat_obj or "C10" in mat_obj:
-                        self.elem_mat_types[e] = MAT_NEO_HOOKEAN
-                        c10 = float(mat_obj.get("c10", mat_obj.get("C10", 0.1)))
-                        d1 = float(mat_obj.get("d1", mat_obj.get("D1", 0.01)))
-                        mu = 2.0 * c10
-                        K = 2.0 / max(d1, 1e-12)
-                        self.elem_props[e, 0] = mu
-                        self.elem_props[e, 1] = K
-                        self.elem_props[e, 2] = c10
-                        self.elem_props[e, 3] = d1
-                    elif mtype == MAT_HYPER_VISCOELASTIC or ("prony" in mat_obj and len(mat_obj["prony"]) >= 1):
-                        self.elem_mat_types[e] = MAT_HYPER_VISCOELASTIC
-                        base_m = mat_obj.get("base_model", MAT_NEO_HOOKEAN)
-                        self.elem_props[e, 0] = float(base_m)
-                        self.elem_props[e, 1] = float(mat_obj.get("mu", mat_obj.get("c10", 0.2)))
-                        self.elem_props[e, 2] = float(mat_obj.get("K", mat_obj.get("lambda_m", 10.0)))
-                        self.elem_props[e, 3] = float(mat_obj.get("p2", 0.0))
-                        prony_list = mat_obj["prony"]
-                        n_terms = min(len(prony_list), 6)  # Abaqus standard up to M=6
-                        self.elem_props[e, 4] = float(n_terms)
-                        for m_idx in range(n_terms):
-                            item = prony_list[m_idx]
-                            g_val = float(item[0])
-                            tau_val = float(item[2] if len(item) > 2 else item[1])
-                            self.elem_props[e, 5 + 2 * m_idx] = g_val
-                            self.elem_props[e, 6 + 2 * m_idx] = tau_val
-                    elif mtype == MAT_VISCOELASTIC_PRONY or str(mtype).lower() in ["viscoelastic", "prony", "visco"]:
-                        self.elem_mat_types[e] = MAT_VISCOELASTIC_PRONY
-                        self.elem_props[e, 0] = float(mat_obj.get("E", 1000.0))
-                        self.elem_props[e, 1] = float(mat_obj.get("nu", 0.45))
-                        self.elem_props[e, 2] = float(mat_obj.get("g1", 0.2))
-                        self.elem_props[e, 3] = float(mat_obj.get("tau1", 1.0))
-                    elif isinstance(mtype, int):
-                        self.elem_mat_types[e] = mtype
-                        if "props" in mat_obj:
-                            p = np.asarray(mat_obj["props"], dtype=np.float64)
-                            self.elem_props[e, :min(64, len(p))] = p[:64]
-                        else:
-                            self.elem_props[e, 0] = float(mat_obj.get("E", 200000.0))
-                            self.elem_props[e, 1] = float(mat_obj.get("nu", 0.3))
-                    else:
-                        self.elem_mat_types[e] = MAT_LINEAR_ELASTIC
-                        self.elem_props[e, 0] = float(mat_obj.get("E", 200000.0))
-                        self.elem_props[e, 1] = float(mat_obj.get("nu", 0.3))
-                else:
-                    self.elem_mat_types[e] = MAT_CUSTOM_ELASTIC
-                    self.elem_props[e, :36] = cmat_flat
+                self.elem_mat_types[e] = mid
+                self.elem_props[e, :] = props
             else:
                 self.elem_mat_types[e] = MAT_CUSTOM_ELASTIC
                 self.elem_props[e, :36] = cmat_flat
@@ -880,7 +690,7 @@ class DynamicSolver3D:
             mt = int(self.elem_mat_types[idx]) if getattr(self, "elem_mat_types", None) is not None else MAT_LINEAR_ELASTIC
             try:
                 k, notes = ElementCatalog.resolve(et, 3, bool(self.nlgeom), nu=nu,
-                                                  linear_elastic=mt in (MAT_LINEAR_ELASTIC, MAT_CUSTOM_ELASTIC))
+                                                  linear_elastic=is_linear_elastic(mt))
             except NotImplementedError as exc:
                 failures.setdefault(et, str(exc))
                 continue
@@ -977,7 +787,7 @@ class DynamicSolver3D:
         for kk, what in elastic_only_kernels(3).items():
             rows = [r for gk, rr in self.elem_kernel_groups.items() if gk[0] == kk for r in rr]
             if rows and getattr(self, "elem_mat_types", None) is not None:
-                bad = sorted({int(self.elem_mat_types[r]) for r in rows} - {MAT_LINEAR_ELASTIC, MAT_CUSTOM_ELASTIC})
+                bad = sorted({int(self.elem_mat_types[r]) for r in rows if not is_linear_elastic(int(self.elem_mat_types[r]))})
                 if bad:
                     raise NotImplementedError(
                         f"{what} elements run a linear-elastic-only kernel ({kk}); found material types {bad}.")
@@ -988,7 +798,7 @@ class DynamicSolver3D:
         the stored 36 entries for MAT_CUSTOM_ELASTIC."""
         mts = np.asarray(self.elem_mat_types)[elem_indices]
         props = np.asarray(self.elem_props)[elem_indices]
-        bad = sorted({int(mt) for mt in mts} - {MAT_LINEAR_ELASTIC, MAT_CUSTOM_ELASTIC})
+        bad = sorted({int(mt) for mt in mts if not is_linear_elastic(int(mt))})
         if bad:
             raise NotImplementedError(
                 f"elements run a linear-elastic-only kernel; found material types {bad}.")

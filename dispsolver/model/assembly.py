@@ -341,6 +341,15 @@ class Assembly:
                                          + f" refers to material {mat_name!r}, which the deck does not define")
                     
                     if mat_obj is not None:
+                        # A material the catalog cannot map raises here, naming the
+                        # deck location, instead of reaching the solver as id 99 (A5).
+                        from dispsolver.material.catalog import material_id as _material_id
+                        from dispsolver.model.regions import describe as _describe
+                        try:
+                            _material_id(mat_obj)
+                        except ValueError as exc:
+                            raise NotImplementedError(
+                                f"{_describe(mat_obj, f'material {mat_name!r}')}: {exc}") from exc
                         # Convert to Numba DOD props if available
                         if hasattr(mat_obj, "to_numba_props"):
                             materials_by_pid[assigned_pid] = mat_obj.to_numba_props()
