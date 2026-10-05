@@ -612,6 +612,7 @@ class Model:
         terms: Any = None,
         constant: float = 0.0,
         penalty_stiffness: float = 1e6,
+        pair_index: Optional[int] = None,
     ) -> EquationConstraint:
         """Create and register a linear equation constraint (*EQUATION in Abaqus)."""
         eq = EquationConstraint(
@@ -619,6 +620,7 @@ class Model:
             terms=[(t[0], int(t[1]), float(t[2])) for t in (terms or [])],
             constant=float(constant),
             penalty_stiffness=float(penalty_stiffness),
+            pair_index=pair_index,
         )
         self.constraints[str(name)] = eq
         return eq

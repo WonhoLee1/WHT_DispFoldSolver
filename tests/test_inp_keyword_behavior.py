@@ -408,7 +408,11 @@ def test_equation_block_with_several_equations_and_node_sets():
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         reader, model = _parse_source(text, dim=3)
-    terms = [c.terms for c in model.constraints.values()]
-    assert terms == [[(1, 0, 1.0), (3, 0, -1.0)], [(2, 0, 1.0), (4, 0, -1.0)],
-                     [(1, 1, 1.0), (3, 1, -1.0), (9, 1, 0.5)], [(2, 1, 1.0), (4, 1, -1.0), (9, 1, 0.5)]]
+    # set terms keep their NAME and the position in the set (pair_index); the nodes are
+    # resolved through model.regions at bind time (tests/test_bind_scans.py checks the pairing)
+    eqs = list(model.constraints.values())
+    assert [c.terms for c in eqs] == [[("A", 0, 1.0), ("B", 0, -1.0)], [("A", 0, 1.0), ("B", 0, -1.0)],
+                                      [("A", 1, 1.0), ("B", 1, -1.0), (9, 1, 0.5)],
+                                      [("A", 1, 1.0), ("B", 1, -1.0), (9, 1, 0.5)]]
+    assert [c.pair_index for c in eqs] == [0, 1, 0, 1]
     assert not reader.physics_gaps()

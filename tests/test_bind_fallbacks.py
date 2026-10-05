@@ -182,7 +182,7 @@ def test_site8_transform_nset_missing_raises():
     m = Model("T", dim=2)
     m.Transform("T1", "Nope", "R", points=((0, 0, 0), (1, 0, 0)))
     sys = SimpleNamespace(coords=np.zeros((2, 2)), dim=2, global_nsets={"Other": [0]})
-    with pytest.raises(ValueError, match="node set 'Nope'"):
+    with pytest.raises(ValueError, match="'Nope'"):
         build_nodal_transforms(sys, m)
     m2 = Model("T", dim=2)
     m2.Transform("T1", "Other", "R", points=((0, 0, 0), (1, 0, 0)))

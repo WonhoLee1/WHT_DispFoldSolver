@@ -38731,17 +38731,15 @@
   "warnings": [],
   "diagnostics": {
    "control-param-ignored": 5,
-   "ignored-keyword": 2,
-   "unresolved-ref": 1
+   "equation-parsed": 1,
+   "ignored-keyword": 2
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
-   "ignored-keyword": "info",
-   "unresolved-ref": "error"
+   "equation-parsed": "info",
+   "ignored-keyword": "info"
   },
-  "error_codes": [
-   "unresolved-ref"
-  ],
+  "error_codes": [],
   "gap_codes": []
  },
  "verification/mmecdo2cut_arruda_visco.inp": {
@@ -38761,19 +38759,17 @@
   "warnings": [],
   "diagnostics": {
    "control-param-ignored": 1,
+   "equation-parsed": 1,
    "ignored-keyword": 2,
-   "unresolved-ref": 1,
    "unsupported-keyword": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
+   "equation-parsed": "info",
    "ignored-keyword": "info",
-   "unresolved-ref": "error",
    "unsupported-keyword": "gap"
   },
-  "error_codes": [
-   "unresolved-ref"
-  ],
+  "error_codes": [],
   "gap_codes": [
    "unsupported-keyword"
   ]
@@ -38886,19 +38882,17 @@
   "warnings": [],
   "diagnostics": {
    "control-param-ignored": 5,
+   "equation-parsed": 1,
    "ignored-keyword": 2,
-   "unresolved-ref": 1,
    "unsupported-param": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
+   "equation-parsed": "info",
    "ignored-keyword": "info",
-   "unresolved-ref": "error",
    "unsupported-param": "gap"
   },
-  "error_codes": [
-   "unresolved-ref"
-  ],
+  "error_codes": [],
   "gap_codes": [
    "unsupported-param"
   ]
@@ -39082,19 +39076,19 @@
   "warnings": [],
   "diagnostics": {
    "control-param-ignored": 5,
+   "equation-parsed": 1,
+   "equation-set-broadcast": 1,
    "ignored-keyword": 2,
-   "unresolved-ref": 1,
    "unsupported-keyword": 2
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
+   "equation-parsed": "info",
+   "equation-set-broadcast": "info",
    "ignored-keyword": "info",
-   "unresolved-ref": "error",
    "unsupported-keyword": "gap"
   },
-  "error_codes": [
-   "unresolved-ref"
-  ],
+  "error_codes": [],
   "gap_codes": [
    "unsupported-keyword"
   ]
@@ -39116,17 +39110,17 @@
   "warnings": [],
   "diagnostics": {
    "control-param-ignored": 5,
-   "ignored-keyword": 2,
-   "unresolved-ref": 1
+   "equation-parsed": 1,
+   "equation-set-broadcast": 1,
+   "ignored-keyword": 2
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
-   "ignored-keyword": "info",
-   "unresolved-ref": "error"
+   "equation-parsed": "info",
+   "equation-set-broadcast": "info",
+   "ignored-keyword": "info"
   },
-  "error_codes": [
-   "unresolved-ref"
-  ],
+  "error_codes": [],
   "gap_codes": []
  },
  "verification/mmecdo3cut_ogden_visco.inp": {
@@ -39146,19 +39140,19 @@
   "warnings": [],
   "diagnostics": {
    "control-param-ignored": 1,
+   "equation-parsed": 1,
+   "equation-set-broadcast": 1,
    "ignored-keyword": 2,
-   "unresolved-ref": 1,
    "unsupported-keyword": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
+   "equation-parsed": "info",
+   "equation-set-broadcast": "info",
    "ignored-keyword": "info",
-   "unresolved-ref": "error",
    "unsupported-keyword": "gap"
   },
-  "error_codes": [
-   "unresolved-ref"
-  ],
+  "error_codes": [],
   "gap_codes": [
    "unsupported-keyword"
   ]
@@ -39180,21 +39174,21 @@
   "warnings": [],
   "diagnostics": {
    "control-param-ignored": 5,
+   "equation-parsed": 1,
+   "equation-set-broadcast": 1,
    "ignored-keyword": 2,
-   "unresolved-ref": 1,
    "unsupported-keyword": 2,
    "unsupported-param": 3
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
+   "equation-parsed": "info",
+   "equation-set-broadcast": "info",
    "ignored-keyword": "info",
-   "unresolved-ref": "error",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
-  "error_codes": [
-   "unresolved-ref"
-  ],
+  "error_codes": [],
   "gap_codes": [
    "unsupported-keyword",
    "unsupported-param"
@@ -39217,17 +39211,17 @@
   "warnings": [],
   "diagnostics": {
    "control-param-ignored": 5,
-   "ignored-keyword": 2,
-   "unresolved-ref": 1
+   "equation-parsed": 1,
+   "equation-set-broadcast": 1,
+   "ignored-keyword": 2
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
-   "ignored-keyword": "info",
-   "unresolved-ref": "error"
+   "equation-parsed": "info",
+   "equation-set-broadcast": "info",
+   "ignored-keyword": "info"
   },
-  "error_codes": [
-   "unresolved-ref"
-  ],
+  "error_codes": [],
   "gap_codes": []
  },
  "verification/mmecdo3cut_yeoh_load.inp": {
@@ -39247,17 +39241,17 @@
   "warnings": [],
   "diagnostics": {
    "control-param-ignored": 1,
-   "ignored-keyword": 2,
-   "unresolved-ref": 1
+   "equation-parsed": 1,
+   "equation-set-broadcast": 1,
+   "ignored-keyword": 2
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
-   "ignored-keyword": "info",
-   "unresolved-ref": "error"
+   "equation-parsed": "info",
+   "equation-set-broadcast": "info",
+   "ignored-keyword": "info"
   },
-  "error_codes": [
-   "unresolved-ref"
-  ],
+  "error_codes": [],
   "gap_codes": []
  },
  "verification/mmecoo2cut_user.inp": {
@@ -39373,17 +39367,17 @@
   "warnings": [],
   "diagnostics": {
    "control-param-ignored": 5,
-   "ignored-keyword": 2,
-   "unresolved-ref": 1
+   "equation-parsed": 1,
+   "equation-set-broadcast": 1,
+   "ignored-keyword": 2
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
-   "ignored-keyword": "info",
-   "unresolved-ref": "error"
+   "equation-parsed": "info",
+   "equation-set-broadcast": "info",
+   "ignored-keyword": "info"
   },
-  "error_codes": [
-   "unresolved-ref"
-  ],
+  "error_codes": [],
   "gap_codes": []
  },
  "verification/mmecoo3cut_ogden_visco.inp": {
@@ -39403,19 +39397,19 @@
   "warnings": [],
   "diagnostics": {
    "control-param-ignored": 1,
+   "equation-parsed": 1,
+   "equation-set-broadcast": 1,
    "ignored-keyword": 2,
-   "unresolved-ref": 1,
    "unsupported-keyword": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
+   "equation-parsed": "info",
+   "equation-set-broadcast": "info",
    "ignored-keyword": "info",
-   "unresolved-ref": "error",
    "unsupported-keyword": "gap"
   },
-  "error_codes": [
-   "unresolved-ref"
-  ],
+  "error_codes": [],
   "gap_codes": [
    "unsupported-keyword"
   ]
@@ -39437,17 +39431,17 @@
   "warnings": [],
   "diagnostics": {
    "control-param-ignored": 5,
-   "ignored-keyword": 2,
-   "unresolved-ref": 1
+   "equation-parsed": 1,
+   "equation-set-broadcast": 1,
+   "ignored-keyword": 2
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
-   "ignored-keyword": "info",
-   "unresolved-ref": "error"
+   "equation-parsed": "info",
+   "equation-set-broadcast": "info",
+   "ignored-keyword": "info"
   },
-  "error_codes": [
-   "unresolved-ref"
-  ],
+  "error_codes": [],
   "gap_codes": []
  },
  "verification/mmetdo3cbt.inp": {
@@ -48708,20 +48702,18 @@
   "gaps": [],
   "warnings": [],
   "diagnostics": {
+   "equation-parsed": 1,
    "ignored-keyword": 1,
-   "unresolved-ref": 1,
    "unsupported-param": 4,
    "unsupported-value": 4
   },
   "diagnostic_levels": {
+   "equation-parsed": "info",
    "ignored-keyword": "info",
-   "unresolved-ref": "error",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
   },
-  "error_codes": [
-   "unresolved-ref"
-  ],
+  "error_codes": [],
   "gap_codes": [
    "unsupported-param",
    "unsupported-value"
@@ -48777,20 +48769,18 @@
   "gaps": [],
   "warnings": [],
   "diagnostics": {
+   "equation-parsed": 1,
    "ignored-keyword": 1,
-   "unresolved-ref": 1,
    "unsupported-param": 5,
    "unsupported-value": 4
   },
   "diagnostic_levels": {
+   "equation-parsed": "info",
    "ignored-keyword": "info",
-   "unresolved-ref": "error",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
   },
-  "error_codes": [
-   "unresolved-ref"
-  ],
+  "error_codes": [],
   "gap_codes": [
    "unsupported-param",
    "unsupported-value"
@@ -48812,20 +48802,18 @@
   "gaps": [],
   "warnings": [],
   "diagnostics": {
+   "equation-parsed": 1,
    "ignored-keyword": 1,
-   "unresolved-ref": 1,
    "unsupported-param": 4,
    "unsupported-value": 4
   },
   "diagnostic_levels": {
+   "equation-parsed": "info",
    "ignored-keyword": "info",
-   "unresolved-ref": "error",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
   },
-  "error_codes": [
-   "unresolved-ref"
-  ],
+  "error_codes": [],
   "gap_codes": [
    "unsupported-param",
    "unsupported-value"
@@ -48881,20 +48869,18 @@
   "gaps": [],
   "warnings": [],
   "diagnostics": {
+   "equation-parsed": 1,
    "ignored-keyword": 1,
-   "unresolved-ref": 1,
    "unsupported-param": 5,
    "unsupported-value": 4
   },
   "diagnostic_levels": {
+   "equation-parsed": "info",
    "ignored-keyword": "info",
-   "unresolved-ref": "error",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
   },
-  "error_codes": [
-   "unresolved-ref"
-  ],
+  "error_codes": [],
   "gap_codes": [
    "unsupported-param",
    "unsupported-value"
@@ -49139,20 +49125,20 @@
   "gaps": [],
   "warnings": [],
   "diagnostics": {
+   "equation-parsed": 1,
+   "equation-set-broadcast": 1,
    "ignored-keyword": 1,
-   "unresolved-ref": 1,
    "unsupported-param": 4,
    "unsupported-value": 4
   },
   "diagnostic_levels": {
+   "equation-parsed": "info",
+   "equation-set-broadcast": "info",
    "ignored-keyword": "info",
-   "unresolved-ref": "error",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
   },
-  "error_codes": [
-   "unresolved-ref"
-  ],
+  "error_codes": [],
   "gap_codes": [
    "unsupported-param",
    "unsupported-value"
@@ -49174,20 +49160,20 @@
   "gaps": [],
   "warnings": [],
   "diagnostics": {
+   "equation-parsed": 1,
+   "equation-set-broadcast": 1,
    "ignored-keyword": 1,
-   "unresolved-ref": 1,
    "unsupported-param": 6,
    "unsupported-value": 4
   },
   "diagnostic_levels": {
+   "equation-parsed": "info",
+   "equation-set-broadcast": "info",
    "ignored-keyword": "info",
-   "unresolved-ref": "error",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
   },
-  "error_codes": [
-   "unresolved-ref"
-  ],
+  "error_codes": [],
   "gap_codes": [
    "unsupported-param",
    "unsupported-value"
@@ -49247,20 +49233,20 @@
   "gaps": [],
   "warnings": [],
   "diagnostics": {
+   "equation-parsed": 1,
+   "equation-set-broadcast": 1,
    "ignored-keyword": 1,
-   "unresolved-ref": 1,
    "unsupported-param": 4,
    "unsupported-value": 4
   },
   "diagnostic_levels": {
+   "equation-parsed": "info",
+   "equation-set-broadcast": "info",
    "ignored-keyword": "info",
-   "unresolved-ref": "error",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
   },
-  "error_codes": [
-   "unresolved-ref"
-  ],
+  "error_codes": [],
   "gap_codes": [
    "unsupported-param",
    "unsupported-value"
@@ -49282,20 +49268,20 @@
   "gaps": [],
   "warnings": [],
   "diagnostics": {
+   "equation-parsed": 1,
+   "equation-set-broadcast": 1,
    "ignored-keyword": 1,
-   "unresolved-ref": 1,
    "unsupported-param": 4,
    "unsupported-value": 4
   },
   "diagnostic_levels": {
+   "equation-parsed": "info",
+   "equation-set-broadcast": "info",
    "ignored-keyword": "info",
-   "unresolved-ref": "error",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
   },
-  "error_codes": [
-   "unresolved-ref"
-  ],
+  "error_codes": [],
   "gap_codes": [
    "unsupported-param",
    "unsupported-value"
@@ -49317,20 +49303,20 @@
   "gaps": [],
   "warnings": [],
   "diagnostics": {
+   "equation-parsed": 1,
+   "equation-set-broadcast": 1,
    "ignored-keyword": 1,
-   "unresolved-ref": 1,
    "unsupported-param": 4,
    "unsupported-value": 4
   },
   "diagnostic_levels": {
+   "equation-parsed": "info",
+   "equation-set-broadcast": "info",
    "ignored-keyword": "info",
-   "unresolved-ref": "error",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
   },
-  "error_codes": [
-   "unresolved-ref"
-  ],
+  "error_codes": [],
   "gap_codes": [
    "unsupported-param",
    "unsupported-value"

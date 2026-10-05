@@ -9,7 +9,7 @@ Provides:
 
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import Optional, Union, List, Dict, Any, Sequence
+from typing import Optional, Union, List, Dict, Any, Sequence, Tuple
 import numpy as np
 
 
@@ -133,69 +133,29 @@ class Coupling(AssemblableConstraint):
     _dim: int = field(default=2, repr=False)
     _bound: bool = field(default=False, repr=False)
 
-    def bind(self, nid_to_idx: dict, global_nsets: dict, node_local_to_global: dict, dim: int, global_elsets: dict = None, elem_conn_0based: np.ndarray = None) -> bool:
-        """Resolve RP reference node and slave node set indices."""
-        rp_idx = None
-        ref_str = str(self.ref_point) if self.ref_point is not None else ""
-        if ref_str.isdigit():
-            ref_int = int(ref_str)
-            if ref_int in nid_to_idx:
-                rp_idx = nid_to_idx[ref_int]
-            else:
-                matches = [g for (inst, nid), g in node_local_to_global.items() if int(nid) == ref_int]
-                if matches and matches[0] in nid_to_idx:
-                    rp_idx = nid_to_idx[matches[0]]
-        if rp_idx is None and ref_str:
-            arr = global_nsets.get(ref_str)
-            if arr is None:
-                for k, v in global_nsets.items():
-                    if k.split(".")[-1].upper() == ref_str.upper():
-                        arr = v
-                        break
-            if arr is not None and len(arr) > 0:
-                rp_idx = int(arr[0])
-            elif global_elsets is not None:
-                el_arr = global_elsets.get(ref_str)
-                if el_arr is None:
-                    for k, v in global_elsets.items():
-                        if k.split(".")[-1].upper() == ref_str.upper():
-                            el_arr = v
-                            break
-                if el_arr is not None and len(el_arr) > 0 and elem_conn_0based is not None:
-                    e_idx = int(el_arr[0])
-                    if e_idx < len(elem_conn_0based):
-                        rp_idx = int(elem_conn_0based[e_idx][0])
-
-        if rp_idx is None:
+    def bind(self, nid_to_idx: dict, global_nsets: dict, node_local_to_global: dict, dim: int,
+             global_elsets: dict = None, elem_conn_0based: np.ndarray = None, sys: Any = None) -> bool:
+        """Resolve the reference node and the coupled node set through
+        ``model.regions`` (the BC/load name rules). Raises RegionError for a
+        reference that does not resolve or is ambiguous; returns False only
+        when the coupled set is empty."""
+        from dispsolver.model.regions import describe, make_view, resolve_node_region, resolve_single_node
+        if sys is None:
+            sys = make_view(nid_to_idx, global_nsets, node_local_to_global, global_elsets)
+        w = describe(self, f"constraint {self.name}")
+        ref_str = str(self.ref_point).strip() if self.ref_point is not None else ""
+        if not ref_str:
             return False
+        rp_idx = resolve_single_node(sys, ref_str, what=f"{w} reference node")
 
         slave_indices = []
-        surf_str = str(self.surface) if self.surface is not None else ""
+        surf_str = str(self.surface).strip() if self.surface is not None else ""
         if surf_str:
-            arr = global_nsets.get(surf_str)
-            if arr is None:
-                for k, v in global_nsets.items():
-                    if k.split(".")[-1].upper() == surf_str.upper():
-                        arr = v
-                        break
-            if arr is not None:
-                for raw_id in np.asarray(arr).ravel().tolist():
-                    s_idx = int(raw_id)
-                    if s_idx != rp_idx and s_idx not in slave_indices:
-                        slave_indices.append(s_idx)
-            elif global_elsets is not None and elem_conn_0based is not None:
-                el_arr = global_elsets.get(surf_str)
-                if el_arr is None:
-                    for k, v in global_elsets.items():
-                        if k.split(".")[-1].upper() == surf_str.upper():
-                            el_arr = v
-                            break
-                if el_arr is not None:
-                    for e_idx in np.asarray(el_arr).ravel().tolist():
-                        if int(e_idx) < len(elem_conn_0based):
-                            for n_idx in elem_conn_0based[int(e_idx)]:
-                                if n_idx >= 0 and int(n_idx) != rp_idx and int(n_idx) not in slave_indices:
-                                    slave_indices.append(int(n_idx))
+            arr = resolve_node_region(sys, surf_str, what=f"{w} surface")
+            for raw_id in np.asarray(arr).ravel().tolist():
+                s_idx = int(raw_id)
+                if s_idx != rp_idx and s_idx not in slave_indices:
+                    slave_indices.append(s_idx)
 
         if len(slave_indices) == 0:
             self._bound = False
@@ -292,42 +252,34 @@ class EquationConstraint(AssemblableConstraint):
     terms: List[Tuple[int, int, float]] = field(default_factory=list)
     constant: float = 0.0
     penalty_stiffness: float = 1e9
+    pair_index: Optional[int] = None
     _dofs: List[int] = field(default_factory=list, repr=False)
     _coeffs: List[float] = field(default_factory=list, repr=False)
     _bound: bool = field(default=False, repr=False)
 
-    def bind(self, nid_to_idx, global_nsets, node_local_to_global, dim: int) -> bool:
-        """Resolve part-local node ids to global DOF indices. Returns False when unresolvable."""
+    def bind(self, nid_to_idx, global_nsets, node_local_to_global, dim: int,
+             global_elsets: dict = None, elem_conn_0based: np.ndarray = None, sys: Any = None) -> bool:
+        """Resolve each term's node or node set through ``model.regions``.
+        A set term contributes every node of the set, or -- when ``pair_index``
+        is set (an equation generated from node sets, one per set position) --
+        only the pair_index-th node in the set's stored order. Raises
+        RegionError on an unresolved / ambiguous reference."""
+        from dispsolver.model.regions import describe, make_view, resolve_node_region
+        if sys is None:
+            sys = make_view(nid_to_idx, global_nsets, node_local_to_global, global_elsets)
+        w = describe(self, f"equation {self.name}")
         dofs: List[int] = []
         coeffs: List[float] = []
         for ref, dof, coeff in self.terms:
-            if isinstance(ref, str):
-                arr = global_nsets.get(ref)
-                if arr is None:
-                    for key, val in global_nsets.items():
-                        if key.split(".")[-1] == ref:
-                            arr = val
-                            break
-                if arr is None:
+            if dof < 0 or dof >= dim:
+                return False
+            idxs = [int(i) for i in resolve_node_region(sys, str(ref), what=f"{w} term {ref!r}").tolist()]
+            if self.pair_index is not None and len(idxs) > 1:
+                if self.pair_index >= len(idxs):
                     return False
-                for idx in [int(i) for i in np.asarray(arr).ravel().tolist()]:
-                    if dof < 0 or dof >= dim:
-                        return False
-                    dofs.append(int(idx) * dim + int(dof))
-                    coeffs.append(float(coeff))
-            else:
-                idx = None
-                if int(ref) in nid_to_idx:
-                    idx = nid_to_idx[int(ref)]
-                else:
-                    matches = [g for (inst, nid), g in node_local_to_global.items()
-                               if int(nid) == int(ref)]
-                    if len(matches) == 1:
-                        gid = matches[0]
-                        idx = nid_to_idx.get(gid)
-                if idx is None or dof < 0 or dof >= dim:
-                    return False
-                dofs.append(int(idx) * dim + int(dof))
+                idxs = [idxs[self.pair_index]]
+            for idx in idxs:
+                dofs.append(idx * dim + int(dof))
                 coeffs.append(float(coeff))
         if not dofs:
             return False

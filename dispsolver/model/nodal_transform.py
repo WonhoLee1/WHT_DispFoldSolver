@@ -14,6 +14,8 @@ from __future__ import annotations
 from typing import Dict, Any, Tuple, Optional, List
 import numpy as np
 
+from dispsolver.model.regions import resolve_node_region
+
 
 def _orthogonal_vector_3d(v: np.ndarray) -> np.ndarray:
     """Find a unit vector orthogonal to 3D unit vector v."""
@@ -208,22 +210,10 @@ def build_nodal_transforms(sys: Any, model: Any) -> Tuple[np.ndarray, bool]:
         if not nset_name:
             continue
 
-        # Look up node indices for this nset name in sys.global_nsets
-        node_indices = None
-        if nset_name in sys.global_nsets:
-            node_indices = sys.global_nsets[nset_name]
-        else:
-            # Case-insensitive / alias match
-            for g_name, g_indices in sys.global_nsets.items():
-                if g_name.upper() == nset_name.upper() or g_name.upper().endswith("." + nset_name.upper()):
-                    node_indices = g_indices
-                    break
-
-        if node_indices is None:
-            # Used to skip the transform silently (nodes stayed in the global frame).
-            loc = spec.get("source_location")
-            raise ValueError(f"transform {spec_name!r}" + (f" [{loc}]" if loc else "")
-                             + f": node set {nset_name!r} is not defined")
+        # Same name rules as BCs/loads (model.regions); a miss raises with the deck location
+        loc = spec.get("source_location")
+        node_indices = resolve_node_region(
+            sys, nset_name, what=f"transform {spec_name!r}" + (f" [{loc}]" if loc else ""))
         if len(node_indices) == 0:
             continue
 

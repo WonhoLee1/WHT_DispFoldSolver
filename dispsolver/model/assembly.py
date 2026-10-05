@@ -491,18 +491,19 @@ class Assembly:
             cols_topo = np.zeros(0, dtype=np.int32)
 
         # 5. Compile Constraints from Model and Assembly
+        from dispsolver.model.regions import RegionError, make_view
+        bind_view = make_view(nid_to_idx, global_nsets, node_local_to_global, global_elsets,
+                              ambiguous_names, self.name)
         compiled_constraints: List[Any] = []
         if hasattr(model, "constraints"):
             for cname, constraint in model.constraints.items():
                 bind = getattr(constraint, "bind", None)
                 if callable(bind):
                     try:
-                        ok = bind(nid_to_idx, global_nsets, node_local_to_global, dim, global_elsets, elem_conn_0based)
-                    except TypeError:
-                        try:
-                            ok = bind(nid_to_idx, global_nsets, node_local_to_global, dim, global_elsets)
-                        except TypeError:
-                            ok = bind(nid_to_idx, global_nsets, node_local_to_global, dim)
+                        ok = bind(nid_to_idx, global_nsets, node_local_to_global, dim, global_elsets,
+                                  elem_conn_0based, sys=bind_view)
+                    except RegionError:
+                        raise                      # unresolved / ambiguous reference: say which
                     except Exception:
                         ok = False
                     if not ok:

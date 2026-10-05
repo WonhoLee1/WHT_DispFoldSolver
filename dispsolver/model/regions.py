@@ -39,13 +39,25 @@ class RegionError(ValueError):
     """A region name in the model does not resolve to any node/element."""
 
 
-def _strip_assembly(sys: Any, key: str) -> str:
+def strip_assembly_prefix(assembly_name: Any, key: str) -> str:
     """ASSEMBLY.INSTANCE.SET -> INSTANCE.SET (Abaqus writes the assembly name in
-    front of instance-qualified names in history data)."""
-    asm = getattr(sys, "assembly_name", None)
-    if asm and key.upper().startswith(str(asm).upper() + "."):
-        return key[len(asm) + 1:]
+    front of instance-qualified names in history data). Shared with
+    ``model/bind.py`` so model space and flattened space fold names alike."""
+    if assembly_name and key.upper().startswith(str(assembly_name).upper() + "."):
+        return key[len(str(assembly_name)) + 1:]
     return key
+
+
+def ambiguity_text(label: str, name: str, candidates: Any) -> str:
+    """The one wording for 'bare part-level name defined by several instances'
+    (``model/bind.py`` and this module both raise it)."""
+    q = sorted(candidates)
+    return (f"{label} {name!r} is defined in several instances ({q}); "
+            f"qualify it with the instance name, e.g. {q[0]!r}")
+
+
+def _strip_assembly(sys: Any, key: str) -> str:
+    return strip_assembly_prefix(getattr(sys, "assembly_name", None), key)
 
 
 def _instance_names(sys: Any) -> set:
@@ -56,9 +68,7 @@ def _ambiguous(sys: Any, region: str, kind: str, what: str) -> None:
     amb = getattr(sys, "ambiguous_names", {}).get(kind, {})
     for bare, quals in amb.items():
         if bare.upper() == region.upper():
-            raise RegionError(
-                f"{what}: region {region!r} is defined in several instances ({sorted(quals)}); "
-                f"qualify it with the instance name, e.g. {sorted(quals)[0]!r}")
+            raise RegionError(ambiguity_text(f"{what}: region", region, quals))
 
 
 def resolve_node_region(sys: Any, region: Any, step: Any = None, what: str = "region") -> np.ndarray:
@@ -139,6 +149,27 @@ def resolve_elem_region(sys: Any, region: Any, what: str = "region", allow_blank
                     return np.array([g - 1], dtype=np.int64)
             raise RegionError(f"{what}: element {key!r} does not exist")
     raise RegionError(f"{what}: element region {key!r} is not an element set or element number of this model")
+
+
+def make_view(nid_to_idx: dict, global_nsets: dict, node_local_to_global: dict,
+              global_elsets: Optional[dict] = None, ambiguous_names: Optional[dict] = None,
+              assembly_name: Optional[str] = None) -> Any:
+    """The minimal sys-like object resolve_node_region needs, for callers that
+    only hold the flattened tables (constraint binding during assembly)."""
+    from types import SimpleNamespace
+    return SimpleNamespace(nid_to_idx=nid_to_idx, global_nsets=global_nsets,
+                           node_local_to_global=node_local_to_global,
+                           global_elsets=global_elsets or {}, ambiguous_names=ambiguous_names or {},
+                           assembly_name=assembly_name)
+
+
+def resolve_single_node(sys: Any, region: Any, what: str = "region") -> int:
+    """0-based index of the ONE node `region` names: a node label, or a node
+    set with exactly one node (Abaqus *COUPLING / *RIGID BODY reference node)."""
+    idx = resolve_node_region(sys, region, what=what)
+    if len(idx) != 1:
+        raise RegionError(f"{what}: {str(region).strip()!r} must name exactly one node, it holds {len(idx)}")
+    return int(idx[0])
 
 
 def node_ids_of(sys: Any, idx: np.ndarray) -> list:

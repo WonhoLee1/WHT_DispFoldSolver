@@ -24,6 +24,7 @@ from typing import Any, Dict, List, Optional
 
 from dispsolver.io.diagnostics import Diagnostics, Loc
 from dispsolver.model.names import CaseInsensitiveDict
+from dispsolver.model.regions import ambiguity_text, strip_assembly_prefix
 
 KINDS = ("step", "material", "section", "orientation", "amplitude", "contact_property", "part",
          "instance", "nset", "elset", "surface", "node_region", "elem_region")
@@ -46,9 +47,7 @@ class AmbiguousRef(BindError):
     """A bare part-level name is defined by several instances."""
 
     def __init__(self, kind: str, name: Any, candidates: List[str]):
-        super().__init__(kind, name,
-                         f"{kind} {name!r} is defined in several instances ({sorted(candidates)}); "
-                         f"qualify it with the instance name, e.g. {sorted(candidates)[0]!r}")
+        super().__init__(kind, name, ambiguity_text(kind, name, candidates))
         self.candidates = sorted(candidates)
 
 
@@ -89,10 +88,7 @@ class SymbolTable:
         return None
 
     def _strip_assembly(self, key: str) -> str:
-        a = self.assembly_name
-        if a and key.upper().startswith(a.upper() + "."):
-            return key[len(a) + 1:]
-        return key
+        return strip_assembly_prefix(self.assembly_name, key)
 
     def _part_find(self, part: Any, kind: str, name: str) -> Any:
         for attr in _SET_ATTRS[kind]:

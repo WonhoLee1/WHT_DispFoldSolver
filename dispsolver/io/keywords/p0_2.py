@@ -11,6 +11,7 @@ from dispsolver.io.keyword_registry import (
     RowSpec,
 )
 from dispsolver.io.keyword_base import _AbortParse, _parse_data_rows
+from dispsolver.model.bind import AmbiguousRef, BindError, SymbolTable, UnresolvedRef
 from dispsolver.io.schema import Flat, Keyword, Param, Record, Schema, applies, keyword
 
 if TYPE_CHECKING:
@@ -439,9 +440,14 @@ def _handle_equation(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
             if ref.lstrip("-").isdigit():
                 nodes = [int(ref)]
             else:
-                nodes = _resolve_equation_nodes(reader, ref)
+                try:
+                    nodes = _equation_set_size(reader, ref)
+                except BindError as e:
+                    reader.report("error", "ambiguous-ref" if isinstance(e, AmbiguousRef) else "unresolved-ref",
+                                  f"*EQUATION at {loc}: {e}", block)
+                    return
                 if not nodes:
-                    reader.report("error", "unresolved-ref", f"*EQUATION at {loc}: node set {ref!r} is not defined", block)
+                    reader.report("error", "unresolved-ref", f"*EQUATION at {loc}: node set {ref!r} is empty", block)
                     return
             terms.append((nodes, dof, coeff))
         sizes = {len(nodes) for nodes, _, _ in terms if len(nodes) > 1}
@@ -454,26 +460,52 @@ def _handle_equation(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
                           f"*EQUATION at {loc}: single nodes used in each of the {count} equations generated "
                           f"from the node sets", block)
         for k in range(count):
-            triples = [(nodes[k] if len(nodes) > 1 else nodes[0], dof, coeff) for nodes, dof, coeff in terms]
+            # a set term keeps its NAME: EquationConstraint.bind resolves it through
+            # model.regions (instance-qualified, ambiguity-checked) and takes the
+            # k-th node of the set; a node number stays a label
+            triples = [(nodes[0], dof, coeff) for nodes, dof, coeff in terms]
             name = f"EQ_{len(reader.model.constraints) + 1}"
-            reader.model.Equation(name, terms=triples)
+            reader.model.Equation(name, terms=triples, pair_index=k if count > 1 else None)
             n_eq += 1
     reader.report("info", "equation-parsed", f"*EQUATION at {block.location}: {n_eq} equation(s)", block)
 
 
-def _resolve_equation_nodes(reader: AbaqusInputReader, ref: str) -> List[int]:
-    """Resolve an EQUATION term reference to part-local node ids."""
-    names = [ref, ref.split(".")[-1]]
-    for part in reader.model.parts.values():
-        for key in names:
-            if key in part.node_sets:
-                return sorted(int(n) for n in part.node_sets[key].node_ids)
-            if key in part.sets:
-                gset = part.sets[key]
-                ids = getattr(gset, "node_ids", None)
-                if ids:
-                    return sorted(int(n) for n in ids)
-    return []
-
-
-
+def _equation_set_size(reader: AbaqusInputReader, ref: str) -> list:
+    """Resolve an EQUATION term's node set name against the model with the
+    BC/load rules (``model/bind.py``: qualified names, unique bare names,
+    ambiguity error) and return a list holding the set's node *count* worth of
+    placeholders ([ref]*n). Only the size is needed at parse time -- the nodes
+    themselves are resolved at bind time. Raises BindError."""
+    asm = getattr(reader.model, "root_assembly", None)
+    if not getattr(asm, "instances", None):
+        # no *ASSEMBLY: the deck's sets live in its part(s), which become the
+        # (single) instance at build time -- resolve there, refusing a name
+        # several parts define instead of taking the first
+        hits = []
+        for part in reader.model.parts.values():
+            for table in (part.node_sets, part.sets):
+                key = next((k for k in table if k.upper() == ref.split(".")[-1].upper()), None)
+                if key is not None and getattr(table[key], "node_ids", None):
+                    hits.append((part.name, table[key]))
+                    break
+        if len(hits) > 1:
+            raise AmbiguousRef("node_region", ref, [f"{n}.{ref}" for n, _ in hits])
+        if not hits:
+            raise UnresolvedRef("node_region", ref, f"node set {ref!r} is not defined in this model")
+        return [ref] * len({int(i) for i in hits[0][1].node_ids})
+    got = SymbolTable(reader.model).resolve("node_region", ref)
+    if isinstance(got, tuple):                       # ("node", inst, label)
+        return [ref]
+    if isinstance(got, str):                         # "ALL"
+        raise UnresolvedRef("node_region", ref, f"*EQUATION term {ref!r}: ALL is not a valid equation node set")
+    ids = None
+    if hasattr(got, "get_nodes"):
+        try:
+            ids = got.get_nodes(include_elements=True)
+        except TypeError:
+            ids = None
+    if ids is None:
+        ids = getattr(got, "node_ids", None)
+    if ids is None:
+        raise UnresolvedRef("node_region", ref, f"*EQUATION term {ref!r}: cannot count the nodes of this region")
+    return [ref] * len(set(int(i) for i in ids))

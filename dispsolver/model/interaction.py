@@ -547,6 +547,27 @@ class AnalyticalRigidSurface:
 # Resolution & Topology Helpers
 # ===========================================================================
 
+def _part_surface_owner(region: str, model: Any) -> Optional[tuple]:
+    """(instance_name | None, part, surface) of the part-level surface `region`.
+
+    A part surface named without an instance resolves only when exactly one
+    instance uses a part defining it (no instances at all: exactly one part).
+    Several owners raise RegionError instead of silently taking the first;
+    no owner returns None."""
+    from dispsolver.model.regions import RegionError, ambiguity_text
+    asm = getattr(model, "root_assembly", None)
+    insts = getattr(asm, "instances", None) or {}
+    hits = [(iname, inst.part, inst.part.surfaces[region]) for iname, inst in insts.items()
+            if hasattr(inst.part, "surfaces") and region in inst.part.surfaces]
+    if not insts:
+        hits = [(None, part, part.surfaces[region]) for part in getattr(model, "parts", {}).values()
+                if hasattr(part, "surfaces") and region in part.surfaces]
+    if len(hits) > 1:
+        quals = [f"{i}.{region}" if i else f"{p.name}.{region}" for i, p, _ in hits]
+        raise RegionError(ambiguity_text("surface", region, quals))
+    return hits[0] if hits else None
+
+
 def _resolve_node_ids(region: Union[str, Any], model: Any = None, sys: Any = None) -> list:
     """Resolve a master/slave region reference into a concrete list of global node IDs."""
     if region is None:
@@ -592,15 +613,13 @@ def _resolve_node_ids(region: Union[str, Any], model: Any = None, sys: Any = Non
             if nids:
                 return list(nids)
             return list(part.nodes.keys())
-        if hasattr(model, "parts"):
-            for part in model.parts.values():
-                if hasattr(part, "surfaces") and region in part.surfaces:
-                    surf = part.surfaces[region]
-                    nids = surf.get_nodes(part) if hasattr(surf, "get_nodes") else list(getattr(surf, "node_ids", []))
-                    if sys is not None and hasattr(sys, "node_local_to_global"):
-                        inst_name = next(iter(model.root_assembly.instances.keys())) if hasattr(model, "root_assembly") and model.root_assembly.instances else "INST_DEFAULT"
-                        return [sys.node_local_to_global.get((inst_name, nid), nid) for nid in nids]
-                    return list(nids)
+        owner = _part_surface_owner(region, model) if hasattr(model, "parts") else None
+        if owner is not None:
+            inst_name, part, surf = owner
+            nids = surf.get_nodes(part) if hasattr(surf, "get_nodes") else list(getattr(surf, "node_ids", []))
+            if sys is not None and hasattr(sys, "node_local_to_global"):
+                return [sys.node_local_to_global.get((inst_name or "INST_DEFAULT", nid), nid) for nid in nids]
+            return list(nids)
         if hasattr(model, "root_assembly") and hasattr(model.root_assembly, "surfaces") and region in model.root_assembly.surfaces:
             surf = model.root_assembly.surfaces[region]
             return list(surf.get_nodes(model.root_assembly)) if hasattr(surf, "get_nodes") else list(getattr(surf, "node_ids", []))
@@ -752,27 +771,25 @@ def _resolve_master_faces(region: Union[str, Any], mesh: Any, model: Any = None,
             part = model.parts[region]
             ext_faces = part.get_exterior_faces() if hasattr(part, "get_exterior_faces") else []
             return [tuple(f) for f in ext_faces]
-        if hasattr(model, "parts"):
-            for part in model.parts.values():
-                if hasattr(part, "surfaces") and region in part.surfaces:
-                    psurf = part.surfaces[region]
-                    if hasattr(psurf, "faces") and psurf.faces:
-                        result = []
-                        for ef in psurf.faces:
-                            eid = ef.element_id if hasattr(ef, "element_id") else ef[0]
-                            fid = ef.face_id if hasattr(ef, "face_id") else ef[1]
-                            gid = eid
-                            if sys is not None and hasattr(sys, "elem_local_to_global") and hasattr(model, "root_assembly") and model.root_assembly.instances:
-                                inst_name = next(iter(model.root_assembly.instances.keys()))
-                                gid = sys.elem_local_to_global.get((inst_name, eid), eid)
-                            if gid in mesh.elements:
-                                elem = mesh.elements[gid]
-                                f_idx = fid - 1 if fid >= 1 else fid
-                                local = _get_element_face_local_nodes(elem, f_idx)
-                                if local is not None:
-                                    result.append(tuple(elem.node_ids[i] for i in local))
-                        if result:
-                            return result
+        owner = _part_surface_owner(region, model) if hasattr(model, "parts") else None
+        if owner is not None:
+            inst_name, _part, psurf = owner
+            if hasattr(psurf, "faces") and psurf.faces:
+                result = []
+                for ef in psurf.faces:
+                    eid = ef.element_id if hasattr(ef, "element_id") else ef[0]
+                    fid = ef.face_id if hasattr(ef, "face_id") else ef[1]
+                    gid = eid
+                    if sys is not None and hasattr(sys, "elem_local_to_global") and inst_name:
+                        gid = sys.elem_local_to_global.get((inst_name, eid), eid)
+                    if gid in mesh.elements:
+                        elem = mesh.elements[gid]
+                        f_idx = fid - 1 if fid >= 1 else fid
+                        local = _get_element_face_local_nodes(elem, f_idx)
+                        if local is not None:
+                            result.append(tuple(elem.node_ids[i] for i in local))
+                if result:
+                    return result
 
     faces = None
     if hasattr(region, "get_faces"):
