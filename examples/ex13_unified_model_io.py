@@ -38,7 +38,7 @@ from dispsolver.constraint.surface_tie import SurfaceTieConstraint
 from ex12_abaqus_inp_plate_fold import run_abaqus_inp_folding, run_folding_from_result
 
 
-def run_read(config: FoldModelConfig = DEFAULT_CONFIG, elem_jit: str = "jax"):
+def run_read(config: FoldModelConfig = DEFAULT_CONFIG, elem_jit: str = "jax", max_steps: int = None):
     """Read the standard on-disk .inp deck and solve.
 
     NOTE: `config` here only affects solver tuning/element type -- the
@@ -54,12 +54,13 @@ def run_read(config: FoldModelConfig = DEFAULT_CONFIG, elem_jit: str = "jax"):
         before_png_name="ex13_read_before_folding_shape.png",
         after_png_name="ex13_read_final_folding_shape.png",
         result_name="ex13_read_result.pkl",
+        max_steps=max_steps,
         config=config,
         elem_jit=elem_jit,
     )
 
 
-def run_roundtrip(config: FoldModelConfig = DEFAULT_CONFIG, elem_jit: str = "jax"):
+def run_roundtrip(config: FoldModelConfig = DEFAULT_CONFIG, elem_jit: str = "jax", max_steps: int = None):
     """Build the .inp text in-memory via gen_ex12_inp.generate(config),
     write it to a temp file, then read+solve it through the same path
     as `read`. Unlike `read`, this DOES pick up geometry/material
@@ -76,6 +77,7 @@ def run_roundtrip(config: FoldModelConfig = DEFAULT_CONFIG, elem_jit: str = "jax
             before_png_name="ex13_roundtrip_before_folding_shape.png",
             after_png_name="ex13_roundtrip_final_folding_shape.png",
             result_name="ex13_roundtrip_result.pkl",
+            max_steps=max_steps,
             config=config,
             elem_jit=elem_jit,
         )
@@ -83,7 +85,7 @@ def run_roundtrip(config: FoldModelConfig = DEFAULT_CONFIG, elem_jit: str = "jax
         os.remove(tmp_path)
 
 
-def run_build(config: FoldModelConfig = DEFAULT_CONFIG, elem_jit: str = "jax"):
+def run_build(config: FoldModelConfig = DEFAULT_CONFIG, elem_jit: str = "jax", max_steps: int = None):
     """Construct the same physical-layer PET-PSA/Q4_VISCO_SIMO model
     directly as Python objects (mirroring gen_ex12_inp.py's geometry/
     materials, but with no .inp text produced or parsed anywhere), then
@@ -239,6 +241,7 @@ def run_build(config: FoldModelConfig = DEFAULT_CONFIG, elem_jit: str = "jax"):
         after_png_name="ex13_build_final_folding_shape.png",
         case_name="build (pure Python objects)",
         result_name="ex13_build_result.pkl",
+        max_steps=max_steps,
         config=config,
         elem_jit=elem_jit,
     )
@@ -300,6 +303,10 @@ def main():
              ".pkl result in the Qt viewer (e.g. --open "
              "examples/ex13_build_result.pkl). Ignores --mode/--viewer.",
     )
+    parser.add_argument(
+        "--max_steps", type=int, default=None,
+        help="Maximum number of solve steps to run (default: None, run to completion).",
+    )
     from dispsolver.fold_model_config import add_config_cli_args, apply_cli_overrides
     add_config_cli_args(parser)
     args = parser.parse_args()
@@ -342,11 +349,11 @@ def main():
     config.solver.distortion_j_crit = args.distortion_j_crit
 
     if args.mode == "read":
-        info = run_read(config, elem_jit=args.elem_jit)
+        info = run_read(config, elem_jit=args.elem_jit, max_steps=args.max_steps)
     elif args.mode == "roundtrip":
-        info = run_roundtrip(config, elem_jit=args.elem_jit)
+        info = run_roundtrip(config, elem_jit=args.elem_jit, max_steps=args.max_steps)
     else:
-        info = run_build(config, elem_jit=args.elem_jit)
+        info = run_build(config, elem_jit=args.elem_jit, max_steps=args.max_steps)
 
     print("=" * 100)
     print(f" EX13 [{args.mode}] SUMMARY: nodes={info['n_nodes']}  elements={info['n_elements']}  "

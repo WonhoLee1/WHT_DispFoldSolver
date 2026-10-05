@@ -19,97 +19,32 @@ from typing import Any, Dict, List, Optional, Tuple
 import warnings
 
 from .abaqus_lexer import AbaqusKeywordBlock, tokenize, tokenize_string
-from .abaqus_model import (
-    AbaqusAmplitude,
-    AbaqusBoundary,
-    AbaqusContactPair,
-    AbaqusContactProperty,
-    AbaqusDload,
-    AbaqusElement,
-    AbaqusLoad,
-    AbaqusMaterial,
-    AbaqusModel,
-    AbaqusMpc,
-    AbaqusNode,
-    AbaqusSection,
-    AbaqusStep,
-    AbaqusSurface,
-    AbaqusTie,
-)
-from .abaqus_parser import AbaqusParser
-from .model_builder import ModelBuilder, ModelBuilderResult
+from .legacy_adapter import model_to_builder_result, ModelBuilderResult, AbaqusBoundary, ABAQUS_ELEMENT_MAP
+from .abaqus_reader import _parse_source, detect_dim
 
 
 def read_abaqus_input(filepath: str) -> ModelBuilderResult:
     """Read an Abaqus .inp file and build dispsolver-native objects.
 
-    This is the main entry point for the Abaqus import pipeline.
+    This is the main entry point for the Abaqus import pipeline,
+    powered by the production reader and legacy_adapter.
 
     Pipeline
     --------
-    1. tokenize(filepath) → list of AbaqusKeywordBlock
-    2. AbaqusParser.parse(blocks) → AbaqusModel
-    3. ModelBuilder(abq_model).build() → ModelBuilderResult
-
-    Parameters
-    ----------
-    filepath : str
-        Path to the .inp file.
-
-    Returns
-    -------
-    ModelBuilderResult with fields:
-        mesh : Mesh
-        materials : dict[int, object]
-        material_params : dict[int, dict]
-        constraints : list
-        solver_config : dict
-        amplitudes : dict[str, Amplitude]
-        dload_configs : list[dict]
-        contact_pairs : list[dict]
-        contact_surfaces : list[dict]
-
-    Examples
-    --------
-    >>> result = read_abaqus_input("tests/fixtures/simple_quad.inp")
-    >>> result.mesh.node_count()
-    4
-
-    Raises
-    ------
-    NotImplementedError
-        For unsupported element types (C3D8, etc.) or features.
-    FileNotFoundError
-        If the .inp file does not exist.
+    1. _parse_source(filepath, dim=detect_dim(filepath)) → reader, model
+    2. model_to_builder_result(model) → ModelBuilderResult
     """
-    blocks = tokenize(filepath)
-    parser = AbaqusParser()
-    abq_model = parser.parse(blocks)
-    builder = ModelBuilder(abq_model)
-    result = builder.build()
-    return result
+    dim = detect_dim(filepath)
+    reader, model = _parse_source(filepath, dim=dim, strict=False)
+    return model_to_builder_result(model)
 
 
 __all__ = [
     # Public API
     "read_abaqus_input",
     "ModelBuilderResult",
-    # Parser data model
-    "AbaqusModel",
-    "AbaqusNode",
-    "AbaqusElement",
-    "AbaqusMaterial",
-    "AbaqusSection",
     "AbaqusBoundary",
-    "AbaqusLoad",
-    "AbaqusStep",
-    "AbaqusAmplitude",
-    "AbaqusDload",
-    "AbaqusMpc",
-    "AbaqusTie",
-    "AbaqusContactPair",
-    "AbaqusContactProperty",
-    "AbaqusSurface",
+    "ABAQUS_ELEMENT_MAP",
     # Lexer
     "AbaqusKeywordBlock",
     # New Production Reader & Executor Architecture

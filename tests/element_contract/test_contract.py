@@ -627,7 +627,7 @@ def test_invented_abaqus_names_are_rejected(bad):
     does not exist, so the deck must ERROR rather than silently resolve.
     """
     from dispsolver.solver.dynamic import _ELEMENT_TYPE_ALIASES
-    from dispsolver.io.model_builder import ABAQUS_ELEMENT_MAP
+    from dispsolver.io.legacy_adapter import ABAQUS_ELEMENT_MAP
     assert bad not in _ELEMENT_TYPE_ALIASES
     assert bad not in ABAQUS_ELEMENT_MAP
 
