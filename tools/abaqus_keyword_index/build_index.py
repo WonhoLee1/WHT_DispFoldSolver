@@ -52,6 +52,27 @@ def _short(s: str, n: int = 90) -> str:
     return s if len(s) <= n else s[: n - 1].rstrip() + "…"
 
 
+_DEFAULT_TAIL_CUT = re.compile(r"=|\bequal to\b|\bset to\b|\s+or\s+", re.I)
+
+
+def _default_from_text(text: str):
+    """Default written as '<value> (default)' where the value is not marked up
+    as <abqparamvalue> (numbers, plain words): 'Set LOAD CASE = 1 (default) or
+    2', 'equal to NO (default)'. Only a value that follows '=' / 'equal to' in
+    the same sentence counts; 'Include this parameter (default)' (a flag) and
+    'used without a value (default)' name no value and give None."""
+    for m in re.finditer(r"\(default\)", text):
+        sentence = re.split(r"(?<=[.;])\s", text[:m.start()])[-1]
+        if not re.search(r"=|\bequal to\b|\bset to\b", sentence, re.I):
+            continue
+        parts = _DEFAULT_TAIL_CUT.split(sentence)
+        tail = parts[-1].strip().strip("=").strip()
+        if (tail and len(tail.split()) <= 4 and not re.search(r"\b(value|parameter|used|omitted)\b", tail, re.I)
+                and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 .\-_/+]*", tail)):
+            return tail.upper()
+    return None
+
+
 def _param_entry(dt, dd) -> dict:
     """Name, allowed values and default of one parameter, read from the
     markup: values are <abqparamvalue> spans that follow '<abqparameter>NAME
@@ -69,15 +90,18 @@ def _param_entry(dt, dd) -> dict:
         if pname is None or _txt(pname).strip().upper() != name:
             continue
         v = _txt(pv).strip().upper()
-        if not v or re.fullmatch(r"[0-9.+\-E]+", v):
+        nxt = pv.next_sibling
+        nxt_txt = nxt if isinstance(nxt, str) else (nxt.get_text() if nxt is not None else "")
+        is_default = nxt_txt.lstrip().startswith("(default)")
+        if not v or (re.fullmatch(r"[0-9.+\-E]+", v) and not is_default):
             continue
         if v not in values:
             values.append(v)
-        nxt = pv.next_sibling
-        nxt_txt = nxt if isinstance(nxt, str) else (nxt.get_text() if nxt is not None else "")
-        if default is None and nxt_txt.lstrip().startswith("(default)"):
+        if default is None and is_default:
             default = v
     text = _txt(dd)
+    if default is None:
+        default = _default_from_text(text)
     # a parameter that stands alone: "Include this parameter ..." or
     # "If this parameter is included, ..."
     flag = bool(re.search(r"\bInclude this parameter\b|\bIf this parameter is included\b", text, re.I))

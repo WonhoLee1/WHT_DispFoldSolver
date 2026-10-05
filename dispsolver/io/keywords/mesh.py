@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     support="FULL",
     params={
         "NSET": ParamSpec("NSET"),
-        "SYSTEM": ParamSpec("SYSTEM", default="RC", choices=["RC", "R", "C", "S"]),
+        "SYSTEM": ParamSpec("SYSTEM", default="R", choices=["R", "C", "S"]),
         "INPUT": ParamSpec("INPUT", supported=False),
     },
     rows=RowSpec(column_types=[int, float, float, float], min_columns=2, max_columns=4),
@@ -37,7 +37,7 @@ def _handle_node(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     import numpy as np
     part = reader.get_active_part()
     nset_name = block.params.get("nset", None)
-    coord_system = block.params.get("system", "RC").upper()
+    coord_system = block.params.get("system", "R").upper()
     added_nids = []
 
     for line in block.data_lines:
@@ -619,7 +619,7 @@ def _apply_assembly_surface(reader: AbaqusInputReader, rec: SurfaceRecord):
     support="FULL",
     params={
         "NSET": ParamSpec("NSET"),
-        "LINE": ParamSpec("LINE", default="C", choices=["C", "P"], aliases=["L"]),
+        "LINE": ParamSpec("LINE", choices=["C", "P"], aliases=["L"]),
         "SYSTEM": ParamSpec("SYSTEM", default="RC", choices=["RC", "C", "S"]),
     },
     rows=RowSpec(min_columns=2, max_columns=10),

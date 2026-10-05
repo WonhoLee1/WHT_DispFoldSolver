@@ -187,6 +187,7 @@
         "BIOT-JOHNSON",
         "BIOT-ATALLA"
        ],
+       "default": "DELANY-BAZLEY",
        "applies": "This parameter applies only to Abaqus/Standard analyses.",
        "condition": "Optional, mutually exclusive parameters"
       },
@@ -2716,6 +2717,7 @@
       },
       {
        "name": "LOAD CASE",
+       "default": "1",
        "applies": "This parameter applies only to Abaqus/Standard analyses.",
        "condition": "Optional parameters (history data only)"
       },
@@ -3087,6 +3089,10 @@
      "optional": [
       {
        "name": "CRACKS",
+       "values": [
+        "1"
+       ],
+       "default": "1",
        "applies": "Set CRACKS = 1 (default) to indicate that an element will be removed when any local direct cracking strain (or displacement) component reac…"
       },
       {
@@ -4792,10 +4798,12 @@
       },
       {
        "name": "HANDEDNESS",
+       "default": "RIGHT",
        "condition": "Optional parameters when the TABULAR and BOLT parameter are included"
       },
       {
        "name": "NORMAL ADJUSTMENT",
+       "default": "UNIFORM AXIAL COMPONENT",
        "applies": "Set this parameter equal to UNIFORM AXIAL COMPONENT (default) if all secondary nodes should be associated with the same top or bottom threa…",
        "condition": "Optional parameters when the TABULAR and BOLT parameter are included"
       }
@@ -6941,7 +6949,8 @@
        "name": "COMPONENT"
       },
       {
-       "name": "TYPE"
+       "name": "TYPE",
+       "default": "VISCOUS"
       },
       {
        "name": "DEPENDENCIES",
@@ -8004,6 +8013,7 @@
      "optional": [
       {
        "name": "RELEASE",
+       "default": "ALL",
        "applies": "In Abaqus/Standard set this parameter equal to ALL (default) to release all available components of relative motion when the failure criter…"
       }
      ],
@@ -8506,6 +8516,7 @@
       },
       {
        "name": "LOCK",
+       "default": "ALL",
        "applies": "Set this parameter equal to ALL (default) to lock all components of relative motion when the locking criterion is satisfied."
       },
       {
@@ -8587,6 +8598,7 @@
       },
       {
        "name": "LOAD CASE",
+       "default": "1",
        "applies": "This parameter applies only to Abaqus/Standard analyses.",
        "condition": "Optional parameters (history data only)"
       },
@@ -14647,10 +14659,18 @@
       },
       {
        "name": "NORMAL DIRECTION",
+       "values": [
+        "1"
+       ],
+       "default": "1",
        "applies": "This parameter can be used only in conjunction with CRITERION = MAXE , CRITERION = MAXS , CRITERION = QUADE , or CRITERION = QUADS ."
       },
       {
        "name": "NPOLY",
+       "values": [
+        "7"
+       ],
+       "default": "7",
        "applies": "This parameter can be used only in conjunction with POSITION = NONLOCAL ."
       },
       {
@@ -16781,7 +16801,8 @@
        "condition": "This parameter applies only to LKM analyses."
       },
       {
-       "name": "SHAPE"
+       "name": "SHAPE",
+       "default": "SPHERE"
       }
      ],
      "optional": [
@@ -25900,6 +25921,10 @@
       },
       {
        "name": "NPOLY",
+       "values": [
+        "7"
+       ],
+       "default": "7",
        "applies": "This parameter can be used only in conjunction with POSITION = NONLOCAL in enriched elements or in predefined initially partially bonded su…"
       },
       {
@@ -26502,6 +26527,7 @@
       },
       {
        "name": "SIM",
+       "default": "YES",
        "applies": "This parameter is relevant only for the Lanczos and subspace iteration eigensolvers."
       },
       {
@@ -26627,6 +26653,7 @@
       },
       {
        "name": "USER",
+       "default": "FRIC",
        "applies": "This parameter cannot be used when friction is defined for connector elements.",
        "condition": "Optional, mutually exclusive parameters"
       },
@@ -26661,6 +26688,7 @@
       },
       {
        "name": "NOMINAL",
+       "default": "AVERAGE",
        "applies": "This parameter applies only to Abaqus/Explicit analyses and is significant only if directional preferences are introduced as surface proper…"
       },
       {
@@ -39460,7 +39488,8 @@
      "required": [],
      "optional": [
       {
-       "name": "NUM FIBERS"
+       "name": "NUM FIBERS",
+       "default": "1"
       }
      ],
      "data": [
@@ -45582,7 +45611,8 @@
      "required": [],
      "optional": [
       {
-       "name": "TYPE"
+       "name": "TYPE",
+       "default": "FREE SLIP"
       }
      ],
      "data": []
@@ -46148,6 +46178,7 @@
       },
       {
        "name": "FREQUENCY SCALE",
+       "default": "LOGARITHMIC",
        "applies": "This parameter is relevant only if INTERVAL = EIGENFREQUENCY or INTERVAL = RANGE ."
       },
       {
@@ -46801,7 +46832,8 @@
      ],
      "optional": [
       {
-       "name": "STIFFNESS UNSYMMETRY FACTOR"
+       "name": "STIFFNESS UNSYMMETRY FACTOR",
+       "default": "1.0"
       }
      ],
      "data": []
@@ -46891,6 +46923,7 @@
       },
       {
        "name": "EIGENPROBLEM",
+       "default": "YES",
        "applies": "Set this parameter equal to YES (default) if the substructure eigenproblem needs to be solved during substructure generation in Abaqus ."
       },
       {
@@ -52955,6 +52988,7 @@
       },
       {
        "name": "FRIC COEF DEPENDENT",
+       "default": "NO",
        "applies": "Set this parameter equal to YES if the Archard’s wear equation depends explicitly on the friction coefficient."
       },
       {
@@ -52963,6 +52997,7 @@
       },
       {
        "name": "UNITLESS WEAR COEF",
+       "default": "NO",
        "applies": "Set this parameter equal to YES if the wear coefficient is dimensionless."
       }
      ],

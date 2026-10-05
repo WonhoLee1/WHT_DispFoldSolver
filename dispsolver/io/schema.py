@@ -66,6 +66,7 @@ frozen `KeywordCtx` -- the reader itself is not reachable from here.
 
 from __future__ import annotations
 
+import dataclasses
 import typing
 from dataclasses import dataclass, field
 from typing import Any, Callable, ClassVar, Dict, Iterable, List, Optional, Tuple, Type, Union
@@ -91,17 +92,20 @@ class InputError(ValueError):
 class Param:
     """Optional metadata for a schema field; the first argument is the default."""
 
-    __slots__ = ("default", "name", "unsupported", "control", "supported", "undocumented")
+    __slots__ = ("default", "name", "unsupported", "control", "supported", "undocumented",
+                 "abaqus_default")
 
     def __init__(self, default: Any = _MISSING, *, name: Optional[str] = None,
                  unsupported: Optional[str] = None, control: bool = False,
-                 supported: Optional[Tuple[str, ...]] = None, undocumented: Optional[str] = None):
+                 supported: Optional[Tuple[str, ...]] = None, undocumented: Optional[str] = None,
+                 abaqus_default: Optional[str] = None):
         self.default = default
         self.name = name                    # Abaqus spelling when it is not the attribute name
         self.unsupported = unsupported      # reason; its presence is a gap and refuses the block
         self.control = control              # solution control: reported as info and ignored
         self.supported = supported          # the subset of choices this solver implements
         self.undocumented = undocumented    # reason a name absent from the Abaqus index is accepted
+        self.abaqus_default = abaqus_default  # reason this default differs from the Keywords Guide on purpose
 
 
 @dataclass(frozen=True)
@@ -117,6 +121,7 @@ class FieldSpec:
     control: bool = False
     supported: Optional[Tuple[str, ...]] = None
     undocumented: Optional[str] = None
+    abaqus_default: Optional[str] = None
 
     @property
     def required(self) -> bool:
@@ -174,7 +179,7 @@ class _Typed:
                 raise TypeError(f"{cls.__qualname__}.{attr}: supported {supported} not among {choices}")
             specs.append(FieldSpec(attr, norm(meta.name or attr), kind, choices, elem, optional,
                                    default, meta.unsupported, meta.control, supported,
-                                   meta.undocumented))
+                                   meta.undocumented, meta.abaqus_default))
         kinds = [s.kind for s in specs]
         if "rest" in kinds[:-1]:
             raise TypeError(f"{cls.__qualname__}: a Tuple[X, ...] field must be the last field")
@@ -515,6 +520,85 @@ def check_against_index(cls: Type[Keyword]) -> List[str]:
             if s.abq not in entry.params and not s.undocumented]
 
 
+# Defaults the framework filled from the index / left alone, for the report
+# and tests/test_abaqus_defaults.py: (keyword, parameter, value | reason).
+DEFAULT_FILLS: List[Tuple[str, str, Any]] = []
+DEFAULT_SKIPS: List[Tuple[str, str, str]] = []
+
+
+def _index_default(s: FieldSpec, raw: str):
+    """The index's documented default as the field's own type (ValueError when
+    the text is not a value of that type)."""
+    if s.kind == "bool":
+        u = norm(raw)
+        if u in _TRUE:
+            return True
+        if u in _FALSE:
+            return False
+        raise ValueError(f"not a flag value: {raw!r}")
+    if s.kind == "choice":
+        v = resolve_name(raw, s.choices)
+        if v is None:
+            raise ValueError(f"not one of {s.choices}: {raw!r}")
+        return v
+    if s.kind == "rest":
+        raise ValueError("a Tuple field has no parameter default")
+    return _scalar(s.kind, raw)
+
+
+def apply_abaqus_defaults(cls: Type[Keyword]) -> List[str]:
+    """Make every declared parameter default the one the Keywords Guide
+    documents (user rule 2026-10-05: an omitted item takes the Abaqus default,
+    never an in-house one).
+
+        field default == documented     -> fine
+        field default differs           -> returned as a problem, unless the
+                                           field carries Param(abaqus_default=reason)
+        Optional field, documented fixed default -> the documented value is filled in
+        documented default depends on the usage (several different values over
+        the keyword's usages) -> left alone and listed in DEFAULT_SKIPS
+
+    `p.given` still says which parameters the deck actually wrote."""
+    entry = abaqus_index().get(cls.name)
+    if entry is None:
+        return []
+    problems: List[str] = []
+    specs = []
+    for s in cls.Params._fields:
+        ip = entry.params.get(s.abq)
+        if ip is None or not ip.default or s.kind == "rest":
+            specs.append(s)
+            continue
+        if len(ip.defaults) > 1:
+            DEFAULT_SKIPS.append((cls.name, s.abq, "default depends on the usage: "
+                                  + ", ".join(d or "(none documented)" for d in ip.defaults)))
+            specs.append(s)
+            continue
+        try:
+            want = _index_default(s, ip.default)
+        except ValueError as e:
+            if s.abaqus_default is None:
+                problems.append(f"*{cls.name}, {s.abq}: Abaqus default {ip.default!r} is not a value of the "
+                                f"field ({e}); Param(abaqus_default=reason) to accept")
+            specs.append(s)
+            continue
+        have = s.default
+        if have is _MISSING or have is None:
+            if s.optional and s.abaqus_default is None and not (s.unsupported or s.control):
+                s = dataclasses.replace(s, default=want)
+                DEFAULT_FILLS.append((cls.name, s.abq, want))
+            elif s.abaqus_default is None and not s.optional and have is _MISSING:
+                pass                                    # required: the deck must give it
+            elif s.abaqus_default is None and not (s.unsupported or s.control):
+                problems.append(f"*{cls.name}, {s.abq}: default None, Abaqus documents {want!r}")
+        elif have != want and s.abaqus_default is None and not (s.unsupported or s.control):
+            problems.append(f"*{cls.name}, {s.abq}: default {have!r}, Abaqus documents {want!r}; "
+                            f"Param(abaqus_default=reason) if that is on purpose")
+        specs.append(s)
+    cls.Params._fields = tuple(specs)
+    return problems
+
+
 def _param_specs(schema: Type[Schema]) -> list:
     """Registry ParamSpecs mirroring the schema, for introspection only: the
     reader validates a schema keyword with the schema itself."""
@@ -538,6 +622,9 @@ def keyword(name: str, *, support: str = "FULL", contexts=None, aliases=(), desc
         if bad:
             raise TypeError(f"{cls.__name__}: not in the Abaqus keyword index: {bad} "
                             f"(Param(undocumented=reason) to accept)")
+        bad = apply_abaqus_defaults(cls)
+        if bad:
+            raise TypeError(f"{cls.__name__}: parameter default differs from the Abaqus Keywords Guide: {bad}")
         if contexts is None:
             ctxs = {KeywordContext[c] for c in contexts_for(abaqus_index().get(cls.name))}
         else:

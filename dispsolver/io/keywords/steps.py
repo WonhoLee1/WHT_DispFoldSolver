@@ -108,6 +108,15 @@ def _procedure(proc: str, rows, ctx):
     if len(rows) > 1:
         raise InputError(f"*{proc} at {ctx.loc}: one data line expected, got {len(rows)}")
     r = rows[0] if rows else _IncrementRow()
+    if proc == "DYNAMIC":
+        # The Keywords Guide documents a default for neither the suggested
+        # initial increment nor the time period of a transient dynamic step
+        # (it does for the minimum and maximum increment), so an omitted one is
+        # the deck's error, not a value to invent.
+        for label, v in (("initial time increment", r.dt_init), ("time period", r.time_period)):
+            if not v:
+                raise InputError(f"*DYNAMIC at {ctx.loc}: {label} omitted; the Abaqus Keywords Guide "
+                                 f"documents no default for it")
     yield ProcedureRecord(ctx.step, proc, r.dt_init, r.time_period, r.dt_min, r.dt_max, loc=ctx.loc)
 
 
@@ -138,15 +147,49 @@ class Dynamic(Keyword):
         return _procedure("DYNAMIC", rows, ctx)
 
 
+def _has_contact(reader: AbaqusInputReader) -> bool:
+    """Any contact interaction defined in the model or in a step read so far."""
+    return bool(reader.model.interactions) or any(s.interactions for s in reader.model.steps.values())
+
+
+def _dynamic_dt_max_default(reader: AbaqusInputReader, time_period: float) -> float:
+    # *DYNAMIC, maximum increment: "If this value is zero, the default depends on the
+    # APPLICATION setting. If APPLICATION = TRANSIENT FIDELITY, the maximum time increment
+    # allowed is the time period of the step divided by 100. If APPLICATION = MODERATE
+    # DISSIPATION, it is the time period of the step divided by 10." and APPLICATION itself
+    # defaults to TRANSIENT FIDELITY "for problems without contact in the model" and
+    # MODERATE DISSIPATION "for problems with contact in the model".
+    return time_period / (10.0 if _has_contact(reader) else 100.0)
+
+
 @applies(ProcedureRecord)
 def _apply_procedure(reader: AbaqusInputReader, rec: ProcedureRecord):
+    """Increment data line -> step. An omitted or zero item takes the default the
+    Keywords Guide documents, never the model's own Step defaults (those stay
+    for models built through the Python API)."""
     step = reader.model.steps[rec.step]
     step.procedure = rec.procedure
     _check_step_amplitude(reader, rec.procedure, "RAMP" if rec.procedure == "STATIC" else "STEP")
-    for attr in ("dt_init", "time_period", "dt_min", "dt_max"):
-        v = getattr(rec, attr)
-        if v is not None:
-            setattr(step, attr, float(v))
+    # time period: "If this entry is zero or is not specified, a default value of 1.0 is assumed."
+    # (*STATIC; *DYNAMIC has no default and refuses an omitted one while parsing)
+    time_period = float(rec.time_period) if rec.time_period else 1.0
+    # initial increment: "If this entry is zero or is not specified, a default value that is
+    # equal to the total time period of the step is assumed." (*STATIC)
+    dt_init = float(rec.dt_init) if rec.dt_init else time_period
+    # minimum increment: "If this entry is zero, a default value of the smaller of the suggested
+    # initial time increment or 10^-5 times the total time period is assumed."
+    dt_min = float(rec.dt_min) if rec.dt_min else min(dt_init, 1e-5 * time_period)
+    step._dt_max_by_application = False
+    if rec.dt_max:
+        dt_max = float(rec.dt_max)
+    elif rec.procedure == "DYNAMIC":
+        dt_max = _dynamic_dt_max_default(reader, time_period)
+        step._dt_max_by_application = True        # re-decided at *END STEP, once contact is known
+    else:
+        # *STATIC: "If this value is not specified, no upper limit is imposed." The step itself
+        # is the largest increment there can be.
+        dt_max = time_period
+    step.time_period, step.dt_init, step.dt_min, step.dt_max = time_period, dt_init, dt_min, dt_max
 
 
 @dataclass(frozen=True)
@@ -166,6 +209,10 @@ class EndStep(Keyword):
 
 @applies(EndStepRecord)
 def _apply_end_step(reader: AbaqusInputReader, rec: EndStepRecord):
+    step = reader.current_step
+    if step is not None and getattr(step, "_dt_max_by_application", False):
+        # contact is part of "the model" however late in the step it was defined
+        step.dt_max = _dynamic_dt_max_default(reader, step.time_period)
     reader.context = KeywordContext.GLOBAL
 
 

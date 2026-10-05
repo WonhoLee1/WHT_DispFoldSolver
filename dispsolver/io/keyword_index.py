@@ -72,6 +72,10 @@ class IndexParam:
     values: Tuple[str, ...] = ()          # documented keyword values (empty: free value)
     default: Optional[str] = None
     flag: bool = False                    # stands alone, no value
+    # the default documented in each usage the parameter appears in ('' where a
+    # usage documents none): more than one distinct entry means the default
+    # depends on the usage (procedure), not a fixed value
+    defaults: Tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -97,9 +101,11 @@ class KeywordIndex:
                     pn = norm(p["name"])
                     old = params.get(pn)
                     vals = tuple(dict.fromkeys((old.values if old else ()) + tuple(p.get("values", ()))))
+                    dfl = tuple(dict.fromkeys((old.defaults if old else ())
+                                              + ((p.get("default") or "",))))
                     params[pn] = IndexParam(pn, vals,
                                             (old.default if old and old.default else p.get("default")),
-                                            bool(p.get("flag")) or bool(old and old.flag))
+                                            bool(p.get("flag")) or bool(old and old.flag), dfl)
             self._kw[norm(name)] = IndexKeyword(norm(name), e.get("slug", ""), e.get("data_type", ""),
                                                 tuple(e.get("levels", ())),
                                                 bool(e.get("assembly_supported", True)), params)
