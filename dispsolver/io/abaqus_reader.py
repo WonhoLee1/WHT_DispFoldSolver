@@ -16,6 +16,7 @@ import numpy as np
 
 from dispsolver.io.abaqus_lexer import AbaqusKeywordBlock, tokenize, tokenize_string
 from dispsolver.io.diagnostics import Diagnostics, Loc
+from dispsolver.io.keyword_index import AmbiguousName, abaqus_index, norm, resolve_name
 from dispsolver.io.keyword_registry import (
     KeywordContext,
     KeywordSpec,
@@ -219,15 +220,76 @@ class AbaqusInputReader:
         "CONCRETE TENSION DAMAGE", "MULLINS EFFECT",
     })
 
+    # Keywords outside the Abaqus Keywords Guide that are still reported as a
+    # gap rather than an error (none so far; add with a reason).
+    _INERT_NON_ABAQUS: frozenset = frozenset()
+
+    def _resolve_keyword(self, block: AbaqusKeywordBlock, index):
+        """(spec, canonical keyword) for a block, or (None, kw) when it was
+        reported instead. Abbreviated keywords are legal Abaqus input and are
+        resolved against the Abaqus keyword index; a keyword Abaqus defines
+        that we do not handle is a gap, one Abaqus does not define is an error."""
+        kw = block.keyword
+        spec = self.registry.get_handler(kw)
+        if spec is not None:
+            return spec, kw
+        try:
+            canon = index.resolve_keyword(kw)
+        except AmbiguousName as e:
+            self.report("error", "ambiguous-keyword", f"*{kw} at {block.location}: keyword {e}", block)
+            return None, kw
+        if canon is not None:
+            spec = self.registry.get_handler(canon)
+            if spec is not None:
+                block.keyword = canon
+                return spec, canon
+            self.unsupported_keyword(canon, block)
+            return None, canon
+        if kw in self._INERT_NON_ABAQUS:
+            self.unsupported_keyword(kw, block)
+        else:
+            self.report("error", "unknown-keyword",
+                        f"*{kw} at {block.location}: not an Abaqus keyword", block)
+            if kw not in self.unsupported_keywords:
+                self.unsupported_keywords.append(kw)
+        return None, kw
+
+    @staticmethod
+    def _expand_param_abbreviations(block: AbaqusKeywordBlock, spec, index) -> None:
+        """Legacy handlers read full lower-case parameter names
+        (params.get("amplitude")); Abaqus accepts any unambiguous prefix
+        (AMP=). Add the full name next to each abbreviation, and record each
+        given key's full Abaqus name for the validation pass."""
+        block.expanded_params = set()
+        block.param_full_names = {}
+        entry = index.get(spec.name)
+        names = set(entry.params) if entry is not None else set()
+        names |= {normalize_param_name(n) for n in spec.params}
+        for key in list(block.params):
+            try:
+                full = resolve_name(key, names)
+            except AmbiguousName:
+                continue
+            if full is None:
+                continue
+            if entry is not None and full in entry.params:
+                block.param_full_names[key] = full
+            low = full.lower()
+            if low != key and low not in block.params:
+                block.params[low] = block.params[key]
+                block.expanded_params.add(low)
+
     def parse_blocks(self, blocks: List[AbaqusKeywordBlock]) -> Model:
         """Parse all keyword blocks into the internal Model."""
+        index = abaqus_index()
         for block in blocks:
-            kw = block.keyword
+            spec, kw = self._resolve_keyword(block, index)
+            if spec is None:
+                continue
             if kw in ("STEP", "MATERIAL"):
                 self.context = KeywordContext.GLOBAL
             if self.context == KeywordContext.MATERIAL and kw not in self._MATERIAL_SUBOPTIONS:
                 self.context = KeywordContext.GLOBAL
-            spec = self.registry.get_handler(kw)
             if spec is not None:
                 if self.context not in spec.valid_contexts:
                     if kw in self._STRUCTURAL_KEYWORDS:
@@ -243,8 +305,11 @@ class AbaqusInputReader:
                     self.report("info" if inert else "error", "bad-context", msg, block)
                     continue
 
-                # Parameter validation against spec
-                if spec.params:
+                # Parameter validation against spec (a schema keyword validates
+                # its own parameters and data, see dispsolver/io/schema.py)
+                if spec.schema is None:
+                    self._expand_param_abbreviations(block, spec, index)
+                if spec.schema is None and spec.params:
                     # 1. Check for required parameters
                     seen_spec_names = set()
                     for p_spec in spec.params.values():
@@ -262,11 +327,18 @@ class AbaqusInputReader:
                                             f"Error processing keyword *{kw} at {block.location}: "
                                             f"missing required parameter '{p_spec.name}'", block)
 
-                    # 2. Check for unknown or unsupported parameters
-                    for p_key in block.params.keys():
+                    # 2. Check for unknown or unsupported parameters. Keys added by
+                    # abbreviation expansion are not reported a second time.
+                    for p_key in list(block.params.keys()):
+                        if p_key in block.expanded_params:
+                            continue
                         p_norm = normalize_param_name(p_key)
+                        full = block.param_full_names.get(p_key)
+                        if p_norm not in spec.params and full is not None:
+                            p_norm = normalize_param_name(full)
                         if p_norm not in spec.params:
-                            self.unsupported_param(kw, p_key, "unknown", block)
+                            # Abaqus defines it (index) -> not implemented; else unknown
+                            self.unsupported_param(kw, p_key, "unsupported" if full else "unknown", block)
                         else:
                             p_spec = spec.params[p_norm]
                             if not p_spec.supported:
@@ -283,8 +355,6 @@ class AbaqusInputReader:
                     self.report("gap" if isinstance(e, NotImplementedError) else "error",
                                 "unsupported-feature" if isinstance(e, NotImplementedError) else "bad-input",
                                 f"Error processing keyword *{kw} at {block.location}: {e}", block)
-            else:
-                self.unsupported_keyword(kw, block)
 
         # If non-assembly deck was loaded, bind the default instance
         if not self.has_assembly and self._default_part is not None:

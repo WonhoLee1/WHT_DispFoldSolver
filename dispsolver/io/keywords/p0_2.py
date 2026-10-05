@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import re
 import warnings
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union
 
 from dispsolver.io.abaqus_lexer import AbaqusKeywordBlock
 from dispsolver.io.keyword_registry import (
@@ -12,6 +13,7 @@ from dispsolver.io.keyword_registry import (
     RowSpec,
 )
 from dispsolver.io.keyword_base import _AbortParse, _parse_data_rows
+from dispsolver.io.schema import Flat, Keyword, Param, Record, Schema, applies, keyword
 from dispsolver.model.step import PredefinedField
 
 if TYPE_CHECKING:
@@ -66,48 +68,43 @@ def _handle_trs(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
         mat.extra_params["trs"] = {"definition": defn, "values": tuple(float(v) for v in vals if v is not None)}
 
 
-@GLOBAL_KEYWORD_REGISTRY.register(
-    "AMPLITUDE",
-    valid_contexts={KeywordContext.GLOBAL, KeywordContext.STEP},
-    support="PARTIAL",
-    params={
-        "NAME": ParamSpec("NAME", required=True),
-        "DEFINITION": ParamSpec("DEFINITION", default="TABULAR", choices=["TABULAR", "SMOOTH STEP", "SMOOTHSTEP"], aliases=["DEF"]),
-        "TIME": ParamSpec("TIME", default="STEP TIME", choices=["STEP TIME", "STEPTIME", "TOTAL TIME"], aliases=["STEP_TIME"]),
-        "VALUE": ParamSpec("VALUE", choices=["RELATIVE", "ABSOLUTE"], supported=False),
-        "SHIFT": ParamSpec("SHIFT", supported=False),
-        "SCALEX": ParamSpec("SCALEX", supported=False),
-        "SCALEY": ParamSpec("SCALEY", supported=False),
-    },
-    rows=RowSpec(column_types=[float], min_columns=2, max_columns=8, repeating=True),
-    description="Define time-dependent load or boundary condition amplitude curve",
-)
-def _handle_amplitude(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
-    name = block.params.get("name", "")
-    if not name:
-        msg = "*AMPLITUDE without NAME — skipped"
-        reader.report("error", "missing-param", msg, block)
-        return
-    defn = block.params.get("definition", "TABULAR").upper().replace(" ", "")
-    if defn not in ("TABULAR", "SMOOTHSTEP"):
-        raise NotImplementedError(f"*AMPLITUDE {name}: DEFINITION={defn} is not implemented")
-    time_ref = block.params.get("time", "STEP TIME").upper().replace(" ", "")
-    if time_ref != "STEPTIME":
+# ── *AMPLITUDE: schema reference migration (see dispsolver/io/schema.py) ──
+
+@dataclass(frozen=True)
+class AmplitudeRecord(Record):
+    name: str
+    definition: str                       # TABULAR or SMOOTH STEP
+    points: Tuple[Tuple[float, float], ...]
+
+
+@keyword("AMPLITUDE", support="PARTIAL")
+class Amplitude(Keyword):
+    """Time-dependent amplitude curve. TABULAR and SMOOTH STEP, step time only."""
+
+    class Params(Schema):
+        name: str
+        definition: Literal["TABULAR", "EQUALLY SPACED", "PERIODIC", "MODULATED", "DECAY",
+                            "SMOOTH STEP", "SOLUTION DEPENDENT", "BUBBLE", "USER", "ACTUATOR"] = Param(
+            "TABULAR", supported=("TABULAR", "SMOOTH STEP"))
         # evaluated against step time; TOTAL TIME would be silently shifted
-        raise NotImplementedError(f"*AMPLITUDE {name}: TIME={block.params.get('time')} is not implemented")
-    if any(k in block.params for k in ("value", "shift", "scalex", "scaley")):
-        raise NotImplementedError(f"*AMPLITUDE {name}: VALUE/SHIFTX/SCALE parameters are not implemented")
-    # Up to four (time, value) pairs per data line. Only the first pair of
-    # each line used to be read, so a typical "0,0, 1,1" table became a
-    # single point and the amplitude a constant 0.
-    flat = [float(v) for r in _parse_data_rows(block.data_lines, dtype=float) for v in r if v is not None]
-    if len(flat) % 2:
-        raise ValueError(f"*AMPLITUDE {name}: odd number of values ({len(flat)}); expected time/value pairs")
-    data = [(flat[i], flat[i + 1]) for i in range(0, len(flat), 2)]
-    if "SMOOTHSTEP" in defn:
-        reader.model.SmoothStepAmplitude(name, data)
+        time: Literal["STEP TIME", "TOTAL TIME"] = Param("STEP TIME", supported=("STEP TIME",))
+        value: Literal["RELATIVE", "ABSOLUTE"] = Param("RELATIVE", supported=("RELATIVE",))
+
+    # up to four (time, value) pairs per data line; the old handler read only
+    # the first pair of each line, turning "0,0, 1,1" into a constant 0
+    Data = Flat(float, group=2)
+
+    def to_records(self, p, rows, ctx):
+        yield AmplitudeRecord(p.name, p.definition, tuple(rows), loc=ctx.loc)
+
+
+@applies(AmplitudeRecord)
+def _apply_amplitude(reader: AbaqusInputReader, rec: AmplitudeRecord):
+    data = list(rec.points)
+    if rec.definition == "SMOOTH STEP":
+        reader.model.SmoothStepAmplitude(rec.name, data)
     else:
-        reader.model.TabularAmplitude(name, data)
+        reader.model.TabularAmplitude(rec.name, data)
 
 
 @GLOBAL_KEYWORD_REGISTRY.register(
@@ -216,25 +213,28 @@ def _handle_dsload(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     valid_contexts={KeywordContext.GLOBAL, KeywordContext.ASSEMBLY},
     support="PARTIAL",
     params={
-        "TYPE": ParamSpec("TYPE", default="BEAM", choices=["BEAM", "TIE", "LINK", "PIN", "SLIDER"]),
+        "MODE": ParamSpec("MODE", supported=False),
+        "USER": ParamSpec("USER", supported=False),
     },
     rows=RowSpec(min_columns=2, max_columns=10),
     description="Define multi-point constraints between nodes",
 )
 def _handle_mpc(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
-    mtype = block.params.get("type", "BEAM").upper()
-    nodes = []
+    # Data line: "MPC type, node or node set, node or node set, ...". The type
+    # is the first data item, not a parameter (*MPC has only MODE and USER);
+    # the old handler read a TYPE parameter and so stored every MPC as BEAM.
     for line in block.data_lines:
-        for p in line.replace(",", " ").split():
-            p = p.strip()
-            if p.lstrip("-").isdigit():
-                nodes.append(int(p))
-    name = f"MPC_{mtype}_{len(reader.model.constraints) + 1}"
-    reader.model.MPC(name, mpcType=mtype,
-                     firstPoint=nodes[0] if nodes else None,
-                     secondPoint=nodes[1] if len(nodes) > 1 else None)
-    msg = f"*MPC {name} parsed and stored; solver assembly not connected"
-    reader.report("gap", "mpc-not-connected", msg, block)
+        tokens = [t.strip() for t in line.split(",") if t.strip()]
+        if not tokens:
+            continue
+        mtype = tokens[0].upper()
+        nodes = [int(t) for t in tokens[1:] if t.lstrip("-").isdigit()]
+        name = f"MPC_{mtype}_{len(reader.model.constraints) + 1}"
+        reader.model.MPC(name, mpcType=mtype,
+                         firstPoint=nodes[0] if nodes else None,
+                         secondPoint=nodes[1] if len(nodes) > 1 else None)
+        msg = f"*MPC {name} parsed and stored; solver assembly not connected"
+        reader.report("gap", "mpc-not-connected", msg, block)
 
 
 @GLOBAL_KEYWORD_REGISTRY.register(
@@ -289,7 +289,7 @@ def _handle_initial_conditions(reader: AbaqusInputReader, block: AbaqusKeywordBl
     valid_contexts={KeywordContext.GLOBAL, KeywordContext.ASSEMBLY},
     support="PARTIAL",
     params={
-        "CONSTRAINT NAME": ParamSpec("CONSTRAINT NAME", aliases=["CONSTRAINT_NAME", "NAME"]),
+        "CONSTRAINT NAME": ParamSpec("CONSTRAINT NAME", aliases=["CONSTRAINT_NAME"]),
         "REF NODE": ParamSpec("REF NODE", aliases=["REF_NODE", "REFNODE"]),
         "SURFACE": ParamSpec("SURFACE", aliases=["SURF"]),
     },
@@ -334,7 +334,8 @@ def _finalize_coupling(reader: AbaqusInputReader, block: AbaqusKeywordBlock, kin
     valid_contexts={KeywordContext.GLOBAL, KeywordContext.ASSEMBLY},
     support="PARTIAL",
     params={
-        "CONSTRAINT NAME": ParamSpec("CONSTRAINT NAME", aliases=["CONSTRAINT_NAME", "NAME"]),
+        # a sub-option of the preceding *COUPLING; it takes no name of its own
+        "ALPHA": ParamSpec("ALPHA", supported=False),
     },
     rows=RowSpec(min_columns=0, max_columns=6),
     description="Sub-option of *COUPLING to constrain degrees of freedom rigidly",
@@ -348,10 +349,8 @@ def _handle_kinematic(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     valid_contexts={KeywordContext.GLOBAL, KeywordContext.ASSEMBLY},
     support="PARTIAL",
     params={
-        "CONSTRAINT NAME": ParamSpec("CONSTRAINT NAME", aliases=["CONSTRAINT_NAME", "NAME"]),
         "REF NODE": ParamSpec("REF NODE", aliases=["REF_NODE", "REFNODE"]),
-        "SURFACE": ParamSpec("SURFACE", aliases=["SURF"]),
-        "ELSET": ParamSpec("ELSET"),
+        "ORIENTATION": ParamSpec("ORIENTATION", supported=False),
     },
     rows=RowSpec(min_columns=0, max_columns=6),
     description="Constrain degrees of freedom on a surface to rigid body motion of reference node",
@@ -365,7 +364,9 @@ def _handle_kinematic_coupling(reader: AbaqusInputReader, block: AbaqusKeywordBl
     valid_contexts={KeywordContext.GLOBAL, KeywordContext.ASSEMBLY},
     support="PARTIAL",
     params={
-        "CONSTRAINT NAME": ParamSpec("CONSTRAINT NAME", aliases=["CONSTRAINT_NAME", "NAME"]),
+        # a sub-option of the preceding *COUPLING; it takes no name of its own
+        "WEIGHTING METHOD": ParamSpec("WEIGHTING METHOD", supported=False),
+        "COUPLING": ParamSpec("COUPLING", supported=False),
     },
     rows=RowSpec(min_columns=0, max_columns=6),
     description="Sub-option of *COUPLING to constrain degrees of freedom in an average sense",
@@ -379,10 +380,8 @@ def _handle_distributing(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     valid_contexts={KeywordContext.GLOBAL, KeywordContext.ASSEMBLY},
     support="PARTIAL",
     params={
-        "CONSTRAINT NAME": ParamSpec("CONSTRAINT NAME", aliases=["CONSTRAINT_NAME", "NAME"]),
-        "REF NODE": ParamSpec("REF NODE", aliases=["REF_NODE", "REFNODE"]),
-        "SURFACE": ParamSpec("SURFACE", aliases=["SURF"]),
         "ELSET": ParamSpec("ELSET"),
+        "FREE NODES": ParamSpec("FREE NODES", supported=False),
     },
     rows=RowSpec(min_columns=0, max_columns=6),
     description="Constrain degrees of freedom on a surface to average motion of reference node",

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import warnings
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union
 
 from dispsolver.io.abaqus_lexer import AbaqusKeywordBlock
 from dispsolver.io.keyword_registry import (
@@ -11,6 +12,7 @@ from dispsolver.io.keyword_registry import (
     RowSpec,
 )
 from dispsolver.io.keyword_base import _parse_data_rows
+from dispsolver.io.schema import InputError, Keyword, Param, Record, RowSchema, Schema, applies, keyword
 from dispsolver.model.step import PredefinedField
 
 if TYPE_CHECKING:
@@ -27,7 +29,6 @@ if TYPE_CHECKING:
         "NLGEOM": ParamSpec("NLGEOM", default="NO", choices=["YES", "NO"]),
         "INC": ParamSpec("INC", type=int, default=100),
         "AMPLITUDE": ParamSpec("AMPLITUDE", default="STEP", choices=["STEP", "RAMP"], aliases=["AMP"]),
-        "TIME PERIOD": ParamSpec("TIME PERIOD", type=float, default=1.0, aliases=["TIME_PERIOD"]),
         "PERTURBATION": ParamSpec("PERTURBATION", supported=False, aliases=["PERT"]),
         "UNSYMM": ParamSpec("UNSYMM", supported=False, control=True, aliases=["UNSYM"]),
         "SOLVER": ParamSpec("SOLVER", supported=False),
@@ -142,92 +143,109 @@ def _handle_end_step(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     reader.context = KeywordContext.GLOBAL
 
 
-@GLOBAL_KEYWORD_REGISTRY.register(
-    "BOUNDARY",
-    valid_contexts={KeywordContext.STEP, KeywordContext.GLOBAL},
-    support="FULL",
-    params={
-        "TYPE": ParamSpec("TYPE", default="DISPLACEMENT", choices=["DISPLACEMENT", "VELOCITY", "ACCELERATION"]),
-        "OP": ParamSpec("OP", default="MOD", choices=["MOD", "NEW"]),
-        "AMPLITUDE": ParamSpec("AMPLITUDE", aliases=["AMP"]),
-        "FIXED": ParamSpec("FIXED", supported=False),
-        "USER": ParamSpec("USER", supported=False),
-        "LOAD CASE": ParamSpec("LOAD CASE", supported=False),
-        "SUBMODEL": ParamSpec("SUBMODEL", supported=False),
-    },
-    rows=RowSpec(column_types=[str, int, int, float], min_columns=2, max_columns=4),
-    description="Prescribe boundary condition on nodes or sets",
-)
-def _handle_boundary(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
-    target_step = reader.current_step if reader.current_step is not None else reader.model.initial_step
-    amp = block.params.get("amplitude", None)
-    op = block.params.get("op", "MOD").upper()
-    bc_type = block.params.get("type", "DISPLACEMENT").upper()
-    if bc_type != "DISPLACEMENT":
-        # A VELOCITY/ACCELERATION history used to be imposed as a displacement.
-        raise NotImplementedError(f"*BOUNDARY, TYPE={bc_type} is not implemented (displacement only)")
-    if "user" in block.params or "fixed" in block.params:
-        raise NotImplementedError(f"*BOUNDARY parameters {sorted(k for k in block.params if k in ('user', 'fixed'))} "
-                                  f"are not implemented")
-    if op == "NEW":
-        for bc_name in list(target_step.boundary_conditions.keys()):
-            target_step.deactivate_bc(bc_name)
+# ── *BOUNDARY: schema reference migration (see dispsolver/io/schema.py) ──
 
-    for line in block.data_lines:
-        line_clean = line.strip()
-        if not line_clean or line_clean.startswith("**"):
-            continue
-        parts = [p.strip() for p in line_clean.split(",")]
-        while len(parts) > 1 and parts[-1] == "":
-            parts.pop()
-        if len(parts) < 2:
-            raise ValueError(f"*BOUNDARY line {line_clean!r}: missing degree of freedom")
-        region = str(parts[0])
-        type_str = str(parts[1]).strip().upper()
-        if type_str in ("YASYMM", "XASYMM", "ZASYMM"):
-            raise NotImplementedError(f"*BOUNDARY {type_str} is not implemented")
-        if type_str == "ENCASTRE":
-            first_dof, last_dof, val = 1, 6, 0.0
-        elif type_str == "PINNED":
-            first_dof, last_dof, val = 1, 3, 0.0
-        elif type_str == "XSYMM":
-            first_dof, last_dof, val = 1, 1, 0.0
-        elif type_str == "YSYMM":
-            first_dof, last_dof, val = 2, 2, 0.0
-        elif type_str == "ZSYMM":
-            first_dof, last_dof, val = 3, 3, 0.0
-        else:
-            try:
-                first_dof = int(parts[1])
-                last_dof = int(parts[2]) if len(parts) >= 3 and parts[2] != "" else first_dof
-                val = float(parts[3]) if len(parts) >= 4 and parts[3] != "" else 0.0
-            except (ValueError, TypeError):
-                # used to `continue`, i.e. drop the BC line silently
-                raise ValueError(f"*BOUNDARY line {line_clean!r}: expected 'region, first dof[, last dof"
-                                 f"[, value]]' or a named type (ENCASTRE, PINNED, XSYMM, ...)")
+# Named boundary types -> constrained degrees of freedom (Abaqus Keywords
+# Guide, *BOUNDARY). Only the translational dofs are listed: continuum nodes
+# carry no rotation dof, and shell / beam elements are refused upstream. A
+# rotational part of a symmetry type therefore has nothing to act on.
+_NAMED_BC = {
+    "ENCASTRE": (1, 2, 3, 4, 5, 6),
+    "PINNED": (1, 2, 3),
+    "XSYMM": (1,),
+    "YSYMM": (2,),
+    "ZSYMM": (3,),
+    "XASYMM": (2, 3),
+    "YASYMM": (1, 3),
+    "ZASYMM": (1, 2),
+}
 
-        kwargs = {}
-        for dof in range(first_dof, last_dof + 1):
-            if dof == 1:
-                kwargs["u1"] = val
-            elif dof == 2:
-                kwargs["u2"] = val
-            elif dof == 3:
-                kwargs["u3"] = val
-            elif dof == 4:
-                kwargs["ur1"] = val
-            elif dof == 5:
-                kwargs["ur2"] = val
-            elif dof == 6:
-                kwargs["ur3"] = val
 
-        bc_name = f"BC_{region}_DOF{first_dof}_{last_dof}"
-        reader.model.DisplacementBC(name=bc_name, createStepName=target_step.name, region=region, amplitude=amp, **kwargs)
-        target_step.boundary_conditions[bc_name].modified_params["op"] = op
-        if any(kwargs.get(k) is not None for k in ("ur1", "ur2", "ur3")):
-            msg = (f"*BOUNDARY {bc_name}: rotational DOFs stored but continuum nodes "
-                   f"have no rotation target in the solver; translational part applied")
-            reader.report("info", "rotation-dofs-ignored", msg, block)
+@dataclass(frozen=True)
+class BcResetRecord(Record):
+    """OP=NEW: release every boundary condition active in the step first."""
+    step: Optional[str]                   # None: model data (initial step)
+
+
+@dataclass(frozen=True)
+class BoundaryRecord(Record):
+    step: Optional[str]
+    region: str                           # node number or node set name (BIND resolves it)
+    dofs: Tuple[int, ...]                 # 1-based
+    value: float
+    amplitude: Optional[str]
+    op: str
+    label: str                            # dof label used in the boundary condition name
+
+
+@keyword("BOUNDARY", support="FULL")
+class Boundary(Keyword):
+    """Prescribed displacements on nodes or node sets."""
+
+    class Params(Schema):
+        op: Literal["MOD", "NEW"] = "MOD"
+        amplitude: Optional[str] = None
+        name: Optional[str] = None        # labels the condition; no effect on the model
+        # VELOCITY / ACCELERATION used to be imposed as a displacement
+        type: Literal["DISPLACEMENT", "VELOCITY", "ACCELERATION"] = Param(
+            "DISPLACEMENT", supported=("DISPLACEMENT",))
+
+    class Row(RowSchema):
+        region: str
+        first: str                        # first dof, or a named type (ENCASTRE, XSYMM, ...)
+        last: Optional[int] = None
+        value: Optional[float] = None
+
+    def to_records(self, p, rows, ctx):
+        if p.op == "NEW":
+            yield BcResetRecord(ctx.step, loc=ctx.loc)
+        for r in rows:
+            named = r.first.upper()
+            if named in _NAMED_BC:
+                if r.last is not None or r.value is not None:
+                    raise InputError(f"*BOUNDARY {r.region}, {named}: a named type takes no further values")
+                dofs, value = _NAMED_BC[named], 0.0
+                lo, hi = dofs[0], dofs[-1]
+                label = f"DOF{lo}_{hi}" if dofs == tuple(range(lo, hi + 1)) else named
+            else:
+                try:
+                    first = int(r.first)
+                except ValueError:
+                    raise InputError(f"*BOUNDARY {r.region}: {r.first!r} is neither a degree of freedom "
+                                     f"nor a named type ({', '.join(_NAMED_BC)})") from None
+                last = first if r.last is None else r.last
+                if not 1 <= first <= last:
+                    raise InputError(f"*BOUNDARY {r.region}: bad dof range {first}..{last}")
+                dofs, value, label = tuple(range(first, last + 1)), (r.value or 0.0), f"DOF{first}_{last}"
+            yield BoundaryRecord(ctx.step, r.region, dofs, value, p.amplitude, p.op, label, loc=r.loc)
+
+
+def _bc_step(reader: AbaqusInputReader, step: Optional[str]):
+    return reader.model.initial_step if step is None else reader.model.steps[step]
+
+
+@applies(BcResetRecord)
+def _apply_bc_reset(reader: AbaqusInputReader, rec: BcResetRecord):
+    target = _bc_step(reader, rec.step)
+    for bc_name in list(target.boundary_conditions.keys()):
+        target.deactivate_bc(bc_name)
+
+
+_DOF_KW = {1: "u1", 2: "u2", 3: "u3", 4: "ur1", 5: "ur2", 6: "ur3"}
+
+
+@applies(BoundaryRecord)
+def _apply_boundary(reader: AbaqusInputReader, rec: BoundaryRecord):
+    target = _bc_step(reader, rec.step)
+    kwargs = {_DOF_KW[d]: rec.value for d in rec.dofs if d in _DOF_KW}
+    bc_name = f"BC_{rec.region}_{rec.label}"
+    reader.model.DisplacementBC(name=bc_name, createStepName=target.name, region=rec.region,
+                                amplitude=rec.amplitude, **kwargs)
+    target.boundary_conditions[bc_name].modified_params["op"] = rec.op
+    if any(d > 3 for d in rec.dofs):
+        reader.diagnostics.add("info", "rotation-dofs-ignored",
+                               f"*BOUNDARY {bc_name}: rotational DOFs stored but continuum nodes have no "
+                               f"rotation target in the solver; translational part applied", rec.loc)
 
 
 @GLOBAL_KEYWORD_REGISTRY.register(
@@ -317,7 +335,7 @@ def _handle_temperature(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
         "HISTORY": ParamSpec("HISTORY", supported=True, aliases=["HIST"]),
         "VARIABLE": ParamSpec("VARIABLE", aliases=["VAR"]),
         "FREQUENCY": ParamSpec("FREQUENCY", aliases=["FREQ", "FRE"]),
-        "NUMBER INTERVALS": ParamSpec("NUMBER INTERVALS", aliases=["NUMBER_INTERVALS", "NUMBER INTERVAL", "NUM", "NUMBER INT", "NUMBER"]),
+        "NUMBER INTERVAL": ParamSpec("NUMBER INTERVAL"),
         "TIME MARKS": ParamSpec("TIME MARKS", aliases=["TIME_MARKS", "TIMEMARKS"]),
         "TIME INTERVAL": ParamSpec("TIME INTERVAL", aliases=["TIME_INTERVAL", "TIME INT", "TIMEINT", "TIME INTERV"]),
         "TIME POINTS": ParamSpec("TIME POINTS", aliases=["TIME_POINTS"]),
@@ -341,7 +359,7 @@ def _handle_output(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
 
     freq = block.params.get("frequency", None)
     frequency = int(freq) if freq is not None else 1
-    num_intervals = block.params.get("number intervals", block.params.get("number_intervals", None))
+    num_intervals = block.params.get("number interval")
     num_intervals = int(num_intervals) if num_intervals is not None else None
 
     reader.current_step._current_output_type = out_type

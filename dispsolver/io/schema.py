@@ -1,0 +1,501 @@
+"""Schema-driven keyword parsing (the PARSE stage).
+
+A keyword is one class. Its parameters and data lines are typed schemas, and a
+pure `to_records` turns them into frozen records. Records reach the model only
+through an applier registered for the record type -- the one place that may
+touch the reader (the BIND pass replaces appliers later).
+
+    @keyword("BOUNDARY", support="FULL")
+    class Boundary(Keyword):
+        class Params(Schema):
+            op: Literal["MOD", "NEW"] = "MOD"
+            amplitude: Optional[str] = None
+            type: Literal["DISPLACEMENT", "VELOCITY", "ACCELERATION"] = Param(
+                "DISPLACEMENT", supported=("DISPLACEMENT",))
+            user: bool = Param(False, unsupported="user subroutine DISP")
+
+        class Row(RowSchema):
+            region: str
+            first: str
+            last: Optional[int] = None
+            value: Optional[float] = None
+
+        def to_records(self, p, rows, ctx):
+            ...yield BoundaryRecord(..., loc=ctx.loc)
+
+    @applies(BoundaryRecord)
+    def _apply(reader, rec): ...
+
+What the framework decides, so no keyword writes it again
+---------------------------------------------------------
+Parameter names are resolved against the schema plus the Abaqus keyword index
+(`keyword_index.py`), with Abaqus's abbreviation rule (exact, else unique
+prefix; '_' / '-' / blanks are equivalent). Then:
+
+    declared, supported            -> converted to the field's type
+    declared, Param(unsupported=)  -> gap  'unsupported-param'   (block skipped)
+    declared, Param(control=True)  -> info 'control-param-ignored' (ignored)
+    not declared, in the index     -> gap  'unsupported-param'   (block skipped)
+    in neither                     -> error 'unknown-param'     (block skipped)
+    ambiguous abbreviation         -> error 'ambiguous-param'
+    required field missing         -> error 'missing-param'     (block skipped)
+    bad value / not a choice       -> error 'bad-value'         (block skipped)
+    choice outside Param(supported=) -> gap 'unsupported-value' (block skipped)
+
+An undeclared parameter Abaqus defines is a gap automatically: a keyword does
+not have to list every option it lacks to be honest about it. A gap refuses
+the whole block rather than dropping the one parameter -- *AMPLITUDE with its
+SCALEX ignored would be a different curve, not a smaller one. A parameter that
+genuinely cannot change the model (an output or solution-technique switch) is
+declared Param(control=True) on purpose. A declared field
+the index does not know is refused at registration (`Param(undocumented=True)`
+to override, with a reason) -- the schema cannot drift from Abaqus.
+
+Field types: str, int, float, bool (a flag: present -> True; YES/NO accepted),
+Literal[...] (choices, resolved by abbreviation), Optional[X]. Row fields are
+positional; a final `Tuple[X, ...]` field takes the remaining columns.
+`Data = Flat(float, group=2)` instead of `Row` reads all data values as one
+sequence in groups (e.g. *AMPLITUDE time/value pairs, up to four per line).
+
+Inside `to_records`: raise `Unsupported(msg)` for valid input this solver does
+not represent (gap) and `InputError(msg)` for wrong input (error). `ctx` is a
+frozen `KeywordCtx` -- the reader itself is not reachable from here.
+"""
+
+from __future__ import annotations
+
+import typing
+from dataclasses import dataclass, field
+from typing import Any, Callable, ClassVar, Dict, Iterable, List, Optional, Tuple, Type
+
+from dispsolver.io.diagnostics import Loc
+from dispsolver.io.keyword_index import AmbiguousName, IndexKeyword, abaqus_index, norm, resolve_name
+
+_MISSING = object()
+
+
+# ── errors raised inside to_records ─────────────────────────────────────────
+
+class Unsupported(NotImplementedError):
+    """Valid Abaqus input this solver does not represent (reported as a gap)."""
+
+
+class InputError(ValueError):
+    """The deck is wrong (reported as an error)."""
+
+
+# ── field declarations ──────────────────────────────────────────────────────
+
+class Param:
+    """Optional metadata for a schema field; the first argument is the default."""
+
+    __slots__ = ("default", "name", "unsupported", "control", "supported", "undocumented")
+
+    def __init__(self, default: Any = _MISSING, *, name: Optional[str] = None,
+                 unsupported: Optional[str] = None, control: bool = False,
+                 supported: Optional[Tuple[str, ...]] = None, undocumented: Optional[str] = None):
+        self.default = default
+        self.name = name                    # Abaqus spelling when it is not the attribute name
+        self.unsupported = unsupported      # reason; its presence is a gap and refuses the block
+        self.control = control              # solution control: reported as info and ignored
+        self.supported = supported          # the subset of choices this solver implements
+        self.undocumented = undocumented    # reason a name absent from the Abaqus index is accepted
+
+
+@dataclass(frozen=True)
+class FieldSpec:
+    attr: str
+    abq: str                                # Abaqus name, normalized
+    kind: str                               # str int float bool choice rest
+    choices: Tuple[str, ...] = ()
+    elem: str = ""                          # element kind of a 'rest' field
+    optional: bool = False
+    default: Any = _MISSING
+    unsupported: Optional[str] = None
+    control: bool = False
+    supported: Optional[Tuple[str, ...]] = None
+    undocumented: Optional[str] = None
+
+    @property
+    def required(self) -> bool:
+        return self.default is _MISSING and not self.optional
+
+
+_SCALARS = {str: "str", int: "int", float: "float", bool: "bool"}
+
+
+def _classify(tp) -> Tuple[str, Tuple[str, ...], str, bool]:
+    """(kind, choices, rest element kind, optional) of an annotation."""
+    origin = typing.get_origin(tp)
+    if origin is typing.Union:
+        args = [a for a in typing.get_args(tp) if a is not type(None)]
+        if len(args) != 1:
+            raise TypeError(f"unsupported union {tp}")
+        kind, choices, elem, _ = _classify(args[0])
+        return kind, choices, elem, True
+    if origin is typing.Literal:
+        return "choice", tuple(norm(c) for c in typing.get_args(tp)), "", False
+    if origin in (tuple, Tuple):
+        args = typing.get_args(tp)
+        if len(args) == 2 and args[1] is Ellipsis and args[0] in _SCALARS:
+            return "rest", (), _SCALARS[args[0]], False
+        raise TypeError(f"only Tuple[X, ...] is supported, got {tp}")
+    if tp in _SCALARS:
+        return _SCALARS[tp], (), "", False
+    raise TypeError(f"unsupported field type {tp}")
+
+
+class _Typed:
+    """Immutable value object built from annotated class attributes."""
+
+    _fields: ClassVar[Tuple[FieldSpec, ...]] = ()
+
+    def __init_subclass__(cls, **kw):
+        super().__init_subclass__(**kw)
+        hints = typing.get_type_hints(cls)
+        specs = []
+        for attr, tp in hints.items():
+            if attr.startswith("_") or typing.get_origin(tp) is ClassVar:
+                continue
+            kind, choices, elem, optional = _classify(tp)
+            raw = cls.__dict__.get(attr, _MISSING)
+            meta = raw if isinstance(raw, Param) else Param(raw)
+            default = meta.default
+            if default is _MISSING and optional:
+                default = None
+            if kind == "rest" and default is _MISSING:
+                default = ()
+            if kind == "choice" and isinstance(default, str):
+                default = norm(default)
+            supported = tuple(norm(s) for s in meta.supported) if meta.supported else None
+            if supported and kind == "choice" and not set(supported) <= set(choices):
+                raise TypeError(f"{cls.__qualname__}.{attr}: supported {supported} not among {choices}")
+            specs.append(FieldSpec(attr, norm(meta.name or attr), kind, choices, elem, optional,
+                                   default, meta.unsupported, meta.control, supported,
+                                   meta.undocumented))
+        kinds = [s.kind for s in specs]
+        if "rest" in kinds[:-1]:
+            raise TypeError(f"{cls.__qualname__}: a Tuple[X, ...] field must be the last field")
+        cls._fields = tuple(specs)
+
+    def __init__(self, **values):
+        for s in self._fields:
+            object.__setattr__(self, s.attr, values.get(s.attr, None if s.default is _MISSING else s.default))
+        object.__setattr__(self, "given", frozenset(values.pop("_given", ())))
+        object.__setattr__(self, "loc", values.pop("_loc", None))
+
+    def __setattr__(self, k, v):
+        raise AttributeError(f"{type(self).__name__} is immutable")
+
+    def __repr__(self) -> str:
+        body = ", ".join(f"{s.attr}={getattr(self, s.attr)!r}" for s in self._fields)
+        return f"{type(self).__name__}({body})"
+
+    def __eq__(self, other) -> bool:
+        return type(self) is type(other) and all(
+            getattr(self, s.attr) == getattr(other, s.attr) for s in self._fields)
+
+    __hash__ = None  # type: ignore[assignment]
+
+
+class Schema(_Typed):
+    """Keyword-line parameters. `given` holds the Abaqus names present in the deck."""
+
+
+class NoParams(Schema):
+    pass
+
+
+class RowSchema(_Typed):
+    """One data line, fields in column order; `loc` is that line's location."""
+
+
+@dataclass(frozen=True)
+class Flat:
+    """All data values as one sequence, split into groups of `group`."""
+    type: type = float
+    group: int = 1
+
+
+# ── records ─────────────────────────────────────────────────────────────────
+
+@dataclass(frozen=True)
+class Record:
+    """Base of every parse record; subclasses are frozen dataclasses."""
+    loc: Optional[Loc] = field(default=None, kw_only=True, compare=False)
+
+
+_APPLIERS: Dict[type, Callable[[Any, Record], None]] = {}
+
+
+def applies(record_type: type):
+    """Register the function that lands `record_type` records in the model."""
+    def deco(fn):
+        if record_type in _APPLIERS:
+            raise ValueError(f"two appliers for {record_type.__name__}")
+        _APPLIERS[record_type] = fn
+        return fn
+    return deco
+
+
+def apply_record(reader, rec: Record) -> None:
+    fn = _APPLIERS.get(type(rec))
+    if fn is None:
+        raise RuntimeError(f"no applier registered for {type(rec).__name__}")
+    fn(reader, rec)
+
+
+# ── keyword classes ─────────────────────────────────────────────────────────
+
+@dataclass(frozen=True)
+class KeywordCtx:
+    """What a keyword may know about where it stands; never the reader."""
+    keyword: str
+    context: str                            # KeywordContext name: GLOBAL PART ASSEMBLY INSTANCE STEP MATERIAL
+    step: Optional[str] = None              # current step name (None: model data)
+    dim: int = 3
+    loc: Optional[Loc] = None
+
+
+class Keyword:
+    name: ClassVar[str] = ""
+    Params: ClassVar[Type[Schema]] = NoParams
+    Row: ClassVar[Optional[Type[RowSchema]]] = None
+    Data: ClassVar[Optional[Flat]] = None
+
+    def to_records(self, p: Schema, rows: list, ctx: KeywordCtx) -> Iterable[Record]:
+        raise NotImplementedError
+
+
+Report = Callable[[str, str, str], None]     # (level, code, message)
+
+
+def parse_params(kw: str, schema: Type[Schema], params: Dict[str, str], report: Report,
+                 where: str = "", entry: Optional[IndexKeyword] = None) -> Optional[Schema]:
+    """Parameters of one keyword line -> a Schema instance, or None when the
+    block must be skipped (an error, or a choice this solver does not implement)."""
+    if entry is None:
+        entry = abaqus_index().get(kw)
+    by_abq = {s.abq: s for s in schema._fields}
+    names = set(by_abq) | (set(entry.params) if entry else set())
+    at = f" at {where}" if where else ""
+    values: Dict[str, Any] = {}
+    given: List[str] = []
+    ok = True
+    for key, raw in params.items():
+        try:
+            abq = resolve_name(key, names)
+        except AmbiguousName as e:
+            report("error", "ambiguous-param", f"*{kw}{at}: parameter {e}")
+            ok = False
+            continue
+        if abq is None:
+            report("error", "unknown-param", f"*{kw}{at}: {key.upper()} is not an Abaqus parameter of *{kw}")
+            ok = False
+            continue
+        if abq in given:
+            report("warning", "duplicate-param", f"*{kw}{at}: {abq} given more than once; the last setting is used")
+        given.append(abq)
+        s = by_abq.get(abq)
+        if s is None:
+            report("gap", "unsupported-param", f"*{kw}, {abq}{at} (unsupported parameter)")
+            ok = False
+            continue
+        if s.unsupported:
+            report("gap", "unsupported-param", f"*{kw}, {abq}{at} (unsupported parameter: {s.unsupported})")
+            ok = False
+            continue
+        if s.control:
+            report("info", "control-param-ignored", f"*{kw}, {abq}{at} (solution control, ignored)")
+            continue
+        try:
+            v = _convert(s, raw)
+        except (ValueError, AmbiguousName) as e:
+            report("error", "bad-value", f"*{kw}{at}: {abq}={raw}: {e}")
+            ok = False
+            continue
+        if s.kind == "choice" and s.supported is not None and v not in s.supported:
+            report("gap", "unsupported-value", f"*{kw}{at}: {abq}={v} is not implemented "
+                                               f"(supported: {', '.join(s.supported)})")
+            ok = False
+            continue
+        values[s.attr] = v
+    for s in schema._fields:
+        if s.required and s.attr not in values and not (s.unsupported or s.control):
+            report("error", "missing-param", f"*{kw}{at}: missing required parameter {s.abq}")
+            ok = False
+    if not ok:
+        return None
+    return schema(**values, _given=given)
+
+
+_TRUE = {"YES", "ON", "TRUE"}
+_FALSE = {"NO", "OFF", "FALSE"}
+
+
+def _scalar(kind: str, raw: str):
+    t = str(raw).strip()
+    if kind == "str":
+        return t
+    if kind == "float":
+        return float(t)
+    if kind == "int":
+        f = float(t)
+        if not f.is_integer():
+            raise ValueError("expected an integer")
+        return int(f)
+    raise TypeError(kind)
+
+
+def _convert(s: FieldSpec, raw: str):
+    if s.kind == "bool":
+        u = norm(raw)
+        if u in _TRUE:
+            return True
+        if u in _FALSE:
+            return False
+        raise ValueError("expected a flag (no value) or YES/NO")
+    if s.kind == "choice":
+        v = resolve_name(raw, s.choices)
+        if v is None:
+            raise ValueError(f"expected one of {', '.join(s.choices)}")
+        return v
+    return _scalar(s.kind, raw)
+
+
+def _split(line: str) -> List[str]:
+    parts = [c.strip() for c in line.split(",")]
+    while parts and parts[-1] == "":
+        parts.pop()
+    return parts
+
+
+def parse_rows(kw: str, row: Type[RowSchema], lines: List[str], locs: List[Any]) -> list:
+    """Data lines -> RowSchema instances. Raises InputError on a bad line."""
+    out = []
+    fields_ = row._fields
+    for text, loc in zip(lines, locs):
+        cols = _split(text)
+        if not cols:
+            continue
+        vals: Dict[str, Any] = {}
+        rest = fields_ and fields_[-1].kind == "rest"
+        fixed = fields_[:-1] if rest else fields_
+        if not rest and len(cols) > len(fixed):
+            raise InputError(f"*{kw} at {loc}: {len(cols)} values, at most {len(fixed)} expected: {text!r}")
+        for s, c in zip(fixed, cols):
+            if c == "":
+                continue
+            try:
+                vals[s.attr] = _convert(s, c) if s.kind in ("bool", "choice") else _scalar(s.kind, c)
+            except (ValueError, AmbiguousName) as e:
+                raise InputError(f"*{kw} at {loc}: {s.attr}={c!r}: {e}") from None
+        if rest:
+            s = fields_[-1]
+            try:
+                vals[s.attr] = tuple(_scalar(s.elem, c) for c in cols[len(fixed):] if c != "")
+            except ValueError as e:
+                raise InputError(f"*{kw} at {loc}: {s.attr}: {e}") from None
+        missing = [s.attr for s in fixed if s.required and s.attr not in vals]
+        if missing:
+            raise InputError(f"*{kw} at {loc}: missing {', '.join(missing)} in {text!r}")
+        out.append(row(**vals, _loc=loc))
+    return out
+
+
+def parse_flat(kw: str, data: Flat, lines: List[str], where: str = "") -> List[tuple]:
+    kind = _SCALARS[data.type]
+    try:
+        flat = [_scalar(kind, c) for ln in lines for c in _split(ln) if c != ""]
+    except ValueError as e:
+        raise InputError(f"*{kw} at {where}: {e}") from None
+    if len(flat) % data.group:
+        raise InputError(f"*{kw} at {where}: {len(flat)} values, not a multiple of {data.group}")
+    return [tuple(flat[i:i + data.group]) for i in range(0, len(flat), data.group)]
+
+
+def _data_locs(block) -> List[Optional[Loc]]:
+    base = Loc.of(block)
+    nums = list(getattr(block, "data_line_numbers", []) or [])
+    out = []
+    for i in range(len(block.data_lines)):
+        out.append(Loc(base.file, nums[i]) if base is not None and i < len(nums) else base)
+    return out
+
+
+def run_keyword(cls: Type[Keyword], block, ctx: KeywordCtx, report: Report) -> List[Record]:
+    """PARSE one block: parameters, data, to_records. Pure; returns the records
+    (empty when the block was refused, with the reason reported)."""
+    p = parse_params(cls.name, cls.Params, block.params, report, str(block.location or ""))
+    if p is None:
+        return []
+    locs = _data_locs(block)
+    if cls.Row is not None:
+        rows = parse_rows(cls.name, cls.Row, block.data_lines, locs)
+    elif cls.Data is not None:
+        rows = parse_flat(cls.name, cls.Data, block.data_lines, str(block.location or ""))
+    else:
+        rows = []
+    return list(cls().to_records(p, rows, ctx))
+
+
+# ── registration ────────────────────────────────────────────────────────────
+
+SCHEMA_KEYWORDS: Dict[str, Type[Keyword]] = {}
+
+
+def check_against_index(cls: Type[Keyword]) -> List[str]:
+    """Schema field names Abaqus does not define for this keyword."""
+    entry = abaqus_index().get(cls.name)
+    if entry is None:
+        return [f"*{cls.name} is not an Abaqus keyword"]
+    return [f"*{cls.name}, {s.abq}" for s in cls.Params._fields
+            if s.abq not in entry.params and not s.undocumented]
+
+
+def keyword(name: str, *, support: str = "FULL", contexts=None, aliases=(), description: str = ""):
+    """Register a Keyword class with the reader's registry. `contexts` defaults
+    to the Abaqus levels in the keyword index."""
+    from dispsolver.io.keyword_index import contexts_for
+    from dispsolver.io.keyword_registry import GLOBAL_KEYWORD_REGISTRY, KeywordContext
+
+    def deco(cls: Type[Keyword]):
+        cls.name = norm(name)
+        bad = check_against_index(cls)
+        if bad:
+            raise TypeError(f"{cls.__name__}: not in the Abaqus keyword index: {bad} "
+                            f"(Param(undocumented=reason) to accept)")
+        if contexts is None:
+            ctxs = {KeywordContext[c] for c in contexts_for(abaqus_index().get(cls.name))}
+        else:
+            ctxs = set(contexts)
+
+        def handler(reader, block):
+            ctx = KeywordCtx(cls.name, reader.context.name,
+                             reader.current_step.name if reader.current_step is not None else None,
+                             reader.dim, Loc.of(block))
+            for rec in run_keyword(cls, block, ctx,
+                                   lambda lv, code, msg: reader.report(lv, code, msg, block)):
+                apply_record(reader, rec)
+
+        GLOBAL_KEYWORD_REGISTRY.register(cls.name, valid_contexts=ctxs, aliases=list(aliases),
+                                         description=description or (cls.__doc__ or ""),
+                                         support=support, schema=cls)(handler)
+        SCHEMA_KEYWORDS[cls.name] = cls
+        return cls
+    return deco
+
+
+def parse_text(text: str, context: str = "STEP", step: Optional[str] = "Step-1", dim: int = 3):
+    """Test helper: PARSE every block of `text` with its schema keyword, no
+    reader. Returns (records, [(level, code, message)])."""
+    from dispsolver.io.abaqus_lexer import tokenize_string
+    diags: List[Tuple[str, str, str]] = []
+    recs: List[Record] = []
+    for b in tokenize_string(text):
+        cls = SCHEMA_KEYWORDS.get(abaqus_index().resolve_keyword(b.keyword) or b.keyword)
+        if cls is None:
+            raise KeyError(f"*{b.keyword} has no schema")
+        ctx = KeywordCtx(cls.name, context, step, dim, Loc.of(b))
+        recs += run_keyword(cls, b, ctx, lambda lv, c, m: diags.append((lv, c, m)))
+    return recs, diags

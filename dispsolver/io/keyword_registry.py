@@ -79,6 +79,9 @@ class KeywordSpec:
     slug: str = ""                                      # SIMACAEKEYRefMap simakey-r-*.htm tracker
     params: Dict[str, ParamSpec] = field(default_factory=dict)
     rows: Optional[RowSpec] = None
+    # dispsolver.io.schema.Keyword subclass: the schema validates parameters
+    # and data itself, so the reader skips the ParamSpec checks below for it.
+    schema: Any = None
 
 
 class KeywordRegistry:
@@ -100,6 +103,7 @@ class KeywordRegistry:
         params: Optional[Union[Dict[str, Union[ParamSpec, dict, type]], List[Union[ParamSpec, str]]]] = None,
         rows: Optional[Union[RowSpec, type, List[type]]] = None,
         slug: str = "",
+        schema: Any = None,
     ):
         """Decorator to register a keyword handler function with declarative schemas."""
         if valid_contexts is None:
@@ -163,6 +167,7 @@ class KeywordRegistry:
                 slug=slug,
                 params=norm_params,
                 rows=norm_rows,
+                schema=schema,
             )
             self._handlers[norm_kw] = spec
             for alias in spec.aliases:

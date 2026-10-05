@@ -101,13 +101,18 @@ NOPE, 1, 3
 
 
 def test_handler_errors_and_unsupported_keywords_cite_file_line(tmp_path):
-    main = _write(tmp_path, "deck.inp", DECK.replace("*STEP\n", "*FOOBAR\n1\n*SOLID SECTION, ELSET=MISSING, MATERIAL=M\n*STEP\n"))
+    # *FOOBAR is not an Abaqus keyword (error); *RADIATION VIEW FACTOR is one
+    # this reader does not handle (gap).
+    main = _write(tmp_path, "deck.inp", DECK.replace(
+        "*STEP\n", "*FOOBAR\n1\n*RADIATION VIEW FACTOR\n*SOLID SECTION, ELSET=MISSING, MATERIAL=M\n*STEP\n"))
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         reader, _ = _parse_source(main, dim=3, strict=False)
     gaps = reader.physics_gaps()
-    assert any("*FOOBAR (unsupported, deck.inp:16)" == g for g in gaps), gaps
-    assert any("SOLID SECTION at deck.inp:18" in g for g in gaps), gaps
+    unknown = [d for d in reader.diagnostics if d.code == "unknown-keyword"]
+    assert len(unknown) == 1 and unknown[0].level == "error" and str(unknown[0].loc) == "deck.inp:16"
+    assert any("*RADIATION VIEW FACTOR (unsupported, deck.inp:18)" == g for g in gaps), gaps
+    assert any("SOLID SECTION at deck.inp:19" in g for g in gaps), gaps
 
 
 def test_model_objects_carry_their_deck_location_into_solver_errors(tmp_path):
