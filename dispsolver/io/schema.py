@@ -51,6 +51,11 @@ declared Param(control=True) on purpose. A declared field
 the index does not know is refused at registration (`Param(undocumented=True)`
 to override, with a reason) -- the schema cannot drift from Abaqus.
 
+A numeric (int / float) data item with no default of its own that is blank or
+omitted at the end of the line is 0 / 0.0, as the Abaqus Input Syntax Rules say
+("Abaqus will use values of zero for any required numeric data that are omitted
+unless a default value is specified"); str / choice items still raise.
+
 Field types: str, int, float, bool (a flag: present -> True; YES/NO accepted),
 Literal[...] (choices, resolved by abbreviation), Optional[X]. Row fields are
 positional; a final `Tuple[X, ...]` field takes the remaining columns (a blank
@@ -448,6 +453,12 @@ def parse_rows(kw: str, row: Type[RowSchema], lines: List[str], locs: List[Any],
                 vals[s.attr] = tuple(None if c == "" else _scalar(s.elem, c) for c in cols[len(fixed):])
             except ValueError as e:
                 raise InputError(f"*{kw} at {loc}: {s.attr}: {e}") from None
+        # Abaqus Input Syntax Rules: "Abaqus will use values of zero for any required
+        # numeric data that are omitted unless a default value is specified" (a blank
+        # cell, or empty cells at the end of the line). A field's own default wins.
+        for s in fixed:
+            if s.required and s.attr not in vals and s.kind in ("int", "float"):
+                vals[s.attr] = 0 if s.kind == "int" else 0.0
         missing = [s.attr for s in fixed if s.required and s.attr not in vals]
         if missing:
             raise InputError(f"*{kw} at {loc}: missing {', '.join(missing)} in {text!r}")
