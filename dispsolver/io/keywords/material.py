@@ -350,16 +350,21 @@ class HyperelasticRecord(Record):
     coef: Tuple[Tuple[str, float], ...] = ()
 
 
-def _flat_values(kw: str, rows, k: int, what: str) -> list:
-    """The k coefficients of a hyperelastic data set (lines may continue), no temperature."""
-    vals = [float(v) for r in rows for v in r.items if v is not None]
-    if len(vals) < k:
-        raise InputError(f"*{kw}: {what} needs {k} values, got {len(vals)}; the Keywords Guide gives no default for the rest")
-    if len(vals) == k + 1:
+def _coef_line(kw: str, rows, k_req: int, k_all: int, what: str) -> list:
+    """One hyperelastic data line of k_all coefficients, the first k_req required.
+
+    The trailing D_i may be omitted: the Keywords Guide treats the compressibility as
+    given only "by entering nonzero values for D_i" (omitted == 0, incompressible).
+    Temperature (the item after the coefficients) and several lines are not represented.
+    """
+    if len(rows) != 1:
+        raise Unsupported(f"*{kw}: several data lines (temperature sets) are not represented")
+    cells = _cells(rows[0], k_all + 1)
+    if any(c is None for c in cells[:k_req]):
+        raise InputError(f"*{kw}: {what}: the first {k_req} values are required; the Keywords Guide gives no default")
+    if cells[k_all] is not None or len(rows[0].items) > k_all + 1:
         raise Unsupported(f"*{kw}: temperature-dependent constants are not represented")
-    if len(vals) > k:
-        raise Unsupported(f"*{kw}: several temperature sets are not represented")
-    return vals
+    return [0.0 if c is None else float(c) for c in cells[:k_all]]
 
 
 @keyword("HYPERELASTIC", support="FULL", contexts={KeywordContext.MATERIAL, KeywordContext.GLOBAL})
@@ -406,36 +411,41 @@ class Hyperelastic(Keyword):
         coef: dict = {}
         table: tuple
         if form == "neo_hooke" or (form == "reduced_polynomial" and n == 1):
-            v = _flat_values(kw, rows, 2, "C10, D1")
+            v = _coef_line(kw, rows, 1, 2, "C10, D1")
             model, table = "NEO_HOOKEAN", (tuple(v),)
         elif form == "mooney_rivlin" or (form == "polynomial" and n == 1):
-            v = _flat_values(kw, rows, 3, "C10, C01, D1")
+            v = _coef_line(kw, rows, 2, 3, "C10, C01, D1")
             model, table = "MOONEY_RIVLIN", (tuple(v),)
             coef = dict(zip(("c10", "c01", "d1"), v))
         elif form == "polynomial" and n == 2:
-            v = _flat_values(kw, rows, 7, "C10 C01 C20 C11 C02 D1 D2")
+            v = _coef_line(kw, rows, 5, 7, "C10 C01 C20 C11 C02 D1 D2")
             model, table = "POLYNOMIAL", (tuple(v),)
             coef = dict(zip(("c10", "c01", "c20", "c11", "c02", "d1", "d2"), v))
         elif form == "polynomial":
             raise Unsupported(f"*HYPERELASTIC, POLYNOMIAL, N={n}: only N=1 and N=2 are represented")
         elif form == "yeoh" or (form == "reduced_polynomial" and n == 3):
-            v = _flat_values(kw, rows, 6, "C10 C20 C30 D1 D2 D3")
+            v = _coef_line(kw, rows, 3, 6, "C10 C20 C30 D1 D2 D3")
             model, table = "YEOH", (tuple(v),)
             coef = dict(zip(("c10", "c20", "c30", "d1", "d2", "d3"), v))
         elif form == "reduced_polynomial" and n == 2:
-            v = _flat_values(kw, rows, 4, "C10 C20 D1 D2")
+            v = _coef_line(kw, rows, 2, 4, "C10 C20 D1 D2")
             model, table = "YEOH", (tuple(v),)          # reduced polynomial N=2 == Yeoh with C30 = 0
             coef = {"c10": v[0], "c20": v[1], "c30": 0.0, "d1": v[2], "d2": v[3], "d3": 0.0}
         elif form == "reduced_polynomial":
             raise Unsupported(f"*HYPERELASTIC, REDUCED POLYNOMIAL, N={n}: only N=1..3 are represented")
         elif form == "arruda_boyce":
-            v = _flat_values(kw, rows, 3, "mu, lambda_m, D")
+            v = _coef_line(kw, rows, 2, 3, "mu, lambda_m, D")
             model, table = "ARRUDA_BOYCE", (tuple(v),)
         else:  # ogden
             if not 1 <= n <= 6:
                 raise InputError(f"*HYPERELASTIC, OGDEN, N={n}: N must be 1..6")
-            v = _flat_values(kw, rows, 3 * n, f"mu_i, alpha_i (i=1..{n}) then D_i")
-            mus, als, ds = v[0:2 * n:2], v[1:2 * n:2], v[2 * n:]
+            vals = [float(x) for r in rows for x in r.items if x is not None]
+            if len(vals) < 2 * n:
+                raise InputError(f"*HYPERELASTIC, OGDEN, N={n}: mu_i, alpha_i (i=1..{n}) are required")
+            if len(vals) > 3 * n:
+                raise Unsupported("*HYPERELASTIC, OGDEN: temperature-dependent constants are not represented")
+            vals = vals + [0.0] * (3 * n - len(vals))          # omitted D_i == 0
+            mus, als, ds = vals[0:2 * n:2], vals[1:2 * n:2], vals[2 * n:]
             model, table = "OGDEN", tuple((mus[i], als[i], ds[i]) for i in range(n))
         yield HyperelasticRecord(model=model, n=n, table=table, coef=tuple(coef.items()), loc=ctx.loc)
 
@@ -774,9 +784,9 @@ class DruckerPragerHardening(Keyword):
 def _apply_drucker_prager_hardening(reader: AbaqusInputReader, rec: DruckerPragerHardeningRecord) -> None:
     mat = reader.current_material
     if mat is None or "drucker_prager" not in mat.extra_params:
-        reader.diagnostics.add("error", "dp-hardening-without-drucker-prager",
-                               "*DRUCKER PRAGER HARDENING without a preceding *DRUCKER PRAGER in the material",
-                               rec.loc)
+        reader.diagnostics.add("gap", "dp-hardening-without-drucker-prager",
+                               "*DRUCKER PRAGER HARDENING: no *DRUCKER PRAGER landed in this material "
+                               "(absent or refused above)", rec.loc)
         return
     dp = mat.extra_params["drucker_prager"]
     # linear model F = t - p tan(beta) - d: cohesion d from the test yield stress.
@@ -798,6 +808,7 @@ def _apply_drucker_prager_hardening(reader: AbaqusInputReader, rec: DruckerPrage
         reader.diagnostics.add("gap", "dp-hardening-multilinear",
                                "*DRUCKER PRAGER HARDENING: more than two points; the model has linear hardening only",
                                rec.loc)
+        mat.extra_params.pop("dp_hardening_missing", None)     # already reported
         return
     dp["d0"] = d[0][0]
     if len(d) == 1:

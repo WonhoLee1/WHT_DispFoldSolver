@@ -365,7 +365,7 @@ def parse_params(kw: str, schema: Type[Schema], params: Dict[str, str], report: 
             continue
         values[s.attr] = v
     for s in schema._fields:
-        if s.required and s.attr not in values and not (s.unsupported or s.control):
+        if s.required and s.attr not in values and s.abq not in given and not (s.unsupported or s.control):
             report("error", "missing-param", f"*{kw}{at}: missing required parameter '{s.abq}'")
             ok = False
     if not ok:

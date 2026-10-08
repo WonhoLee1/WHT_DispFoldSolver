@@ -554,8 +554,11 @@ def test_hyperelastic_layouts():
     _, m, bad = _errors("*MATERIAL, NAME=O\n*HYPERELASTIC, OGDEN, N=2\n1., 2., 3., -2., 0.01, 0.02\n")
     h = m.materials["O"].hyperelastic
     assert not bad and h["mu_list"] == [1., 3.] and h["alpha_list"] == [2., -2.] and h["d_list"] == [0.01, 0.02]
-    # D omitted: no Guide default -> error; TYPE is not a model selector; MARLOW needs test data
-    _, _, bad = _errors("*MATERIAL, NAME=E\n*HYPERELASTIC, NEO HOOKE\n0.4\n")
+    # D omitted == 0 (incompressible; the Guide treats compressibility as given by nonzero Di);
+    # the coefficient itself has no default; TYPE is not a model selector; MARLOW needs test data
+    _, m, bad = _errors("*MATERIAL, NAME=E\n*HYPERELASTIC, NEO HOOKE\n0.4\n")
+    assert not bad and m.materials["E"].hyperelastic["d1"] == 0.0
+    _, _, bad = _errors("*MATERIAL, NAME=E\n*HYPERELASTIC, NEO HOOKE\n, 0.01\n")
     assert any(d.level == "error" for d in bad)
     for hdr in ("*HYPERELASTIC, TYPE=NEO HOOKE", "*HYPERELASTIC, MARLOW"):
         _, _, bad = _errors(f"*MATERIAL, NAME=T\n{hdr}\n0.4, 0.01\n")
