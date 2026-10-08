@@ -205,10 +205,8 @@ class DynamicSolver2D:
             mat_obj = self.materials.get(pid, None) if isinstance(self.materials, dict) else None
             nu = 0.3
             if mat_obj is not None:
-                if isinstance(mat_obj, dict):
-                    nu = float(mat_obj.get("nu", 0.3))
-                elif hasattr(mat_obj, "props"):
-                    nu = float(mat_obj.props[1]) if len(mat_obj.props) > 1 else 0.3
+                from dispsolver.material.resolve import material_nu
+                nu = material_nu(mat_obj)
             linear_elastic = is_linear_elastic(int(self.elem_mat_types[idx]))
             try:
                 k, notes = ElementCatalog.resolve(et, 2, bool(self.nlgeom), nu=nu, linear_elastic=linear_elastic)

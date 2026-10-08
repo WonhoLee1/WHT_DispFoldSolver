@@ -611,7 +611,8 @@ class DynamicSolver3D:
                     if "engineering_constants" in extra:
                         # KEPT outside the catalog on purpose: id 17 is a C3D20-kernel
                         # private path (it reads the 9 raw constants from props); the
-                        # catalog has no id 17 and resolves this to 99 (reported to B).
+                        # catalog resolves these constants to CUSTOM_ELASTIC (16), which
+                        # is a different (6x6 C) layout.  C3D20 only: see the guard below.
                         ec = extra["engineering_constants"]
                         props17 = np.zeros(64, dtype=np.float64)
                         props17[:len(ec)] = ec
@@ -620,6 +621,12 @@ class DynamicSolver3D:
                         mid, props = resolve_material(mat_obj, 3, f"material of pid {pid}")
                         resolved[pid] = (md, mid, props)
                 md, mid, props = resolved[pid]
+                if mid == MAT_ORTHOTROPIC_CYLINDRICAL and not elem.elem_type.upper().startswith("C3D20"):
+                    from dispsolver.model.regions import describe
+                    raise NotImplementedError(
+                        f"{describe(mat_obj, f'material of pid {pid}')} (material {getattr(mat_obj, 'name', None)!r}): "
+                        f"orthotropic ENGINEERING CONSTANTS (id {MAT_ORTHOTROPIC_CYLINDRICAL}) are only "
+                        f"implemented for C3D20 elements (element3d/c3d20_numba.py), not {elem.elem_type}")
                 if isinstance(md, dict):
                     rho_val = float(md.get("density", md.get("rho", default_rho)))
                 elif hasattr(md, "density"):
@@ -683,10 +690,8 @@ class DynamicSolver3D:
             mat_obj = self.materials.get(pid, None) if hasattr(self, "materials") and isinstance(self.materials, dict) else None
             nu = 0.3
             if mat_obj is not None:
-                if isinstance(mat_obj, dict):
-                    nu = float(mat_obj.get("nu", 0.3))
-                elif hasattr(mat_obj, "props"):
-                    nu = float(mat_obj.props[1]) if len(mat_obj.props) > 1 else 0.3
+                from dispsolver.material.resolve import material_nu
+                nu = material_nu(mat_obj)
             mt = int(self.elem_mat_types[idx]) if getattr(self, "elem_mat_types", None) is not None else MAT_LINEAR_ELASTIC
             try:
                 k, notes = ElementCatalog.resolve(et, 3, bool(self.nlgeom), nu=nu,

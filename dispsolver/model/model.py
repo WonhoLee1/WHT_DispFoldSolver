@@ -802,7 +802,7 @@ class Model:
             excluded_pairs=excludedPairs,
             interaction_property=prop,
             contact_controls=ctrl,
-            contact_enforcement=str(kwargs.get("contact_enforcement", kwargs.get("contactEnforcement", "NITSCHE"))).upper(),
+            contact_enforcement=str(kwargs.get("contact_enforcement", kwargs.get("contactEnforcement", "PENALTY"))).upper(),
             normal_behavior=str(kwargs.get("normal_behavior", kwargs.get("normalBehavior", "HARD"))).upper(),
             gamma=float(kwargs.get("gamma", kwargs.get("penalty_stiffness", 1.0e8))),
             skin=float(kwargs.get("skin", 0.05)),

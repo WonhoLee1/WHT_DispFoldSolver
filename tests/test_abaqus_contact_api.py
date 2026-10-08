@@ -707,7 +707,7 @@ def test_adaptive_soft_contact_auto_derivation_and_solve():
         name="AdaptiveGC",
         createStepName="Step-1",
         useAllExterior=True,
-        contactEnforcement=NITSCHE,
+        contactEnforcement="PENALTY",
         interactionProperty="AdaptiveProp",
     )
 
@@ -787,7 +787,7 @@ def test_autonomous_contact_auto_tuning_and_guide():
         name="AutoTuneGC",
         createStepName="Step-1",
         useAllExterior=True,
-        contactEnforcement=NITSCHE,
+        contactEnforcement="PENALTY",
         interactionProperty="AdaptiveInitialProp",
     )
 
@@ -1225,15 +1225,32 @@ def test_general_contact_enforcements_and_normal_behaviors():
     model.Step(name="Step-1")
 
     # 1. NITSCHE + ADAPTIVE_SOFT
+    # GeneralContact3D implements penalty only: NITSCHE never ran as requested -> refused.
+    import pytest
     gc1 = model.ContactStd(
         name="GC_Nitsche_Adaptive",
         createStepName="Step-1",
         contactEnforcement="NITSCHE",
         normalBehavior="ADAPTIVE_SOFT",
     )
-    solver1, sys1 = model.create_solver3d("Step-1")
+    with pytest.raises(NotImplementedError, match="NITSCHE"):
+        model.create_solver3d("Step-1")
+    # the ADAPTIVE_SOFT law is still checked, under the enforcement that is implemented
+    model_p = Model(name="EnforcementModelP", dim=3)
+    part_p = model_p.Part(name="Part1")
+    for nid, (x, y, z) in enumerate([
+        (0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (1.0, 1.0, 0.0), (0.0, 1.0, 0.0),
+        (0.0, 0.0, 1.0), (1.0, 0.0, 1.0), (1.0, 1.0, 1.0), (0.0, 1.0, 1.0),
+    ]):
+        part_p.Node(nid + 1, x, y, z)
+    part_p.Element(1, "C3D8", [1, 2, 3, 4, 5, 6, 7, 8])
+    model_p.root_assembly.Instance(name="Inst1", part=part_p)
+    model_p.Step(name="Step-1")
+    model_p.ContactStd(name="GC_Penalty_Adaptive", createStepName="Step-1",
+                       contactEnforcement="PENALTY", normalBehavior="ADAPTIVE_SOFT")
+    solver1, sys1 = model_p.create_solver3d("Step-1")
     c1 = next(c for c in solver1.constraints if isinstance(c, GeneralContact3D))
-    assert c1.contact_enforcement == "NITSCHE"
+    assert c1.contact_enforcement == "PENALTY"
     assert isinstance(c1.law, AdaptivePowerSoftLaw)
 
     # 2. PENALTY + EXPONENTIAL
@@ -1274,10 +1291,9 @@ def test_general_contact_enforcements_and_normal_behaviors():
         createStepName="Step-1",
         contactEnforcement="AUGMENTED_LAGRANGE",
     )
-    solver3, _ = model3.create_solver3d("Step-1")
-    c3 = next(c for c in solver3.constraints if isinstance(c, GeneralContact3D))
-    assert c3.augmented_lagrange is True
-    assert c3.contact_enforcement == "AUGMENTED_LAGRANGE"
+    # GeneralContact3D never read augmented_lagrange -> AL for general contact is refused.
+    with pytest.raises(NotImplementedError, match="AUGMENTED_LAGRANGE"):
+        model3.create_solver3d("Step-1")
 
 
 def test_contact_control_penetration_tolerance():

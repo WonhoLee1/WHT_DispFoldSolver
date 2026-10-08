@@ -103,18 +103,24 @@ def _table() -> Dict[Tuple, Tuple[str, str, bool, bool, str]]:
                 C_RIGID3D, "rigid3d", False, True, "analytical rigid plane: sliding mode does not apply")
             t[_key(2, "pair", "rigid", enf, sl, None)] = (
                 C_RIGID2D, "rigid2d", False, True, "analytical rigid line: sliding mode does not apply")
-    # ---- GeneralContact (3D only; sliding is not a GeneralContact setting -> SMALL)
-    for enf in ("PENALTY", "AUGMENTED_LAGRANGE", "NITSCHE"):
-        for ep in (True, False):
-            t[_key(3, "general", "deformable", enf, "SMALL", ep)] = (C_GENERAL3D, "general3d", False, True,
-                                                                   "GeneralContact has no sliding setting")
+    # ---- GeneralContact (3D only; sliding is not a GeneralContact setting -> SMALL,
+    # so there is no sliding request to honor).  GeneralContact3D stores
+    # contact_enforcement / augmented_lagrange and never reads them: every
+    # enforcement runs the same penalty formulation, so only PENALTY is honored.
+    _NOT_HONORED = ("GeneralContact3D implements penalty only (contact_enforcement / augmented_lagrange "
+                    "are stored, never read); the {enf} request cannot be applied")
+    for ep in (True, False):
+        t[_key(3, "general", "deformable", "PENALTY", "SMALL", ep)] = (C_GENERAL3D, "general3d", True, True,
+                                                                     "GeneralContact has no sliding setting")
+        for enf in ("AUGMENTED_LAGRANGE", "NITSCHE"):
+            t[_key(3, "general", "deformable", enf, "SMALL", ep)] = (
+                C_GENERAL3D, "general3d", True, False, _NOT_HONORED.format(enf=enf))
     for enf in _MORTAR:
         t[_key(3, "general", "deformable", enf, "SMALL", True)] = (
-            C_MORTAR3D_SMALL, "mortar3d_general", False, True, "explicit included_pairs -> clipped mortar")
+            C_MORTAR3D_SMALL, "mortar3d_general", True, True, "explicit included_pairs -> clipped mortar (one pair)")
         t[_key(3, "general", "deformable", enf, "SMALL", False)] = (
-            C_GENERAL3D, "general3d", False, False,
-            "mortar enforcement needs explicit included_pairs; without them GeneralContact3D is built and "
-            "the mortar request is NOT applied")
+            C_GENERAL3D, "general3d", True, False,
+            "mortar enforcement needs explicit included_pairs; it is NOT applied by GeneralContact3D")
     return t
 
 
@@ -159,3 +165,16 @@ def resolve_contact(dim: int, enforcement: str, sliding: str, nlgeom: bool = Tru
                        nlgeom=bool(nlgeom), class_path=cls_path, family=family,
                        mode=contact_mode(sl, bool(nlgeom)), honors_sliding=hs,
                        honors_enforcement=he, note=note)
+
+
+def check_spec_honored(spec: ContactSpec, what: str) -> None:
+    """Builders call this right after resolve_contact: a class that does not
+    implement the requested enforcement raises; one that ignores the requested
+    sliding mode warns (finite tracking is a superset of small sliding)."""
+    if not spec.honors_enforcement:
+        raise NotImplementedError(
+            f"{what}: contact combination not implemented (dim={spec.dim}, scope={spec.scope}, "
+            f"enforcement={spec.enforcement!r}): {spec.note}")
+    if not spec.honors_sliding:
+        import warnings
+        warnings.warn(f"{what}: {spec.note} (requested sliding={spec.sliding})", stacklevel=3)

@@ -119,3 +119,117 @@ def test_no_other_module_picks_a_contact_class_by_strings():
     interaction = (ROOT / "dispsolver/model/interaction.py").read_text(encoding="utf-8")
     for name in class_names:
         assert not re.search(r"import\s+.*\b" + name + r"\b", interaction), name
+
+
+# ---------------------------------------------------------------------------
+# Builders return exactly the class the catalog names (or refuse)
+# ---------------------------------------------------------------------------
+import warnings
+from dispsolver.model.set import GeneralSet
+
+import numpy as np
+
+from dispsolver.model.interaction import (
+    AnalyticalRigidSurface, ContactPair, ContactProperty, GeneralContact,
+)
+
+
+def _two_cubes():
+    from dispsolver.mesh3d.mesh3d import Mesh3D
+    mesh = Mesh3D()
+    nid = 0
+    for z0 in (0.0, 1.0):
+        for (x, y, z) in [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0), (0, 0, 1), (1, 0, 1), (1, 1, 1), (0, 1, 1)]:
+            nid += 1
+            mesh.add_node(nid, float(x), float(y), z + z0)
+    mesh.add_element(1, list(range(1, 9)), "C3D8", pid=0)
+    mesh.add_element(2, list(range(9, 17)), "C3D8", pid=0)
+    return mesh
+
+
+def _build(spec):
+    """build_runtime_constraint for one catalog entry on a minimal model."""
+    enf = spec.enforcement
+    if spec.scope == "general":
+        mesh = _two_cubes()
+        nid_to_idx = mesh.node_id_to_index()
+        coords = mesh.nodes_array()
+        kw = {}
+        if spec.family == "mortar3d_general":
+            kw["included_pairs"] = [([(5, 6, 7, 8)], [(9, 10, 11, 12)])]
+        gc = GeneralContact(name="GC", contact_enforcement=enf, **kw)
+        return gc.build_runtime_constraint(mesh, nid_to_idx, coords)
+    if spec.master == "rigid":
+        plane = AnalyticalRigidSurface(name="F", point=[0, 0, 0] if spec.dim == 3 else [0, 0],
+                                       normal=[0, 0, 1] if spec.dim == 3 else [0, 1])
+        slave = GeneralSet(name="S", nodes=[1, 2, 3, 4] if spec.dim == 3 else [1, 2])
+        coords = (_two_cubes().nodes_array() if spec.dim == 3
+                  else np.array([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]]))
+        mesh = _two_cubes() if spec.dim == 3 else type("M", (), {"dim": 2, "nodes_array": lambda s: coords})()
+        pair = ContactPair(name="P", master=plane, slave=slave, interaction_property=ContactProperty(name="P1"),
+                           sliding=spec.sliding, constraint_enforcement=enf)
+        return pair.build_runtime_constraint(mesh, {i + 1: i for i in range(len(coords))}, coords,
+                                             nlgeom=spec.nlgeom)
+    if spec.dim == 3:
+        coords = np.array([[-1, -1, 0], [1, -1, 0], [1, 1, 0], [-1, 1, 0]] * 2, dtype=float)
+        main, sec = [(5, 6, 7, 8)], [(1, 2, 3, 4)]
+    else:
+        coords = np.array([[0.0, 0.0], [1.0, 0.0], [0.0, 0.0], [1.0, 0.0]])
+        main, sec = [(3, 4)], [(1, 2)]
+    mesh = type("M", (), {"nodes_array": lambda s: coords})()
+    if spec.family in ("node_to_surface", "node_to_segment2d"):   # node-to-surface: the slave is a node set
+        sec = GeneralSet(name="S", nodes=list(sec[0]))
+    pair = ContactPair(name="P", main=main, secondary=sec, interaction_property=ContactProperty(name="P1"),
+                       sliding=spec.sliding, constraint_enforcement=enf)
+    return pair.build_runtime_constraint(mesh, {i + 1: i for i in range(len(coords))}, coords, nlgeom=spec.nlgeom)
+
+
+def test_builder_returns_exactly_the_catalog_class_or_refuses():
+    n_built = n_refused = 0
+    for sp in _all_specs():
+        if not sp.nlgeom:
+            continue
+        label = (sp.dim, sp.scope, sp.master, sp.enforcement, sp.sliding)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            if not sp.honors_enforcement:
+                with pytest.raises(NotImplementedError, match=sp.enforcement):
+                    _build(sp)
+                n_refused += 1
+                continue
+            rc = _build(sp)
+        assert type(rc) is sp.load(), (label, type(rc), sp.load())
+        n_built += 1
+    assert n_built >= 20 and n_refused == 6, (n_built, n_refused)
+
+
+def test_sliding_not_honored_warns_instead_of_raising():
+    sp = resolve_contact(2, "PENALTY", "SMALL", True)
+    assert not sp.honors_sliding
+    with pytest.warns(UserWarning, match="SMALL"):
+        _build(sp)
+    rigid = resolve_contact(3, "PENALTY", "SMALL", True, master="rigid")
+    with pytest.warns(UserWarning, match="sliding"):
+        _build(rigid)
+
+
+def test_general_contact_only_penalty_without_pairs():
+    for enf in ("AUGMENTED_LAGRANGE", "NITSCHE", "DUAL_MORTAR", "STANDARD_MORTAR"):
+        mesh = _two_cubes()
+        gc = GeneralContact(name="GC", contact_enforcement=enf)
+        with pytest.raises(NotImplementedError, match=enf):
+            gc.build_runtime_constraint(mesh, mesh.node_id_to_index(), mesh.nodes_array())
+
+
+def test_general_mortar_pairs_must_resolve_and_only_one_is_built():
+    mesh = _two_cubes()
+    n2i, coords = mesh.node_id_to_index(), mesh.nodes_array()
+    unresolved = GeneralContact(name="GC", contact_enforcement="DUAL_MORTAR",
+                                included_pairs=[([(5, 6, 7, 8)], [])])
+    with pytest.raises(ValueError, match="does not resolve"):
+        unresolved.build_runtime_constraint(mesh, n2i, coords)
+    two = GeneralContact(name="GC", contact_enforcement="DUAL_MORTAR",
+                         included_pairs=[([(5, 6, 7, 8)], [(9, 10, 11, 12)]),
+                                         ([(1, 2, 3, 4)], [(13, 14, 15, 16)])])
+    with pytest.raises(NotImplementedError, match="only one included pair"):
+        two.build_runtime_constraint(mesh, n2i, coords)

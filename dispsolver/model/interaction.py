@@ -65,7 +65,7 @@ from dataclasses import dataclass, field
 from typing import Optional, Union, Any, Sequence, Dict, List, Tuple, Set
 import warnings
 import numpy as np
-from dispsolver.model.contact_catalog import resolve_contact
+from dispsolver.model.contact_catalog import resolve_contact, check_spec_honored
 
 
 # ===========================================================================
@@ -1312,12 +1312,9 @@ class ContactPair:
                 is_2d = True
 
             if is_2d:
-                if sliding_upper == "SMALL" and getattr(model, "from_deck", False):
-                    import warnings as _w
-                    _w.warn(f"ContactPair '{self.name}': the 2D contact classes always track the contact point "
-                            f"in the current configuration (finite sliding); SMALL SLIDING is not distinguished")
                 spec2 = resolve_contact(2, self.constraint_enforcement, sliding_upper,
                                         bool(kwargs.get("nlgeom", True)))
+                check_spec_honored(spec2, f"ContactPair '{self.name}'")
                 if spec2.family == "mortar2d":
                     m_type = "STANDARD" if self.constraint_enforcement == "STANDARD_MORTAR" else "DUAL"
                     form = "nitsche" if self.constraint_enforcement == "NITSCHE" else "dual_mortar"
@@ -1351,6 +1348,7 @@ class ContactPair:
 
             spec3 = resolve_contact(3, self.constraint_enforcement, sliding_upper,
                                     bool(kwargs.get("nlgeom", True)))
+            check_spec_honored(spec3, f"ContactPair '{self.name}'")
             # S2S Nitsche Dispatch
             if spec3.family == "nitsche3d":
                 slave_faces = _resolve_master_faces(self.slave, mesh, model=model, sys=sys_obj)
@@ -1419,6 +1417,7 @@ class ContactPair:
 
         spec_r = resolve_contact(2 if is_2d else 3, self.constraint_enforcement, sliding_upper,
                                  bool(kwargs.get("nlgeom", True)), master="rigid")
+        check_spec_honored(spec_r, f"ContactPair '{self.name}'")
         if is_2d:
             m_pt = np.asarray(self.master.point, dtype=np.float64)[:2] if hasattr(self.master, "point") else np.zeros(2)
             m_n = self.master.unit_normal()[:2] if hasattr(self.master, "unit_normal") else np.array([0.0, 1.0])
@@ -1490,7 +1489,7 @@ class GeneralContact:
         excludedPairs=None,
         interactionProperty='IntProp-1',
         contactControls='ContCtrl-1',
-        contactEnforcement='NITSCHE',  # NITSCHE | DUAL_MORTAR | PENALTY | AUGMENTED_LAGRANGE
+        contactEnforcement='PENALTY',  # PENALTY (only one implemented without explicit mortar pairs) | DUAL_MORTAR | AUGMENTED_LAGRANGE
         normalBehavior='HARD',        # HARD | EXPONENTIAL | ADAPTIVE_SOFT | LINEAR | TABULAR
         gamma=1.0e8,
         skin=0.05
@@ -1534,7 +1533,7 @@ class GeneralContact:
     excluded_pairs: Optional[List[Tuple[Any, Any]]] = None
     interaction_property: Optional[Union[str, ContactProperty]] = None
     contact_controls: Optional[Union[str, ContactControl, ContactStabilization]] = None
-    contact_enforcement: str = "NITSCHE"  # "NITSCHE" | "DUAL_MORTAR" | "PENALTY" | "AUGMENTED_LAGRANGE"
+    contact_enforcement: str = "PENALTY"  # "PENALTY" | "DUAL_MORTAR" (explicit pair) ; NITSCHE / AUGMENTED_LAGRANGE refused
     normal_behavior: str = "HARD"         # "HARD" | "EXPONENTIAL" | "ADAPTIVE_SOFT" | "LINEAR" | "TABULAR"
     gamma: float = 1.0e8
     skin: float = 0.05
@@ -1556,7 +1555,7 @@ class GeneralContact:
         contactControls: Optional[Union[str, ContactControl, ContactStabilization]] = None,
         contact_stabilization: Optional[Union[str, ContactControl, ContactStabilization]] = None,
         contactStabilization: Optional[Union[str, ContactControl, ContactStabilization]] = None,
-        contact_enforcement: str = "NITSCHE",
+        contact_enforcement: str = "PENALTY",
         contactEnforcement: Optional[str] = None,
         normal_behavior: str = "HARD",
         normalBehavior: Optional[str] = None,
@@ -1616,26 +1615,36 @@ class GeneralContact:
             else:
                 coords = np.zeros((len(nid_to_idx), 3), dtype=np.float64)
 
-        # Early fast dispatch for explicit included_pairs (Mortar surface-to-surface)
-        if self.contact_enforcement in ("DUAL_MORTAR", "STANDARD_MORTAR") and self.included_pairs is not None:
-            m_type = "STANDARD" if self.contact_enforcement == "STANDARD_MORTAR" else "DUAL"
-            mortar_cls = resolve_contact(3, self.contact_enforcement, "SMALL", scope="general",
-                                         explicit_pairs=True).load()
-            for p_pair in self.included_pairs:
-                if len(p_pair) == 2:
-                    reg_s, reg_m = p_pair
-                    s_faces = _resolve_master_faces(reg_s, mesh, model=model, sys=sys_obj)
-                    m_faces = _resolve_master_faces(reg_m, mesh, model=model, sys=sys_obj)
-                    if s_faces and m_faces:
-                        return mortar_cls(
-                            slave_faces=s_faces,
-                            master_faces=m_faces,
-                            nid_to_idx=nid_to_idx,
-                            coords=coords,
-                            penalty_stiffness=self.gamma,
-                            mortar_type=m_type,
-                            name=self.name,
-                        )
+        # Explicit included_pairs + mortar enforcement -> one clipped mortar constraint.
+        # Every other enforcement without a class that honors it raises (catalog).
+        explicit = self.included_pairs is not None
+        gspec = resolve_contact(3, self.contact_enforcement, "SMALL", scope="general", explicit_pairs=explicit)
+        check_spec_honored(gspec, f"GeneralContact '{self.name}'")
+        if self.contact_enforcement in ("DUAL_MORTAR", "STANDARD_MORTAR"):
+            pairs = list(self.included_pairs)
+            if len(pairs) != 1:
+                raise NotImplementedError(
+                    f"GeneralContact '{self.name}': only one included pair is supported with "
+                    f"{self.contact_enforcement} (got {len(pairs)}); a builder returns one constraint")
+            p_pair = pairs[0]
+            if len(p_pair) != 2:
+                raise ValueError(f"GeneralContact '{self.name}': included pair {p_pair!r} must be (slave, master)")
+            reg_s, reg_m = p_pair
+            s_faces = _resolve_master_faces(reg_s, mesh, model=model, sys=sys_obj)
+            m_faces = _resolve_master_faces(reg_m, mesh, model=model, sys=sys_obj)
+            if not s_faces or not m_faces:
+                raise ValueError(
+                    f"GeneralContact '{self.name}': included pair {p_pair!r} does not resolve to faces on "
+                    f"both sides (slave: {len(s_faces)}, master: {len(m_faces)})")
+            return gspec.load()(
+                slave_faces=s_faces,
+                master_faces=m_faces,
+                nid_to_idx=nid_to_idx,
+                coords=coords,
+                penalty_stiffness=self.gamma,
+                mortar_type="STANDARD" if self.contact_enforcement == "STANDARD_MORTAR" else "DUAL",
+                name=self.name,
+            )
 
         # 1. 100% Automatic Gathering of Non-Tied Exterior Faces across all Part Instances
         (
@@ -1753,31 +1762,8 @@ class GeneralContact:
         if materials is None and sys_obj is not None and hasattr(sys_obj, "materials_by_pid"):
             materials = sys_obj.materials_by_pid
 
-        # 4. Routing based on Contact Enforcement
-        if self.contact_enforcement in ("DUAL_MORTAR", "STANDARD_MORTAR") and self.included_pairs is not None:
-            # If explicit pairs of surfaces are provided, wire directly to DualMortarClippedContactConstraint3D
-            m_type = "STANDARD" if self.contact_enforcement == "STANDARD_MORTAR" else "DUAL"
-            mortar_cls = resolve_contact(3, self.contact_enforcement, "SMALL", scope="general",
-                                         explicit_pairs=True).load()
-            for p_pair in self.included_pairs:
-                if len(p_pair) == 2:
-                    reg_s, reg_m = p_pair
-                    s_faces = _resolve_master_faces(reg_s, mesh, model=model, sys=sys_obj)
-                    m_faces = _resolve_master_faces(reg_m, mesh, model=model, sys=sys_obj)
-                    if s_faces and m_faces:
-                        return mortar_cls(
-                            slave_faces=s_faces,
-                            master_faces=m_faces,
-                            nid_to_idx=nid_to_idx,
-                            coords=coords,
-                            penalty_stiffness=self.gamma,
-                            mortar_type=m_type,
-                            name=self.name,
-                        )
-
         # Default GeneralContact3D with full Nitsche / Pure SPD / Harmonic Scaling
-        gc_cls = resolve_contact(3, self.contact_enforcement, "SMALL", scope="general", explicit_pairs=False).load()
-        return gc_cls(
+        return gspec.load()(
             faces=faces,
             coords=coords,
             nid_to_idx=nid_to_idx,

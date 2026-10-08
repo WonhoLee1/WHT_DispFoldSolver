@@ -341,18 +341,15 @@ class Assembly:
                                          + f" refers to material {mat_name!r}, which the deck does not define")
                     
                     if mat_obj is not None:
-                        # A material the catalog cannot map raises here, naming the
-                        # deck location, instead of reaching the solver as id 99 (A5).
-                        from dispsolver.material.catalog import material_id as _material_id
-                        from dispsolver.model.regions import describe as _describe
-                        try:
-                            _material_id(mat_obj)
-                        except ValueError as exc:
-                            raise NotImplementedError(
-                                f"{_describe(mat_obj, f'material {mat_name!r}')}: {exc}") from exc
-                        # Convert to Numba DOD props if available
+                        # A material the catalog cannot map (or has not implemented in
+                        # this dimension) raises here, naming the deck location (A5).
+                        from dispsolver.material.resolve import resolve_material, MaterialProps
+                        resolve_material(mat_obj, dim, f"material {mat_name!r}")
+                        # The flattened props dict stays what contact-stiffness code reads,
+                        # but it remembers its Material: the solvers resolve id + props
+                        # from that object (catalog only), see material.resolve.MaterialProps.
                         if hasattr(mat_obj, "to_numba_props"):
-                            materials_by_pid[assigned_pid] = mat_obj.to_numba_props()
+                            materials_by_pid[assigned_pid] = MaterialProps(mat_obj.to_numba_props(), mat_obj)
                         else:
                             materials_by_pid[assigned_pid] = mat_obj
                     else:
