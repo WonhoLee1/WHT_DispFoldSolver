@@ -327,28 +327,24 @@ def _explained_change(m, old, new):
         return "hyper-viscoelastic with a base the kernel layout cannot carry (old: wrong slots)"
     # ---- B4 / Keywords Guide audit (agent B, 2026-10): each class names the audit fix that changed it
     refused = list(extra.get("refused_definitions") or [])
-    constitutive = ("*PLASTIC", "*DRUCKER PRAGER", "*CREEP", "*DAMAGE", "*HYPERELASTIC", "*VISCOELASTIC", "*CONCRETE")
     if err and "must be given together" in new["msg"] and any(r.startswith(("*DAMAGE", "*PLASTIC")) for r in refused):
-        return ("damage initiation or its plasticity refused by the reader, evolution kept: "
-                "refused loudly (old: ran with the half definition)")
+        return ("damage initiation or its plasticity refused by the reader, evolution kept: the material is "
+                "refused (Material.to_numba_props raises before resolve_material) (old: ran with the half definition)")
+    if err and "props are not finite" in new["msg"] and m.mat_type == "DRUCKER_PRAGER"             and extra.get("drucker_prager", {}).get("d0") != extra.get("drucker_prager", {}).get("d0"):
+        return "DRUCKER PRAGER HARDENING with more than two points: d0 is NaN, refused as non-finite (old: d0=100)"
+    if err and refused and "definition was refused" in new["msg"] and all(r in new["msg"] for r in refused):
+        return ("a definition the reader refused (gap): the material is refused too, the message lists it "
+                "(old: ran as another model -- elastic part only, or half a damage/plasticity definition)")
     if err:
         return None
     nid, op, nprops = new["id"], old["props"], new["props"]
     diff = [i for i in range(64) if not (op[i] == nprops[i])]
     hyp = (m.hyperelastic or {}).get("model", "").upper()
-    if nid != old.get("id") and nid == 0 and any(r.startswith(constitutive) for r in refused):
-        return ("a *PLASTIC / *DRUCKER PRAGER / *CREEP / ... block the reader now refuses "
-                "(KINEMATIC, COMBINED, DP K!=1, SHEAR CRITERION, STRAIN m!=0, SCALESTRESS ...): "
-                "the material keeps its elastic part only and the gap is reported (old: silently ran as another model)")
-    if nid == old.get("id") == 2 and any(r.startswith("*PLASTIC, RATE=") for r in refused):
-        return "*PLASTIC, RATE= tables refused: only the rate-free table lands (old: a later RATE table overwrote it)"
     if nid == old.get("id") == 0 and diff == [1] and op[1] == 0.3 and nprops[1] == 0.0 and m.elastic \
             and m.elastic[1] == 0.0:
         return "*ELASTIC with Poisson's ratio omitted: blank == 0 (old: invented nu=0.3)"
     if nid == old.get("id") == 14 and m.mat_type == "DRUCKER_PRAGER":
         dp = extra.get("drucker_prager", {})
-        if nprops[2] != nprops[2]:
-            return "DRUCKER PRAGER HARDENING with more than two points: d0 left NaN, gap reported (old: d0=100)"
         if op[4] == op[5] == 20.0 and (nprops[2], nprops[3], nprops[4], nprops[5]) == (
                 dp.get("d0"), dp.get("H"), dp.get("beta"), dp.get("psi")):
             return ("DRUCKER PRAGER data line (beta, K, psi) and cohesion/hardening from DRUCKER PRAGER HARDENING "

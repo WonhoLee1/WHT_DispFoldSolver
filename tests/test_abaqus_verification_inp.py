@@ -177,7 +177,9 @@ def test_equation_lands_binds_assembles():
     # The test is about *EQUATION binding, not materials: this deck's only material is
     # *HYPERELASTIC, MARLOW, which the reader refuses (it needs test data), so give A1 a
     # supported one before building the solver system. The refusal must be on record.
-    assert model.materials["A1"].extra_params.get("refused_definitions")
+    # (a material with a refused definition is itself refused by resolve_material, so the
+    # test replaces the material's definition outright: drop the record, give it an *ELASTIC)
+    assert model.materials["A1"].extra_params.pop("refused_definitions")
     model.materials["A1"].Elastic(E=1000.0, nu=0.3)
     sys = model.build_solver_system()
     bound = [c for c in sys.constraints if isinstance(c, EquationConstraint)]

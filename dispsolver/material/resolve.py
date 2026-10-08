@@ -137,7 +137,7 @@ _FLAT_PACKED = {MAT_LINEAR_ELASTIC, MAT_J2_PLASTICITY, MAT_J2_PLASTICITY_NONLINE
                 MAT_J2_PLASTICITY_TABULAR, MAT_DRUCKER_PRAGER}
 
 
-def resolve_material(mat_obj: Any, dim: int, label: str = "material") -> Tuple[int, np.ndarray]:
+def _resolve(mat_obj: Any, dim: int, label: str = "material") -> Tuple[int, np.ndarray]:
     """Return (mat_id, props[64]) for a Material object or property dict.
 
     Raises NotImplementedError (never falls back to linear elastic) when the
@@ -242,3 +242,39 @@ def resolve_material(mat_obj: Any, dim: int, label: str = "material") -> Tuple[i
         return mid, (_pack_ductile_damage(flat) if mid == MAT_J2_DUCTILE_DAMAGE else pack_props(flat, dim))
 
     return mid, pack_props(mat_obj, dim)
+
+
+def resolve_material(mat_obj: Any, dim: int, label: str = "material") -> Tuple[int, np.ndarray]:
+    """Return (mat_id, props[64]) for a Material object or property dict (see `_resolve`).
+
+    Two refusals apply to every material whatever its id:
+      * a definition the deck gave and the reader refused (extra_params['refused_definitions'])
+        -- running what is left would be a different model than the deck;
+      * a non-finite packed value (e.g. the NaN a multilinear Drucker-Prager hardening leaves
+        in d0) -- it must never reach a kernel.
+    """
+    from dispsolver.model.regions import describe
+
+    obj = mat_obj.material if isinstance(mat_obj, MaterialProps) else mat_obj
+    extra = obj if isinstance(obj, dict) else (getattr(obj, "extra_params", None) or {})
+    refused = extra.get("refused_definitions")
+    if refused:
+        where = describe(obj, label)
+        name = getattr(obj, "name", None)
+        if name:
+            where = f"{where} (material {name!r})"
+        raise NotImplementedError(
+            f"{where}: its {'; '.join(refused)} definition was refused by the reader; "
+            f"nothing to compute it with -- running the rest would be a different model than the deck")
+    mid, props = _resolve(mat_obj, dim, label)
+    bad = np.flatnonzero(~np.isfinite(np.asarray(props, dtype=float)))
+    if bad.size:
+        where = describe(obj, label)
+        name = getattr(obj, "name", None)
+        if name:
+            where = f"{where} (material {name!r})"
+        raise NotImplementedError(
+            f"{where}: packed {MATERIALS[mid].name} props are not finite at slot(s) "
+            f"{', '.join(str(int(i)) for i in bad[:6])} (an undefined input value, e.g. a refused or "
+            f"multilinear hardening table); refusing to hand them to a kernel")
+    return mid, props

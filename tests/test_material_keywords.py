@@ -746,3 +746,21 @@ def test_refused_definition_is_named_when_nothing_is_left_to_compute():
         resolve_material(mat, 3, "material 'A1'")
     msg = str(ei.value)
     assert "definition was refused" in msg and "*HYPERELASTIC, MARLOW" in msg and "nothing to compute" in msg
+
+
+def test_material_with_a_refused_definition_is_refused_whatever_else_it_has():
+    from dispsolver.material.resolve import resolve_material
+    _, m, _ = _errors("*MATERIAL, NAME=K\n*ELASTIC\n1000., 0.3\n*PLASTIC, HARDENING=KINEMATIC\n10., 0.\n")
+    with pytest.raises(NotImplementedError) as ei:
+        resolve_material(m.materials["K"], 3, "material of pid 0")
+    assert "HARDENING=KINEMATIC" in str(ei.value) and "different model" in str(ei.value)
+
+
+def test_non_finite_packed_props_are_refused():
+    from dispsolver.material.resolve import resolve_material
+    deck = ("*MATERIAL, NAME=D\n*ELASTIC\n3e5, 0.3\n*DRUCKER PRAGER\n40., 1., 20.\n"
+            "*DRUCKER PRAGER HARDENING\n10., 0.\n12., 0.01\n14., 0.02\n")
+    _, m, bad = _errors(deck)
+    assert any(d.code == "dp-hardening-multilinear" for d in bad)
+    with pytest.raises(NotImplementedError, match="not finite"):
+        resolve_material(m.materials["D"], 3, "material of pid 0")
