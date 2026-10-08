@@ -317,10 +317,10 @@ def test_drucker_prager_hardening_types():
 
 
 def test_drucker_prager_missing_items_and_hardening():
-    # beta / psi have no Guide default -> input error
-    for line in ("", ", 1.0, 10.0", "30.0, 1.0"):
+    # blank beta / psi are zero (Abaqus Input Syntax Rules)
+    for line in (", 1.0, 10.0", "30.0, 1.0"):
         reader, _ = _read_snippet(_dp_deck(line))
-        assert reader.diagnostics.of("error"), line
+        assert not reader.diagnostics.of("error"), line
     # K != 1 is a gap (Material has no K)
     reader, _ = _read_snippet(_dp_deck("30.0, 0.8, 10.0"))
     assert reader.diagnostics.of("gap")
@@ -448,8 +448,7 @@ def test_elastic_positional_temperature_and_field():
 
 def test_elastic_missing_nu_is_input_error():
     reader, model, bad = _errors("*MATERIAL, NAME=A\n*ELASTIC\n200000.\n")
-    assert any(d.level == "error" for d in bad)
-    assert model.materials["A"].elastic is None
+    assert not [d for d in bad if d.level == "error"] and model.materials["A"].elastic == (200000.0, 0.0)   # blank nu == 0
 
 
 def test_elastic_types_not_isotropic_are_gaps():
@@ -458,9 +457,10 @@ def test_elastic_types_not_isotropic_are_gaps():
         assert any(d.level == "gap" for d in bad), t
 
 
-def test_elastic_engineering_constants_needs_all_nine():
-    _, _, bad = _errors("*MATERIAL, NAME=A\n*ELASTIC, TYPE=ENGINEERING CONSTANTS\n1., 2., 3., .3, .3, .3, 5., 6.\n")
-    assert any(d.level == "error" for d in bad)
+def test_elastic_engineering_constants_two_lines():
+    # G23 on the second line omitted (or that line blank) == 0
+    _, m, bad = _errors("*MATERIAL, NAME=A\n*ELASTIC, TYPE=ENGINEERING CONSTANTS\n1., 2., 3., .3, .3, .3, 5., 6.\n")
+    assert m.materials["A"].extra_params["engineering_constants"][-1] == 0.0
 
 
 def test_expansion_layout():
@@ -480,7 +480,7 @@ def test_plastic_layout_and_unsupported_hardening():
     assert not bad and m.materials["P"].plastic == [(250., 0.)]
     # plastic strain missing: no Guide default
     _, _, bad = _errors("*MATERIAL, NAME=Q\n*PLASTIC\n250.\n")
-    assert any(d.level == "error" for d in bad)
+    assert not [d for d in bad if d.level == "error"]   # blank plastic strain == 0
     # DEPENDENCIES=1: (yield, strain, T, FV1)
     _, m, bad = _errors("*MATERIAL, NAME=F\n*PLASTIC, DEPENDENCIES=1\n250., 0., , 0.\n200., 0., , 1.\n")
     assert not bad
@@ -497,7 +497,7 @@ def test_plastic_johnson_cook_items():
     assert (jc["A"], jc["B"], jc["n"], jc["m"], jc["T_melt"], jc["T_room"]) == (500., 400., 0.3, 1.0, 1500., 20.)
     # m nonzero without the temperatures: input error (no Guide default)
     _, _, bad = _errors("*MATERIAL, NAME=K\n*PLASTIC, HARDENING=JOHNSON COOK\n500., 400., 0.3, 1.0\n")
-    assert any(d.level == "error" for d in bad)
+    assert not [d for d in bad if d.level == "error"]
 
 
 # ─── Guide data-line layout audit: CREEP / HYPERELASTIC / VISCOELASTIC / RATE DEPENDENT ───
@@ -513,7 +513,7 @@ def test_creep_laws():
     assert not bad
     # m is a needed item without a Guide default
     _, _, bad = _errors("*MATERIAL, NAME=D\n*CREEP\n1e-10, 5.\n")
-    assert any(d.level == "error" for d in bad)
+    assert not [d for d in bad if d.level == "error"]
     # HYPERB: A, B, n (delta H, R are temperature dependence, not the time exponent)
     _, m, bad = _errors("*MATERIAL, NAME=H\n*CREEP, LAW=HYPERB\n1e-10, 0.01, 3.\n")
     c = m.materials["H"].extra_params["creep"]
@@ -559,7 +559,7 @@ def test_hyperelastic_layouts():
     _, m, bad = _errors("*MATERIAL, NAME=E\n*HYPERELASTIC, NEO HOOKE\n0.4\n")
     assert not bad and m.materials["E"].hyperelastic["d1"] == 0.0
     _, _, bad = _errors("*MATERIAL, NAME=E\n*HYPERELASTIC, NEO HOOKE\n, 0.01\n")
-    assert any(d.level == "error" for d in bad)
+    assert not [d for d in bad if d.level == "error"]
     for hdr in ("*HYPERELASTIC, TYPE=NEO HOOKE", "*HYPERELASTIC, MARLOW"):
         _, _, bad = _errors(f"*MATERIAL, NAME=T\n{hdr}\n0.4, 0.01\n")
         assert any(d.level == "gap" for d in bad), hdr
@@ -571,7 +571,7 @@ def test_viscoelastic_requires_time_and_three_items():
     _, _, bad = _errors("*MATERIAL, NAME=V\n*VISCOELASTIC\n0.2, 0.1, 3.3\n")
     assert any(d.level == "error" for d in bad)
     _, _, bad = _errors("*MATERIAL, NAME=V\n*VISCOELASTIC, TIME=PRONY\n0.2, 3.3\n")
-    assert any(d.level == "error" for d in bad)
+    assert not [d for d in bad if d.level == "error"]
     _, _, bad = _errors("*MATERIAL, NAME=V\n*VISCOELASTIC, TIME=RELAXATION TEST DATA\n")
     assert any(d.level == "gap" for d in bad)
 
@@ -582,7 +582,7 @@ def test_rate_dependent_layout_and_dropped_effect():
     assert rd["C"] == 0.02 and rd["eps_dot_0"] == 1.0
     assert any(d.code == "rate-effect-dropped" for d in bad)   # no kernel consumes it
     _, _, bad = _errors("*MATERIAL, NAME=R\n*RATE DEPENDENT, TYPE=JOHNSON COOK\n0.02\n")
-    assert any(d.level == "error" for d in bad)
+    assert not [d for d in bad if d.level == "error"]
     _, _, bad = _errors("*MATERIAL, NAME=R\n*RATE DEPENDENT, TYPE=CHABOCHE\n1., 2., 3.\n")
     assert any(d.level == "gap" for d in bad)
 
@@ -610,17 +610,17 @@ def test_damage_initiation_johnson_cook_items():
     assert (di["Tmelt"], di["Troom"], di["eps0"]) == (1500., 20., 2.)
     # d5 / d4 nonzero need theta_melt, theta_transition / eps0 (no Guide default)
     _, _, bad = _errors("*MATERIAL, NAME=B\n*DAMAGE INITIATION, CRITERION=JOHNSON COOK\n0.1, 0.2, -1.5, 0., 0.5\n")
-    assert any(d.level == "error" for d in bad)
+    assert not [d for d in bad if d.level == "error"]
     _, _, bad = _errors("*MATERIAL, NAME=C\n*DAMAGE INITIATION, CRITERION=JOHNSON COOK\n0.1, 0.2, -1.5, 0.01\n")
-    assert any(d.level == "error" for d in bad)
+    assert not [d for d in bad if d.level == "error"]
 
 
 def test_damage_evolution_requirements():
     _, m, bad = _errors("*MATERIAL, NAME=A\n*DAMAGE EVOLUTION, TYPE=ENERGY\n12.5\n")
     assert not bad and m.materials["A"].extra_params["damage_evol"]["Gf"] == 12.5
     assert m.materials["A"].extra_params["damage_evol"]["type"] == 0       # SOFTENING default LINEAR
-    _, _, bad = _errors("*MATERIAL, NAME=B\n*DAMAGE EVOLUTION, TYPE=ENERGY\n")      # Gf missing
-    assert any(d.level == "error" for d in bad)
+    _, m, bad = _errors("*MATERIAL, NAME=B\n*DAMAGE EVOLUTION, TYPE=ENERGY\n,\n")   # empty cell: Gf == 0
+    assert m.materials["B"].extra_params["damage_evol"]["Gf"] == 0.0
     _, _, bad = _errors("*MATERIAL, NAME=C\n*DAMAGE EVOLUTION\n5.\n")               # TYPE required
     assert any(d.level == "error" for d in bad)
 
@@ -638,7 +638,7 @@ def test_cdp_tables_are_strain_value_pairs_and_psi_required():
     assert cd["dc_table"] == [(0., 0.)]           # no *CONCRETE COMPRESSION DAMAGE -> no damage
     assert any(d.code == "cdp-backbone-approximation" for d in bad)
     _, _, bad = _errors("*MATERIAL, NAME=D\n*CONCRETE DAMAGED PLASTICITY\n, 0.1\n")
-    assert any(d.level == "error" for d in bad)
+    assert not [d for d in bad if d.level == "error"]
     _, _, bad = _errors("*MATERIAL, NAME=E\n*CONCRETE DAMAGED PLASTICITY\n36., 0.3\n")   # eccentricity 0.3 != default
     assert any(d.level == "gap" for d in bad)
 
@@ -651,7 +651,7 @@ def test_mullins_data_line_and_beta_default():
     assert (mu["r"], mu["m"], mu["beta"]) == (2.5, 0.6, 0.0)       # blank beta: 0.0 (Abaqus/Standard)
     assert any(d.code == "mullins-not-connected" for d in bad)     # no kernel consumes it
     _, _, bad = _errors("*MATERIAL, NAME=B\n*MULLINS EFFECT\n2.5\n")
-    assert any(d.level == "error" for d in bad)
+    assert not [d for d in bad if d.level == "error"]
     # R / M / BETA parameters belong to TEST DATA INPUT
     _, _, bad = _errors("*MATERIAL, NAME=C\n*MULLINS EFFECT, R=2.5\n2.5, 0.6, 0.1\n")
     assert any(d.level == "gap" for d in bad)
@@ -671,7 +671,7 @@ def test_trs_wlf_line():
     _, _, bad = _errors("*MATERIAL, NAME=B\n*TRS, DEFINITION=ARRHENIUS\n20., 1e5\n")
     assert any(d.level == "gap" for d in bad)
     _, _, bad = _errors("*MATERIAL, NAME=C\n*TRS\n20., 17.4\n")
-    assert any(d.level == "error" for d in bad)
+    assert not [d for d in bad if d.level == "error"]
 
 
 def test_orientation_origin_and_rotation():
@@ -689,3 +689,41 @@ def test_orientation_origin_and_rotation():
     # Z RECTANGULAR is an Abaqus system; ZCYLINDRICAL is not
     _, m, bad = _errors("*ORIENTATION, NAME=Z, SYSTEM=Z RECTANGULAR\n1., 0., 0., 0., 1., 0.\n")
     assert not [d for d in bad if d.level == "error"]
+
+
+# ─── Abaqus Input Syntax Rules: blank / omitted numeric data items are zero ──
+
+def test_blank_numeric_items_are_zero_across_keywords():
+    # "Abaqus will use values of zero for any required numeric data that are omitted unless a
+    # default value is specified"
+    _, m, bad = _errors("*MATERIAL, NAME=A\n*ELASTIC\n1.E8,\n")                       # nu
+    assert not bad and m.materials["A"].elastic == (1.0e8, 0.0)
+    _, m, bad = _errors("*MATERIAL, NAME=B\n*VISCOELASTIC, TIME=PRONY\n0.5,,10.\n")    # k
+    assert not bad and m.materials["B"].viscoelastic_prony == [(0.5, 0.0, 10.)]
+    _, m, bad = _errors("*MATERIAL, NAME=C\n*CREEP, LAW=TIME\n1e-10, 5.\n")            # m
+    assert not bad and m.materials["C"].extra_params["creep"]["m"] == 0.0
+    _, m, bad = _errors("*MATERIAL, NAME=D\n*DRUCKER PRAGER\n30.\n*DRUCKER PRAGER HARDENING\n10.\n")
+    dp = m.materials["D"].extra_params["drucker_prager"]
+    assert not [x for x in bad if x.level == "error"] and dp["psi"] == 0.0 and dp["H"] == 0.0
+    _, m, bad = _errors("*MATERIAL, NAME=E\n*CONCRETE DAMAGED PLASTICITY\n,\n*CONCRETE COMPRESSION HARDENING\n15.\n"
+                        "*CONCRETE TENSION STIFFENING\n3.\n")
+    assert m.materials["E"].extra_params["concrete_dp"]["psi"] == 0.0
+    # items with their own documented default keep it
+    _, m, bad = _errors("*MATERIAL, NAME=F\n*MULLINS EFFECT\n2.5, 0.6\n")
+    assert m.materials["F"].extra_params["mullins"]["beta"] == 0.0                     # Standard default
+    _, _, bad = _errors("*MATERIAL, NAME=G\n*DRUCKER PRAGER\n30., 0., 10.\n*DRUCKER PRAGER HARDENING\n10., 0.\n")
+    assert not [x for x in bad if x.level in ("error", "gap")]                         # K == 0 -> 1.0
+
+
+def test_schema_numeric_row_field_blank_is_zero_but_str_still_raises():
+    from dispsolver.io.schema import RowSchema, parse_rows, InputError
+
+    class R(RowSchema):
+        name: str
+        a: float
+        n: int
+
+    rows = parse_rows("X", R, ["ab, 1.5", "cd,,3", "ef"], [None] * 3)
+    assert [(r.name, r.a, r.n) for r in rows] == [("ab", 1.5, 0), ("cd", 0.0, 3), ("ef", 0.0, 0)]
+    with pytest.raises(InputError):
+        parse_rows("X", R, [",1.5,2"], [None])        # str item blank: still missing

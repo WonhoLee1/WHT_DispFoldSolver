@@ -39,6 +39,13 @@ class FloatRow(RowSchema):
     items: Tuple[float, ...] = ()
 
 
+def _z(v) -> float:
+    """A blank or omitted numeric data item is zero (Abaqus Input Syntax Rules: "Abaqus will
+    use values of zero for any required numeric data that are omitted unless a default value
+    is specified"). Items with their own documented default are handled where they are read."""
+    return 0.0 if v is None else float(v)
+
+
 def _cells(row, n: int) -> list:
     """The first n data items of a line by position (None for a blank or missing one)."""
     v = list(row.items)[:n]
@@ -89,14 +96,15 @@ def _tabulate(kw: str, rows, ncols: int, dependencies: int, names: Tuple[str, ..
         raise Unsupported(f"*{kw}: DEPENDENCIES={dependencies} (several field variables) is not represented")
     width = ncols + 1 + dependencies
     grid = [_cells(r, width) for r in rows]
-    for g in grid:
+    for g in grid:                       # blank / omitted numeric items are zero
         for i in range(ncols):
             if g[i] is None:
-                raise InputError(f"*{kw}: data item {i + 1} ({names[i]}) is missing; the Keywords Guide gives no default")
+                g[i] = 0.0
     temps = [g[ncols] for g in grid]
     if dependencies == 1:
-        if any(g[ncols + 1] is None for g in grid):
-            raise InputError(f"*{kw}: DEPENDENCIES=1 needs the field variable (data item {ncols + 2}) on every line")
+        for g in grid:
+            if g[ncols + 1] is None:
+                g[ncols + 1] = 0.0
         if any(t is not None and t != temps[0] for t in temps):
             raise Unsupported(f"*{kw}: joint temperature and field-variable dependence is not represented")
         return "field", tuple(tuple(float(v) for v in g[:ncols]) + (float(g[ncols + 1]),) for g in grid)
@@ -140,12 +148,12 @@ class Elastic(Keyword):
             # line 1: E1 E2 E3 nu12 nu13 nu23 G12 G13; line 2: G23, temperature, fields
             if p.dependencies:
                 raise Unsupported("*ELASTIC, TYPE=ENGINEERING CONSTANTS: DEPENDENCIES not represented")
-            if len(rows) != 2:
+            if len(rows) not in (1, 2):
                 raise InputError("*ELASTIC, TYPE=ENGINEERING CONSTANTS needs two data lines (a single temperature set)")
-            a, b = _cells(rows[0], 8), _cells(rows[1], 2)
+            # an all-blank second line carries no cells, so the parser drops it: G23 == 0
+            a, b = _cells(rows[0], 8), (_cells(rows[1], 2) if len(rows) == 2 else [None, None])
             vals = a + [b[0]]
-            if any(v is None for v in vals):
-                raise InputError("*ELASTIC, TYPE=ENGINEERING CONSTANTS: E1 E2 E3 nu12 nu13 nu23 G12 G13 G23 are all required")
+            vals = [_z(v) for v in vals]
             if b[1] is not None:
                 raise Unsupported("*ELASTIC, TYPE=ENGINEERING CONSTANTS: temperature dependence not represented")
             yield ElasticRecord(type=p.type, kind="const", table=(tuple(float(v) for v in vals),), loc=ctx.loc)
@@ -241,17 +249,12 @@ class Plastic(Keyword):
             if len(rows) != 1:
                 raise InputError("*PLASTIC, HARDENING=JOHNSON COOK takes exactly one data line")
             v = _cells(rows[0], 6)
-            for i, nm in enumerate(("A", "B", "n")):
-                if v[i] is None:
-                    raise InputError(f"*PLASTIC, HARDENING=JOHNSON COOK: {nm} (data item {i + 1}) is required")
-            m = 0.0 if v[3] is None else float(v[3])
-            if m != 0.0 and (v[4] is None or v[5] is None):
-                raise InputError("*PLASTIC, HARDENING=JOHNSON COOK: melting and transition temperature are required when m is nonzero")
+            m = _z(v[3])
             yield Note("gap", "rate-effect-dropped",
                        "*PLASTIC HARDENING=JOHNSON_COOK: quasi-static isothermal landing (C=0, dispatcher carries no rate)",
                        loc=ctx.loc)
             yield PlasticRecord(hardening=hard, kind="const",
-                                table=((float(v[0]), float(v[1]), float(v[2]), m, v[4], v[5]),), loc=ctx.loc)
+                                table=((_z(v[0]), _z(v[1]), _z(v[2]), m, v[4], v[5]),), loc=ctx.loc)
             return
         kind, table = _tabulate("PLASTIC", rows, 2, p.dependencies, ("yield stress", "plastic strain"), curve=True)
         yield PlasticRecord(hardening=hard, kind=kind, table=table, loc=ctx.loc)
@@ -265,8 +268,8 @@ def _apply_plastic(reader: AbaqusInputReader, rec: PlasticRecord) -> None:
     if rec.hardening == "JOHNSON_COOK":
         A, B, n, m, t_melt, t_trans = rec.table[0]
         kw = {}
-        if t_melt is not None and t_trans is not None:
-            kw = {"T_melt": float(t_melt), "T_room": float(t_trans)}
+        if m != 0.0:                       # temperature terms only matter for m != 0 (blank == 0)
+            kw = {"T_melt": _z(t_melt), "T_room": _z(t_trans)}
         mat.JohnsonCook(A=A, B=B, n=n, m=m, **kw)
     elif rec.kind == "field":
         mat.Plastic(table=rec.table, hardening=rec.hardening, field_table=rec.table)
@@ -302,9 +305,7 @@ class Creep(Keyword):
             if len(rows) > 1:
                 raise Unsupported("*CREEP: several data lines (temperature dependence) are not represented")
             v = _cells(rows[0], 4)
-            for i, nm in enumerate(("A", "n", "m")):
-                if v[i] is None:
-                    raise InputError(f"*CREEP LAW={law}: {nm} (data item {i + 1}) is required; the Keywords Guide gives no default")
+            v[:3] = [_z(x) for x in v[:3]]
             if v[3] is not None:
                 raise Unsupported("*CREEP: temperature-dependent constants are not represented")
             if law == "STRAIN" and v[2] != 0.0:
@@ -315,9 +316,7 @@ class Creep(Keyword):
             if len(rows) > 1:
                 raise Unsupported("*CREEP: several data lines (field dependence) are not represented")
             v = _cells(rows[0], 5)
-            for i, nm in enumerate(("A", "B", "n")):
-                if v[i] is None:
-                    raise InputError(f"*CREEP LAW=HYPERB: {nm} (data item {i + 1}) is required")
+            v[:3] = [_z(x) for x in v[:3]]
             if v[3] not in (None, 0.0) or v[4] not in (None, 0.0):
                 raise Unsupported("*CREEP LAW=HYPERB: temperature dependence (delta H, R) is not represented")
             table = ((float(v[0]), float(v[1]), float(v[2])),)
@@ -325,8 +324,8 @@ class Creep(Keyword):
             if len(rows) != 2:
                 raise InputError("*CREEP LAW=ANAND needs two data lines")
             a, b = _cells(rows[0], 8), _cells(rows[1], 8)
-            if any(x is None for x in a) or b[0] is None:
-                raise InputError("*CREEP LAW=ANAND: S1 Q/R A xi m A0 shat n / a are required")
+            a = [_z(x) for x in a]
+            b[0] = _z(b[0])
             if any(x not in (None, 0.0) for x in b[1:]):
                 raise Unsupported("*CREEP LAW=ANAND: S2, S3, A1..A4 are not represented")
             table = (tuple(float(x) for x in a + [b[0]]),)
@@ -360,8 +359,6 @@ def _coef_line(kw: str, rows, k_req: int, k_all: int, what: str) -> list:
     if len(rows) != 1:
         raise Unsupported(f"*{kw}: several data lines (temperature sets) are not represented")
     cells = _cells(rows[0], k_all + 1)
-    if any(c is None for c in cells[:k_req]):
-        raise InputError(f"*{kw}: {what}: the first {k_req} values are required; the Keywords Guide gives no default")
     if cells[k_all] is not None or len(rows[0].items) > k_all + 1:
         raise Unsupported(f"*{kw}: temperature-dependent constants are not represented")
     return [0.0 if c is None else float(c) for c in cells[:k_all]]
@@ -440,11 +437,9 @@ class Hyperelastic(Keyword):
             if not 1 <= n <= 6:
                 raise InputError(f"*HYPERELASTIC, OGDEN, N={n}: N must be 1..6")
             vals = [float(x) for r in rows for x in r.items if x is not None]
-            if len(vals) < 2 * n:
-                raise InputError(f"*HYPERELASTIC, OGDEN, N={n}: mu_i, alpha_i (i=1..{n}) are required")
             if len(vals) > 3 * n:
                 raise Unsupported("*HYPERELASTIC, OGDEN: temperature-dependent constants are not represented")
-            vals = vals + [0.0] * (3 * n - len(vals))          # omitted D_i == 0
+            vals = vals + [0.0] * (3 * n - len(vals))          # omitted items are zero
             mus, als, ds = vals[0:2 * n:2], vals[1:2 * n:2], vals[2 * n:]
             model, table = "OGDEN", tuple((mus[i], als[i], ds[i]) for i in range(n))
         yield HyperelasticRecord(model=model, n=n, table=table, coef=tuple(coef.items()), loc=ctx.loc)
@@ -497,10 +492,9 @@ class Viscoelastic(Keyword):
             raise InputError("*VISCOELASTIC: no Prony data line")
         table = []
         for r in rows:
-            v = _cells(r, 3)
-            if any(x is None for x in v) or len(r.items) > 3:
-                raise InputError("*VISCOELASTIC: each line needs g_i, k_i and tau_i (the Keywords Guide gives no default)")
-            table.append(tuple(float(x) for x in v))
+            if len(r.items) > 3:
+                raise InputError("*VISCOELASTIC: at most g_i, k_i and tau_i per line")
+            table.append(tuple(_z(x) for x in _cells(r, 3)))
         yield ViscoelasticRecord(time=p.time, type=p.type, table=tuple(table), loc=ctx.loc)
 
 
@@ -543,11 +537,9 @@ class RateDependent(Keyword):
         table = []
         for r in rows:
             v = _cells(r, 3)
-            if v[0] is None or v[1] is None:
-                raise InputError(f"*RATE DEPENDENT: {names[0]} and {names[1]} are required; the Keywords Guide gives no default")
             if v[2] is not None:
                 raise Unsupported("*RATE DEPENDENT: temperature-dependent data is not represented")
-            table.append((float(v[0]), float(v[1])))
+            table.append((_z(v[0]), _z(v[1])))
         yield Note("gap", "rate-effect-dropped",
                    "*RATE DEPENDENT is stored on the material but no kernel consumes it: the solve is rate independent",
                    loc=ctx.loc)
@@ -599,20 +591,12 @@ class DamageInitiation(Keyword):
                 raise InputError("*DAMAGE INITIATION, CRITERION=JOHNSON COOK takes one data line")
             v = _cells(rows[0], 8)
             d = v[:5]
-            if any(x is None for x in d):
-                raise InputError("*DAMAGE INITIATION, CRITERION=JOHNSON COOK: d1..d5 are all required; "
-                                 "the Keywords Guide gives no default")
+            d = [_z(x) for x in d]
             extra = {}
-            if d[4] != 0.0:          # temperature term in use
-                if v[5] is None or v[6] is None:
-                    raise InputError("*DAMAGE INITIATION, CRITERION=JOHNSON COOK: theta_melt and theta_transition "
-                                     "are required when d5 is nonzero")
-                extra.update(Tmelt=float(v[5]), Troom=float(v[6]))
-            if d[3] != 0.0:          # rate term in use
-                if v[7] is None:
-                    raise InputError("*DAMAGE INITIATION, CRITERION=JOHNSON COOK: the reference strain rate is "
-                                     "required when d4 is nonzero")
-                extra["eps0"] = float(v[7])
+            if d[4] != 0.0:          # temperature term in use (blank == 0)
+                extra.update(Tmelt=_z(v[5]), Troom=_z(v[6]))
+            if d[3] != 0.0:          # rate term in use (blank == 0)
+                extra["eps0"] = _z(v[7])
             yield DamageInitiationRecord(criterion="JOHNSON_COOK", table=(tuple(float(x) for x in d),),
                                          extra=tuple(extra.items()), loc=ctx.loc)
             return
@@ -620,18 +604,16 @@ class DamageInitiation(Keyword):
         pts = []
         for r in rows:
             v = _cells(r, 4)
-            if v[0] is None:
-                raise InputError("*DAMAGE INITIATION, CRITERION=DUCTILE: the equivalent plastic strain at "
-                                 "initiation (data item 1) is required")
             if v[2] not in (None, 0.0):
                 raise Unsupported("*DAMAGE INITIATION, CRITERION=DUCTILE: strain-rate dependence is not represented")
             if v[3] is not None:
                 raise Unsupported("*DAMAGE INITIATION, CRITERION=DUCTILE: temperature dependence is not represented")
-            pts.append((v[0], v[1]))
+            pts.append((_z(v[0]), v[1]))
         if len(pts) == 1:
             table = ((float(pts[0][0]),),)                       # constant eD
         elif len(pts) == 2:
-            if any(t is None for _, t in pts) or pts[0][1] == pts[1][1]:
+            pts = [(e, _z(t)) for e, t in pts]
+            if pts[0][1] == pts[1][1]:
                 raise InputError("*DAMAGE INITIATION, CRITERION=DUCTILE: two points need distinct triaxialities")
             pts.sort(key=lambda x: x[1])
             table = tuple((float(t), float(e)) for e, t in pts)  # Material convention: (triaxiality, eD)
@@ -673,17 +655,12 @@ class DamageEvolution(Keyword):
     Row = FloatRow
 
     def to_records(self, p, rows, ctx) -> Iterable[Record]:
-        if not rows:
-            raise InputError("*DAMAGE EVOLUTION: no data line (the fracture energy is required)")
         if len(rows) > 1:
             raise Unsupported("*DAMAGE EVOLUTION: several data lines (temperature dependence) are not represented")
-        v = _cells(rows[0], 2)
-        if v[0] is None or v[0] <= 0.0:
-            raise InputError("*DAMAGE EVOLUTION: a positive fracture energy (data item 1) is required; "
-                             "the Keywords Guide gives no default")
+        v = _cells(rows[0], 2) if rows else [None, None]      # an all-blank line: Gf == 0
         if v[1] is not None:
             raise Unsupported("*DAMAGE EVOLUTION: temperature-dependent fracture energy is not represented")
-        yield DamageEvolutionRecord(type=f"ENERGY_{p.softening}", Gf=float(v[0]), loc=ctx.loc)
+        yield DamageEvolutionRecord(type=f"ENERGY_{p.softening}", Gf=_z(v[0]), loc=ctx.loc)
 
 
 @applies(DamageEvolutionRecord)
@@ -723,16 +700,12 @@ class DruckerPrager(Keyword):
         if len(rows) > 1:
             raise Unsupported("*DRUCKER PRAGER: several data lines (temperature dependence) are not represented")
         v = _cells(rows[0], 4)
-        if v[0] is None:
-            raise InputError("*DRUCKER PRAGER: friction angle beta (data item 1) is required; the Keywords Guide gives no default")
-        if v[2] is None:
-            raise InputError("*DRUCKER PRAGER: dilation angle psi (data item 3) is required; the Keywords Guide gives no default")
         k = 1.0 if v[1] is None or v[1] == 0.0 else v[1]
         if k != 1.0:
             raise Unsupported(f"*DRUCKER PRAGER: K={k} (flow-stress ratio) is not represented; only K=1.0")
         if v[3] is not None:
             raise Unsupported("*DRUCKER PRAGER: temperature-dependent data is not represented")
-        yield DruckerPragerRecord(beta=float(v[0]), psi=float(v[2]), loc=ctx.loc)
+        yield DruckerPragerRecord(beta=_z(v[0]), psi=_z(v[2]), loc=ctx.loc)
 
 
 @applies(DruckerPragerRecord)
@@ -770,11 +743,9 @@ class DruckerPragerHardening(Keyword):
         table = []
         for r in rows:
             v = _cells(r, 3)
-            if v[0] is None or v[1] is None:
-                raise InputError("*DRUCKER PRAGER HARDENING: each line needs yield stress and plastic strain")
             if v[2] is not None:
                 raise Unsupported("*DRUCKER PRAGER HARDENING: temperature-dependent data is not represented")
-            table.append((float(v[0]), float(v[1])))
+            table.append((_z(v[0]), _z(v[1])))
         if table[0][1] != 0.0:
             raise InputError("*DRUCKER PRAGER HARDENING: the first plastic strain must be zero (Keywords Guide)")
         yield DruckerPragerHardeningRecord(type=p.type, table=tuple(table), loc=ctx.loc)
@@ -856,13 +827,11 @@ def _cdp_pairs(kw: str, rows, names: Tuple[str, str]) -> Tuple[Tuple[float, floa
     out = []
     for r in rows:
         v = _cells(r, 4)
-        if v[0] is None or v[1] is None:
-            raise InputError(f"*{kw}: each line needs {names[0]} and {names[1]}")
         if v[2] not in (None, 0.0):
             raise Unsupported(f"*{kw}: rate-dependent data is not represented")
         if v[3] is not None:
             raise Unsupported(f"*{kw}: temperature-dependent data is not represented")
-        out.append((float(v[1]), float(v[0])))
+        out.append((_z(v[1]), _z(v[0])))
     return tuple(out)
 
 
@@ -883,14 +852,9 @@ class ConcreteDamagedPlasticity(Keyword):
     Row = FloatRow
 
     def to_records(self, p, rows, ctx) -> Iterable[Record]:
-        if not rows:
-            raise InputError("*CONCRETE DAMAGED PLASTICITY: no data line (the dilation angle is required)")
         if len(rows) > 1:
             raise Unsupported("*CONCRETE DAMAGED PLASTICITY: several data lines (temperature dependence) not represented")
-        v = _cells(rows[0], 6)
-        if v[0] is None:
-            raise InputError("*CONCRETE DAMAGED PLASTICITY: the dilation angle psi (data item 1) is required; "
-                             "the Keywords Guide gives no default")
+        v = _cells(rows[0], 6) if rows else [None] * 6        # an all-blank line has no cells: psi == 0
         # items 2-5: eccentricity, fb0/fc0, Kc, viscosity -- the material is a Drucker-Prager
         # backbone that does not use them; only the Guide defaults (blank, 0.0 or the default
         # value itself) can be accepted
@@ -904,7 +868,7 @@ class ConcreteDamagedPlasticity(Keyword):
                    "*CONCRETE DAMAGED PLASTICITY runs on a Drucker-Prager backbone (friction angle fixed at 20 deg, "
                    "no Lubliner/Kc yield surface, no cyclic stiffness recovery); the Abaqus defaults of eccentricity, "
                    "fb0/fc0, Kc and viscosity are not applied", loc=ctx.loc)
-        yield ConcreteDPRecord(psi=float(v[0]), beta=20.0, loc=ctx.loc)
+        yield ConcreteDPRecord(psi=_z(v[0]), beta=20.0, loc=ctx.loc)
 
 
 @applies(ConcreteDPRecord)
@@ -1063,8 +1027,6 @@ class MullinsEffect(Keyword):
         if len(rows) != 1:
             raise InputError("*MULLINS EFFECT takes one data line (r, m, beta)")
         v = _cells(rows[0], 4)
-        if v[0] is None or v[1] is None:
-            raise InputError("*MULLINS EFFECT: r and m (data items 1, 2) are required; the Keywords Guide gives no default")
         if v[3] is not None:
             raise Unsupported("*MULLINS EFFECT: temperature-dependent constants are not represented")
         # Guide: a blank beta is 0.0 in Abaqus/Standard (0.1 in Abaqus/Explicit); this is the implicit solver
@@ -1072,7 +1034,7 @@ class MullinsEffect(Keyword):
         yield Note("gap", "mullins-not-connected",
                    "*MULLINS EFFECT: parsed and stored; no material kernel consumes it, so the solve has no Mullins softening",
                    loc=ctx.loc)
-        yield MullinsRecord(r=float(v[0]), m=float(v[1]), beta=beta, loc=ctx.loc)
+        yield MullinsRecord(r=_z(v[0]), m=_z(v[1]), beta=beta, loc=ctx.loc)
 
 
 @applies(MullinsRecord)
@@ -1106,11 +1068,9 @@ class Density(Keyword):
         if len(rows) > 1:
             raise Unsupported("*DENSITY: several data lines (temperature dependence) are not represented")
         v = _cells(rows[0], 2)
-        if v[0] is None:
-            raise InputError(f"*DENSITY at {ctx.loc}: missing density value")
         if v[1] is not None:
             raise Unsupported("*DENSITY: temperature-dependent density is not represented")
-        yield DensityRecord(density=float(v[0]), loc=ctx.loc)
+        yield DensityRecord(density=_z(v[0]), loc=ctx.loc)
 
 
 @applies(DensityRecord)
@@ -1143,12 +1103,12 @@ class TRS(Keyword):
         if len(rows) != 1:
             raise InputError("*TRS, DEFINITION=WLF takes one data line (theta0, C1, C2)")
         v = _cells(rows[0], 3)
-        if any(x is None for x in v) or len(rows[0].items) > 3:
-            raise InputError("*TRS, DEFINITION=WLF: reference temperature, C1 and C2 are all required")
+        if len(rows[0].items) > 3:
+            raise InputError("*TRS, DEFINITION=WLF: at most reference temperature, C1 and C2")
         yield Note("gap", "trs-not-connected",
                    "*TRS: parsed and stored; no material kernel consumes the shift function",
                    loc=ctx.loc)
-        yield TRSRecord(definition=p.definition, values=tuple(float(x) for x in v), loc=ctx.loc)
+        yield TRSRecord(definition=p.definition, values=tuple(_z(x) for x in v), loc=ctx.loc)
 
 
 @applies(TRSRecord)
@@ -1191,9 +1151,9 @@ class Orientation(Keyword):
             raise InputError(f"*ORIENTATION {p.name}: no data line")
         raw_rows = tuple(tuple(v for v in r.items if v is not None) for r in rows)
         first = _cells(rows[0], 9)
-        n_pts = 6 if p.definition == "COORDINATES" else 2
-        if any(x is None for x in first[:n_pts]):
-            raise InputError(f"*ORIENTATION {p.name}: points a and b are required (first data line)")
+        if p.definition == "COORDINATES":      # blank point coordinates are zero; keep positions
+            n_first = 9 if any(x is not None for x in first[6:]) else 6
+            raw_rows = (tuple(_z(x) for x in first[:n_first]),) + raw_rows[1:]
         # second line: local direction and additional rotation alpha (defaults: direction 1, 0 degrees)
         if len(rows) > 1:
             second = _cells(rows[1], 2)
