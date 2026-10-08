@@ -70,10 +70,12 @@ def test_elastic_engineering_constants():
     deck = """
 *MATERIAL, NAME=COMPOSITE
 *ELASTIC, TYPE=ENGINEERING CONSTANTS
-10000.0, 2000.0, 2000.0, 0.3, 0.3, 0.3, 500.0, 500.0, 500.0
+10000.0, 2000.0, 2000.0, 0.3, 0.3, 0.3, 500.0, 500.0
+450.0
 """
     reader, model = _read_snippet(deck)
     mat = model.materials["COMPOSITE"]
+    assert mat.extra_params["engineering_constants"] == (10000.0, 2000.0, 2000.0, 0.3, 0.3, 0.3, 500.0, 500.0, 450.0)
     mid = material_id(mat)
     assert mid == MAT_CUSTOM_ELASTIC
     props = pack_props(mat, dim=3)
@@ -420,3 +422,78 @@ def test_orientation():
     assert ori.system == "RECTANGULAR"
     assert ori.frame is not None
     assert np.allclose(ori.frame, np.eye(3))
+
+
+# ─── Guide data-line layout audit: ELASTIC / EXPANSION / PLASTIC ─────────────
+
+def _errors(deck):
+    reader, model = _read_snippet(deck)
+    return reader, model, [d for d in reader.diagnostics.of("error", "gap")]
+
+
+def test_elastic_positional_temperature_and_field():
+    # (E, nu, T): temperature table
+    _, m, bad = _errors("*MATERIAL, NAME=A\n*ELASTIC\n200000., 0.3, 20.\n180000., 0.3, 100.\n")
+    assert not bad
+    assert m.materials["A"].extra_params["temp_elastic_table"] == [(200000., 0.3, 20.), (180000., 0.3, 100.)]
+    # DEPENDENCIES=1: data items are E, nu, T, FV1 -- the field variable is item 4, not item 3
+    _, m, bad = _errors("*MATERIAL, NAME=B\n*ELASTIC, DEPENDENCIES=1\n200000., 0.3, , 0.\n160000., 0.3, , 1.\n")
+    assert not bad
+    assert m.materials["B"].extra_params["field_elastic_table"] == [(200000., 0.3, 0.), (160000., 0.3, 1.)]
+    # temperature together with a field variable is not represented
+    _, _, bad = _errors("*MATERIAL, NAME=C\n*ELASTIC, DEPENDENCIES=1\n5., 0.3, 0., 0.\n5., 0.3, 10., 0.\n")
+    assert bad
+
+
+def test_elastic_missing_nu_is_input_error():
+    reader, model, bad = _errors("*MATERIAL, NAME=A\n*ELASTIC\n200000.\n")
+    assert any(d.level == "error" for d in bad)
+    assert model.materials["A"].elastic is None
+
+
+def test_elastic_types_not_isotropic_are_gaps():
+    for t in ("LAMINA", "ORTHOTROPIC", "ANISOTROPIC", "TRACTION"):
+        _, _, bad = _errors(f"*MATERIAL, NAME=A\n*ELASTIC, TYPE={t}\n1., 2., 3., 4., 5., 6.\n")
+        assert any(d.level == "gap" for d in bad), t
+
+
+def test_elastic_engineering_constants_needs_all_nine():
+    _, _, bad = _errors("*MATERIAL, NAME=A\n*ELASTIC, TYPE=ENGINEERING CONSTANTS\n1., 2., 3., .3, .3, .3, 5., 6.\n")
+    assert any(d.level == "error" for d in bad)
+
+
+def test_expansion_layout():
+    _, m, bad = _errors("*MATERIAL, NAME=A\n*EXPANSION, ZERO=20.\n1.2e-5, 20.\n1.3e-5, 100.\n")
+    assert not bad
+    e = m.materials["A"].expansion
+    assert e["table"] == [(1.2e-5, 20.), (1.3e-5, 100.)] and e["zero"] == 20.0
+    _, _, bad = _errors("*MATERIAL, NAME=B\n*EXPANSION, TYPE=ORTHO\n1e-5, 2e-5, 3e-5\n")
+    assert any(d.level == "gap" for d in bad)
+
+
+def test_plastic_layout_and_unsupported_hardening():
+    _, m, bad = _errors("*MATERIAL, NAME=A\n*PLASTIC\n250., 0.\n300., 0.1\n")
+    assert not bad and m.materials["A"].plastic == [(250., 0.), (300., 0.1)]
+    # perfect plasticity: one line (yield, 0)
+    _, m, bad = _errors("*MATERIAL, NAME=P\n*PLASTIC\n250., 0.\n")
+    assert not bad and m.materials["P"].plastic == [(250., 0.)]
+    # plastic strain missing: no Guide default
+    _, _, bad = _errors("*MATERIAL, NAME=Q\n*PLASTIC\n250.\n")
+    assert any(d.level == "error" for d in bad)
+    # DEPENDENCIES=1: (yield, strain, T, FV1)
+    _, m, bad = _errors("*MATERIAL, NAME=F\n*PLASTIC, DEPENDENCIES=1\n250., 0., , 0.\n200., 0., , 1.\n")
+    assert not bad
+    assert m.materials["F"].extra_params["field_plastic_table"] == [(250., 0., 0.), (200., 0., 1.)]
+    for h in ("KINEMATIC", "COMBINED"):
+        _, _, bad = _errors(f"*MATERIAL, NAME=K\n*PLASTIC, HARDENING={h}\n250., 0.\n")
+        assert any(d.level == "gap" for d in bad), h
+
+
+def test_plastic_johnson_cook_items():
+    # A, B, n, m, theta_melt, theta_transition
+    _, m, bad = _errors("*MATERIAL, NAME=J\n*PLASTIC, HARDENING=JOHNSON COOK\n500., 400., 0.3, 1.0, 1500., 20.\n")
+    jc = m.materials["J"].extra_params["johnson_cook"]
+    assert (jc["A"], jc["B"], jc["n"], jc["m"], jc["T_melt"], jc["T_room"]) == (500., 400., 0.3, 1.0, 1500., 20.)
+    # m nonzero without the temperatures: input error (no Guide default)
+    _, _, bad = _errors("*MATERIAL, NAME=K\n*PLASTIC, HARDENING=JOHNSON COOK\n500., 400., 0.3, 1.0\n")
+    assert any(d.level == "error" for d in bad)

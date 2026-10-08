@@ -74,25 +74,60 @@ def _apply_material(reader: AbaqusInputReader, rec: MaterialRecord) -> None:
     reader.context = KeywordContext.MATERIAL
 
 
+def _tabulate(kw: str, rows, ncols: int, dependencies: int, names: Tuple[str, ...], curve: bool = False):
+    """Data lines of `ncols` items [+ temperature + field variables] -> (kind, table).
+
+    Keywords Guide layout: items 1..ncols, then temperature, then the field
+    variables. kind is 'const' (one line), 'temp' (lines with temperature) or
+    'field' (DEPENDENCIES=1; rows are (items..., FV1)). Blank cells keep their
+    position. Several lines without temperature, several field variables, and
+    temperature together with a field variable are not represented.
+    """
+    if not rows:
+        raise InputError(f"*{kw}: no data line")
+    if dependencies > 1:
+        raise Unsupported(f"*{kw}: DEPENDENCIES={dependencies} (several field variables) is not represented")
+    width = ncols + 1 + dependencies
+    grid = [_cells(r, width) for r in rows]
+    for g in grid:
+        for i in range(ncols):
+            if g[i] is None:
+                raise InputError(f"*{kw}: data item {i + 1} ({names[i]}) is missing; the Keywords Guide gives no default")
+    temps = [g[ncols] for g in grid]
+    if dependencies == 1:
+        if any(g[ncols + 1] is None for g in grid):
+            raise InputError(f"*{kw}: DEPENDENCIES=1 needs the field variable (data item {ncols + 2}) on every line")
+        if any(t is not None and t != temps[0] for t in temps):
+            raise Unsupported(f"*{kw}: joint temperature and field-variable dependence is not represented")
+        return "field", tuple(tuple(float(v) for v in g[:ncols]) + (float(g[ncols + 1]),) for g in grid)
+    if all(t is None for t in temps):
+        if len(grid) > 1 and not curve:
+            raise InputError(f"*{kw}: several data lines without temperature")
+        return "const", tuple(tuple(float(v) for v in g[:ncols]) for g in grid)
+    if any(t is None for t in temps):
+        raise InputError(f"*{kw}: temperature is missing on some data lines")
+    return "temp", tuple(tuple(float(v) for v in g[:ncols + 1]) for g in grid)
+
+
 # ─── 2. *ELASTIC ─────────────────────────────────────────────────────────────
 
 @dataclass(frozen=True)
 class ElasticRecord(Record):
     type: str
-    dependencies: int
+    kind: str
     table: Tuple[Tuple[float, ...], ...]
 
 
 @keyword("ELASTIC", support="FULL", contexts={KeywordContext.MATERIAL, KeywordContext.GLOBAL})
 class Elastic(Keyword):
-    """Linear elasticity: Young's modulus, Poisson's ratio, engineering constants, orthotropy."""
+    """Linear elasticity: isotropic (E, nu[, T]) and engineering constants."""
 
     class Params(Schema):
         type: Literal[
             "ISOTROPIC", "ENGINEERING CONSTANTS", "ORTHOTROPIC", "ANISOTROPIC",
             "TRACTION", "BILAMINA", "LAMINA", "SHORT FIBER", "COUPLED TRACTION",
             "TRANSVERSELY ISOTROPIC", "SHEAR"
-        ] = Param("ISOTROPIC", supported=("ISOTROPIC", "ENGINEERING CONSTANTS", "ORTHOTROPIC", "ANISOTROPIC", "TRACTION", "LAMINA"))
+        ] = Param("ISOTROPIC", supported=("ISOTROPIC", "ENGINEERING CONSTANTS"))
         moduli: Literal["LONG TERM", "INSTANTANEOUS"] = Param("LONG TERM", unsupported="MODULI not supported")
         dependencies: int = 0
         cohesive_offset: Optional[str] = Param(None, unsupported="COHESIVE OFFSET not supported")
@@ -101,8 +136,22 @@ class Elastic(Keyword):
     Row = FloatRow
 
     def to_records(self, p, rows, ctx) -> Iterable[Record]:
-        table = tuple(tuple(v for v in r.items if v is not None) for r in rows)
-        yield ElasticRecord(type=p.type, dependencies=p.dependencies, table=table, loc=ctx.loc)
+        if p.type == "ENGINEERING CONSTANTS":
+            # line 1: E1 E2 E3 nu12 nu13 nu23 G12 G13; line 2: G23, temperature, fields
+            if p.dependencies:
+                raise Unsupported("*ELASTIC, TYPE=ENGINEERING CONSTANTS: DEPENDENCIES not represented")
+            if len(rows) != 2:
+                raise InputError("*ELASTIC, TYPE=ENGINEERING CONSTANTS needs two data lines (a single temperature set)")
+            a, b = _cells(rows[0], 8), _cells(rows[1], 2)
+            vals = a + [b[0]]
+            if any(v is None for v in vals):
+                raise InputError("*ELASTIC, TYPE=ENGINEERING CONSTANTS: E1 E2 E3 nu12 nu13 nu23 G12 G13 G23 are all required")
+            if b[1] is not None:
+                raise Unsupported("*ELASTIC, TYPE=ENGINEERING CONSTANTS: temperature dependence not represented")
+            yield ElasticRecord(type=p.type, kind="const", table=(tuple(float(v) for v in vals),), loc=ctx.loc)
+            return
+        kind, table = _tabulate("ELASTIC", rows, 2, p.dependencies, ("Young's modulus E", "Poisson's ratio nu"))
+        yield ElasticRecord(type=p.type, kind=kind, table=table, loc=ctx.loc)
 
 
 @applies(ElasticRecord)
@@ -111,11 +160,12 @@ def _apply_elastic(reader: AbaqusInputReader, rec: ElasticRecord) -> None:
     if mat is None:
         mat = reader.model.Material("DEFAULT_ELASTIC")
         reader.current_material = mat
-    flat_tokens = [v for r in rec.table for v in r]
-    if rec.dependencies > 0:
-        mat.Elastic(field_table=rec.table, type=rec.type, flat_tokens=flat_tokens)
+    if rec.type == "ENGINEERING CONSTANTS":
+        mat.Elastic(table=(), type=rec.type, flat_tokens=list(rec.table[0]))
+    elif rec.kind == "field":
+        mat.Elastic(field_table=rec.table, type=rec.type)
     else:
-        mat.Elastic(table=rec.table, type=rec.type, flat_tokens=flat_tokens)
+        mat.Elastic(table=rec.table, type=rec.type)
 
 
 # ─── 3. *EXPANSION ───────────────────────────────────────────────────────────
@@ -129,10 +179,11 @@ class ExpansionRecord(Record):
 
 @keyword("EXPANSION", support="FULL", contexts={KeywordContext.MATERIAL, KeywordContext.GLOBAL})
 class Expansion(Keyword):
-    """Thermal expansion coefficients."""
+    """Isotropic thermal expansion coefficient alpha (and temperature)."""
 
     class Params(Schema):
-        type: Literal["ISO", "ORTHO", "ANISO"] = "ISO"
+        # the model carries one scalar alpha
+        type: Literal["ISO", "ORTHO", "ANISO", "SHORT FIBER", "TRANSVERSELY ISOTROPIC"] = Param("ISO", supported=("ISO",))
         zero: float = 0.0
         dependencies: int = Param(0, unsupported="EXPANSION DEPENDENCIES not supported")
         user: bool = Param(False, unsupported="EXPANSION USER not supported")
@@ -144,7 +195,7 @@ class Expansion(Keyword):
     Row = FloatRow
 
     def to_records(self, p, rows, ctx) -> Iterable[Record]:
-        table = tuple(tuple(v for v in r.items if v is not None) for r in rows)
+        _, table = _tabulate("EXPANSION", rows, 1, 0, ("alpha",))
         yield ExpansionRecord(type=p.type, zero=p.zero, table=table, loc=ctx.loc)
 
 
@@ -160,16 +211,18 @@ def _apply_expansion(reader: AbaqusInputReader, rec: ExpansionRecord) -> None:
 @dataclass(frozen=True)
 class PlasticRecord(Record):
     hardening: str
-    dependencies: int
+    kind: str
     table: Tuple[Tuple[float, ...], ...]
 
 
 @keyword("PLASTIC", support="FULL", contexts={KeywordContext.MATERIAL, KeywordContext.GLOBAL})
 class Plastic(Keyword):
-    """Metal plasticity (yield stress, plastic strain, Johnson-Cook)."""
+    """Metal plasticity: isotropic hardening table (yield stress, plastic strain) or Johnson-Cook."""
 
     class Params(Schema):
-        hardening: Literal["ISOTROPIC", "KINEMATIC", "COMBINED", "JOHNSON COOK", "JOHNSON_COOK"] = "ISOTROPIC"
+        # kinematic hardening is not represented (the model hardens isotropically)
+        hardening: Literal["ISOTROPIC", "KINEMATIC", "MULTILINEAR KINEMATIC", "COMBINED", "JOHNSON COOK", "USER"] = Param(
+            "ISOTROPIC", supported=("ISOTROPIC", "JOHNSON COOK"))
         rate: Optional[str] = Param(None, unsupported="PLASTIC RATE not supported")
         dependencies: int = 0
         data_type: Optional[str] = Param(None, unsupported="PLASTIC DATA TYPE not supported")
@@ -182,13 +235,26 @@ class Plastic(Keyword):
     Row = FloatRow
 
     def to_records(self, p, rows, ctx) -> Iterable[Record]:
-        table = tuple(tuple(v for v in r.items if v is not None) for r in rows)
         hard = p.hardening.replace(" ", "_")
         if hard == "JOHNSON_COOK":
+            # one line: A B n m theta_melt theta_transition (m blank or 0: no temperature dependence)
+            if len(rows) != 1:
+                raise InputError("*PLASTIC, HARDENING=JOHNSON COOK takes exactly one data line")
+            v = _cells(rows[0], 6)
+            for i, nm in enumerate(("A", "B", "n")):
+                if v[i] is None:
+                    raise InputError(f"*PLASTIC, HARDENING=JOHNSON COOK: {nm} (data item {i + 1}) is required")
+            m = 0.0 if v[3] is None else float(v[3])
+            if m != 0.0 and (v[4] is None or v[5] is None):
+                raise InputError("*PLASTIC, HARDENING=JOHNSON COOK: melting and transition temperature are required when m is nonzero")
             yield Note("gap", "rate-effect-dropped",
                        "*PLASTIC HARDENING=JOHNSON_COOK: quasi-static isothermal landing (C=0, dispatcher carries no rate)",
                        loc=ctx.loc)
-        yield PlasticRecord(hardening=hard, dependencies=p.dependencies, table=table, loc=ctx.loc)
+            yield PlasticRecord(hardening=hard, kind="const",
+                                table=((float(v[0]), float(v[1]), float(v[2]), m, v[4], v[5]),), loc=ctx.loc)
+            return
+        kind, table = _tabulate("PLASTIC", rows, 2, p.dependencies, ("yield stress", "plastic strain"), curve=True)
+        yield PlasticRecord(hardening=hard, kind=kind, table=table, loc=ctx.loc)
 
 
 @applies(PlasticRecord)
@@ -196,17 +262,13 @@ def _apply_plastic(reader: AbaqusInputReader, rec: PlasticRecord) -> None:
     mat = reader.current_material
     if mat is None:
         return
-    if rec.hardening == "JOHNSON_COOK" and rec.table:
-        r0 = rec.table[0]
-        mat.JohnsonCook(
-            A=float(r0[0]),
-            B=float(r0[1]),
-            n=float(r0[2]),
-            m=float(r0[3]) if len(r0) > 3 else 0.0,
-            T_melt=float(r0[4]) if len(r0) > 4 else 1793.15,
-            T_room=float(r0[5]) if len(r0) > 5 else 293.15,
-        )
-    elif rec.dependencies > 0:
+    if rec.hardening == "JOHNSON_COOK":
+        A, B, n, m, t_melt, t_trans = rec.table[0]
+        kw = {}
+        if t_melt is not None and t_trans is not None:
+            kw = {"T_melt": float(t_melt), "T_room": float(t_trans)}
+        mat.JohnsonCook(A=A, B=B, n=n, m=m, **kw)
+    elif rec.kind == "field":
         mat.Plastic(table=rec.table, hardening=rec.hardening, field_table=rec.table)
     else:
         mat.Plastic(table=rec.table, hardening=rec.hardening)
