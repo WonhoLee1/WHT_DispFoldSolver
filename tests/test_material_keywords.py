@@ -727,3 +727,10 @@ def test_schema_numeric_row_field_blank_is_zero_but_str_still_raises():
     assert [(r.name, r.a, r.n) for r in rows] == [("ab", 1.5, 0), ("cd", 0.0, 3), ("ef", 0.0, 0)]
     with pytest.raises(InputError):
         parse_rows("X", R, [",1.5,2"], [None])        # str item blank: still missing
+
+
+def test_distribution_name_data_line_is_a_gap_not_a_parse_error():
+    for deck in ("*MATERIAL, NAME=A\n*ELASTIC\ndistElastic\n", "*MATERIAL, NAME=A\n*DENSITY\ndistRho\n",
+                 "*MATERIAL, NAME=A\n*EXPANSION\ndistAlpha\n", "*ORIENTATION, NAME=O\ndistOrient\n"):
+        _, _, bad = _errors(deck)
+        assert [d.level for d in bad] == ["gap"] and "distribution" in bad[0].message, deck

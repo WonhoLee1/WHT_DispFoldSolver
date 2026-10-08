@@ -39,6 +39,35 @@ class FloatRow(RowSchema):
     items: Tuple[float, ...] = ()
 
 
+class TextRow(RowSchema):
+    """Data line whose items are read as text first: the Guide allows a distribution name
+    where numbers are expected (*ELASTIC, *EXPANSION, *DENSITY, *ORIENTATION)."""
+    items: Tuple[str, ...] = ()
+
+
+class _Nums:
+    __slots__ = ("items",)
+
+    def __init__(self, items):
+        self.items = items
+
+
+def _numeric_rows(kw: str, rows) -> list:
+    out = []
+    for r in rows:
+        vals = []
+        for c in r.items:
+            if c is None:
+                vals.append(None)
+                continue
+            try:
+                vals.append(float(c))
+            except ValueError:
+                raise Unsupported(f"*{kw}: spatially varying data (distribution name {c!r}) is not represented") from None
+        out.append(_Nums(tuple(vals)))
+    return out
+
+
 def _z(v) -> float:
     """A blank or omitted numeric data item is zero (Abaqus Input Syntax Rules: "Abaqus will
     use values of zero for any required numeric data that are omitted unless a default value
@@ -141,9 +170,10 @@ class Elastic(Keyword):
         cohesive_offset: Optional[str] = Param(None, unsupported="COHESIVE OFFSET not supported")
         compression_factor: Optional[float] = Param(None, unsupported="COMPRESSION FACTOR not supported")
 
-    Row = FloatRow
+    Row = TextRow
 
     def to_records(self, p, rows, ctx) -> Iterable[Record]:
+        rows = _numeric_rows("ELASTIC", rows)
         if p.type == "ENGINEERING CONSTANTS":
             # line 1: E1 E2 E3 nu12 nu13 nu23 G12 G13; line 2: G23, temperature, fields
             if p.dependencies:
@@ -200,9 +230,10 @@ class Expansion(Keyword):
         liquid: bool = Param(False, unsupported="EXPANSION LIQUID not supported")
         properties: Optional[int] = Param(None, unsupported="EXPANSION PROPERTIES not supported")
 
-    Row = FloatRow
+    Row = TextRow
 
     def to_records(self, p, rows, ctx) -> Iterable[Record]:
+        rows = _numeric_rows("EXPANSION", rows)
         _, table = _tabulate("EXPANSION", rows, 1, 0, ("alpha",))
         yield ExpansionRecord(type=p.type, zero=p.zero, table=table, loc=ctx.loc)
 
@@ -1060,9 +1091,10 @@ class Density(Keyword):
         pore_fluid: bool = Param(False, unsupported="DENSITY PORE FLUID not supported")
         slurry: bool = Param(False, unsupported="DENSITY SLURRY not supported")
 
-    Row = FloatRow
+    Row = TextRow
 
     def to_records(self, p, rows, ctx) -> Iterable[Record]:
+        rows = _numeric_rows("DENSITY", rows)
         if not rows:
             raise InputError(f"*DENSITY at {ctx.loc}: missing density value")
         if len(rows) > 1:
@@ -1144,9 +1176,10 @@ class Orientation(Keyword):
         local_directions: Optional[int] = None
         dispersion: Optional[str] = Param(None, unsupported="ORIENTATION DISPERSION not supported")
 
-    Row = FloatRow
+    Row = TextRow
 
     def to_records(self, p, rows, ctx) -> Iterable[Record]:
+        rows = _numeric_rows("ORIENTATION", rows)
         if not rows:
             raise InputError(f"*ORIENTATION {p.name}: no data line")
         raw_rows = tuple(tuple(v for v in r.items if v is not None) for r in rows)
