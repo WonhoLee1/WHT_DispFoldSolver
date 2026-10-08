@@ -325,8 +325,52 @@ def _explained_change(m, old, new):
         return "hyperelastic form the catalog does not know: REDUCED POLYNOMIAL, COMPRESSIBLE... (old: silently polynomial / Neo-Hooke)"
     if err and m.mat_type == "HYPER_VISCOELASTIC" and "base model" in new["msg"]:
         return "hyper-viscoelastic with a base the kernel layout cannot carry (old: wrong slots)"
+    # ---- B4 / Keywords Guide audit (agent B, 2026-10): each class names the audit fix that changed it
+    refused = list(extra.get("refused_definitions") or [])
+    constitutive = ("*PLASTIC", "*DRUCKER PRAGER", "*CREEP", "*DAMAGE", "*HYPERELASTIC", "*VISCOELASTIC", "*CONCRETE")
+    if err and "must be given together" in new["msg"] and any(r.startswith(("*DAMAGE", "*PLASTIC")) for r in refused):
+        return ("damage initiation or its plasticity refused by the reader, evolution kept: "
+                "refused loudly (old: ran with the half definition)")
     if err:
         return None
+    nid, op, nprops = new["id"], old["props"], new["props"]
+    diff = [i for i in range(64) if not (op[i] == nprops[i])]
+    hyp = (m.hyperelastic or {}).get("model", "").upper()
+    if nid != old.get("id") and nid == 0 and any(r.startswith(constitutive) for r in refused):
+        return ("a *PLASTIC / *DRUCKER PRAGER / *CREEP / ... block the reader now refuses "
+                "(KINEMATIC, COMBINED, DP K!=1, SHEAR CRITERION, STRAIN m!=0, SCALESTRESS ...): "
+                "the material keeps its elastic part only and the gap is reported (old: silently ran as another model)")
+    if nid == old.get("id") == 2 and any(r.startswith("*PLASTIC, RATE=") for r in refused):
+        return "*PLASTIC, RATE= tables refused: only the rate-free table lands (old: a later RATE table overwrote it)"
+    if nid == old.get("id") == 0 and diff == [1] and op[1] == 0.3 and nprops[1] == 0.0 and m.elastic \
+            and m.elastic[1] == 0.0:
+        return "*ELASTIC with Poisson's ratio omitted: blank == 0 (old: invented nu=0.3)"
+    if nid == old.get("id") == 14 and m.mat_type == "DRUCKER_PRAGER":
+        dp = extra.get("drucker_prager", {})
+        if nprops[2] != nprops[2]:
+            return "DRUCKER PRAGER HARDENING with more than two points: d0 left NaN, gap reported (old: d0=100)"
+        if op[4] == op[5] == 20.0 and (nprops[2], nprops[3], nprops[4], nprops[5]) == (
+                dp.get("d0"), dp.get("H"), dp.get("beta"), dp.get("psi")):
+            return ("DRUCKER PRAGER data line (beta, K, psi) and cohesion/hardening from DRUCKER PRAGER HARDENING "
+                    "(old: beta=psi=20, d0=100, ANGLE parameter)")
+    if nid == old.get("id") == 13 and set(diff) <= {14, 15} and op[14] == 20.0 and op[15] == 1000.0:
+        di = extra.get("damage_init", {})
+        if (di.get("Troom"), di.get("Tmelt")) == (nprops[14], nprops[15]):
+            return "JOHNSON COOK damage: theta_transition / theta_melt from the data line (old: 20 / 1000)"
+    if old.get("id") == 0 and nid == 2 and m.mat_type == "J2_PLASTICITY" and m.plastic \
+            and nprops[2] == m.plastic[0][0] and all(e == 0.0 for _, e in m.plastic):
+        return "*PLASTIC data line with the plastic strain omitted: blank == 0 (old: line dropped, elastic only)"
+    if old.get("id") == 1 and (nid, hyp) in ((8, "MOONEY_RIVLIN"), (10, "POLYNOMIAL")):
+        return "*HYPERELASTIC without a form flag is POLYNOMIAL (N=1: Mooney-Rivlin, N=2: polynomial) (old: Neo-Hooke)"
+    if old.get("id") == 10 and nid == 1 and hyp == "NEO_HOOKEAN":
+        return "REDUCED POLYNOMIAL N=1 is Neo-Hooke (old: polynomial id 10, constants in the wrong slots)"
+    if nid == old.get("id") == 5 and hyp == "YEOH" and op[3] == nprops[2] and set(diff) <= {2, 3, 4, 5}:
+        return "Yeoh: D1 no longer takes C30 (old slot mix-up; omitted D_i == 0)"
+    _short = {1: {0: 0.2, 1: 200.0, 2: 0.1, 3: 0.01}, 8: {0: 0.1, 1: 0.05, 2: 0.01}, 4: {2: 8.3333}}
+    if nid == old.get("id") and nid in _short and m.hyperelastic and diff \
+            and all(i in _short[nid] and op[i] == _short[nid][i] for i in diff):
+        return ("hyperelastic data line without D_i (Guide: omitted == 0): the old parser needed the full line "
+                "and left every constant at the catalog default")
     if m.mat_type == "VISCOELASTIC" and old.get("id") == 6 and new["id"] == 3 and m.viscoelastic_prony and not m.hyperelastic:
         return "plain Prony: catalog id 3 (old: Neo-Hooke id 6 with an invented mu=0.2, K=10)"
     if m.mat_type == "HYPER_VISCOELASTIC" and not m.viscoelastic_prony and new["id"] == material_id(m) != old.get("id"):
