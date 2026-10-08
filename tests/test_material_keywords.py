@@ -366,7 +366,8 @@ def test_mullins_effect():
 *MATERIAL, NAME=FILLED_RUBBER
 *HYPERELASTIC, NEO HOOKE
 0.5, 0.01
-*MULLINS EFFECT, R=2.5, M=0.6, BETA=0.15
+*MULLINS EFFECT
+2.5, 0.6, 0.15
 """
     reader, model = _read_snippet(deck)
     mat = model.materials["FILLED_RUBBER"]
@@ -637,3 +638,51 @@ def test_cdp_tables_are_strain_value_pairs_and_psi_required():
     assert any(d.level == "error" for d in bad)
     _, _, bad = _errors("*MATERIAL, NAME=E\n*CONCRETE DAMAGED PLASTICITY\n36., 0.3\n")   # eccentricity 0.3 != default
     assert any(d.level == "gap" for d in bad)
+
+
+# ─── Guide data-line layout audit: MULLINS / DENSITY / TRS / ORIENTATION ─────
+
+def test_mullins_data_line_and_beta_default():
+    _, m, bad = _errors("*MATERIAL, NAME=A\n*MULLINS EFFECT\n2.5, 0.6\n")
+    mu = m.materials["A"].extra_params["mullins"]
+    assert (mu["r"], mu["m"], mu["beta"]) == (2.5, 0.6, 0.0)       # blank beta: 0.0 (Abaqus/Standard)
+    assert any(d.code == "mullins-not-connected" for d in bad)     # no kernel consumes it
+    _, _, bad = _errors("*MATERIAL, NAME=B\n*MULLINS EFFECT\n2.5\n")
+    assert any(d.level == "error" for d in bad)
+    # R / M / BETA parameters belong to TEST DATA INPUT
+    _, _, bad = _errors("*MATERIAL, NAME=C\n*MULLINS EFFECT, R=2.5\n2.5, 0.6, 0.1\n")
+    assert any(d.level == "gap" for d in bad)
+
+
+def test_density_single_value():
+    _, m, bad = _errors("*MATERIAL, NAME=A\n*DENSITY\n7.8e-9\n")
+    assert not bad and m.materials["A"].density == 7.8e-9
+    _, _, bad = _errors("*MATERIAL, NAME=B\n*DENSITY\n7.8e-9, 20.\n7.7e-9, 100.\n")
+    assert any(d.level == "gap" for d in bad)                      # temperature table not represented
+
+
+def test_trs_wlf_line():
+    _, m, bad = _errors("*MATERIAL, NAME=A\n*VISCOELASTIC, TIME=PRONY\n0.2, 0.1, 3.\n*TRS, DEFINITION=WLF\n20., 17.4, 51.6\n")
+    assert m.materials["A"].extra_params["trs"] == {"definition": "WLF", "T_ref": 20., "C1": 17.4, "C2": 51.6}
+    assert any(d.code == "trs-not-connected" for d in bad)
+    _, _, bad = _errors("*MATERIAL, NAME=B\n*TRS, DEFINITION=ARRHENIUS\n20., 1e5\n")
+    assert any(d.level == "gap" for d in bad)
+    _, _, bad = _errors("*MATERIAL, NAME=C\n*TRS\n20., 17.4\n")
+    assert any(d.level == "error" for d in bad)
+
+
+def test_orientation_origin_and_rotation():
+    import numpy as np
+    # point a on axis 1, b in the 1-2 plane, origin c = (1, 1, 0): vectors are taken relative to c
+    _, m, bad = _errors("*ORIENTATION, NAME=O\n2., 1., 0., 1., 2., 0., 1., 1., 0.\n")
+    assert not [d for d in bad if d.level == "error"]
+    assert np.allclose(m.orientations["O"].frame, np.eye(3))
+    # additional rotation alpha != 0 is not represented
+    _, _, bad = _errors("*ORIENTATION, NAME=P\n1., 0., 0., 0., 1., 0.\n1, 30.\n")
+    assert any(d.level == "gap" for d in bad)
+    # NODES: only the first line holds node numbers (the second line is direction, alpha)
+    _, m, bad = _errors("*ORIENTATION, NAME=N, DEFINITION=NODES\n1, 2, 3\n1, 0.\n")
+    assert m.orientations["N"].node_ids == (1, 2, 3)
+    # Z RECTANGULAR is an Abaqus system; ZCYLINDRICAL is not
+    _, m, bad = _errors("*ORIENTATION, NAME=Z, SYSTEM=Z RECTANGULAR\n1., 0., 0., 0., 1., 0.\n")
+    assert not [d for d in bad if d.level == "error"]

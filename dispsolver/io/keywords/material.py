@@ -1030,34 +1030,45 @@ class MullinsRecord(Record):
     r: float
     m: float
     beta: float
-    table: Tuple[Tuple[float, ...], ...]
 
 
-@keyword("MULLINS EFFECT", support="FULL", contexts={KeywordContext.MATERIAL, KeywordContext.GLOBAL})
+@keyword("MULLINS EFFECT", support="PARTIAL", contexts={KeywordContext.MATERIAL, KeywordContext.GLOBAL})
 class MullinsEffect(Keyword):
-    """Mullins effect damage model for filled elastomers."""
+    """Mullins effect constants r, m, beta (data line); stored, no kernel consumes them yet."""
 
     class Params(Schema):
-        r: float = 2.0
-        m: float = 0.5
-        beta: float = 0.1
+        # R, M, BETA parameters are for TEST DATA INPUT only (Keywords Guide); the constants are data items
+        r: Optional[float] = Param(None, unsupported="MULLINS EFFECT R applies only with TEST DATA INPUT")
+        m: Optional[float] = Param(None, unsupported="MULLINS EFFECT M applies only with TEST DATA INPUT")
+        beta: Optional[float] = Param(None, unsupported="MULLINS EFFECT BETA applies only with TEST DATA INPUT")
         dependencies: int = Param(0, unsupported="MULLINS EFFECT DEPENDENCIES not supported")
         properties: Optional[int] = Param(None, unsupported="MULLINS EFFECT PROPERTIES not supported")
-        test_data_input: bool = Param(False, control=True)
+        test_data_input: bool = Param(False, unsupported="MULLINS EFFECT TEST DATA INPUT not supported")
         user: bool = Param(False, unsupported="MULLINS EFFECT USER not supported")
 
     Row = FloatRow
 
     def to_records(self, p, rows, ctx) -> Iterable[Record]:
-        table = tuple(tuple(v for v in r.items if v is not None) for r in rows)
-        yield MullinsRecord(r=p.r, m=p.m, beta=p.beta, table=table, loc=ctx.loc)
+        if len(rows) != 1:
+            raise InputError("*MULLINS EFFECT takes one data line (r, m, beta)")
+        v = _cells(rows[0], 4)
+        if v[0] is None or v[1] is None:
+            raise InputError("*MULLINS EFFECT: r and m (data items 1, 2) are required; the Keywords Guide gives no default")
+        if v[3] is not None:
+            raise Unsupported("*MULLINS EFFECT: temperature-dependent constants are not represented")
+        # Guide: a blank beta is 0.0 in Abaqus/Standard (0.1 in Abaqus/Explicit); this is the implicit solver
+        beta = 0.0 if v[2] is None else float(v[2])
+        yield Note("gap", "mullins-not-connected",
+                   "*MULLINS EFFECT: parsed and stored; no material kernel consumes it, so the solve has no Mullins softening",
+                   loc=ctx.loc)
+        yield MullinsRecord(r=float(v[0]), m=float(v[1]), beta=beta, loc=ctx.loc)
 
 
 @applies(MullinsRecord)
 def _apply_mullins(reader: AbaqusInputReader, rec: MullinsRecord) -> None:
     mat = reader.current_material
     if mat is not None:
-        mat.MullinsEffect(r=rec.r, m=rec.m, beta=rec.beta, table=rec.table if rec.table else None)
+        mat.MullinsEffect(table=((rec.r, rec.m, rec.beta),))
 
 
 # ─── 19. *DENSITY ────────────────────────────────────────────────────────────
@@ -1079,9 +1090,16 @@ class Density(Keyword):
     Row = FloatRow
 
     def to_records(self, p, rows, ctx) -> Iterable[Record]:
-        if not rows or not rows[0].items or rows[0].items[0] is None:
+        if not rows:
             raise InputError(f"*DENSITY at {ctx.loc}: missing density value")
-        yield DensityRecord(density=float(rows[0].items[0]), loc=ctx.loc)
+        if len(rows) > 1:
+            raise Unsupported("*DENSITY: several data lines (temperature dependence) are not represented")
+        v = _cells(rows[0], 2)
+        if v[0] is None:
+            raise InputError(f"*DENSITY at {ctx.loc}: missing density value")
+        if v[1] is not None:
+            raise Unsupported("*DENSITY: temperature-dependent density is not represented")
+        yield DensityRecord(density=float(v[0]), loc=ctx.loc)
 
 
 @applies(DensityRecord)
@@ -1096,35 +1114,38 @@ def _apply_density(reader: AbaqusInputReader, rec: DensityRecord) -> None:
 @dataclass(frozen=True)
 class TRSRecord(Record):
     definition: str
-    values: Tuple[float, ...]
+    values: Tuple[float, float, float]
 
 
 @keyword("TRS", support="PARTIAL", contexts={KeywordContext.MATERIAL, KeywordContext.GLOBAL})
 class TRS(Keyword):
-    """Temperature-time shift for viscoelastic materials (WLF, Arrhenius)."""
+    """Williams-Landel-Ferry shift (theta0, C1, C2); stored, no kernel consumes it yet."""
 
     class Params(Schema):
-        definition: Literal["WLF", "ARRHENIUS", "USER"] = "WLF"
+        definition: Literal["WLF", "ARRHENIUS", "USER", "TNM", "TABULAR"] = Param("WLF", supported=("WLF",))
         dependencies: int = Param(0, unsupported="TRS DEPENDENCIES not supported")
         properties: Optional[int] = Param(None, unsupported="TRS PROPERTIES not supported")
 
     Row = FloatRow
 
     def to_records(self, p, rows, ctx) -> Iterable[Record]:
-        vals = tuple(float(v) for r in rows for v in r.items if v is not None)
-        yield TRSRecord(definition=p.definition, values=vals, loc=ctx.loc)
+        if len(rows) != 1:
+            raise InputError("*TRS, DEFINITION=WLF takes one data line (theta0, C1, C2)")
+        v = _cells(rows[0], 3)
+        if any(x is None for x in v) or len(rows[0].items) > 3:
+            raise InputError("*TRS, DEFINITION=WLF: reference temperature, C1 and C2 are all required")
+        yield Note("gap", "trs-not-connected",
+                   "*TRS: parsed and stored; no material kernel consumes the shift function",
+                   loc=ctx.loc)
+        yield TRSRecord(definition=p.definition, values=tuple(float(x) for x in v), loc=ctx.loc)
 
 
 @applies(TRSRecord)
 def _apply_trs(reader: AbaqusInputReader, rec: TRSRecord) -> None:
     mat = reader.current_material
-    if mat is None:
-        return
-    vals = rec.values
-    if len(vals) >= 3:
-        mat.extra_params["trs"] = {"definition": rec.definition, "T_ref": vals[0], "C1": vals[1], "C2": vals[2]}
-    else:
-        mat.extra_params["trs"] = {"definition": rec.definition, "values": vals}
+    if mat is not None:
+        t0, c1, c2 = rec.values
+        mat.extra_params["trs"] = {"definition": rec.definition, "T_ref": t0, "C1": c1, "C2": c2}
 
 
 # ─── 21. *ORIENTATION ────────────────────────────────────────────────────────
@@ -1142,27 +1163,39 @@ class OrientationRecord(Record):
 @keyword("ORIENTATION", support="PARTIAL",
          contexts={KeywordContext.GLOBAL, KeywordContext.PART, KeywordContext.INSTANCE, KeywordContext.ASSEMBLY})
 class Orientation(Keyword):
-    """Local material orientation coordinate system."""
+    """Local material orientation: points a, b (and origin c) by coordinates or node numbers."""
 
     class Params(Schema):
         name: str
-        system: Literal["RECTANGULAR", "CYLINDRICAL", "SPHERICAL", "ZCYLINDRICAL"] = "RECTANGULAR"
+        system: Literal["RECTANGULAR", "Z RECTANGULAR", "CYLINDRICAL", "SPHERICAL", "USER"] = Param(
+            "RECTANGULAR", supported=("RECTANGULAR", "Z RECTANGULAR", "CYLINDRICAL", "SPHERICAL"))
         definition: Literal["COORDINATES", "NODES", "OFFSET TO NODES"] = "COORDINATES"
-        local_directions: int = 1
+        local_directions: Optional[int] = None
         dispersion: Optional[str] = Param(None, unsupported="ORIENTATION DISPERSION not supported")
 
     Row = FloatRow
 
     def to_records(self, p, rows, ctx) -> Iterable[Record]:
+        if not rows:
+            raise InputError(f"*ORIENTATION {p.name}: no data line")
         raw_rows = tuple(tuple(v for v in r.items if v is not None) for r in rows)
+        first = _cells(rows[0], 9)
+        n_pts = 6 if p.definition == "COORDINATES" else 2
+        if any(x is None for x in first[:n_pts]):
+            raise InputError(f"*ORIENTATION {p.name}: points a and b are required (first data line)")
+        # second line: local direction and additional rotation alpha (defaults: direction 1, 0 degrees)
+        if len(rows) > 1:
+            second = _cells(rows[1], 2)
+            if second[1] not in (None, 0.0):
+                raise Unsupported(f"*ORIENTATION {p.name}: an additional rotation of {second[1]} deg is not represented")
         node_ids: tuple = ()
         if p.definition == "NODES":
-            node_ids = tuple(int(v) for r in raw_rows for v in r)
+            node_ids = tuple(int(v) for v in first[:3] if v is not None)
         yield OrientationRecord(
             name=p.name,
             system=p.system,
             definition=p.definition,
-            local_directions=p.local_directions,
+            local_directions=0 if p.local_directions is None else p.local_directions,
             raw_rows=raw_rows,
             node_ids=node_ids,
             loc=ctx.loc,
@@ -1172,17 +1205,19 @@ class Orientation(Keyword):
 @applies(OrientationRecord)
 def _apply_orientation(reader: AbaqusInputReader, rec: OrientationRecord) -> None:
     frame = None
-    if rec.system == "RECTANGULAR" and rec.raw_rows and len(rec.raw_rows[0]) >= 6:
-        a = np.array(rec.raw_rows[0][:3], dtype=np.float64)
-        b = np.array(rec.raw_rows[0][3:6], dtype=np.float64)
+    if rec.system == "RECTANGULAR" and rec.definition == "COORDINATES" and rec.raw_rows and len(rec.raw_rows[0]) >= 6:
+        row = rec.raw_rows[0]
+        c = np.array(row[6:9], dtype=np.float64) if len(row) >= 9 else np.zeros(3)   # default origin: global origin
+        a = np.array(row[:3], dtype=np.float64) - c
+        b = np.array(row[3:6], dtype=np.float64) - c
         na = float(np.linalg.norm(a))
         if na > 1e-12:
             a = a / na
         nb = float(np.linalg.norm(b - a * float(np.dot(b, a))))
         if nb > 1e-12:
             b = (b - a * float(np.dot(b, a))) / nb
-        c = np.cross(a, b)
-        frame = np.array([a, b, c], dtype=np.float64)
+        cz = np.cross(a, b)
+        frame = np.array([a, b, cz], dtype=np.float64)
 
     reader.model.Orientation(
         name=rec.name,
@@ -1193,6 +1228,6 @@ def _apply_orientation(reader: AbaqusInputReader, rec: OrientationRecord) -> Non
         node_ids=rec.node_ids,
         local_directions=rec.local_directions,
     )
-    if frame is None or rec.system != "RECTANGULAR" or rec.definition == "NODES":
+    if frame is None or rec.system != "RECTANGULAR" or rec.definition != "COORDINATES":
         msg = f"*ORIENTATION {rec.name}: parsed and stored; material-kernel consumption not connected"
         reader.diagnostics.add("gap", "orientation-not-connected", msg, rec.loc)
