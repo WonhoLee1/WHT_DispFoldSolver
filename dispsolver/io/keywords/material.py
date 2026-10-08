@@ -8,6 +8,7 @@ dispsolver.material.catalog.material_id and pack_props.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Literal, Optional, Tuple
 
@@ -36,6 +37,12 @@ if TYPE_CHECKING:
 class FloatRow(RowSchema):
     """Positional data line accepting a variable number of float values (or blanks)."""
     items: Tuple[float, ...] = ()
+
+
+def _cells(row, n: int) -> list:
+    """The first n data items of a line by position (None for a blank or missing one)."""
+    v = list(row.items)[:n]
+    return v + [None] * (n - len(v))
 
 
 # ─── 1. *MATERIAL ────────────────────────────────────────────────────────────
@@ -466,15 +473,18 @@ def _apply_damage_evolution(reader: AbaqusInputReader, rec: DamageEvolutionRecor
 class DruckerPragerRecord(Record):
     beta: float
     psi: float
-    d0: float
 
 
 @keyword("DRUCKER PRAGER", support="FULL", contexts={KeywordContext.MATERIAL, KeywordContext.GLOBAL})
 class DruckerPrager(Keyword):
-    """Extended Drucker-Prager plasticity model."""
+    """Extended Drucker-Prager plasticity model (linear criterion).
+
+    Keywords Guide data line (SHEAR CRITERION=LINEAR): 1 beta [deg], 2 K (blank
+    or 0.0 -> 1.0), 3 psi [deg], 4 temperature, 5.. field variables.
+    """
 
     class Params(Schema):
-        shear_criterion: Optional[str] = Param(None, unsupported="DRUCKER PRAGER SHEAR CRITERION not supported")
+        shear_criterion: Literal["LINEAR", "HYPERBOLIC", "EXPONENT FORM"] = Param("LINEAR", supported=("LINEAR",))
         eccentricity: Optional[float] = Param(None, unsupported="DRUCKER PRAGER ECCENTRICITY not supported")
         test_data: bool = Param(False, unsupported="DRUCKER PRAGER TEST DATA not supported")
         dependencies: int = Param(0, unsupported="DRUCKER PRAGER DEPENDENCIES not supported")
@@ -482,18 +492,31 @@ class DruckerPrager(Keyword):
     Row = FloatRow
 
     def to_records(self, p, rows, ctx) -> Iterable[Record]:
-        vals = rows[0].items if rows and rows[0].items else ()
-        beta = float(vals[0]) if len(vals) > 0 and vals[0] is not None else 20.0
-        psi = float(vals[1]) if len(vals) > 1 and vals[1] is not None else beta
-        d0 = float(vals[2]) if len(vals) > 2 and vals[2] is not None else 100.0
-        yield DruckerPragerRecord(beta=beta, psi=psi, d0=d0, loc=ctx.loc)
+        if not rows:
+            raise InputError("*DRUCKER PRAGER: no data line (friction angle and dilation angle are required)")
+        if len(rows) > 1:
+            raise Unsupported("*DRUCKER PRAGER: several data lines (temperature dependence) are not represented")
+        v = _cells(rows[0], 4)
+        if v[0] is None:
+            raise InputError("*DRUCKER PRAGER: friction angle beta (data item 1) is required; the Keywords Guide gives no default")
+        if v[2] is None:
+            raise InputError("*DRUCKER PRAGER: dilation angle psi (data item 3) is required; the Keywords Guide gives no default")
+        k = 1.0 if v[1] is None or v[1] == 0.0 else v[1]
+        if k != 1.0:
+            raise Unsupported(f"*DRUCKER PRAGER: K={k} (flow-stress ratio) is not represented; only K=1.0")
+        if v[3] is not None:
+            raise Unsupported("*DRUCKER PRAGER: temperature-dependent data is not represented")
+        yield DruckerPragerRecord(beta=float(v[0]), psi=float(v[2]), loc=ctx.loc)
 
 
 @applies(DruckerPragerRecord)
 def _apply_drucker_prager(reader: AbaqusInputReader, rec: DruckerPragerRecord) -> None:
     mat = reader.current_material
     if mat is not None:
-        mat.DruckerPrager(beta=rec.beta, psi=rec.psi, d0=rec.d0)
+        # cohesion d0 and hardening H come from *DRUCKER PRAGER HARDENING; the
+        # Material default (d0=100) is not a deck value, so mark it unset (NaN)
+        mat.DruckerPrager(beta=rec.beta, psi=rec.psi, d0=float("nan"), H=0.0)
+        mat.extra_params["dp_hardening_missing"] = True
 
 
 # ─── 12. *DRUCKER PRAGER HARDENING ───────────────────────────────────────────
@@ -501,12 +524,12 @@ def _apply_drucker_prager(reader: AbaqusInputReader, rec: DruckerPragerRecord) -
 @dataclass(frozen=True)
 class DruckerPragerHardeningRecord(Record):
     type: str
-    table: Tuple[Tuple[float, ...], ...]
+    table: Tuple[Tuple[float, float], ...]
 
 
 @keyword("DRUCKER PRAGER HARDENING", support="FULL", contexts={KeywordContext.MATERIAL, KeywordContext.GLOBAL})
 class DruckerPragerHardening(Keyword):
-    """Hardening data for Drucker-Prager plasticity."""
+    """Hardening data (yield stress, plastic strain) for Drucker-Prager plasticity."""
 
     class Params(Schema):
         type: Literal["COMPRESSION", "TENSION", "SHEAR"] = "COMPRESSION"
@@ -516,23 +539,60 @@ class DruckerPragerHardening(Keyword):
     Row = FloatRow
 
     def to_records(self, p, rows, ctx) -> Iterable[Record]:
-        table = tuple(tuple(v for v in r.items if v is not None) for r in rows)
-        yield DruckerPragerHardeningRecord(type=p.type, table=table, loc=ctx.loc)
+        if not rows:
+            raise InputError("*DRUCKER PRAGER HARDENING: no data line")
+        table = []
+        for r in rows:
+            v = _cells(r, 3)
+            if v[0] is None or v[1] is None:
+                raise InputError("*DRUCKER PRAGER HARDENING: each line needs yield stress and plastic strain")
+            if v[2] is not None:
+                raise Unsupported("*DRUCKER PRAGER HARDENING: temperature-dependent data is not represented")
+            table.append((float(v[0]), float(v[1])))
+        if table[0][1] != 0.0:
+            raise InputError("*DRUCKER PRAGER HARDENING: the first plastic strain must be zero (Keywords Guide)")
+        yield DruckerPragerHardeningRecord(type=p.type, table=tuple(table), loc=ctx.loc)
 
 
 @applies(DruckerPragerHardeningRecord)
 def _apply_drucker_prager_hardening(reader: AbaqusInputReader, rec: DruckerPragerHardeningRecord) -> None:
     mat = reader.current_material
     if mat is None or "drucker_prager" not in mat.extra_params:
+        reader.diagnostics.add("error", "dp-hardening-without-drucker-prager",
+                               "*DRUCKER PRAGER HARDENING without a preceding *DRUCKER PRAGER in the material",
+                               rec.loc)
         return
-    rows = rec.table
-    if len(rows) >= 2 and len(rows[0]) >= 1 and len(rows[1]) >= 1:
-        d0 = float(rows[0][0])
-        e0 = float(rows[0][1]) if len(rows[0]) > 1 else 0.0
-        d1 = float(rows[1][0])
-        e1 = float(rows[1][1]) if len(rows[1]) > 1 else 0.0
-        if e1 > e0:
-            mat.extra_params["drucker_prager"]["H"] = (d1 - d0) / (e1 - e0)
+    dp = mat.extra_params["drucker_prager"]
+    # linear model F = t - p tan(beta) - d: cohesion d from the test yield stress.
+    # The DRUCKER PRAGER HARDENING page states only d = (sqrt3/2) tau (1+1/K) for
+    # SHEAR; COMPRESSION / TENSION use the standard Abaqus Analysis Guide relations
+    # (Extended Drucker-Prager models), not on the cached pages:
+    #   COMPRESSION d = (1 - tan(beta)/3) sigma_c
+    #   TENSION     d = (1/K + tan(beta)/3) sigma_t
+    #   SHEAR       d = (sqrt(3)/2) (1 + 1/K) tau      (K = 1 here)
+    tb = math.tan(math.radians(dp["beta"]))
+    if rec.type == "COMPRESSION":
+        f = 1.0 - tb / 3.0
+    elif rec.type == "TENSION":
+        f = 1.0 + tb / 3.0
+    else:
+        f = math.sqrt(3.0)
+    d = [(f * s, e) for s, e in rec.table]
+    if len(d) > 2:
+        reader.diagnostics.add("gap", "dp-hardening-multilinear",
+                               "*DRUCKER PRAGER HARDENING: more than two points; the model has linear hardening only",
+                               rec.loc)
+        return
+    dp["d0"] = d[0][0]
+    if len(d) == 1:
+        dp["H"] = 0.0
+    else:
+        if d[1][1] <= d[0][1]:
+            reader.diagnostics.add("error", "dp-hardening-strain",
+                                   "*DRUCKER PRAGER HARDENING: plastic strain must increase", rec.loc)
+            return
+        dp["H"] = (d[1][0] - d[0][0]) / (d[1][1] - d[0][1])
+    mat.extra_params.pop("dp_hardening_missing", None)
 
 
 # ─── 13-17. CONCRETE DAMAGED PLASTICITY SUITE ────────────────────────────────

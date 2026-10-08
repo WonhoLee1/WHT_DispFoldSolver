@@ -400,6 +400,14 @@ class AbaqusInputReader:
         # this runs once, after the last block). An internal failure here is a bug: not swallowed.
         self.symbols = bind_model(self.model, self.diagnostics)
 
+        # a Drucker-Prager material needs its cohesion from *DRUCKER PRAGER HARDENING; the
+        # Keywords Guide gives no default, so running on one would build a different model
+        for mname, m in self.model.materials.items():
+            if getattr(m, "extra_params", {}).get("dp_hardening_missing"):
+                self.report("error", "dp-hardening-missing",
+                            f"*MATERIAL {mname}: *DRUCKER PRAGER without *DRUCKER PRAGER HARDENING "
+                            f"(cohesion is undefined; the Keywords Guide gives no default)")
+
         # *RIGID BODY, ANALYTICAL SURFACE= must name a surface the deck defined. A *SURFACE
         # of an unimplemented TYPE (CYLINDER ...) was refused and already reported as a gap
         # and may be this one: that gap is the diagnostic, so no second report then.

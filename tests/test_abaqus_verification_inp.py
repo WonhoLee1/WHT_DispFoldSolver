@@ -77,8 +77,10 @@ def test_damage_and_jc_plastic_landings():
 0.3
 *DAMAGE EVOLUTION, TYPE=ENERGY, SOFTENING=EXPONENTIAL
 10.0
-*DRUCKER PRAGER, ANGLE=25.0
-100.0
+*DRUCKER PRAGER
+25.0, 1.0, 25.0
+*DRUCKER PRAGER HARDENING
+100.0, 0.0
 """
     from dispsolver.io.abaqus_reader import read_inp
     import warnings

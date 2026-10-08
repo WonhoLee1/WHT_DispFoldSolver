@@ -273,29 +273,59 @@ def test_damage_initiation_and_evolution():
     assert mat.extra_params["damage_evol"]["Gf"] == pytest.approx(50.0)
 
 
-def test_drucker_prager():
-    """*DRUCKER PRAGER maps to MAT_DRUCKER_PRAGER."""
-    deck = """
+_DP_HARD = "*DRUCKER PRAGER HARDENING\n20.0, 0.0\n30.0, 0.02\n"
+
+
+def _dp_deck(dp_line="35.0, 1.0, 20.0", hard=_DP_HARD):
+    return f"""
 *MATERIAL, NAME=SOIL
 *ELASTIC
 50000.0, 0.3
 *DRUCKER PRAGER
-35.0, 30.0, 20.0
-*DRUCKER PRAGER HARDENING
-20.0, 0.0
-30.0, 0.02
-"""
-    reader, model = _read_snippet(deck)
+{dp_line}
+{hard}"""
+
+
+def test_drucker_prager():
+    """*DRUCKER PRAGER data line is (beta, K, psi); COMPRESSION hardening gives d."""
+    import math
+    reader, model = _read_snippet(_dp_deck())
     mat = model.materials["SOIL"]
-    mid = material_id(mat)
-    assert mid == MAT_DRUCKER_PRAGER
+    assert material_id(mat) == MAT_DRUCKER_PRAGER
     props = pack_props(mat, dim=3)
+    f = 1.0 - math.tan(math.radians(35.0)) / 3.0
     assert props[0] == pytest.approx(50000.0)
     assert props[1] == pytest.approx(0.3)
-    assert props[2] == pytest.approx(20.0)   # d0
-    assert props[3] == pytest.approx(500.0)  # H = (30-20)/0.02
-    assert props[4] == pytest.approx(35.0)   # beta
-    assert props[5] == pytest.approx(30.0)   # psi
+    assert props[2] == pytest.approx(f * 20.0)             # d0 = (1 - tan(beta)/3) sigma_c
+    assert props[3] == pytest.approx(f * 10.0 / 0.02)      # H
+    assert props[4] == pytest.approx(35.0)                 # beta
+    assert props[5] == pytest.approx(20.0)                 # psi
+    assert not reader.diagnostics.of("error", "gap")
+
+
+def test_drucker_prager_hardening_types():
+    import math
+    tb = math.tan(math.radians(30.0))
+    for typ, f in (("TENSION", 1.0 + tb / 3.0), ("SHEAR", math.sqrt(3.0))):
+        _, model = _read_snippet(_dp_deck("30.0, 0.0, 10.0",
+                                          f"*DRUCKER PRAGER HARDENING, TYPE={typ}\n10.0, 0.0\n"))
+        dp = model.materials["SOIL"].extra_params["drucker_prager"]
+        assert dp["d0"] == pytest.approx(f * 10.0)
+        assert dp["H"] == 0.0 and dp["psi"] == 10.0 and dp["beta"] == 30.0
+
+
+def test_drucker_prager_missing_items_and_hardening():
+    # beta / psi have no Guide default -> input error
+    for line in ("", ", 1.0, 10.0", "30.0, 1.0"):
+        reader, _ = _read_snippet(_dp_deck(line))
+        assert reader.diagnostics.of("error"), line
+    # K != 1 is a gap (Material has no K)
+    reader, _ = _read_snippet(_dp_deck("30.0, 0.8, 10.0"))
+    assert reader.diagnostics.of("gap")
+    # no hardening -> refused, naming the material
+    reader, _ = _read_snippet(_dp_deck(hard=""))
+    msgs = [d.message for d in reader.diagnostics.of("error")]
+    assert any("SOIL" in m and "HARDENING" in m for m in msgs)
 
 
 def test_concrete_damaged_plasticity():
