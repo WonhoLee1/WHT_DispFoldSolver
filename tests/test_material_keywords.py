@@ -138,18 +138,18 @@ def test_plastic_johnson_cook():
 
 
 def test_creep_strain():
-    """*CREEP, LAW=STRAIN parses Norton creep parameters."""
+    """*CREEP, LAW=TIME parses the time-hardening power-law parameters."""
     deck = """
 *MATERIAL, NAME=CREEP_STEEL
 *ELASTIC
 150000.0, 0.3
-*CREEP, LAW=STRAIN
+*CREEP, LAW=TIME
 1.0e-10, 5.0, -0.5
 """
     reader, model = _read_snippet(deck)
     mat = model.materials["CREEP_STEEL"]
     assert "creep" in mat.extra_params
-    assert mat.extra_params["creep"]["law"] == "STRAIN"
+    assert mat.extra_params["creep"]["law"] == "TIME"
     assert mat.extra_params["creep"]["A"] == pytest.approx(1.0e-10)
     assert mat.extra_params["creep"]["n"] == pytest.approx(5.0)
 
@@ -497,3 +497,87 @@ def test_plastic_johnson_cook_items():
     # m nonzero without the temperatures: input error (no Guide default)
     _, _, bad = _errors("*MATERIAL, NAME=K\n*PLASTIC, HARDENING=JOHNSON COOK\n500., 400., 0.3, 1.0\n")
     assert any(d.level == "error" for d in bad)
+
+
+# ─── Guide data-line layout audit: CREEP / HYPERELASTIC / VISCOELASTIC / RATE DEPENDENT ───
+
+def test_creep_laws():
+    _, m, bad = _errors("*MATERIAL, NAME=A\n*CREEP, LAW=TIME\n1e-10, 5., -0.5\n")
+    assert not bad
+    assert m.materials["A"].extra_params["creep"]["m"] == -0.5
+    # strain hardening with m != 0 is a different law than the time-hardening kernel
+    _, _, bad = _errors("*MATERIAL, NAME=B\n*CREEP, LAW=STRAIN\n1e-10, 5., -0.5\n")
+    assert any(d.level == "gap" for d in bad)
+    _, m, bad = _errors("*MATERIAL, NAME=C\n*CREEP, LAW=STRAIN\n1e-10, 5., 0.\n")
+    assert not bad
+    # m is a needed item without a Guide default
+    _, _, bad = _errors("*MATERIAL, NAME=D\n*CREEP\n1e-10, 5.\n")
+    assert any(d.level == "error" for d in bad)
+    # HYPERB: A, B, n (delta H, R are temperature dependence, not the time exponent)
+    _, m, bad = _errors("*MATERIAL, NAME=H\n*CREEP, LAW=HYPERB\n1e-10, 0.01, 3.\n")
+    c = m.materials["H"].extra_params["creep"]
+    assert not bad and (c["A"], c["B"], c["n"], c["m"]) == (1e-10, 0.01, 3., 0.)
+    _, _, bad = _errors("*MATERIAL, NAME=H\n*CREEP, LAW=HYPERB\n1e-10, 0.01, 3., 5e4\n")
+    assert any(d.level == "gap" for d in bad)
+    for law in ("USER", "POWER LAW", "DARVEAUX"):
+        _, _, bad = _errors(f"*MATERIAL, NAME=U\n*CREEP, LAW={law}\n1., 2., 3.\n")
+        assert any(d.level == "gap" for d in bad), law
+
+
+def test_creep_anand_two_lines():
+    deck = ("*MATERIAL, NAME=AN\n*CREEP, LAW=ANAND\n"
+            "10., 1e4, 1e6, 7., 0.2, 1e3, 20., 0.01\n1.5\n")
+    _, m, bad = _errors(deck)
+    c = m.materials["AN"].extra_params["creep"]
+    assert not bad and c["s0"] == 10. and c["nn"] == 0.01 and c["a"] == 1.5
+
+
+def test_hyperelastic_default_is_polynomial_n1():
+    # no model flag: POLYNOMIAL, N=1 (C10, C01, D1) == Mooney-Rivlin, not Neo-Hooke
+    _, m, bad = _errors("*MATERIAL, NAME=A\n*HYPERELASTIC\n0.3, 0.1, 0.02\n")
+    h = m.materials["A"].hyperelastic
+    assert not bad and h["model"] == "MOONEY_RIVLIN" and (h["c10"], h["c01"], h["d1"]) == (0.3, 0.1, 0.02)
+
+
+def test_hyperelastic_layouts():
+    _, m, bad = _errors("*MATERIAL, NAME=Y\n*HYPERELASTIC, YEOH\n0.5, -0.1, 0.02, 0.01, 0.002, 0.0005\n")
+    h = m.materials["Y"].hyperelastic
+    assert not bad and h["model"] == "YEOH"
+    assert (h["c10"], h["c20"], h["c30"], h["d1"], h["d2"], h["d3"]) == (0.5, -0.1, 0.02, 0.01, 0.002, 0.0005)
+    _, m, bad = _errors("*MATERIAL, NAME=P\n*HYPERELASTIC, POLYNOMIAL, N=2\n1., 2., 3., 4., 5., 6., 7.\n")
+    h = m.materials["P"].hyperelastic
+    assert not bad and h["model"] == "POLYNOMIAL" and (h["c20"], h["c11"], h["c02"], h["d1"], h["d2"]) == (3., 4., 5., 6., 7.)
+    _, m, bad = _errors("*MATERIAL, NAME=R\n*HYPERELASTIC, REDUCED POLYNOMIAL, N=1\n0.4, 0.01\n")
+    h = m.materials["R"].hyperelastic
+    assert not bad and h["model"] == "NEO_HOOKEAN" and (h["c10"], h["d1"]) == (0.4, 0.01)
+    _, m, bad = _errors("*MATERIAL, NAME=O\n*HYPERELASTIC, OGDEN, N=2\n1., 2., 3., -2., 0.01, 0.02\n")
+    h = m.materials["O"].hyperelastic
+    assert not bad and h["mu_list"] == [1., 3.] and h["alpha_list"] == [2., -2.] and h["d_list"] == [0.01, 0.02]
+    # D omitted: no Guide default -> error; TYPE is not a model selector; MARLOW needs test data
+    _, _, bad = _errors("*MATERIAL, NAME=E\n*HYPERELASTIC, NEO HOOKE\n0.4\n")
+    assert any(d.level == "error" for d in bad)
+    for hdr in ("*HYPERELASTIC, TYPE=NEO HOOKE", "*HYPERELASTIC, MARLOW"):
+        _, _, bad = _errors(f"*MATERIAL, NAME=T\n{hdr}\n0.4, 0.01\n")
+        assert any(d.level == "gap" for d in bad), hdr
+
+
+def test_viscoelastic_requires_time_and_three_items():
+    _, m, bad = _errors("*MATERIAL, NAME=V\n*VISCOELASTIC, TIME=PRONY\n0.2, 0.1, 3.3\n0.1, 0.05, 30.\n")
+    assert not bad and m.materials["V"].viscoelastic_prony == [(0.2, 0.1, 3.3), (0.1, 0.05, 30.)]
+    _, _, bad = _errors("*MATERIAL, NAME=V\n*VISCOELASTIC\n0.2, 0.1, 3.3\n")
+    assert any(d.level == "error" for d in bad)
+    _, _, bad = _errors("*MATERIAL, NAME=V\n*VISCOELASTIC, TIME=PRONY\n0.2, 3.3\n")
+    assert any(d.level == "error" for d in bad)
+    _, _, bad = _errors("*MATERIAL, NAME=V\n*VISCOELASTIC, TIME=RELAXATION TEST DATA\n")
+    assert any(d.level == "gap" for d in bad)
+
+
+def test_rate_dependent_layout_and_dropped_effect():
+    _, m, bad = _errors("*MATERIAL, NAME=R\n*PLASTIC\n250., 0.\n*RATE DEPENDENT, TYPE=JOHNSON COOK\n0.02, 1.\n")
+    rd = m.materials["R"].extra_params["rate_dependent"]
+    assert rd["C"] == 0.02 and rd["eps_dot_0"] == 1.0
+    assert any(d.code == "rate-effect-dropped" for d in bad)   # no kernel consumes it
+    _, _, bad = _errors("*MATERIAL, NAME=R\n*RATE DEPENDENT, TYPE=JOHNSON COOK\n0.02\n")
+    assert any(d.level == "error" for d in bad)
+    _, _, bad = _errors("*MATERIAL, NAME=R\n*RATE DEPENDENT, TYPE=CHABOCHE\n1., 2., 3.\n")
+    assert any(d.level == "gap" for d in bad)

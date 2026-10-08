@@ -284,18 +284,53 @@ class CreepRecord(Record):
 
 @keyword("CREEP", support="FULL", contexts={KeywordContext.MATERIAL, KeywordContext.GLOBAL})
 class Creep(Keyword):
-    """Creep material behavior."""
+    """Creep material behavior (the kernel is the time-hardening power law A q^n t^m, sinh law, Anand)."""
 
     class Params(Schema):
-        law: Literal["STRAIN", "TIME", "HYPERBOLIC", "USER"] = "STRAIN"
+        law: Literal["STRAIN", "TIME", "HYPERB", "ANAND", "DARVEAUX", "DOUBLE POWER", "POWER LAW",
+                     "TIME POWER LAW", "USER"] = Param("STRAIN", supported=("STRAIN", "TIME", "HYPERB", "ANAND"))
         dependencies: int = Param(0, unsupported="CREEP DEPENDENCIES not supported")
-        time: Optional[Literal["TOTAL", "CREEP"]] = Param("TOTAL", control=True)
+        time: Optional[Literal["TOTAL", "CREEP"]] = Param("TOTAL", supported=("TOTAL",))
 
     Row = FloatRow
 
     def to_records(self, p, rows, ctx) -> Iterable[Record]:
-        table = tuple(tuple(v for v in r.items if v is not None) for r in rows)
-        yield CreepRecord(law=p.law, table=table, loc=ctx.loc)
+        if not rows:
+            raise InputError("*CREEP: no data line")
+        law = p.law
+        if law in ("STRAIN", "TIME"):
+            if len(rows) > 1:
+                raise Unsupported("*CREEP: several data lines (temperature dependence) are not represented")
+            v = _cells(rows[0], 4)
+            for i, nm in enumerate(("A", "n", "m")):
+                if v[i] is None:
+                    raise InputError(f"*CREEP LAW={law}: {nm} (data item {i + 1}) is required; the Keywords Guide gives no default")
+            if v[3] is not None:
+                raise Unsupported("*CREEP: temperature-dependent constants are not represented")
+            if law == "STRAIN" and v[2] != 0.0:
+                raise Unsupported("*CREEP LAW=STRAIN with m != 0 (strain hardening) is not represented: "
+                                  "the kernel is the time-hardening form")
+            table = ((float(v[0]), float(v[1]), float(v[2])),)
+        elif law == "HYPERB":
+            if len(rows) > 1:
+                raise Unsupported("*CREEP: several data lines (field dependence) are not represented")
+            v = _cells(rows[0], 5)
+            for i, nm in enumerate(("A", "B", "n")):
+                if v[i] is None:
+                    raise InputError(f"*CREEP LAW=HYPERB: {nm} (data item {i + 1}) is required")
+            if v[3] not in (None, 0.0) or v[4] not in (None, 0.0):
+                raise Unsupported("*CREEP LAW=HYPERB: temperature dependence (delta H, R) is not represented")
+            table = ((float(v[0]), float(v[1]), float(v[2])),)
+        else:  # ANAND: S1 Q/R A xi m A0 shat n / a S2 S3 A1 A2 A3 A4
+            if len(rows) != 2:
+                raise InputError("*CREEP LAW=ANAND needs two data lines")
+            a, b = _cells(rows[0], 8), _cells(rows[1], 8)
+            if any(x is None for x in a) or b[0] is None:
+                raise InputError("*CREEP LAW=ANAND: S1 Q/R A xi m A0 shat n / a are required")
+            if any(x not in (None, 0.0) for x in b[1:]):
+                raise Unsupported("*CREEP LAW=ANAND: S2, S3, A1..A4 are not represented")
+            table = (tuple(float(x) for x in a + [b[0]]),)
+        yield CreepRecord(law=law, table=table, loc=ctx.loc)
 
 
 @applies(CreepRecord)
@@ -312,72 +347,104 @@ class HyperelasticRecord(Record):
     model: str
     n: int
     table: Tuple[Tuple[float, ...], ...]
+    coef: Tuple[Tuple[str, float], ...] = ()
+
+
+def _flat_values(kw: str, rows, k: int, what: str) -> list:
+    """The k coefficients of a hyperelastic data set (lines may continue), no temperature."""
+    vals = [float(v) for r in rows for v in r.items if v is not None]
+    if len(vals) < k:
+        raise InputError(f"*{kw}: {what} needs {k} values, got {len(vals)}; the Keywords Guide gives no default for the rest")
+    if len(vals) == k + 1:
+        raise Unsupported(f"*{kw}: temperature-dependent constants are not represented")
+    if len(vals) > k:
+        raise Unsupported(f"*{kw}: several temperature sets are not represented")
+    return vals
 
 
 @keyword("HYPERELASTIC", support="FULL", contexts={KeywordContext.MATERIAL, KeywordContext.GLOBAL})
 class Hyperelastic(Keyword):
-    """Hyperelastic material models (Neo-Hookean, Mooney-Rivlin, Ogden, Yeoh, Arruda-Boyce, Marlow, etc.)."""
+    """Hyperelastic strain-energy potentials. POLYNOMIAL (N=1) is the Abaqus default form."""
 
     class Params(Schema):
-        type: Optional[Literal[
-            "NEO HOOKE", "NEO_HOOKE", "NEO HOOKEAN", "NEO_HOOKEAN",
-            "MOONEY RIVLIN", "MOONEY_RIVLIN", "POLYNOMIAL", "OGDEN", "YEOH",
-            "ARRUDA BOYCE", "ARRUDA_BOYCE", "MARLOW",
-            "REDUCED POLYNOMIAL", "REDUCED_POLYNOMIAL",
-            "VAN DER WAALS", "VALANIS LANDEL"
-        ]] = None
+        # TYPE belongs to USER hyperelasticity only (Keywords Guide); the model is chosen by the flags
+        type: Optional[str] = Param(None, unsupported="HYPERELASTIC TYPE applies only to USER hyperelasticity")
         n: int = 1
-        moduli: Literal["INSTANTANEOUS", "LONG TERM"] = Param("INSTANTANEOUS", unsupported="HYPERELASTIC MODULI not supported")
+        moduli: Literal["INSTANTANEOUS", "LONG TERM"] = Param("LONG TERM", unsupported="HYPERELASTIC MODULI not supported")
         properties: Optional[int] = Param(None, unsupported="HYPERELASTIC PROPERTIES not supported")
-        test_data_input: bool = Param(False, control=True)
+        test_data_input: bool = Param(False, unsupported="HYPERELASTIC TEST DATA INPUT not supported")
         arruda_boyce: bool = False
         yeoh: bool = False
         mooney_rivlin: bool = False
         ogden: bool = False
         polynomial: bool = False
         neo_hooke: bool = False
-        marlow: bool = False
+        marlow: bool = Param(False, unsupported="MARLOW needs *UNIAXIAL TEST DATA, which is not read")
         reduced_polynomial: bool = False
         van_der_waals: bool = Param(False, unsupported="VAN DER WAALS not supported")
         valanis_landel: bool = Param(False, unsupported="VALANIS LANDEL not supported")
+        hencky: bool = Param(False, unsupported="HYPERELASTIC HENCKY not supported")
         user: bool = Param(False, unsupported="HYPERELASTIC USER not supported")
         formulation: Optional[str] = Param(None, control=True, undocumented="Abaqus verification decks use FORMULATION")
+        poisson: Optional[float] = Param(None, unsupported="HYPERELASTIC POISSON not supported")
+        beta: Optional[float] = Param(None, unsupported="HYPERELASTIC BETA not supported")
 
     Row = FloatRow
 
     def to_records(self, p, rows, ctx) -> Iterable[Record]:
-        model = "NEO_HOOKEAN"
-        if p.arruda_boyce:
-            model = "ARRUDA_BOYCE"
-        elif p.yeoh:
-            model = "YEOH"
-        elif p.mooney_rivlin:
-            model = "MOONEY_RIVLIN"
-        elif p.ogden:
-            model = "OGDEN"
-        elif p.polynomial:
-            model = "POLYNOMIAL"
-        elif p.neo_hooke:
-            model = "NEO_HOOKEAN"
-        elif p.marlow:
-            model = "MARLOW"
-        elif p.reduced_polynomial:
-            model = "REDUCED_POLYNOMIAL"
-
-        if p.type is not None:
-            model = p.type.replace(" ", "_")
-            if model == "NEO_HOOKE":
-                model = "NEO_HOOKEAN"
-
-        table = tuple(tuple(v for v in r.items if v is not None) for r in rows)
-        yield HyperelasticRecord(model=model, n=p.n, table=table, loc=ctx.loc)
+        flags = [nm for nm in ("arruda_boyce", "yeoh", "mooney_rivlin", "ogden", "polynomial",
+                               "neo_hooke", "reduced_polynomial") if getattr(p, nm)]
+        if len(flags) > 1:
+            raise InputError(f"*HYPERELASTIC: parameters {', '.join(f.upper() for f in flags)} are mutually exclusive")
+        form = flags[0] if flags else "polynomial"       # Keywords Guide: POLYNOMIAL is the default
+        n = p.n
+        if form in ("arruda_boyce", "yeoh", "mooney_rivlin", "neo_hooke") and "n" in p.given:
+            raise InputError(f"*HYPERELASTIC: N can be used only with OGDEN, POLYNOMIAL and REDUCED POLYNOMIAL")
+        if not rows:
+            raise InputError("*HYPERELASTIC: no data line")
+        kw = "HYPERELASTIC"
+        coef: dict = {}
+        table: tuple
+        if form == "neo_hooke" or (form == "reduced_polynomial" and n == 1):
+            v = _flat_values(kw, rows, 2, "C10, D1")
+            model, table = "NEO_HOOKEAN", (tuple(v),)
+        elif form == "mooney_rivlin" or (form == "polynomial" and n == 1):
+            v = _flat_values(kw, rows, 3, "C10, C01, D1")
+            model, table = "MOONEY_RIVLIN", (tuple(v),)
+            coef = dict(zip(("c10", "c01", "d1"), v))
+        elif form == "polynomial" and n == 2:
+            v = _flat_values(kw, rows, 7, "C10 C01 C20 C11 C02 D1 D2")
+            model, table = "POLYNOMIAL", (tuple(v),)
+            coef = dict(zip(("c10", "c01", "c20", "c11", "c02", "d1", "d2"), v))
+        elif form == "polynomial":
+            raise Unsupported(f"*HYPERELASTIC, POLYNOMIAL, N={n}: only N=1 and N=2 are represented")
+        elif form == "yeoh" or (form == "reduced_polynomial" and n == 3):
+            v = _flat_values(kw, rows, 6, "C10 C20 C30 D1 D2 D3")
+            model, table = "YEOH", (tuple(v),)
+            coef = dict(zip(("c10", "c20", "c30", "d1", "d2", "d3"), v))
+        elif form == "reduced_polynomial" and n == 2:
+            v = _flat_values(kw, rows, 4, "C10 C20 D1 D2")
+            model, table = "YEOH", (tuple(v),)          # reduced polynomial N=2 == Yeoh with C30 = 0
+            coef = {"c10": v[0], "c20": v[1], "c30": 0.0, "d1": v[2], "d2": v[3], "d3": 0.0}
+        elif form == "reduced_polynomial":
+            raise Unsupported(f"*HYPERELASTIC, REDUCED POLYNOMIAL, N={n}: only N=1..3 are represented")
+        elif form == "arruda_boyce":
+            v = _flat_values(kw, rows, 3, "mu, lambda_m, D")
+            model, table = "ARRUDA_BOYCE", (tuple(v),)
+        else:  # ogden
+            if not 1 <= n <= 6:
+                raise InputError(f"*HYPERELASTIC, OGDEN, N={n}: N must be 1..6")
+            v = _flat_values(kw, rows, 3 * n, f"mu_i, alpha_i (i=1..{n}) then D_i")
+            mus, als, ds = v[0:2 * n:2], v[1:2 * n:2], v[2 * n:]
+            model, table = "OGDEN", tuple((mus[i], als[i], ds[i]) for i in range(n))
+        yield HyperelasticRecord(model=model, n=n, table=table, coef=tuple(coef.items()), loc=ctx.loc)
 
 
 @applies(HyperelasticRecord)
 def _apply_hyperelastic(reader: AbaqusInputReader, rec: HyperelasticRecord) -> None:
     mat = reader.current_material
     if mat is not None:
-        mat.Hyperelastic(model=rec.model, n=rec.n, table=rec.table)
+        mat.Hyperelastic(model=rec.model, n=rec.n, table=rec.table, **dict(rec.coef))
 
 
 # ─── 7. *VISCOELASTIC ────────────────────────────────────────────────────────
@@ -391,12 +458,16 @@ class ViscoelasticRecord(Record):
 
 @keyword("VISCOELASTIC", support="FULL", contexts={KeywordContext.MATERIAL, KeywordContext.GLOBAL})
 class Viscoelastic(Keyword):
-    """Viscoelastic material behavior with Prony series."""
+    """Time-domain Prony-series viscoelasticity (g_i, k_i, tau_i per term)."""
 
     class Params(Schema):
-        time: Literal["PRONY", "FREQUENCY DATA", "TABULAR"] = "PRONY"
-        frequency: Optional[Literal["CREEP TEST DATA", "RELAXATION TEST DATA", "FORMULA"]] = Param(None, unsupported="VISCOELASTIC FREQUENCY not supported")
-        type: Literal["ISOTROPIC", "TRACTION"] = "ISOTROPIC"
+        # one of TIME / FREQUENCY / NONLINEAR is required (Keywords Guide); no default
+        time: Optional[Literal["CREEP TEST DATA", "FREQUENCY DATA", "PRONY", "RELAXATION TEST DATA"]] = Param(
+            None, supported=("PRONY",))
+        frequency: Optional[Literal["CREEP TEST DATA", "RELAXATION TEST DATA", "FORMULA", "PRONY", "TABULAR"]] = Param(
+            None, unsupported="VISCOELASTIC FREQUENCY not supported")
+        type: Literal["ISOTROPIC", "TRANSVERSELY ISOTROPIC", "ORTHOTROPIC", "TRACTION"] = Param(
+            "ISOTROPIC", supported=("ISOTROPIC",))
         dependencies: int = Param(0, unsupported="VISCOELASTIC DEPENDENCIES not supported")
         errtol: Optional[float] = Param(None, control=True)
         nmax: Optional[int] = Param(None, control=True)
@@ -410,8 +481,17 @@ class Viscoelastic(Keyword):
     Row = FloatRow
 
     def to_records(self, p, rows, ctx) -> Iterable[Record]:
-        table = tuple(tuple(v for v in r.items if v is not None) for r in rows)
-        yield ViscoelasticRecord(time=p.time, type=p.type, table=table, loc=ctx.loc)
+        if p.time is None:
+            raise InputError("*VISCOELASTIC: one of TIME, FREQUENCY or NONLINEAR is required")
+        if not rows:
+            raise InputError("*VISCOELASTIC: no Prony data line")
+        table = []
+        for r in rows:
+            v = _cells(r, 3)
+            if any(x is None for x in v) or len(r.items) > 3:
+                raise InputError("*VISCOELASTIC: each line needs g_i, k_i and tau_i (the Keywords Guide gives no default)")
+            table.append(tuple(float(x) for x in v))
+        yield ViscoelasticRecord(time=p.time, type=p.type, table=tuple(table), loc=ctx.loc)
 
 
 @applies(ViscoelasticRecord)
@@ -431,18 +511,37 @@ class RateDependentRecord(Record):
 
 @keyword("RATE DEPENDENT", support="FULL", contexts={KeywordContext.MATERIAL, KeywordContext.GLOBAL})
 class RateDependent(Keyword):
-    """Strain rate dependence for plastic materials."""
+    """Strain-rate dependence: stored on the material, not yet consumed by any kernel."""
 
     class Params(Schema):
-        type: Literal["POWER LAW", "POWER_LAW", "YIELD RATIO", "JOHNSON COOK"] = "POWER LAW"
+        type: Literal["POWER LAW", "CHABOCHE", "JOHNSON COOK", "YIELD RATIO"] = Param(
+            "POWER LAW", supported=("POWER LAW", "JOHNSON COOK", "YIELD RATIO"))
         dependencies: int = Param(0, unsupported="RATE DEPENDENT DEPENDENCIES not supported")
 
     Row = FloatRow
 
     def to_records(self, p, rows, ctx) -> Iterable[Record]:
+        if not rows:
+            raise InputError("*RATE DEPENDENT: no data line")
         rd_type = p.type.replace(" ", "_")
-        table = tuple(tuple(v for v in r.items if v is not None) for r in rows)
-        yield RateDependentRecord(type=rd_type, table=table, loc=ctx.loc)
+        names = {"POWER_LAW": ("D", "n"), "JOHNSON_COOK": ("C", "reference strain rate"),
+                 "YIELD_RATIO": ("yield stress ratio", "plastic strain rate")}[rd_type]
+        if rd_type == "JOHNSON_COOK" and len(rows) != 1:
+            raise InputError("*RATE DEPENDENT, TYPE=JOHNSON COOK takes one data line")
+        if rd_type == "POWER_LAW" and len(rows) != 1:
+            raise Unsupported("*RATE DEPENDENT, TYPE=POWER LAW: several data lines (temperature dependence) not represented")
+        table = []
+        for r in rows:
+            v = _cells(r, 3)
+            if v[0] is None or v[1] is None:
+                raise InputError(f"*RATE DEPENDENT: {names[0]} and {names[1]} are required; the Keywords Guide gives no default")
+            if v[2] is not None:
+                raise Unsupported("*RATE DEPENDENT: temperature-dependent data is not represented")
+            table.append((float(v[0]), float(v[1])))
+        yield Note("gap", "rate-effect-dropped",
+                   "*RATE DEPENDENT is stored on the material but no kernel consumes it: the solve is rate independent",
+                   loc=ctx.loc)
+        yield RateDependentRecord(type=rd_type, table=tuple(table), loc=ctx.loc)
 
 
 @applies(RateDependentRecord)
