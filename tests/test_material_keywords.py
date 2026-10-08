@@ -581,3 +581,59 @@ def test_rate_dependent_layout_and_dropped_effect():
     assert any(d.level == "error" for d in bad)
     _, _, bad = _errors("*MATERIAL, NAME=R\n*RATE DEPENDENT, TYPE=CHABOCHE\n1., 2., 3.\n")
     assert any(d.level == "gap" for d in bad)
+
+
+# ─── Guide data-line layout audit: DAMAGE INITIATION / EVOLUTION / CONCRETE ──
+
+def test_damage_initiation_ductile_layouts():
+    _, m, bad = _errors("*MATERIAL, NAME=A\n*DAMAGE INITIATION, CRITERION=DUCTILE\n0.2\n")
+    assert not bad and m.materials["A"].extra_params["damage_init"] == {"type": 0, "p": [0.2, 0, 0, 0, 0]}
+    # Guide row is (eD, triaxiality); the kernel wants (eta0, e0, eta1, e1), ascending eta
+    _, m, bad = _errors("*MATERIAL, NAME=B\n*DAMAGE INITIATION, CRITERION=DUCTILE\n0.1, 0.8\n0.3, 0.\n")
+    assert not bad and m.materials["B"].extra_params["damage_init"] == {"type": 1, "p": [0.0, 0.3, 0.8, 0.1, 0]}
+    # strain-rate item given: not represented; CRITERION is required
+    _, _, bad = _errors("*MATERIAL, NAME=C\n*DAMAGE INITIATION, CRITERION=DUCTILE\n0.2, 0., 5.\n")
+    assert any(d.level == "gap" for d in bad)
+    _, _, bad = _errors("*MATERIAL, NAME=D\n*DAMAGE INITIATION\n0.2\n")
+    assert any(d.level == "error" for d in bad)
+
+
+def test_damage_initiation_johnson_cook_items():
+    _, m, bad = _errors("*MATERIAL, NAME=A\n*DAMAGE INITIATION, CRITERION=JOHNSON COOK\n"
+                        "0.1, 0.2, -1.5, 0.01, 0.5, 1500., 20., 2.\n")
+    di = m.materials["A"].extra_params["damage_init"]
+    assert not bad and di["p"] == [0.1, 0.2, -1.5, 0.01, 0.5]
+    assert (di["Tmelt"], di["Troom"], di["eps0"]) == (1500., 20., 2.)
+    # d5 / d4 nonzero need theta_melt, theta_transition / eps0 (no Guide default)
+    _, _, bad = _errors("*MATERIAL, NAME=B\n*DAMAGE INITIATION, CRITERION=JOHNSON COOK\n0.1, 0.2, -1.5, 0., 0.5\n")
+    assert any(d.level == "error" for d in bad)
+    _, _, bad = _errors("*MATERIAL, NAME=C\n*DAMAGE INITIATION, CRITERION=JOHNSON COOK\n0.1, 0.2, -1.5, 0.01\n")
+    assert any(d.level == "error" for d in bad)
+
+
+def test_damage_evolution_requirements():
+    _, m, bad = _errors("*MATERIAL, NAME=A\n*DAMAGE EVOLUTION, TYPE=ENERGY\n12.5\n")
+    assert not bad and m.materials["A"].extra_params["damage_evol"]["Gf"] == 12.5
+    assert m.materials["A"].extra_params["damage_evol"]["type"] == 0       # SOFTENING default LINEAR
+    _, _, bad = _errors("*MATERIAL, NAME=B\n*DAMAGE EVOLUTION, TYPE=ENERGY\n")      # Gf missing
+    assert any(d.level == "error" for d in bad)
+    _, _, bad = _errors("*MATERIAL, NAME=C\n*DAMAGE EVOLUTION\n5.\n")               # TYPE required
+    assert any(d.level == "error" for d in bad)
+
+
+def test_cdp_tables_are_strain_value_pairs_and_psi_required():
+    deck = ("*MATERIAL, NAME=C\n*ELASTIC\n30000., 0.2\n*CONCRETE DAMAGED PLASTICITY\n36.\n"
+            "*CONCRETE COMPRESSION HARDENING\n15., 0.\n30., 0.001\n"
+            "*CONCRETE TENSION STIFFENING\n3., 0.\n0.3, 0.001\n"
+            "*CONCRETE TENSION DAMAGE\n0., 0.\n0.9, 0.001\n")
+    _, m, bad = _errors(deck)
+    cd = m.materials["C"].extra_params["concrete_dp"]
+    # Guide lines are (stress, strain); the material kernel wants (strain, stress)
+    assert cd["compression"] == [(0., 15.), (0.001, 30.)] and cd["tension"] == [(0., 3.), (0.001, 0.3)]
+    assert cd["dt_table"] == [(0., 0.), (0.001, 0.9)]
+    assert cd["dc_table"] == [(0., 0.)]           # no *CONCRETE COMPRESSION DAMAGE -> no damage
+    assert any(d.code == "cdp-backbone-approximation" for d in bad)
+    _, _, bad = _errors("*MATERIAL, NAME=D\n*CONCRETE DAMAGED PLASTICITY\n, 0.1\n")
+    assert any(d.level == "error" for d in bad)
+    _, _, bad = _errors("*MATERIAL, NAME=E\n*CONCRETE DAMAGED PLASTICITY\n36., 0.3\n")   # eccentricity 0.3 != default
+    assert any(d.level == "gap" for d in bad)

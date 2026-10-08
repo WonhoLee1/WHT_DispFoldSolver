@@ -557,17 +557,21 @@ def _apply_rate_dependent(reader: AbaqusInputReader, rec: RateDependentRecord) -
 class DamageInitiationRecord(Record):
     criterion: str
     table: Tuple[Tuple[float, ...], ...]
+    extra: Tuple[Tuple[str, float], ...] = ()
 
 
 @keyword("DAMAGE INITIATION", support="PARTIAL", contexts={KeywordContext.MATERIAL, KeywordContext.GLOBAL})
 class DamageInitiation(Keyword):
-    """Damage initiation criteria (ductile, shear, Johnson-Cook)."""
+    """Damage initiation: ductile (eD [, triaxiality]) and Johnson-Cook (d1..d5, theta_melt, theta_transition, eps0)."""
 
     class Params(Schema):
+        # CRITERION is required (Keywords Guide); there is no default
         criterion: Literal[
-            "DUCTILE", "JOHNSON COOK", "JOHNSON_COOK", "JC", "SHEAR", "MAXS", "MAXPE",
-            "FRACTURE ENERGY", "HASHIN", "MK", "MSFLD", "FLD", "FLSD", "HOOSIEPOUR"
-        ] = Param("DUCTILE", supported=("DUCTILE", "JOHNSON COOK", "JOHNSON_COOK", "JC"))
+            "DUCTILE", "HC", "JOHNSON COOK", "SHEAR", "FLD", "FLSD", "MK", "MSFLD", "HASHIN", "LARC",
+            "PLY FABRIC", "HSNFIBER", "HSNMATRIX", "TSINVMATRIX", "MAX STRAIN", "MAX STRESS", "TSAIWU",
+            "TSAIWUE", "HYSTERESIS ENERGY", "MAXE", "MAXPE", "MAXPS", "MAXS", "MAXU", "QUADE", "QUADS",
+            "QUADU", "USER"
+        ] = Param(supported=("DUCTILE", "JOHNSON COOK"))
         definition: Optional[str] = Param(None, unsupported="DAMAGE INITIATION DEFINITION not supported")
         dependencies: int = Param(0, unsupported="DAMAGE INITIATION DEPENDENCIES not supported")
         frequency: Optional[int] = Param(None, control=True)
@@ -578,18 +582,59 @@ class DamageInitiation(Keyword):
     Row = FloatRow
 
     def to_records(self, p, rows, ctx) -> Iterable[Record]:
-        crit = p.criterion.replace(" ", "_")
-        if crit in ("JOHNSONCOOK", "JC"):
-            crit = "JOHNSON_COOK"
-        table = tuple(tuple(v for v in r.items if v is not None) for r in rows)
-        yield DamageInitiationRecord(criterion=crit, table=table, loc=ctx.loc)
+        if not rows:
+            raise InputError("*DAMAGE INITIATION: no data line")
+        if p.criterion == "JOHNSON COOK":
+            if len(rows) != 1:
+                raise InputError("*DAMAGE INITIATION, CRITERION=JOHNSON COOK takes one data line")
+            v = _cells(rows[0], 8)
+            d = v[:5]
+            if any(x is None for x in d):
+                raise InputError("*DAMAGE INITIATION, CRITERION=JOHNSON COOK: d1..d5 are all required; "
+                                 "the Keywords Guide gives no default")
+            extra = {}
+            if d[4] != 0.0:          # temperature term in use
+                if v[5] is None or v[6] is None:
+                    raise InputError("*DAMAGE INITIATION, CRITERION=JOHNSON COOK: theta_melt and theta_transition "
+                                     "are required when d5 is nonzero")
+                extra.update(Tmelt=float(v[5]), Troom=float(v[6]))
+            if d[3] != 0.0:          # rate term in use
+                if v[7] is None:
+                    raise InputError("*DAMAGE INITIATION, CRITERION=JOHNSON COOK: the reference strain rate is "
+                                     "required when d4 is nonzero")
+                extra["eps0"] = float(v[7])
+            yield DamageInitiationRecord(criterion="JOHNSON_COOK", table=(tuple(float(x) for x in d),),
+                                         extra=tuple(extra.items()), loc=ctx.loc)
+            return
+        # DUCTILE: (equivalent plastic strain eD, triaxiality, strain rate, temperature)
+        pts = []
+        for r in rows:
+            v = _cells(r, 4)
+            if v[0] is None:
+                raise InputError("*DAMAGE INITIATION, CRITERION=DUCTILE: the equivalent plastic strain at "
+                                 "initiation (data item 1) is required")
+            if v[2] not in (None, 0.0):
+                raise Unsupported("*DAMAGE INITIATION, CRITERION=DUCTILE: strain-rate dependence is not represented")
+            if v[3] is not None:
+                raise Unsupported("*DAMAGE INITIATION, CRITERION=DUCTILE: temperature dependence is not represented")
+            pts.append((v[0], v[1]))
+        if len(pts) == 1:
+            table = ((float(pts[0][0]),),)                       # constant eD
+        elif len(pts) == 2:
+            if any(t is None for _, t in pts) or pts[0][1] == pts[1][1]:
+                raise InputError("*DAMAGE INITIATION, CRITERION=DUCTILE: two points need distinct triaxialities")
+            pts.sort(key=lambda x: x[1])
+            table = tuple((float(t), float(e)) for e, t in pts)  # Material convention: (triaxiality, eD)
+        else:
+            raise Unsupported("*DAMAGE INITIATION, CRITERION=DUCTILE: more than two triaxiality points are not represented")
+        yield DamageInitiationRecord(criterion="DUCTILE", table=table, loc=ctx.loc)
 
 
 @applies(DamageInitiationRecord)
 def _apply_damage_initiation(reader: AbaqusInputReader, rec: DamageInitiationRecord) -> None:
     mat = reader.current_material
     if mat is not None:
-        mat.DamageInitiation(type=rec.criterion, table=rec.table)
+        mat.DamageInitiation(type=rec.criterion, table=rec.table, **dict(rec.extra))
 
 
 # ─── 10. *DAMAGE EVOLUTION ───────────────────────────────────────────────────
@@ -602,10 +647,11 @@ class DamageEvolutionRecord(Record):
 
 @keyword("DAMAGE EVOLUTION", support="PARTIAL", contexts={KeywordContext.MATERIAL, KeywordContext.GLOBAL})
 class DamageEvolution(Keyword):
-    """Damage evolution after damage initiation."""
+    """Damage evolution by fracture energy (TYPE=ENERGY, linear or exponential softening)."""
 
     class Params(Schema):
-        type: Literal["ENERGY", "DISPLACEMENT"] = Param("ENERGY", supported=("ENERGY",))
+        # TYPE is required (Keywords Guide); SOFTENING defaults to LINEAR
+        type: Literal["DISCONTINUOUS", "DISPLACEMENT", "ENERGY", "HYSTERESIS ENERGY"] = Param(supported=("ENERGY",))
         softening: Literal["LINEAR", "EXPONENTIAL", "TABULAR"] = Param("LINEAR", supported=("LINEAR", "EXPONENTIAL"))
         degradation: Literal["MAXIMUM", "MULTIPLICATIVE"] = Param("MAXIMUM", unsupported="DAMAGE EVOLUTION DEGRADATION not supported")
         dependencies: int = Param(0, unsupported="DAMAGE EVOLUTION DEPENDENCIES not supported")
@@ -617,8 +663,17 @@ class DamageEvolution(Keyword):
     Row = FloatRow
 
     def to_records(self, p, rows, ctx) -> Iterable[Record]:
-        gf = float(rows[0].items[0]) if rows and rows[0].items and rows[0].items[0] is not None else 1.0
-        yield DamageEvolutionRecord(type=f"ENERGY_{p.softening}", Gf=gf, loc=ctx.loc)
+        if not rows:
+            raise InputError("*DAMAGE EVOLUTION: no data line (the fracture energy is required)")
+        if len(rows) > 1:
+            raise Unsupported("*DAMAGE EVOLUTION: several data lines (temperature dependence) are not represented")
+        v = _cells(rows[0], 2)
+        if v[0] is None or v[0] <= 0.0:
+            raise InputError("*DAMAGE EVOLUTION: a positive fracture energy (data item 1) is required; "
+                             "the Keywords Guide gives no default")
+        if v[1] is not None:
+            raise Unsupported("*DAMAGE EVOLUTION: temperature-dependent fracture energy is not represented")
+        yield DamageEvolutionRecord(type=f"ENERGY_{p.softening}", Gf=float(v[0]), loc=ctx.loc)
 
 
 @applies(DamageEvolutionRecord)
@@ -757,27 +812,47 @@ def _apply_drucker_prager_hardening(reader: AbaqusInputReader, rec: DruckerPrage
 
 
 # ─── 13-17. CONCRETE DAMAGED PLASTICITY SUITE ────────────────────────────────
+#
+# The material's tables are (strain, value) pairs; the Keywords Guide gives
+# (value, strain, rate, temperature), so every table is swapped on landing.
+# An absent *CONCRETE TENSION/COMPRESSION DAMAGE means no damage (zero table).
+
+_NO_DAMAGE = [(0.0, 0.0)]
+
 
 def _try_finalize_cdp(reader: AbaqusInputReader, mat) -> None:
     ep = mat.extra_params
-    if "concrete_dp" in ep or "cdp_params" not in ep:
-        return
-    if "cdp_compression" not in ep or "cdp_tension" not in ep:
-        return
-    if "cdp_dc" not in ep or "cdp_dt" not in ep:
+    if "cdp_params" not in ep or "cdp_compression" not in ep or "cdp_tension" not in ep:
         return
     p = ep["cdp_params"]
     try:
         mat.ConcreteDP(
-            beta=p.get("beta", 20.0),
-            psi=p.get("psi", 15.0),
+            beta=p["beta"],
+            psi=p["psi"],
             compression=ep["cdp_compression"],
             tension=ep["cdp_tension"],
-            dt_table=ep["cdp_dt"],
-            dc_table=ep["cdp_dc"],
+            dt_table=ep.get("cdp_dt", _NO_DAMAGE),
+            dc_table=ep.get("cdp_dc", _NO_DAMAGE),
         )
     except ValueError as e:
         reader.unsupported_keyword(f"CONCRETE_DAMAGED_PLASTICITY table rejected ({e})")
+
+
+def _cdp_pairs(kw: str, rows, names: Tuple[str, str]) -> Tuple[Tuple[float, float], ...]:
+    """Guide lines (value, strain, rate, temperature) -> ((strain, value), ...)."""
+    if not rows:
+        raise InputError(f"*{kw}: no data line")
+    out = []
+    for r in rows:
+        v = _cells(r, 4)
+        if v[0] is None or v[1] is None:
+            raise InputError(f"*{kw}: each line needs {names[0]} and {names[1]}")
+        if v[2] not in (None, 0.0):
+            raise Unsupported(f"*{kw}: rate-dependent data is not represented")
+        if v[3] is not None:
+            raise Unsupported(f"*{kw}: temperature-dependent data is not represented")
+        out.append((float(v[1]), float(v[0])))
+    return tuple(out)
 
 
 @dataclass(frozen=True)
@@ -788,7 +863,7 @@ class ConcreteDPRecord(Record):
 
 @keyword("CONCRETE DAMAGED PLASTICITY", support="PARTIAL", contexts={KeywordContext.MATERIAL, KeywordContext.GLOBAL})
 class ConcreteDamagedPlasticity(Keyword):
-    """Concrete damaged plasticity yield and flow potential parameters."""
+    """CDP flow potential / yield parameters: psi, eccentricity, fb0/fc0, Kc, viscosity."""
 
     class Params(Schema):
         dependencies: int = Param(0, unsupported="CDP DEPENDENCIES not supported")
@@ -797,9 +872,28 @@ class ConcreteDamagedPlasticity(Keyword):
     Row = FloatRow
 
     def to_records(self, p, rows, ctx) -> Iterable[Record]:
-        vals = rows[0].items if rows and rows[0].items else ()
-        psi = float(vals[0]) if len(vals) > 0 and vals[0] is not None else 15.0
-        yield ConcreteDPRecord(psi=psi, beta=20.0, loc=ctx.loc)
+        if not rows:
+            raise InputError("*CONCRETE DAMAGED PLASTICITY: no data line (the dilation angle is required)")
+        if len(rows) > 1:
+            raise Unsupported("*CONCRETE DAMAGED PLASTICITY: several data lines (temperature dependence) not represented")
+        v = _cells(rows[0], 6)
+        if v[0] is None:
+            raise InputError("*CONCRETE DAMAGED PLASTICITY: the dilation angle psi (data item 1) is required; "
+                             "the Keywords Guide gives no default")
+        # items 2-5: eccentricity, fb0/fc0, Kc, viscosity -- the material is a Drucker-Prager
+        # backbone that does not use them; only the Guide defaults (blank, 0.0 or the default
+        # value itself) can be accepted
+        for i, nm, dflt in ((1, "eccentricity", 0.1), (2, "fb0/fc0", 1.16), (3, "Kc", 2.0 / 3.0), (4, "viscosity", 0.0)):
+            if v[i] not in (None, 0.0) and abs(v[i] - dflt) > 1e-3:
+                raise Unsupported(f"*CONCRETE DAMAGED PLASTICITY: {nm}={v[i]} is not represented "
+                                  f"(Drucker-Prager backbone)")
+        if v[5] is not None:
+            raise Unsupported("*CONCRETE DAMAGED PLASTICITY: temperature-dependent data is not represented")
+        yield Note("gap", "cdp-backbone-approximation",
+                   "*CONCRETE DAMAGED PLASTICITY runs on a Drucker-Prager backbone (friction angle fixed at 20 deg, "
+                   "no Lubliner/Kc yield surface, no cyclic stiffness recovery); the Abaqus defaults of eccentricity, "
+                   "fb0/fc0, Kc and viscosity are not applied", loc=ctx.loc)
+        yield ConcreteDPRecord(psi=float(v[0]), beta=20.0, loc=ctx.loc)
 
 
 @applies(ConcreteDPRecord)
@@ -807,21 +901,18 @@ def _apply_cdp(reader: AbaqusInputReader, rec: ConcreteDPRecord) -> None:
     mat = reader.current_material
     if mat is None:
         return
-    mat.extra_params["cdp_params"] = {
-        "psi": rec.psi,
-        "beta": rec.beta,
-    }
+    mat.extra_params["cdp_params"] = {"psi": rec.psi, "beta": rec.beta}
     _try_finalize_cdp(reader, mat)
 
 
 @dataclass(frozen=True)
 class CDPCompressionRecord(Record):
-    table: Tuple[Tuple[float, ...], ...]
+    table: Tuple[Tuple[float, float], ...]
 
 
 @keyword("CONCRETE COMPRESSION HARDENING", support="PARTIAL", contexts={KeywordContext.MATERIAL, KeywordContext.GLOBAL})
 class ConcreteCompressionHardening(Keyword):
-    """Compression hardening data for CDP."""
+    """Compression hardening (yield stress, inelastic strain) for CDP."""
 
     class Params(Schema):
         dependencies: int = Param(0, unsupported="CDP COMPRESSION DEPENDENCIES not supported")
@@ -829,8 +920,8 @@ class ConcreteCompressionHardening(Keyword):
     Row = FloatRow
 
     def to_records(self, p, rows, ctx) -> Iterable[Record]:
-        table = tuple(tuple(v for v in r.items if v is not None) for r in rows)
-        yield CDPCompressionRecord(table=table, loc=ctx.loc)
+        yield CDPCompressionRecord(table=_cdp_pairs("CONCRETE COMPRESSION HARDENING", rows,
+                                                    ("yield stress", "inelastic strain")), loc=ctx.loc)
 
 
 @applies(CDPCompressionRecord)
@@ -838,19 +929,19 @@ def _apply_cdp_compression(reader: AbaqusInputReader, rec: CDPCompressionRecord)
     mat = reader.current_material
     if mat is None:
         return
-    mat.extra_params["cdp_compression"] = [tuple(v for v in r[:2] if v is not None) for r in rec.table]
+    mat.extra_params["cdp_compression"] = list(rec.table)
     _try_finalize_cdp(reader, mat)
 
 
 @dataclass(frozen=True)
 class CDPTensionRecord(Record):
     type: str
-    table: Tuple[Tuple[float, ...], ...]
+    table: Tuple[Tuple[float, float], ...]
 
 
 @keyword("CONCRETE TENSION STIFFENING", support="PARTIAL", contexts={KeywordContext.MATERIAL, KeywordContext.GLOBAL})
 class ConcreteTensionStiffening(Keyword):
-    """Tension stiffening data for CDP."""
+    """Post-cracking (stress, cracking strain) for CDP."""
 
     class Params(Schema):
         type: Literal["STRAIN", "DISPLACEMENT", "GFI"] = Param("STRAIN", supported=("STRAIN",))
@@ -859,8 +950,8 @@ class ConcreteTensionStiffening(Keyword):
     Row = FloatRow
 
     def to_records(self, p, rows, ctx) -> Iterable[Record]:
-        table = tuple(tuple(v for v in r.items if v is not None) for r in rows)
-        yield CDPTensionRecord(type=p.type, table=table, loc=ctx.loc)
+        yield CDPTensionRecord(type=p.type, table=_cdp_pairs("CONCRETE TENSION STIFFENING", rows,
+                                                             ("remaining stress", "cracking strain")), loc=ctx.loc)
 
 
 @applies(CDPTensionRecord)
@@ -868,18 +959,18 @@ def _apply_cdp_tension(reader: AbaqusInputReader, rec: CDPTensionRecord) -> None
     mat = reader.current_material
     if mat is None:
         return
-    mat.extra_params["cdp_tension"] = [tuple(v for v in r[:2] if v is not None) for r in rec.table]
+    mat.extra_params["cdp_tension"] = list(rec.table)
     _try_finalize_cdp(reader, mat)
 
 
 @dataclass(frozen=True)
 class CDPCompressionDamageRecord(Record):
-    table: Tuple[Tuple[float, ...], ...]
+    table: Tuple[Tuple[float, float], ...]
 
 
 @keyword("CONCRETE COMPRESSION DAMAGE", support="PARTIAL", contexts={KeywordContext.MATERIAL, KeywordContext.GLOBAL})
 class ConcreteCompressionDamage(Keyword):
-    """Compression damage variable for CDP."""
+    """Compression damage variable dc versus inelastic strain."""
 
     class Params(Schema):
         dependencies: int = Param(0, unsupported="CDP COMPRESSION DAMAGE DEPENDENCIES not supported")
@@ -888,8 +979,8 @@ class ConcreteCompressionDamage(Keyword):
     Row = FloatRow
 
     def to_records(self, p, rows, ctx) -> Iterable[Record]:
-        table = tuple(tuple(v for v in r.items if v is not None) for r in rows)
-        yield CDPCompressionDamageRecord(table=table, loc=ctx.loc)
+        yield CDPCompressionDamageRecord(table=_cdp_pairs("CONCRETE COMPRESSION DAMAGE", rows,
+                                                          ("damage dc", "inelastic strain")), loc=ctx.loc)
 
 
 @applies(CDPCompressionDamageRecord)
@@ -897,19 +988,19 @@ def _apply_cdp_dc(reader: AbaqusInputReader, rec: CDPCompressionDamageRecord) ->
     mat = reader.current_material
     if mat is None:
         return
-    mat.extra_params["cdp_dc"] = [tuple(v for v in r[:2] if v is not None) for r in rec.table]
+    mat.extra_params["cdp_dc"] = list(rec.table)
     _try_finalize_cdp(reader, mat)
 
 
 @dataclass(frozen=True)
 class CDPTensionDamageRecord(Record):
     type: str
-    table: Tuple[Tuple[float, ...], ...]
+    table: Tuple[Tuple[float, float], ...]
 
 
 @keyword("CONCRETE TENSION DAMAGE", support="PARTIAL", contexts={KeywordContext.MATERIAL, KeywordContext.GLOBAL})
 class ConcreteTensionDamage(Keyword):
-    """Tension damage variable for CDP."""
+    """Tension damage variable dt versus cracking strain."""
 
     class Params(Schema):
         type: Literal["STRAIN", "DISPLACEMENT"] = Param("STRAIN", supported=("STRAIN",))
@@ -919,8 +1010,8 @@ class ConcreteTensionDamage(Keyword):
     Row = FloatRow
 
     def to_records(self, p, rows, ctx) -> Iterable[Record]:
-        table = tuple(tuple(v for v in r.items if v is not None) for r in rows)
-        yield CDPTensionDamageRecord(type=p.type, table=table, loc=ctx.loc)
+        yield CDPTensionDamageRecord(type=p.type, table=_cdp_pairs("CONCRETE TENSION DAMAGE", rows,
+                                                                   ("damage dt", "cracking strain")), loc=ctx.loc)
 
 
 @applies(CDPTensionDamageRecord)
@@ -928,7 +1019,7 @@ def _apply_cdp_dt(reader: AbaqusInputReader, rec: CDPTensionDamageRecord) -> Non
     mat = reader.current_material
     if mat is None:
         return
-    mat.extra_params["cdp_dt"] = [tuple(v for v in r[:2] if v is not None) for r in rec.table]
+    mat.extra_params["cdp_dt"] = list(rec.table)
     _try_finalize_cdp(reader, mat)
 
 
