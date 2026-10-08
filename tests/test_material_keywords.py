@@ -734,3 +734,15 @@ def test_distribution_name_data_line_is_a_gap_not_a_parse_error():
                  "*MATERIAL, NAME=A\n*EXPANSION\ndistAlpha\n", "*ORIENTATION, NAME=O\ndistOrient\n"):
         _, _, bad = _errors(deck)
         assert [d.level for d in bad] == ["gap"] and "distribution" in bad[0].message, deck
+
+
+def test_refused_definition_is_named_when_nothing_is_left_to_compute():
+    import warnings
+    from dispsolver.material.resolve import resolve_material
+    _, m, _ = _errors("*MATERIAL, NAME=A1\n*HYPERELASTIC, MARLOW\n0.4, 0.01\n")
+    mat = m.materials["A1"]
+    assert "*HYPERELASTIC, MARLOW" in mat.extra_params["refused_definitions"][0]
+    with pytest.raises(NotImplementedError) as ei:
+        resolve_material(mat, 3, "material 'A1'")
+    msg = str(ei.value)
+    assert "definition was refused" in msg and "*HYPERELASTIC, MARLOW" in msg and "nothing to compute" in msg

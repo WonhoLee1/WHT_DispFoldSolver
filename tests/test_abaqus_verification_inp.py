@@ -174,6 +174,11 @@ def test_equation_lands_binds_assembles():
     # 3 blocks, each 'node set (3 nodes) = node': one equation per set node
     # (the set's nodes used to be lumped into a single equation)
     assert len(eqs) == 9
+    # The test is about *EQUATION binding, not materials: this deck's only material is
+    # *HYPERELASTIC, MARLOW, which the reader refuses (it needs test data), so give A1 a
+    # supported one before building the solver system. The refusal must be on record.
+    assert model.materials["A1"].extra_params.get("refused_definitions")
+    model.materials["A1"].Elastic(E=1000.0, nu=0.3)
     sys = model.build_solver_system()
     bound = [c for c in sys.constraints if isinstance(c, EquationConstraint)]
     assert all(c._bound for c in bound)

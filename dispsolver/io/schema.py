@@ -621,6 +621,23 @@ def _param_specs(schema: Type[Schema]) -> list:
             for s in schema._fields]
 
 
+def _note_refused_definition(reader, cls, block, reason: str) -> None:
+    """A keyword inside a *MATERIAL that the reader refused leaves the material without that
+    definition; record it on the Material so a later 'nothing to compute it with' error can
+    say what the deck asked for (extra_params['refused_definitions'])."""
+    ctx = getattr(reader, "context", None)
+    mat = getattr(reader, "current_material", None)
+    if mat is None or getattr(ctx, "name", "") != "MATERIAL":
+        return
+    import re
+    params = ", ".join(k.upper() if v in (None, "", True, "yes", "YES") else f"{k.upper()}={v}"
+                       for k, v in block.params.items())
+    label = f"*{cls.name}" + (f", {params}" if params else "")
+    reason = re.sub(r"^(Error processing keyword )?\*[^:]*?:\d+:? ?", "", reason).strip()
+    why = f" ({reason[:140]})" if reason else ""
+    mat.extra_params.setdefault("refused_definitions", []).append(label + why)
+
+
 def keyword(name: str, *, support: str = "FULL", contexts=None, aliases=(), description: str = ""):
     """Register a Keyword class with the reader's registry. `contexts` defaults
     to the Abaqus levels in the keyword index."""
@@ -645,8 +662,12 @@ def keyword(name: str, *, support: str = "FULL", contexts=None, aliases=(), desc
             ctx = KeywordCtx(cls.name, reader.context.name,
                              reader.current_step.name if reader.current_step is not None else None,
                              reader.dim, Loc.of(block))
+            reasons: List[str] = []
+
             def report(level, code, msg, param=None):
                 reader.report(level, code, msg, block)
+                if level in ("gap", "error"):
+                    reasons.append(msg)
                 if param is not None:             # legacy view: reader.unsupported_params
                     kind = {"unknown-param": "unknown", "ambiguous-param": "unknown",
                             "unsupported-param": "unsupported", "control-param-ignored": "control"}[code]
@@ -655,10 +676,13 @@ def keyword(name: str, *, support: str = "FULL", contexts=None, aliases=(), desc
 
             try:
                 records = run_keyword(cls, block, ctx, report)
-            except Exception:
+            except Exception as exc:
+                _note_refused_definition(reader, cls, block, str(exc))
                 if cls.closes_with:
                     reader.skip_scope(cls.name, cls.closes_with, block)
                 raise
+            if not any(not isinstance(r, Note) for r in records):
+                _note_refused_definition(reader, cls, block, reasons[-1] if reasons else "")
             if cls.closes_with and not any(not isinstance(r, Note) for r in records):
                 reader.skip_scope(cls.name, cls.closes_with, block)
             for rec in records:

@@ -190,6 +190,13 @@ def resolve_material(mat_obj: Any, dim: int, label: str = "material") -> Tuple[i
         else:
             missing = [] if (getattr(mat_obj, "elastic", None) is not None
                              or getattr(mat_obj, "E", None) is not None) else ["E", "nu"]
+        refused = (getattr(mat_obj, "extra_params", None) or extra or {}).get("refused_definitions") \
+            if missing else None
+        if missing and refused:
+            raise NotImplementedError(
+                f"{where}: its {'; '.join(refused)} definition was refused by the reader; "
+                f"nothing to compute it with (material has no *ELASTIC ({'/'.join(missing)} missing): "
+                f"{spec.name} needs E, nu -- no default is assumed)")
         if missing:
             raise NotImplementedError(
                 f"{where}: material has no *ELASTIC ({'/'.join(missing)} missing): "
