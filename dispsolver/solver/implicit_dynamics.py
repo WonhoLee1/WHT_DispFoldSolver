@@ -324,7 +324,10 @@ def initial_acceleration(solver: Any, f_ext: np.ndarray, dt: float,
         a0[ok] = r[ok] / m[ok]
     else:
         kc_max = float(np.max(np.abs(Kc.diagonal()))) or float(np.max(np.abs(Kc.data)))
-        p = 1e8 * max(float(np.max(m)), 1e-300) / kc_max
+        # 1e6 (not 1e8): the condition number grows with p*max(m)/min(m) and graded or HRZ
+        # meshes spread the masses by orders of magnitude; the residual check below
+        # (with one refinement pass) catches the rest
+        p = 1e6 * max(float(np.max(m)), 1e-300) / kc_max
         A = (diags(m, format="csr") + p * Kc).tocsr()
         fi = np.flatnonzero(free)
         rhs = r[fi] - (A[fi][:, np.flatnonzero(fixed)] @ a0[fixed] if fixed.any() else 0.0)
@@ -334,7 +337,16 @@ def initial_acceleration(solver: Any, f_ext: np.ndarray, dt: float,
         from scipy.sparse.linalg import spsolve
         sol = np.zeros(len(fi))
         if live.any():
-            sol[live] = spsolve(Aff[live][:, live].tocsc(), rhs[live])
+            Al = Aff[live][:, live].tocsc()
+            sol[live] = spsolve(Al, rhs[live])
+            res = rhs[live] - Al @ sol[live]          # one refinement pass, then verify
+            sol[live] += spsolve(Al, res)
+            res = rhs[live] - Al @ sol[live]
+            if np.linalg.norm(res) > 1e-8 * max(np.linalg.norm(rhs[live]), 1e-300):
+                raise RuntimeError(
+                    "initial acceleration: constrained solve did not reach its residual tolerance "
+                    f"(|res|/|rhs| = {np.linalg.norm(res) / max(np.linalg.norm(rhs[live]), 1e-300):.2e}); "
+                    "the constraint/mass scaling is too ill-conditioned")
         a0[fi] = sol
     solver.a[:] = a0
     return a0
