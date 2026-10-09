@@ -197,6 +197,11 @@ class Elastic(Keyword):
             # through set_temperature, not from the deck): the first line would run at every temperature
             raise Unsupported("*ELASTIC: temperature-dependent moduli are not represented "
                               "(deck temperatures are not passed to the solver)")
+        if kind == "field":
+            # likewise for field variables: DynamicSolver3D.set_field_variable has no caller and *FIELD /
+            # *INITIAL CONDITIONS, TYPE=FIELD do not reach the solver, so the first row would always run
+            raise Unsupported("*ELASTIC: field-dependent moduli are not represented "
+                              "(deck field variables are not passed to the solver)")
         yield ElasticRecord(type=p.type, kind=kind, table=table, moduli=p.moduli, loc=ctx.loc)
 
 
@@ -324,9 +329,9 @@ class Creep(Keyword):
     Row = FloatRow
 
     def to_records(self, p, rows, ctx) -> Iterable[Record]:
-        # no solver material id consumes the stored creep law, so a material with *CREEP would run
-        # without it; refuse until an id does (Material.Creep and the kernels in material/creep_*.py exist)
-        raise Unsupported("*CREEP: no solver material consumes creep laws yet")
+        # The data line is validated first (input errors are reported as such), then the keyword is
+        # refused: no solver material id consumes the creep law yet, so a material with *CREEP would
+        # run without it (Material.Creep and the kernels in material/creep_*.py exist).
         if not rows:
             raise InputError("*CREEP: no data line")
         law = p.law
@@ -358,7 +363,8 @@ class Creep(Keyword):
             if any(x not in (None, 0.0) for x in b[1:]):
                 raise Unsupported("*CREEP LAW=ANAND: S2, S3, A1..A4 are not represented")
             table = (tuple(float(x) for x in a + [b[0]]),)
-        yield CreepRecord(law=law, table=table, loc=ctx.loc)
+        raise Unsupported("*CREEP: no solver material consumes creep laws yet")
+        yield CreepRecord(law=law, table=table, loc=ctx.loc)  # noqa: unreachable until an id consumes creep
 
 
 @applies(CreepRecord)

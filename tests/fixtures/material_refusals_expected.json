@@ -297,11 +297,11 @@
   "*HYPERELASTIC, TEST DATA INPUT, N=1, MODULI=LONG TERM ((unsupported parameter: HYPERELASTIC TEST DATA INPUT not supported))"
  ],
  "benchmark_inp/verification/mcpsto3nt1.inp::DATSTR": [
-  "*CREEP, LAW=STRAIN (*CREEP: no solver material consumes creep laws yet)"
+  "*CREEP, LAW=STRAIN (*CREEP LAW=STRAIN with m != 0 (strain hardening) is not represented: the kernel is the time-hardening form)"
  ],
  "benchmark_inp/verification/mcpsto3pt3.inp::DATSTR": [
   "*ELASTIC (*ELASTIC: spatially varying data (distribution name 'distElastic') is not represented)",
-  "*CREEP, LAW=STRAIN (*CREEP: no solver material consumes creep laws yet)"
+  "*CREEP, LAW=STRAIN (*CREEP LAW=STRAIN with m != 0 (strain hardening) is not represented: the kernel is the time-hardening form)"
  ],
  "benchmark_inp/verification/mdcsmo3euc.inp::ALLE": [
   "*DRUCKER PRAGER HARDENING with more than two points (the model has linear hardening only)"
@@ -427,7 +427,7 @@
  ],
  "benchmark_inp/verification/mkcsto3hut.inp::ALLE": [
   "*PLASTIC, HARDENING=KINEMATIC (HARDENING=KINEMATIC is not implemented (supported: ISOTROPIC))",
-  "*CREEP, LAW=STRAIN (*CREEP: no solver material consumes creep laws yet)"
+  "*CREEP, LAW=STRAIN (*CREEP LAW=STRAIN with m != 0 (strain hardening) is not represented: the kernel is the time-hardening form)"
  ],
  "benchmark_inp/verification/mmcsto1xmx.inp::ALLE": [
   "*CREEP, LAW=TIME (*CREEP: no solver material consumes creep laws yet)"

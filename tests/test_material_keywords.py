@@ -464,9 +464,10 @@ def test_elastic_positional_temperature_and_field():
     assert any(d.level == "gap" and "temperature" in d.message for d in bad)
     assert m.materials["A"].extra_params["refused_definitions"]
     # DEPENDENCIES=1: data items are E, nu, T, FV1 -- the field variable is item 4, not item 3
+    # field variables never reach the solver either -> refused (positional decode checked by the message)
     _, m, bad = _errors("*MATERIAL, NAME=B\n*ELASTIC, DEPENDENCIES=1\n200000., 0.3, , 0.\n160000., 0.3, , 1.\n")
-    assert not bad
-    assert m.materials["B"].extra_params["field_elastic_table"] == [(200000., 0.3, 0.), (160000., 0.3, 1.)]
+    assert any(d.level == "gap" and "field-dependent" in d.message for d in bad)
+    assert m.materials["B"].extra_params["refused_definitions"]
     # temperature together with a field variable is not represented
     _, _, bad = _errors("*MATERIAL, NAME=C\n*ELASTIC, DEPENDENCIES=1\n5., 0.3, 0., 0.\n5., 0.3, 10., 0.\n")
     assert bad
@@ -898,7 +899,7 @@ def test_ductile_damage_with_a_long_plastic_table_is_refused():
     deck = ("*MATERIAL, NAME=D\n*ELASTIC\n7e4, 0.3\n*PLASTIC\n200., 0.\n250., 0.05\n280., 0.1\n"
             "*DAMAGE INITIATION, CRITERION=DUCTILE\n0.3\n*DAMAGE EVOLUTION, TYPE=ENERGY\n10.\n")
     _, m, _ = _errors(deck)
-    with pytest.raises(NotImplementedError, match="keeps two"):
+    with pytest.raises(NotImplementedError, match="extrapolates linearly"):
         resolve_material(m.materials["D"], 3, "material of pid 0")
     # initiation without evolution (valid Abaqus: no softening) is a clear refusal, not a ValueError
     _, m, _ = _errors("*MATERIAL, NAME=D\n*ELASTIC\n7e4, 0.3\n*PLASTIC\n200., 0.\n"
@@ -934,3 +935,38 @@ def test_blank_dload_dsload_magnitude_is_zero():
     deck = ("*NODE\n1, 0, 0, 0\n*STEP\n*STATIC\n*DLOAD\nE, P1\n*END STEP\n")
     reader, _ = _read_snippet(deck)
     assert not [d for d in reader.diagnostics if d.level == "error" and "magnitude" in d.message]
+
+
+# -- opus re-review: the last two silent paths ------------------------------
+
+def _resolve_first(deck):
+    from dispsolver.material.resolve import resolve_material
+    reader, model = _read_snippet(deck)
+    mat = next(iter(model.materials.values()))
+    return reader, mat, lambda: resolve_material(mat, 3, "probe")
+
+
+def test_ductile_damage_with_two_point_plastic_is_refused():
+    # the damage kernel hardens linearly without bound; Abaqus holds 300 after eps=0.1
+    _, _, run = _resolve_first("*MATERIAL, NAME=M\n*ELASTIC\n200000., 0.3\n*PLASTIC\n200., 0.\n300., 0.1\n"
+                               "*DAMAGE INITIATION, CRITERION=DUCTILE\n0.3\n*DAMAGE EVOLUTION, TYPE=ENERGY\n10.\n")
+    with pytest.raises(NotImplementedError, match="extrapolates linearly"):
+        run()
+
+
+def test_field_dependent_elastic_is_refused():
+    # deck field variables never reach the solver: the first row (E=1000) would always run
+    reader, _ = _read_snippet("*MATERIAL, NAME=M\n*ELASTIC, DEPENDENCIES=1\n1000., 0.3, , -1.\n500., 0.3, , 1.\n")
+    assert any("field-dependent moduli" in d.message for d in reader.diagnostics)
+
+
+def test_elastic_with_hyperelastic_is_refused():
+    _, _, run = _resolve_first("*MATERIAL, NAME=M\n*ELASTIC\n1000., 0.3\n*HYPERELASTIC, NEO HOOKE\n0.5, 0.01\n")
+    with pytest.raises(NotImplementedError, match=r"together with \*HYPERELASTIC"):
+        run()
+
+
+def test_creep_validates_its_data_before_refusing():
+    reader, _ = _read_snippet("*MATERIAL, NAME=M\n*ELASTIC\n1000., 0.3\n*CREEP, LAW=ANAND\n1.,2.,3.\n")
+    assert any("ANAND needs two data lines" in d.message for d in reader.diagnostics)   # input error first
+
