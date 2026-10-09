@@ -41,6 +41,10 @@ _CR_WRAPPED_KERNELS_2D = _cr_wrapped_kernels(2)
 class DynamicSolver2D:
     """Production 2D Non-Linear Newton-Raphson Finite Element Solver."""
 
+    # implicit_dynamics.HHTIncrement while an HHT / Newmark increment runs: assemble_system
+    # then returns the dynamic effective system to the (single) Newton loop
+    _dyn_ctx = None
+
     def __init__(
         self,
         mesh: Mesh2D,
@@ -252,6 +256,7 @@ class DynamicSolver2D:
         }
 
         from dispsolver.model.element_catalog import KERNELS as _KERNELS
+        self._lumped_mass_cache = None          # regrouped: the lumped mass follows the kernels' nodes
         self.elem_conn_groups = {}
         for g_key, indices in self.elem_kernel_groups.items():
             k_val, n_nodes_val = g_key
@@ -393,6 +398,14 @@ class DynamicSolver2D:
         return f_th
 
     def assemble_system(self, u_vec: np.ndarray, dt: float = 1.0, return_error: bool = False, update_state: bool = False):
+        """K and f_int of the system the Newton loop solves: the physical ones, or during an
+        HHT / Newmark increment the dynamic effective ones (implicit_dynamics.HHTIncrement).
+        self.f_int is always the physical internal force."""
+        res = self._assemble_physical(u_vec, dt=dt, return_error=return_error, update_state=update_state)
+        ctx = self._dyn_ctx
+        return res if ctx is None else ctx.transform(res, u_vec)
+
+    def _assemble_physical(self, u_vec: np.ndarray, dt: float = 1.0, return_error: bool = False, update_state: bool = False):
         """Assemble global 2D stiffness matrix K_global and internal force vector f_int."""
         node_coords_all = self.mesh.nodes_array()
 
@@ -653,98 +666,27 @@ class DynamicSolver2D:
 
         HHT/Newmark: `f_ext` is the load at t_{n+1}, `f_ext_n` the load at t_n (default:
         the f_ext of the last converged dynamic increment, else f_ext itself)."""
-        if not self.config_integrator.is_quasistatic and not self.config_integrator.is_emcs:
-            u_n = self.u.copy()
-            v_n = self.v.copy()
-            a_n = self.a.copy()
-            u_trial = u_n.copy()
+        # HHT / Newmark: the same Newton loop on the dynamic effective system
+        # (implicit_dynamics.run_increment); a static integrator runs it as is.
+        from dispsolver.solver.implicit_dynamics import run_increment
+        return run_increment(self, 2, self._solve_step_newton, dt, f_ext, f_ext_n,
+                             tol=tol, max_iters=max_iters, use_anderson_accel=use_anderson_accel,
+                             anderson_m=anderson_m, anderson_beta=anderson_beta,
+                             augment_relaxation=augment_relaxation)
 
-            if f_ext is None:
-                if hasattr(self, "f_ext_applied") and self.f_ext_applied is not None:
-                    f_ext = self.f_ext_applied.copy()
-                else:
-                    f_ext = np.zeros(self.num_dofs, dtype=np.float64)
-            if f_ext_n is None:
-                prev = getattr(self, "_hht_f_ext_prev", None)
-                f_ext_n = prev if prev is not None and prev.shape == f_ext.shape else f_ext
-
-            # Lumped mass, m_a = rho * int N_a dA (unit thickness, like the 2D kernels'
-            # internal force). It used to be rho / n_nodes per DOF with no element area.
-            from dispsolver.solver.implicit_dynamics import lumped_mass
-            from scipy.sparse import diags
-            M_global = diags(lumped_mass(self, 2), format="csc")
-            self.M_global = M_global
-
-            K_n, f_int_n = self.assemble_system(u_n, dt=dt, update_state=False)
-
-            beta_hht = self.beta_hht
-            gamma_hht = self.gamma_hht
-            alpha_hht = self.alpha_hht
-
-            coeff_m = 1.0 / (beta_hht * dt * dt)
-
-            if use_anderson_accel:
-                from dispsolver.solver.anderson_acceleration import AndersonAccelerator
-                anderson = AndersonAccelerator(m=anderson_m, beta=anderson_beta)
-            else:
-                anderson = None
-
-            converged = False
-            for n_iter in range(1, max_iters + 1):
-                a_trial = coeff_m * (u_trial - u_n) - (1.0 / (beta_hht * dt)) * v_n - (0.5 / beta_hht - 1.0) * a_n
-                v_trial = v_n + dt * ((1.0 - gamma_hht) * a_n + gamma_hht * a_trial)
-
-                K_tan, f_int_trial = self.assemble_system(u_trial, dt=dt, update_state=False)
-
-                f_int_hht = (1.0 + alpha_hht) * f_int_trial - alpha_hht * f_int_n
-                f_inertial = M_global @ a_trial
-                # HHT weights the external force like the internal one (Hilber, Hughes &
-                # Taylor 1977; Abaqus Theory Guide "Implicit dynamic analysis")
-                f_ext_hht = (1.0 + alpha_hht) * f_ext - alpha_hht * f_ext_n
-
-                residual = f_ext_hht - f_inertial - f_int_hht
-
-                free_mask = np.ones(self.num_dofs, dtype=bool)
-                if self.fixed_dofs:
-                    free_mask[list(self.fixed_dofs.keys())] = False
-
-                res_norm = float(np.linalg.norm(residual[free_mask]))
-                if n_iter == 1:
-                    res_init = max(res_norm, 1e-12)
-
-                rel_res = res_norm / res_init
-                if res_norm < tol or rel_res < tol:
-                    converged = True
-                    break
-
-                K_eff = (1.0 + alpha_hht) * K_tan + coeff_m * M_global
-                K_bc, r_bc = self.apply_boundary_conditions(K_eff, residual, u_trial)
-
-                try:
-                    du = pardiso_spsolve(K_bc, r_bc)
-                except Exception as e:
-                    raise RuntimeError("Linear solver failed in 2D dynamic step.") from e
-
-                du_norm = float(np.linalg.norm(du[free_mask]))
-                if du_norm < 1e-7:
-                    u_trial += du
-                    converged = True
-                    break
-
-                if anderson is not None:
-                    u_trial = anderson.step(u_trial, du)
-                else:
-                    u_trial += du
-
-            if converged:
-                self.u[:] = u_trial
-                self.a[:] = coeff_m * (self.u - u_n) - (1.0 / (beta_hht * dt)) * v_n - (0.5 / beta_hht - 1.0) * a_n
-                self.v[:] = v_n + dt * ((1.0 - gamma_hht) * a_n + gamma_hht * self.a)
-                self.assemble_system(self.u, dt=dt, update_state=True)
-                self._hht_f_ext_prev = np.array(f_ext, dtype=np.float64, copy=True)
-
-            return converged, n_iter
-
+    def _solve_step_newton(
+        self,
+        dt: float = 1.0,
+        f_ext: Optional[np.ndarray] = None,
+        tol: float = 1e-5,
+        max_iters: int = 25,
+        use_anderson_accel: bool = False,
+        anderson_m: int = 4,
+        anderson_beta: float = 1.0,
+        augment_relaxation: float = 1.0,
+    ) -> Tuple[bool, int]:
+        """The Newton loop of solve_step: static, or on the HHT effective system while
+        self._dyn_ctx is set."""
         if f_ext is None:
             if hasattr(self, "f_ext_applied") and self.f_ext_applied is not None:
                 f_ext = self.f_ext_applied.copy()
@@ -1003,7 +945,8 @@ class DynamicSolver2D:
             # Abaqus computes the initial acceleration at the start of every *DYNAMIC
             # step (INITIAL omitted); INITIAL=NO keeps the current one
             self._apply_plan_bcs(plan, 0.0)
-            _dyn.initial_acceleration(self, plan.f_ext(0.0, self.u), dt)
+            _dyn.initial_acceleration(self, plan.f_ext(0.0, self.u), dt,
+                                      _dyn.prescribed_acceleration(plan, 0.0, dt, self._u_step_start))
 
         while t_curr < total_time - 1e-9:
             inc_count += 1

@@ -169,7 +169,7 @@ class Dynamic(Keyword):
         alpha: Optional[float] = None
         beta: Optional[float] = None
         gamma: Optional[float] = None
-        initial: Optional[Literal["NO"]] = None
+        initial: Optional[Literal["YES", "NO"]] = None     # YES (the default): computed at the step start
         # solution technique only: increment size control, half-increment residual
         # tolerance and the impact (velocity-jump) treatment of the increment
         direct: bool = Param(False, control=True)
