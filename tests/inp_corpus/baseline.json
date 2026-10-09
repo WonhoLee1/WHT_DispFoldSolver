@@ -416,15 +416,18 @@
   "diagnostics": {
    "control-param-ignored": 2,
    "ignored-keyword": 5,
+   "unsupported-feature": 1,
    "unsupported-keyword": 2
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword"
   ]
  },
@@ -608,16 +611,19 @@
    "control-param-ignored": 2,
    "equation-parsed": 1,
    "ignored-keyword": 6,
+   "unsupported-feature": 1,
    "unsupported-param": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "equation-parsed": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-param": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-param"
   ]
  },
@@ -635,7 +641,7 @@
   "warnings": [],
   "diagnostics": {
    "ignored-keyword": 5,
-   "orientation-not-connected": 1,
+   "orientation-not-connected": 3,
    "unsupported-param": 3
   },
   "diagnostic_levels": {
@@ -874,21 +880,26 @@
   "warnings": [],
   "diagnostics": {
    "ignored-keyword": 2,
-   "rate-effect-dropped": 1,
+   "orientation-ignored-isotropic": 1,
+   "unsupported-feature": 2,
    "unsupported-keyword": 2,
-   "unsupported-param": 1
+   "unsupported-param": 1,
+   "unsupported-value": 1
   },
   "diagnostic_levels": {
    "ignored-keyword": "info",
-   "rate-effect-dropped": "gap",
+   "orientation-ignored-isotropic": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
-   "unsupported-param": "gap"
+   "unsupported-param": "gap",
+   "unsupported-value": "gap"
   },
   "error_codes": [],
   "gap_codes": [
-   "rate-effect-dropped",
+   "unsupported-feature",
    "unsupported-keyword",
-   "unsupported-param"
+   "unsupported-param",
+   "unsupported-value"
   ]
  },
  "verification/cdp_c3d8r_ss_s1.inp": {
@@ -908,17 +919,20 @@
    "cdp-backbone-approximation": 1,
    "control-param-ignored": 2,
    "ignored-keyword": 3,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1
   },
   "diagnostic_levels": {
    "cdp-backbone-approximation": "gap",
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
    "cdp-backbone-approximation",
+   "unsupported-feature",
    "unsupported-keyword"
   ]
  },
@@ -965,17 +979,20 @@
    "cdp-backbone-approximation": 1,
    "control-param-ignored": 1,
    "ignored-keyword": 3,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1
   },
   "diagnostic_levels": {
    "cdp-backbone-approximation": "gap",
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
    "cdp-backbone-approximation",
+   "unsupported-feature",
    "unsupported-keyword"
   ]
  },
@@ -1054,17 +1071,20 @@
    "cdp-backbone-approximation": 1,
    "control-param-ignored": 2,
    "ignored-keyword": 3,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1
   },
   "diagnostic_levels": {
    "cdp-backbone-approximation": "gap",
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
    "cdp-backbone-approximation",
+   "unsupported-feature",
    "unsupported-keyword"
   ]
  },
@@ -1144,17 +1164,20 @@
    "cdp-backbone-approximation": 1,
    "control-param-ignored": 3,
    "ignored-keyword": 3,
+   "unsupported-feature": 1,
    "unsupported-keyword": 2
   },
   "diagnostic_levels": {
    "cdp-backbone-approximation": "gap",
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
    "cdp-backbone-approximation",
+   "unsupported-feature",
    "unsupported-keyword"
   ]
  },
@@ -1239,17 +1262,22 @@
    "cdp-backbone-approximation": 1,
    "control-param-ignored": 2,
    "ignored-keyword": 3,
+   "orientation-ignored-isotropic": 1,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1
   },
   "diagnostic_levels": {
    "cdp-backbone-approximation": "gap",
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "orientation-ignored-isotropic": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
    "cdp-backbone-approximation",
+   "unsupported-feature",
    "unsupported-keyword"
   ]
  },
@@ -1334,17 +1362,20 @@
    "cdp-backbone-approximation": 1,
    "control-param-ignored": 1,
    "ignored-keyword": 3,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1
   },
   "diagnostic_levels": {
    "cdp-backbone-approximation": "gap",
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
    "cdp-backbone-approximation",
+   "unsupported-feature",
    "unsupported-keyword"
   ]
  },
@@ -1427,17 +1458,20 @@
    "cdp-backbone-approximation": 1,
    "control-param-ignored": 4,
    "ignored-keyword": 2,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1
   },
   "diagnostic_levels": {
    "cdp-backbone-approximation": "gap",
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
    "cdp-backbone-approximation",
+   "unsupported-feature",
    "unsupported-keyword"
   ]
  },
@@ -1460,17 +1494,20 @@
    "cdp-backbone-approximation": 1,
    "control-param-ignored": 4,
    "ignored-keyword": 2,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1
   },
   "diagnostic_levels": {
    "cdp-backbone-approximation": "gap",
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
    "cdp-backbone-approximation",
+   "unsupported-feature",
    "unsupported-keyword"
   ]
  },
@@ -1493,17 +1530,20 @@
    "cdp-backbone-approximation": 1,
    "control-param-ignored": 4,
    "ignored-keyword": 2,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1
   },
   "diagnostic_levels": {
    "cdp-backbone-approximation": "gap",
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
    "cdp-backbone-approximation",
+   "unsupported-feature",
    "unsupported-keyword"
   ]
  },
@@ -1529,17 +1569,20 @@
    "cdp-backbone-approximation": 1,
    "control-param-ignored": 6,
    "ignored-keyword": 2,
+   "unsupported-feature": 1,
    "unsupported-keyword": 2
   },
   "diagnostic_levels": {
    "cdp-backbone-approximation": "gap",
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
    "cdp-backbone-approximation",
+   "unsupported-feature",
    "unsupported-keyword"
   ]
  },
@@ -1562,17 +1605,20 @@
    "cdp-backbone-approximation": 1,
    "control-param-ignored": 4,
    "ignored-keyword": 2,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1
   },
   "diagnostic_levels": {
    "cdp-backbone-approximation": "gap",
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
    "cdp-backbone-approximation",
+   "unsupported-feature",
    "unsupported-keyword"
   ]
  },
@@ -1595,17 +1641,20 @@
    "cdp-backbone-approximation": 1,
    "control-param-ignored": 4,
    "ignored-keyword": 2,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1
   },
   "diagnostic_levels": {
    "cdp-backbone-approximation": "gap",
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
    "cdp-backbone-approximation",
+   "unsupported-feature",
    "unsupported-keyword"
   ]
  },
@@ -1628,17 +1677,20 @@
    "cdp-backbone-approximation": 1,
    "control-param-ignored": 4,
    "ignored-keyword": 2,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1
   },
   "diagnostic_levels": {
    "cdp-backbone-approximation": "gap",
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
    "cdp-backbone-approximation",
+   "unsupported-feature",
    "unsupported-keyword"
   ]
  },
@@ -1662,6 +1714,8 @@
    "cdp-backbone-approximation": 1,
    "control-param-ignored": 4,
    "ignored-keyword": 2,
+   "orientation-ignored-isotropic": 1,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1,
    "unsupported-param": 1
   },
@@ -1669,12 +1723,15 @@
    "cdp-backbone-approximation": "gap",
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "orientation-ignored-isotropic": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
   "error_codes": [],
   "gap_codes": [
    "cdp-backbone-approximation",
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param"
   ]
@@ -1699,6 +1756,8 @@
    "cdp-backbone-approximation": 1,
    "control-param-ignored": 4,
    "ignored-keyword": 2,
+   "orientation-ignored-isotropic": 1,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1,
    "unsupported-param": 1
   },
@@ -1706,12 +1765,15 @@
    "cdp-backbone-approximation": "gap",
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "orientation-ignored-isotropic": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
   "error_codes": [],
   "gap_codes": [
    "cdp-backbone-approximation",
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param"
   ]
@@ -1736,6 +1798,8 @@
    "cdp-backbone-approximation": 1,
    "control-param-ignored": 4,
    "ignored-keyword": 2,
+   "orientation-ignored-isotropic": 1,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1,
    "unsupported-param": 1
   },
@@ -1743,12 +1807,15 @@
    "cdp-backbone-approximation": "gap",
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "orientation-ignored-isotropic": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
   "error_codes": [],
   "gap_codes": [
    "cdp-backbone-approximation",
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param"
   ]
@@ -1773,17 +1840,20 @@
    "cdp-backbone-approximation": 1,
    "control-param-ignored": 1,
    "ignored-keyword": 2,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1
   },
   "diagnostic_levels": {
    "cdp-backbone-approximation": "gap",
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
    "cdp-backbone-approximation",
+   "unsupported-feature",
    "unsupported-keyword"
   ]
  },
@@ -1807,17 +1877,20 @@
    "cdp-backbone-approximation": 1,
    "control-param-ignored": 1,
    "ignored-keyword": 2,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1
   },
   "diagnostic_levels": {
    "cdp-backbone-approximation": "gap",
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
    "cdp-backbone-approximation",
+   "unsupported-feature",
    "unsupported-keyword"
   ]
  },
@@ -1841,17 +1914,20 @@
    "cdp-backbone-approximation": 1,
    "control-param-ignored": 1,
    "ignored-keyword": 2,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1
   },
   "diagnostic_levels": {
    "cdp-backbone-approximation": "gap",
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
    "cdp-backbone-approximation",
+   "unsupported-feature",
    "unsupported-keyword"
   ]
  },
@@ -1874,17 +1950,23 @@
    "cdp-backbone-approximation": 1,
    "control-param-ignored": 4,
    "ignored-keyword": 2,
+   "unsupported-feature": 1,
+   "unsupported-keyword": 1,
    "unsupported-value": 2
   },
   "diagnostic_levels": {
    "cdp-backbone-approximation": "gap",
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
+   "unsupported-keyword": "gap",
    "unsupported-value": "gap"
   },
   "error_codes": [],
   "gap_codes": [
    "cdp-backbone-approximation",
+   "unsupported-feature",
+   "unsupported-keyword",
    "unsupported-value"
   ]
  },
@@ -1907,17 +1989,23 @@
    "cdp-backbone-approximation": 1,
    "control-param-ignored": 4,
    "ignored-keyword": 2,
+   "unsupported-feature": 1,
+   "unsupported-keyword": 1,
    "unsupported-value": 2
   },
   "diagnostic_levels": {
    "cdp-backbone-approximation": "gap",
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
+   "unsupported-keyword": "gap",
    "unsupported-value": "gap"
   },
   "error_codes": [],
   "gap_codes": [
    "cdp-backbone-approximation",
+   "unsupported-feature",
+   "unsupported-keyword",
    "unsupported-value"
   ]
  },
@@ -1940,17 +2028,23 @@
    "cdp-backbone-approximation": 1,
    "control-param-ignored": 4,
    "ignored-keyword": 2,
+   "unsupported-feature": 1,
+   "unsupported-keyword": 1,
    "unsupported-value": 2
   },
   "diagnostic_levels": {
    "cdp-backbone-approximation": "gap",
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
+   "unsupported-keyword": "gap",
    "unsupported-value": "gap"
   },
   "error_codes": [],
   "gap_codes": [
    "cdp-backbone-approximation",
+   "unsupported-feature",
+   "unsupported-keyword",
    "unsupported-value"
   ]
  },
@@ -1973,17 +2067,23 @@
    "cdp-backbone-approximation": 1,
    "control-param-ignored": 5,
    "ignored-keyword": 2,
+   "unsupported-feature": 1,
+   "unsupported-keyword": 1,
    "unsupported-value": 2
   },
   "diagnostic_levels": {
    "cdp-backbone-approximation": "gap",
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
+   "unsupported-keyword": "gap",
    "unsupported-value": "gap"
   },
   "error_codes": [],
   "gap_codes": [
    "cdp-backbone-approximation",
+   "unsupported-feature",
+   "unsupported-keyword",
    "unsupported-value"
   ]
  },
@@ -2003,17 +2103,23 @@
    "cdp-backbone-approximation": 1,
    "control-param-ignored": 1,
    "ignored-keyword": 3,
+   "unsupported-feature": 1,
+   "unsupported-keyword": 1,
    "unsupported-value": 2
   },
   "diagnostic_levels": {
    "cdp-backbone-approximation": "gap",
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
+   "unsupported-keyword": "gap",
    "unsupported-value": "gap"
   },
   "error_codes": [],
   "gap_codes": [
    "cdp-backbone-approximation",
+   "unsupported-feature",
+   "unsupported-keyword",
    "unsupported-value"
   ]
  },
@@ -2101,6 +2207,7 @@
   "diagnostics": {
    "cdp-backbone-approximation": 1,
    "ignored-keyword": 2,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1,
    "unsupported-param": 3,
    "unsupported-value": 3
@@ -2108,6 +2215,7 @@
   "diagnostic_levels": {
    "cdp-backbone-approximation": "gap",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
@@ -2115,6 +2223,7 @@
   "error_codes": [],
   "gap_codes": [
    "cdp-backbone-approximation",
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param",
    "unsupported-value"
@@ -2137,6 +2246,7 @@
   "diagnostics": {
    "cdp-backbone-approximation": 1,
    "ignored-keyword": 2,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1,
    "unsupported-param": 3,
    "unsupported-value": 3
@@ -2144,6 +2254,7 @@
   "diagnostic_levels": {
    "cdp-backbone-approximation": "gap",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
@@ -2151,6 +2262,7 @@
   "error_codes": [],
   "gap_codes": [
    "cdp-backbone-approximation",
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param",
    "unsupported-value"
@@ -2173,6 +2285,7 @@
   "diagnostics": {
    "cdp-backbone-approximation": 1,
    "ignored-keyword": 2,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1,
    "unsupported-param": 3,
    "unsupported-value": 3
@@ -2180,6 +2293,7 @@
   "diagnostic_levels": {
    "cdp-backbone-approximation": "gap",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
@@ -2187,6 +2301,7 @@
   "error_codes": [],
   "gap_codes": [
    "cdp-backbone-approximation",
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param",
    "unsupported-value"
@@ -2209,6 +2324,7 @@
   "diagnostics": {
    "cdp-backbone-approximation": 1,
    "ignored-keyword": 2,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1,
    "unsupported-param": 3,
    "unsupported-value": 3
@@ -2216,6 +2332,7 @@
   "diagnostic_levels": {
    "cdp-backbone-approximation": "gap",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
@@ -2223,6 +2340,7 @@
   "error_codes": [],
   "gap_codes": [
    "cdp-backbone-approximation",
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param",
    "unsupported-value"
@@ -2244,6 +2362,7 @@
   "diagnostics": {
    "cdp-backbone-approximation": 1,
    "ignored-keyword": 2,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1,
    "unsupported-param": 2,
    "unsupported-value": 2
@@ -2251,6 +2370,7 @@
   "diagnostic_levels": {
    "cdp-backbone-approximation": "gap",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
@@ -2258,6 +2378,7 @@
   "error_codes": [],
   "gap_codes": [
    "cdp-backbone-approximation",
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param",
    "unsupported-value"
@@ -2279,6 +2400,7 @@
   "diagnostics": {
    "cdp-backbone-approximation": 1,
    "ignored-keyword": 2,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1,
    "unsupported-param": 2,
    "unsupported-value": 2
@@ -2286,6 +2408,7 @@
   "diagnostic_levels": {
    "cdp-backbone-approximation": "gap",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
@@ -2293,6 +2416,7 @@
   "error_codes": [],
   "gap_codes": [
    "cdp-backbone-approximation",
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param",
    "unsupported-value"
@@ -2314,6 +2438,7 @@
   "diagnostics": {
    "cdp-backbone-approximation": 1,
    "ignored-keyword": 2,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1,
    "unsupported-param": 2,
    "unsupported-value": 2
@@ -2321,6 +2446,7 @@
   "diagnostic_levels": {
    "cdp-backbone-approximation": "gap",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
@@ -2328,6 +2454,7 @@
   "error_codes": [],
   "gap_codes": [
    "cdp-backbone-approximation",
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param",
    "unsupported-value"
@@ -2349,6 +2476,8 @@
   "diagnostics": {
    "cdp-backbone-approximation": 1,
    "ignored-keyword": 2,
+   "orientation-ignored-isotropic": 1,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1,
    "unsupported-param": 2,
    "unsupported-value": 2
@@ -2356,6 +2485,8 @@
   "diagnostic_levels": {
    "cdp-backbone-approximation": "gap",
    "ignored-keyword": "info",
+   "orientation-ignored-isotropic": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
@@ -2363,6 +2494,7 @@
   "error_codes": [],
   "gap_codes": [
    "cdp-backbone-approximation",
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param",
    "unsupported-value"
@@ -2384,6 +2516,8 @@
   "diagnostics": {
    "cdp-backbone-approximation": 1,
    "ignored-keyword": 2,
+   "orientation-ignored-isotropic": 1,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1,
    "unsupported-param": 2,
    "unsupported-value": 2
@@ -2391,6 +2525,8 @@
   "diagnostic_levels": {
    "cdp-backbone-approximation": "gap",
    "ignored-keyword": "info",
+   "orientation-ignored-isotropic": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
@@ -2398,6 +2534,7 @@
   "error_codes": [],
   "gap_codes": [
    "cdp-backbone-approximation",
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param",
    "unsupported-value"
@@ -2419,6 +2556,8 @@
   "diagnostics": {
    "cdp-backbone-approximation": 1,
    "ignored-keyword": 2,
+   "orientation-ignored-isotropic": 1,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1,
    "unsupported-param": 2,
    "unsupported-value": 2
@@ -2426,6 +2565,8 @@
   "diagnostic_levels": {
    "cdp-backbone-approximation": "gap",
    "ignored-keyword": "info",
+   "orientation-ignored-isotropic": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
@@ -2433,6 +2574,7 @@
   "error_codes": [],
   "gap_codes": [
    "cdp-backbone-approximation",
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param",
    "unsupported-value"
@@ -2455,6 +2597,7 @@
   "diagnostics": {
    "cdp-backbone-approximation": 1,
    "ignored-keyword": 2,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1,
    "unsupported-param": 3,
    "unsupported-value": 3
@@ -2462,6 +2605,7 @@
   "diagnostic_levels": {
    "cdp-backbone-approximation": "gap",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
@@ -2469,6 +2613,7 @@
   "error_codes": [],
   "gap_codes": [
    "cdp-backbone-approximation",
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param",
    "unsupported-value"
@@ -2491,6 +2636,7 @@
   "diagnostics": {
    "cdp-backbone-approximation": 1,
    "ignored-keyword": 2,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1,
    "unsupported-param": 3,
    "unsupported-value": 3
@@ -2498,6 +2644,7 @@
   "diagnostic_levels": {
    "cdp-backbone-approximation": "gap",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
@@ -2505,6 +2652,7 @@
   "error_codes": [],
   "gap_codes": [
    "cdp-backbone-approximation",
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param",
    "unsupported-value"
@@ -2527,6 +2675,7 @@
   "diagnostics": {
    "cdp-backbone-approximation": 1,
    "ignored-keyword": 2,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1,
    "unsupported-param": 3,
    "unsupported-value": 3
@@ -2534,6 +2683,7 @@
   "diagnostic_levels": {
    "cdp-backbone-approximation": "gap",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
@@ -2541,6 +2691,7 @@
   "error_codes": [],
   "gap_codes": [
    "cdp-backbone-approximation",
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param",
    "unsupported-value"
@@ -2563,18 +2714,24 @@
   "diagnostics": {
    "cdp-backbone-approximation": 1,
    "ignored-keyword": 2,
+   "unsupported-feature": 1,
+   "unsupported-keyword": 1,
    "unsupported-param": 3,
    "unsupported-value": 5
   },
   "diagnostic_levels": {
    "cdp-backbone-approximation": "gap",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
+   "unsupported-keyword": "gap",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
   },
   "error_codes": [],
   "gap_codes": [
    "cdp-backbone-approximation",
+   "unsupported-feature",
+   "unsupported-keyword",
    "unsupported-param",
    "unsupported-value"
   ]
@@ -2596,6 +2753,8 @@
   "diagnostics": {
    "cdp-backbone-approximation": 1,
    "ignored-keyword": 2,
+   "unsupported-feature": 1,
+   "unsupported-keyword": 1,
    "unsupported-param": 3,
    "unsupported-param-ignored": 1,
    "unsupported-value": 5
@@ -2603,6 +2762,8 @@
   "diagnostic_levels": {
    "cdp-backbone-approximation": "gap",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
+   "unsupported-keyword": "gap",
    "unsupported-param": "gap",
    "unsupported-param-ignored": "info",
    "unsupported-value": "gap"
@@ -2610,6 +2771,8 @@
   "error_codes": [],
   "gap_codes": [
    "cdp-backbone-approximation",
+   "unsupported-feature",
+   "unsupported-keyword",
    "unsupported-param",
    "unsupported-value"
   ]
@@ -2631,18 +2794,24 @@
   "diagnostics": {
    "cdp-backbone-approximation": 1,
    "ignored-keyword": 2,
+   "unsupported-feature": 1,
+   "unsupported-keyword": 1,
    "unsupported-param": 3,
    "unsupported-value": 5
   },
   "diagnostic_levels": {
    "cdp-backbone-approximation": "gap",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
+   "unsupported-keyword": "gap",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
   },
   "error_codes": [],
   "gap_codes": [
    "cdp-backbone-approximation",
+   "unsupported-feature",
+   "unsupported-keyword",
    "unsupported-param",
    "unsupported-value"
   ]
@@ -2664,18 +2833,24 @@
   "diagnostics": {
    "cdp-backbone-approximation": 1,
    "ignored-keyword": 2,
+   "unsupported-feature": 1,
+   "unsupported-keyword": 1,
    "unsupported-param": 3,
    "unsupported-value": 5
   },
   "diagnostic_levels": {
    "cdp-backbone-approximation": "gap",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
+   "unsupported-keyword": "gap",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
   },
   "error_codes": [],
   "gap_codes": [
    "cdp-backbone-approximation",
+   "unsupported-feature",
+   "unsupported-keyword",
    "unsupported-param",
    "unsupported-value"
   ]
@@ -2693,13 +2868,16 @@
   "gaps": [],
   "warnings": [],
   "diagnostics": {
+   "orientation-not-connected": 6,
    "unsupported-keyword": 3
   },
   "diagnostic_levels": {
+   "orientation-not-connected": "gap",
    "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "orientation-not-connected",
    "unsupported-keyword"
   ]
  },
@@ -2716,15 +2894,18 @@
   "gaps": [],
   "warnings": [],
   "diagnostics": {
+   "orientation-not-connected": 6,
    "unsupported-keyword": 3,
    "unsupported-param": 1
   },
   "diagnostic_levels": {
+   "orientation-not-connected": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "orientation-not-connected",
    "unsupported-keyword",
    "unsupported-param"
   ]
@@ -2742,13 +2923,16 @@
   "gaps": [],
   "warnings": [],
   "diagnostics": {
+   "orientation-not-connected": 1,
    "unsupported-keyword": 3
   },
   "diagnostic_levels": {
+   "orientation-not-connected": "gap",
    "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "orientation-not-connected",
    "unsupported-keyword"
   ]
  },
@@ -2765,15 +2949,18 @@
   "gaps": [],
   "warnings": [],
   "diagnostics": {
+   "orientation-not-connected": 1,
    "unsupported-keyword": 3,
    "unsupported-param": 1
   },
   "diagnostic_levels": {
+   "orientation-not-connected": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "orientation-not-connected",
    "unsupported-keyword",
    "unsupported-param"
   ]
@@ -3140,7 +3327,7 @@
   "diagnostics": {
    "control-param-ignored": 1,
    "ignored-keyword": 2,
-   "unsupported-feature": 1,
+   "unsupported-feature": 2,
    "unsupported-keyword": 4,
    "unsupported-param": 2
   },
@@ -3174,18 +3361,16 @@
    "bad-input": 7,
    "ignored-keyword": 1,
    "initial-condition-not-connected": 1,
-   "rate-effect-dropped": 1,
    "rotation-dofs-ignored": 1,
    "unresolved-ref": 2,
    "unsupported-keyword": 1,
-   "unsupported-param": 35,
-   "unsupported-value": 16
+   "unsupported-param": 32,
+   "unsupported-value": 25
   },
   "diagnostic_levels": {
    "bad-input": "error",
    "ignored-keyword": "info",
    "initial-condition-not-connected": "gap",
-   "rate-effect-dropped": "gap",
    "rotation-dofs-ignored": "info",
    "unresolved-ref": "warning",
    "unsupported-keyword": "gap",
@@ -3197,7 +3382,6 @@
   ],
   "gap_codes": [
    "initial-condition-not-connected",
-   "rate-effect-dropped",
    "unsupported-keyword",
    "unsupported-param",
    "unsupported-value"
@@ -3514,15 +3698,19 @@
   "gaps": [],
   "warnings": [],
   "diagnostics": {
+   "damage-energy-regularization": 1,
    "ignored-keyword": 1,
    "unresolved-ref": 4,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1,
    "unsupported-param": 7,
    "unsupported-value": 6
   },
   "diagnostic_levels": {
+   "damage-energy-regularization": "gap",
    "ignored-keyword": "info",
    "unresolved-ref": "error",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
@@ -3531,6 +3719,8 @@
    "unresolved-ref"
   ],
   "gap_codes": [
+   "damage-energy-regularization",
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param",
    "unsupported-value"
@@ -3550,15 +3740,19 @@
   "gaps": [],
   "warnings": [],
   "diagnostics": {
+   "damage-energy-regularization": 1,
    "ignored-keyword": 1,
    "unresolved-ref": 4,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1,
    "unsupported-param": 7,
    "unsupported-value": 6
   },
   "diagnostic_levels": {
+   "damage-energy-regularization": "gap",
    "ignored-keyword": "info",
    "unresolved-ref": "error",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
@@ -3567,6 +3761,8 @@
    "unresolved-ref"
   ],
   "gap_codes": [
+   "damage-energy-regularization",
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param",
    "unsupported-value"
@@ -3586,15 +3782,19 @@
   "gaps": [],
   "warnings": [],
   "diagnostics": {
+   "damage-energy-regularization": 1,
    "ignored-keyword": 1,
    "unresolved-ref": 4,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1,
    "unsupported-param": 7,
    "unsupported-value": 6
   },
   "diagnostic_levels": {
+   "damage-energy-regularization": "gap",
    "ignored-keyword": "info",
    "unresolved-ref": "error",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
@@ -3603,6 +3803,8 @@
    "unresolved-ref"
   ],
   "gap_codes": [
+   "damage-energy-regularization",
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param",
    "unsupported-value"
@@ -3631,15 +3833,19 @@
   "gaps": [],
   "warnings": [],
   "diagnostics": {
+   "damage-energy-regularization": 1,
    "ignored-keyword": 1,
    "unresolved-ref": 4,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1,
    "unsupported-param": 7,
    "unsupported-value": 6
   },
   "diagnostic_levels": {
+   "damage-energy-regularization": "gap",
    "ignored-keyword": "info",
    "unresolved-ref": "error",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
@@ -3648,6 +3854,8 @@
    "unresolved-ref"
   ],
   "gap_codes": [
+   "damage-energy-regularization",
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param",
    "unsupported-value"
@@ -3667,15 +3875,19 @@
   "gaps": [],
   "warnings": [],
   "diagnostics": {
+   "damage-energy-regularization": 1,
    "ignored-keyword": 1,
    "unresolved-ref": 4,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1,
    "unsupported-param": 7,
    "unsupported-value": 6
   },
   "diagnostic_levels": {
+   "damage-energy-regularization": "gap",
    "ignored-keyword": "info",
    "unresolved-ref": "error",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
@@ -3684,6 +3896,8 @@
    "unresolved-ref"
   ],
   "gap_codes": [
+   "damage-energy-regularization",
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param",
    "unsupported-value"
@@ -3721,15 +3935,19 @@
   "gaps": [],
   "warnings": [],
   "diagnostics": {
+   "damage-energy-regularization": 1,
    "ignored-keyword": 1,
    "unresolved-ref": 4,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1,
    "unsupported-param": 4,
    "unsupported-value": 6
   },
   "diagnostic_levels": {
+   "damage-energy-regularization": "gap",
    "ignored-keyword": "info",
    "unresolved-ref": "error",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
@@ -3738,6 +3956,8 @@
    "unresolved-ref"
   ],
   "gap_codes": [
+   "damage-energy-regularization",
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param",
    "unsupported-value"
@@ -3757,15 +3977,19 @@
   "gaps": [],
   "warnings": [],
   "diagnostics": {
+   "damage-energy-regularization": 1,
    "ignored-keyword": 1,
    "unresolved-ref": 4,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1,
    "unsupported-param": 4,
    "unsupported-value": 6
   },
   "diagnostic_levels": {
+   "damage-energy-regularization": "gap",
    "ignored-keyword": "info",
    "unresolved-ref": "error",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
@@ -3774,6 +3998,8 @@
    "unresolved-ref"
   ],
   "gap_codes": [
+   "damage-energy-regularization",
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param",
    "unsupported-value"
@@ -3793,15 +4019,19 @@
   "gaps": [],
   "warnings": [],
   "diagnostics": {
+   "damage-energy-regularization": 1,
    "ignored-keyword": 1,
    "unresolved-ref": 4,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1,
    "unsupported-param": 4,
    "unsupported-value": 6
   },
   "diagnostic_levels": {
+   "damage-energy-regularization": "gap",
    "ignored-keyword": "info",
    "unresolved-ref": "error",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
@@ -3810,6 +4040,8 @@
    "unresolved-ref"
   ],
   "gap_codes": [
+   "damage-energy-regularization",
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param",
    "unsupported-value"
@@ -3865,15 +4097,19 @@
   "gaps": [],
   "warnings": [],
   "diagnostics": {
+   "damage-energy-regularization": 1,
    "ignored-keyword": 1,
    "unresolved-ref": 4,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1,
    "unsupported-param": 4,
    "unsupported-value": 6
   },
   "diagnostic_levels": {
+   "damage-energy-regularization": "gap",
    "ignored-keyword": "info",
    "unresolved-ref": "error",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
@@ -3882,6 +4118,8 @@
    "unresolved-ref"
   ],
   "gap_codes": [
+   "damage-energy-regularization",
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param",
    "unsupported-value"
@@ -3901,15 +4139,19 @@
   "gaps": [],
   "warnings": [],
   "diagnostics": {
+   "damage-energy-regularization": 1,
    "ignored-keyword": 1,
    "unresolved-ref": 4,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1,
    "unsupported-param": 4,
    "unsupported-value": 6
   },
   "diagnostic_levels": {
+   "damage-energy-regularization": "gap",
    "ignored-keyword": "info",
    "unresolved-ref": "error",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
@@ -3918,6 +4160,8 @@
    "unresolved-ref"
   ],
   "gap_codes": [
+   "damage-energy-regularization",
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param",
    "unsupported-value"
@@ -3937,15 +4181,19 @@
   "gaps": [],
   "warnings": [],
   "diagnostics": {
+   "damage-energy-regularization": 1,
    "ignored-keyword": 1,
    "unresolved-ref": 4,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1,
    "unsupported-param": 7,
    "unsupported-value": 6
   },
   "diagnostic_levels": {
+   "damage-energy-regularization": "gap",
    "ignored-keyword": "info",
    "unresolved-ref": "error",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
@@ -3954,6 +4202,8 @@
    "unresolved-ref"
   ],
   "gap_codes": [
+   "damage-energy-regularization",
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param",
    "unsupported-value"
@@ -3972,15 +4222,19 @@
   "gaps": [],
   "warnings": [],
   "diagnostics": {
+   "damage-energy-regularization": 1,
    "ignored-keyword": 1,
    "unresolved-ref": 2,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1,
    "unsupported-param": 6,
    "unsupported-value": 4
   },
   "diagnostic_levels": {
+   "damage-energy-regularization": "gap",
    "ignored-keyword": "info",
    "unresolved-ref": "error",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
@@ -3989,6 +4243,8 @@
    "unresolved-ref"
   ],
   "gap_codes": [
+   "damage-energy-regularization",
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param",
    "unsupported-value"
@@ -4008,15 +4264,19 @@
   "gaps": [],
   "warnings": [],
   "diagnostics": {
+   "damage-energy-regularization": 1,
    "ignored-keyword": 1,
    "unresolved-ref": 3,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1,
    "unsupported-param": 7,
    "unsupported-value": 6
   },
   "diagnostic_levels": {
+   "damage-energy-regularization": "gap",
    "ignored-keyword": "info",
    "unresolved-ref": "error",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
@@ -4025,6 +4285,8 @@
    "unresolved-ref"
   ],
   "gap_codes": [
+   "damage-energy-regularization",
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param",
    "unsupported-value"
@@ -5145,12 +5407,14 @@
   "diagnostics": {
    "extra-data-items": 2,
    "ignored-keyword": 4,
+   "orientation-ignored-isotropic": 1,
    "unsupported-keyword": 2,
    "unsupported-param": 1
   },
   "diagnostic_levels": {
    "extra-data-items": "warning",
    "ignored-keyword": "info",
+   "orientation-ignored-isotropic": "info",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
@@ -5175,12 +5439,14 @@
   "diagnostics": {
    "extra-data-items": 2,
    "ignored-keyword": 1,
+   "orientation-ignored-isotropic": 1,
    "unsupported-keyword": 2,
    "unsupported-param": 1
   },
   "diagnostic_levels": {
    "extra-data-items": "warning",
    "ignored-keyword": "info",
+   "orientation-ignored-isotropic": "info",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
@@ -5206,6 +5472,7 @@
    "control-param-ignored": 1,
    "extra-data-items": 2,
    "ignored-keyword": 1,
+   "orientation-ignored-isotropic": 1,
    "unsupported-keyword": 2,
    "unsupported-param": 1
   },
@@ -5213,6 +5480,7 @@
    "control-param-ignored": "info",
    "extra-data-items": "warning",
    "ignored-keyword": "info",
+   "orientation-ignored-isotropic": "info",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
@@ -17061,13 +17329,15 @@
   "diagnostics": {
    "control-param-ignored": 2,
    "ignored-keyword": 5,
+   "orientation-ignored-isotropic": 1,
    "unsupported-keyword": 2,
-   "unsupported-param": 2,
+   "unsupported-param": 1,
    "unsupported-value": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "orientation-ignored-isotropic": "info",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
@@ -17102,15 +17372,17 @@
    "bad-input": 1,
    "control-param-ignored": 2,
    "ignored-keyword": 5,
+   "orientation-ignored-isotropic": 1,
    "unresolved-ref": 6,
    "unsupported-keyword": 2,
-   "unsupported-param": 2,
+   "unsupported-param": 1,
    "unsupported-value": 1
   },
   "diagnostic_levels": {
    "bad-input": "error",
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "orientation-ignored-isotropic": "info",
    "unresolved-ref": "warning",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap",
@@ -17143,19 +17415,22 @@
    "equation-parsed": 1,
    "equation-set-broadcast": 1,
    "ignored-keyword": 2,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1,
-   "unsupported-param": 4
+   "unsupported-param": 3
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "equation-parsed": "info",
    "equation-set-broadcast": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param"
   ]
@@ -17187,19 +17462,22 @@
    "equation-parsed": 1,
    "equation-set-broadcast": 2,
    "ignored-keyword": 3,
+   "unsupported-feature": 2,
    "unsupported-keyword": 1,
-   "unsupported-param": 13
+   "unsupported-param": 11
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "equation-parsed": "info",
    "equation-set-broadcast": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param"
   ]
@@ -17272,7 +17550,7 @@
    "equation-set-broadcast": 2,
    "ignored-keyword": 3,
    "unsupported-keyword": 2,
-   "unsupported-param": 15
+   "unsupported-param": 13
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -17316,7 +17594,7 @@
    "equation-set-broadcast": 2,
    "ignored-keyword": 4,
    "unsupported-keyword": 1,
-   "unsupported-param": 13
+   "unsupported-param": 11
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -17360,7 +17638,7 @@
    "equation-set-broadcast": 2,
    "ignored-keyword": 3,
    "unsupported-keyword": 1,
-   "unsupported-param": 13
+   "unsupported-param": 11
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -17403,19 +17681,22 @@
    "equation-parsed": 1,
    "equation-set-broadcast": 2,
    "ignored-keyword": 3,
+   "unsupported-feature": 2,
    "unsupported-keyword": 1,
-   "unsupported-param": 13
+   "unsupported-param": 11
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "equation-parsed": "info",
    "equation-set-broadcast": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param"
   ]
@@ -17448,7 +17729,7 @@
    "equation-set-broadcast": 2,
    "ignored-keyword": 4,
    "unsupported-keyword": 1,
-   "unsupported-param": 15
+   "unsupported-param": 13
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -17527,7 +17808,7 @@
    "control-param-ignored": 6,
    "ignored-keyword": 2,
    "unsupported-keyword": 1,
-   "unsupported-param": 15
+   "unsupported-param": 13
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -17567,17 +17848,20 @@
   "diagnostics": {
    "control-param-ignored": 6,
    "ignored-keyword": 3,
+   "unsupported-feature": 2,
    "unsupported-keyword": 1,
-   "unsupported-param": 16
+   "unsupported-param": 14
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param"
   ]
@@ -17604,13 +17888,15 @@
   "diagnostics": {
    "control-param-ignored": 2,
    "ignored-keyword": 5,
+   "orientation-ignored-isotropic": 1,
    "unsupported-keyword": 2,
-   "unsupported-param": 2,
+   "unsupported-param": 1,
    "unsupported-value": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "orientation-ignored-isotropic": "info",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
@@ -17644,13 +17930,15 @@
   "diagnostics": {
    "control-param-ignored": 2,
    "ignored-keyword": 5,
+   "orientation-ignored-isotropic": 1,
    "unsupported-keyword": 2,
-   "unsupported-param": 2,
+   "unsupported-param": 1,
    "unsupported-value": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "orientation-ignored-isotropic": "info",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
@@ -20105,11 +20393,13 @@
   "warnings": [],
   "diagnostics": {
    "control-param-ignored": 1,
+   "orientation-ignored-isotropic": 1,
    "unsupported-keyword": 1,
    "unsupported-param": 3
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
+   "orientation-ignored-isotropic": "info",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
@@ -20239,11 +20529,13 @@
   "warnings": [],
   "diagnostics": {
    "control-param-ignored": 1,
+   "orientation-ignored-isotropic": 1,
    "unsupported-keyword": 2,
    "unsupported-param": 4
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
+   "orientation-ignored-isotropic": "info",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
@@ -20267,11 +20559,13 @@
   "warnings": [],
   "diagnostics": {
    "control-param-ignored": 1,
+   "orientation-ignored-isotropic": 1,
    "unsupported-keyword": 2,
    "unsupported-param": 4
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
+   "orientation-ignored-isotropic": "info",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
@@ -20371,12 +20665,14 @@
   "diagnostics": {
    "bad-input": 1,
    "ignored-keyword": 2,
+   "orientation-ignored-isotropic": 3,
    "unsupported-feature": 1,
    "unsupported-keyword": 3
   },
   "diagnostic_levels": {
    "bad-input": "error",
    "ignored-keyword": "info",
+   "orientation-ignored-isotropic": "info",
    "unsupported-feature": "gap",
    "unsupported-keyword": "gap"
   },
@@ -20405,12 +20701,14 @@
   "diagnostics": {
    "bad-input": 1,
    "ignored-keyword": 2,
+   "orientation-ignored-isotropic": 3,
    "unsupported-feature": 1,
    "unsupported-keyword": 3
   },
   "diagnostic_levels": {
    "bad-input": "error",
    "ignored-keyword": "info",
+   "orientation-ignored-isotropic": "info",
    "unsupported-feature": "gap",
    "unsupported-keyword": "gap"
   },
@@ -20439,12 +20737,14 @@
   "diagnostics": {
    "bad-input": 1,
    "ignored-keyword": 2,
+   "orientation-ignored-isotropic": 3,
    "unsupported-feature": 1,
    "unsupported-keyword": 3
   },
   "diagnostic_levels": {
    "bad-input": "error",
    "ignored-keyword": "info",
+   "orientation-ignored-isotropic": "info",
    "unsupported-feature": "gap",
    "unsupported-keyword": "gap"
   },
@@ -20473,12 +20773,14 @@
   "diagnostics": {
    "bad-input": 1,
    "ignored-keyword": 2,
+   "orientation-ignored-isotropic": 3,
    "unsupported-feature": 1,
    "unsupported-keyword": 3
   },
   "diagnostic_levels": {
    "bad-input": "error",
    "ignored-keyword": "info",
+   "orientation-ignored-isotropic": "info",
    "unsupported-feature": "gap",
    "unsupported-keyword": "gap"
   },
@@ -20507,12 +20809,14 @@
   "diagnostics": {
    "bad-input": 1,
    "ignored-keyword": 2,
+   "orientation-ignored-isotropic": 3,
    "unsupported-feature": 1,
    "unsupported-keyword": 3
   },
   "diagnostic_levels": {
    "bad-input": "error",
    "ignored-keyword": "info",
+   "orientation-ignored-isotropic": "info",
    "unsupported-feature": "gap",
    "unsupported-keyword": "gap"
   },
@@ -20539,12 +20843,14 @@
   "diagnostics": {
    "bad-input": 1,
    "ignored-keyword": 2,
+   "orientation-ignored-isotropic": 1,
    "unsupported-feature": 1,
    "unsupported-keyword": 2
   },
   "diagnostic_levels": {
    "bad-input": "error",
    "ignored-keyword": "info",
+   "orientation-ignored-isotropic": "info",
    "unsupported-feature": "gap",
    "unsupported-keyword": "gap"
   },
@@ -20571,12 +20877,14 @@
   "diagnostics": {
    "bad-input": 1,
    "ignored-keyword": 2,
+   "orientation-ignored-isotropic": 1,
    "unsupported-feature": 1,
    "unsupported-keyword": 2
   },
   "diagnostic_levels": {
    "bad-input": "error",
    "ignored-keyword": "info",
+   "orientation-ignored-isotropic": "info",
    "unsupported-feature": "gap",
    "unsupported-keyword": "gap"
   },
@@ -20602,12 +20910,14 @@
   "warnings": [],
   "diagnostics": {
    "ignored-keyword": 1,
+   "orientation-ignored-isotropic": 1,
    "unsupported-feature": 1,
    "unsupported-keyword": 2,
    "unsupported-value": 1
   },
   "diagnostic_levels": {
    "ignored-keyword": "info",
+   "orientation-ignored-isotropic": "info",
    "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-value": "gap"
@@ -20635,6 +20945,7 @@
    "equation-parsed": 1,
    "equation-set-broadcast": 1,
    "ignored-keyword": 1,
+   "orientation-ignored-isotropic": 1,
    "unsupported-feature": 1,
    "unsupported-keyword": 2,
    "unsupported-value": 1
@@ -20643,6 +20954,7 @@
    "equation-parsed": "info",
    "equation-set-broadcast": "info",
    "ignored-keyword": "info",
+   "orientation-ignored-isotropic": "info",
    "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-value": "gap"
@@ -20716,11 +21028,13 @@
   "diagnostics": {
    "bad-input": 1,
    "ignored-keyword": 2,
+   "orientation-ignored-isotropic": 3,
    "unsupported-keyword": 3
   },
   "diagnostic_levels": {
    "bad-input": "error",
    "ignored-keyword": "info",
+   "orientation-ignored-isotropic": "info",
    "unsupported-keyword": "gap"
   },
   "error_codes": [
@@ -20747,11 +21061,13 @@
   "diagnostics": {
    "bad-input": 1,
    "ignored-keyword": 2,
+   "orientation-ignored-isotropic": 3,
    "unsupported-keyword": 3
   },
   "diagnostic_levels": {
    "bad-input": "error",
    "ignored-keyword": "info",
+   "orientation-ignored-isotropic": "info",
    "unsupported-keyword": "gap"
   },
   "error_codes": [
@@ -20778,11 +21094,13 @@
   "diagnostics": {
    "bad-input": 1,
    "ignored-keyword": 2,
+   "orientation-ignored-isotropic": 3,
    "unsupported-keyword": 3
   },
   "diagnostic_levels": {
    "bad-input": "error",
    "ignored-keyword": "info",
+   "orientation-ignored-isotropic": "info",
    "unsupported-keyword": "gap"
   },
   "error_codes": [
@@ -20809,11 +21127,13 @@
   "diagnostics": {
    "bad-input": 1,
    "ignored-keyword": 2,
+   "orientation-ignored-isotropic": 3,
    "unsupported-keyword": 3
   },
   "diagnostic_levels": {
    "bad-input": "error",
    "ignored-keyword": "info",
+   "orientation-ignored-isotropic": "info",
    "unsupported-keyword": "gap"
   },
   "error_codes": [
@@ -20840,11 +21160,13 @@
   "diagnostics": {
    "bad-input": 1,
    "ignored-keyword": 2,
+   "orientation-ignored-isotropic": 3,
    "unsupported-keyword": 3
   },
   "diagnostic_levels": {
    "bad-input": "error",
    "ignored-keyword": "info",
+   "orientation-ignored-isotropic": "info",
    "unsupported-keyword": "gap"
   },
   "error_codes": [
@@ -20868,11 +21190,13 @@
   "warnings": [],
   "diagnostics": {
    "ignored-keyword": 1,
+   "orientation-ignored-isotropic": 1,
    "unsupported-keyword": 2,
    "unsupported-value": 1
   },
   "diagnostic_levels": {
    "ignored-keyword": "info",
+   "orientation-ignored-isotropic": "info",
    "unsupported-keyword": "gap",
    "unsupported-value": "gap"
   },
@@ -20898,6 +21222,7 @@
    "equation-parsed": 1,
    "equation-set-broadcast": 1,
    "ignored-keyword": 1,
+   "orientation-ignored-isotropic": 1,
    "unsupported-keyword": 2,
    "unsupported-value": 1
   },
@@ -20905,6 +21230,7 @@
    "equation-parsed": "info",
    "equation-set-broadcast": "info",
    "ignored-keyword": "info",
+   "orientation-ignored-isotropic": "info",
    "unsupported-keyword": "gap",
    "unsupported-value": "gap"
   },
@@ -20959,19 +21285,16 @@
   "diagnostics": {
    "control-param-ignored": 8,
    "ignored-keyword": 3,
-   "unsupported-keyword": 1,
-   "unsupported-param": 1
+   "unsupported-keyword": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
-   "unsupported-keyword": "gap",
-   "unsupported-param": "gap"
+   "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
-   "unsupported-keyword",
-   "unsupported-param"
+   "unsupported-keyword"
   ]
  },
  "verification/hysteresis_e001_uniaxial.inp": {
@@ -20992,19 +21315,16 @@
   "diagnostics": {
    "control-param-ignored": 8,
    "ignored-keyword": 3,
-   "unsupported-keyword": 1,
-   "unsupported-param": 1
+   "unsupported-keyword": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
-   "unsupported-keyword": "gap",
-   "unsupported-param": "gap"
+   "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
-   "unsupported-keyword",
-   "unsupported-param"
+   "unsupported-keyword"
   ]
  },
  "verification/hzplaniso_ve.inp": {
@@ -21274,12 +21594,14 @@
   "diagnostics": {
    "bad-input": 1,
    "ignored-keyword": 2,
+   "orientation-ignored-isotropic": 3,
    "unsupported-feature": 1,
    "unsupported-keyword": 3
   },
   "diagnostic_levels": {
    "bad-input": "error",
    "ignored-keyword": "info",
+   "orientation-ignored-isotropic": "info",
    "unsupported-feature": "gap",
    "unsupported-keyword": "gap"
   },
@@ -21308,12 +21630,14 @@
   "diagnostics": {
    "bad-input": 1,
    "ignored-keyword": 2,
+   "orientation-ignored-isotropic": 3,
    "unsupported-feature": 1,
    "unsupported-keyword": 3
   },
   "diagnostic_levels": {
    "bad-input": "error",
    "ignored-keyword": "info",
+   "orientation-ignored-isotropic": "info",
    "unsupported-feature": "gap",
    "unsupported-keyword": "gap"
   },
@@ -21342,12 +21666,14 @@
   "diagnostics": {
    "bad-input": 1,
    "ignored-keyword": 2,
+   "orientation-ignored-isotropic": 3,
    "unsupported-feature": 1,
    "unsupported-keyword": 3
   },
   "diagnostic_levels": {
    "bad-input": "error",
    "ignored-keyword": "info",
+   "orientation-ignored-isotropic": "info",
    "unsupported-feature": "gap",
    "unsupported-keyword": "gap"
   },
@@ -21376,12 +21702,14 @@
   "diagnostics": {
    "bad-input": 1,
    "ignored-keyword": 2,
+   "orientation-ignored-isotropic": 3,
    "unsupported-feature": 1,
    "unsupported-keyword": 3
   },
   "diagnostic_levels": {
    "bad-input": "error",
    "ignored-keyword": "info",
+   "orientation-ignored-isotropic": "info",
    "unsupported-feature": "gap",
    "unsupported-keyword": "gap"
   },
@@ -21410,12 +21738,14 @@
   "diagnostics": {
    "bad-input": 1,
    "ignored-keyword": 2,
+   "orientation-ignored-isotropic": 3,
    "unsupported-feature": 1,
    "unsupported-keyword": 3
   },
   "diagnostic_levels": {
    "bad-input": "error",
    "ignored-keyword": "info",
+   "orientation-ignored-isotropic": "info",
    "unsupported-feature": "gap",
    "unsupported-keyword": "gap"
   },
@@ -21441,12 +21771,14 @@
   "warnings": [],
   "diagnostics": {
    "ignored-keyword": 1,
+   "orientation-ignored-isotropic": 1,
    "unsupported-feature": 1,
    "unsupported-keyword": 2,
    "unsupported-value": 1
   },
   "diagnostic_levels": {
    "ignored-keyword": "info",
+   "orientation-ignored-isotropic": "info",
    "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-value": "gap"
@@ -21474,6 +21806,7 @@
    "equation-parsed": 1,
    "equation-set-broadcast": 1,
    "ignored-keyword": 1,
+   "orientation-ignored-isotropic": 1,
    "unsupported-feature": 1,
    "unsupported-keyword": 2,
    "unsupported-value": 1
@@ -21482,6 +21815,7 @@
    "equation-parsed": "info",
    "equation-set-broadcast": "info",
    "ignored-keyword": "info",
+   "orientation-ignored-isotropic": "info",
    "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-value": "gap"
@@ -21667,15 +22001,18 @@
   "diagnostics": {
    "control-param-ignored": 4,
    "ignored-keyword": 3,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword"
   ]
  },
@@ -21698,15 +22035,18 @@
   "diagnostics": {
    "control-param-ignored": 4,
    "ignored-keyword": 3,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword"
   ]
  },
@@ -22472,7 +22812,7 @@
    "equation-set-broadcast": 1,
    "ignored-keyword": 2,
    "unsupported-keyword": 2,
-   "unsupported-param": 2
+   "unsupported-param": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -23791,7 +24131,7 @@
   "diagnostics": {
    "ignored-keyword": 1,
    "unsupported-keyword": 4,
-   "unsupported-param": 3,
+   "unsupported-param": 2,
    "unsupported-value": 1
   },
   "diagnostic_levels": {
@@ -23823,7 +24163,7 @@
   "diagnostics": {
    "ignored-keyword": 1,
    "unsupported-keyword": 4,
-   "unsupported-param": 2,
+   "unsupported-param": 1,
    "unsupported-value": 1
   },
   "diagnostic_levels": {
@@ -23856,7 +24196,7 @@
    "ignored-keyword": 2,
    "rotation-dofs-ignored": 3,
    "unsupported-keyword": 4,
-   "unsupported-param": 3,
+   "unsupported-param": 2,
    "unsupported-value": 1
   },
   "diagnostic_levels": {
@@ -23890,7 +24230,7 @@
    "ignored-keyword": 1,
    "rotation-dofs-ignored": 2,
    "unsupported-keyword": 4,
-   "unsupported-param": 2,
+   "unsupported-param": 1,
    "unsupported-value": 1
   },
   "diagnostic_levels": {
@@ -23925,7 +24265,7 @@
    "equation-set-broadcast": 1,
    "ignored-keyword": 3,
    "unsupported-keyword": 4,
-   "unsupported-param": 2,
+   "unsupported-param": 1,
    "unsupported-value": 1
   },
   "diagnostic_levels": {
@@ -23961,7 +24301,7 @@
    "equation-set-broadcast": 1,
    "ignored-keyword": 3,
    "unsupported-keyword": 3,
-   "unsupported-param": 2,
+   "unsupported-param": 1,
    "unsupported-value": 1
   },
   "diagnostic_levels": {
@@ -23996,7 +24336,7 @@
    "equation-parsed": 1,
    "ignored-keyword": 3,
    "unsupported-keyword": 4,
-   "unsupported-param": 2,
+   "unsupported-param": 1,
    "unsupported-value": 1
   },
   "diagnostic_levels": {
@@ -24030,7 +24370,7 @@
    "equation-parsed": 1,
    "ignored-keyword": 3,
    "unsupported-keyword": 3,
-   "unsupported-param": 2,
+   "unsupported-param": 1,
    "unsupported-value": 1
   },
   "diagnostic_levels": {
@@ -24066,7 +24406,7 @@
    "rotation-dofs-ignored": 1,
    "unsupported-feature": 1,
    "unsupported-keyword": 4,
-   "unsupported-param": 3,
+   "unsupported-param": 2,
    "unsupported-value": 1
   },
   "diagnostic_levels": {
@@ -24105,7 +24445,7 @@
    "rotation-dofs-ignored": 1,
    "unsupported-feature": 1,
    "unsupported-keyword": 4,
-   "unsupported-param": 2,
+   "unsupported-param": 1,
    "unsupported-value": 1
   },
   "diagnostic_levels": {
@@ -24144,7 +24484,7 @@
    "rotation-dofs-ignored": 2,
    "unsupported-feature": 1,
    "unsupported-keyword": 4,
-   "unsupported-param": 3,
+   "unsupported-param": 2,
    "unsupported-value": 1
   },
   "diagnostic_levels": {
@@ -24183,7 +24523,7 @@
    "rotation-dofs-ignored": 3,
    "unsupported-feature": 1,
    "unsupported-keyword": 4,
-   "unsupported-param": 2,
+   "unsupported-param": 1,
    "unsupported-value": 1
   },
   "diagnostic_levels": {
@@ -24220,7 +24560,7 @@
   "diagnostics": {
    "ignored-keyword": 1,
    "unsupported-keyword": 4,
-   "unsupported-param": 2,
+   "unsupported-param": 1,
    "unsupported-value": 1
   },
   "diagnostic_levels": {
@@ -24253,7 +24593,7 @@
   "diagnostics": {
    "ignored-keyword": 1,
    "unsupported-keyword": 3,
-   "unsupported-param": 2,
+   "unsupported-param": 1,
    "unsupported-value": 1
   },
   "diagnostic_levels": {
@@ -24512,19 +24852,16 @@
   "diagnostics": {
    "control-param-ignored": 2,
    "ignored-keyword": 4,
-   "unsupported-keyword": 1,
-   "unsupported-param": 1
+   "unsupported-keyword": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
-   "unsupported-keyword": "gap",
-   "unsupported-param": "gap"
+   "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
-   "unsupported-keyword",
-   "unsupported-param"
+   "unsupported-keyword"
   ]
  },
  "verification/mbbcdo3euc_un_1e_2_cl15.inp": {
@@ -24549,7 +24886,7 @@
    "control-param-ignored": 12,
    "ignored-keyword": 3,
    "unsupported-keyword": 3,
-   "unsupported-param": 2
+   "unsupported-param": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -24580,7 +24917,7 @@
    "control-param-ignored": 4,
    "ignored-keyword": 5,
    "unsupported-keyword": 2,
-   "unsupported-param": 2
+   "unsupported-param": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -24610,19 +24947,16 @@
   "diagnostics": {
    "control-param-ignored": 4,
    "ignored-keyword": 5,
-   "unsupported-keyword": 1,
-   "unsupported-param": 1
+   "unsupported-keyword": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
-   "unsupported-keyword": "gap",
-   "unsupported-param": "gap"
+   "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
-   "unsupported-keyword",
-   "unsupported-param"
+   "unsupported-keyword"
   ]
  },
  "verification/mbbcdo3gsh_vwaals.inp": {
@@ -24642,7 +24976,7 @@
    "control-param-ignored": 4,
    "ignored-keyword": 5,
    "unsupported-keyword": 1,
-   "unsupported-param": 2
+   "unsupported-param": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -24672,19 +25006,16 @@
   "diagnostics": {
    "control-param-ignored": 4,
    "ignored-keyword": 5,
-   "unsupported-keyword": 1,
-   "unsupported-param": 1
+   "unsupported-keyword": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
-   "unsupported-keyword": "gap",
-   "unsupported-param": "gap"
+   "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
-   "unsupported-keyword",
-   "unsupported-param"
+   "unsupported-keyword"
   ]
  },
  "verification/mbbcdo3ibt.inp": {
@@ -24705,7 +25036,7 @@
    "control-param-ignored": 4,
    "ignored-keyword": 3,
    "unsupported-keyword": 3,
-   "unsupported-param": 2
+   "unsupported-param": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -24735,19 +25066,16 @@
   "diagnostics": {
    "control-param-ignored": 4,
    "ignored-keyword": 3,
-   "unsupported-keyword": 1,
-   "unsupported-param": 1
+   "unsupported-keyword": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
-   "unsupported-keyword": "gap",
-   "unsupported-param": "gap"
+   "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
-   "unsupported-keyword",
-   "unsupported-param"
+   "unsupported-keyword"
   ]
  },
  "verification/mbbcdo3mcy_un_1e_2_cl15.inp": {
@@ -24766,19 +25094,16 @@
   "diagnostics": {
    "control-param-ignored": 4,
    "ignored-keyword": 3,
-   "unsupported-keyword": 1,
-   "unsupported-param": 1
+   "unsupported-keyword": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
-   "unsupported-keyword": "gap",
-   "unsupported-param": "gap"
+   "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
-   "unsupported-keyword",
-   "unsupported-param"
+   "unsupported-keyword"
   ]
  },
  "verification/mbbcdo3mcy_un_1e_2_cl40.inp": {
@@ -24797,19 +25122,16 @@
   "diagnostics": {
    "control-param-ignored": 4,
    "ignored-keyword": 3,
-   "unsupported-keyword": 1,
-   "unsupported-param": 1
+   "unsupported-keyword": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
-   "unsupported-keyword": "gap",
-   "unsupported-param": "gap"
+   "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
-   "unsupported-keyword",
-   "unsupported-param"
+   "unsupported-keyword"
   ]
  },
  "verification/mbbcdo3mcy_un_1e_2_cl65.inp": {
@@ -24828,19 +25150,16 @@
   "diagnostics": {
    "control-param-ignored": 4,
    "ignored-keyword": 3,
-   "unsupported-keyword": 1,
-   "unsupported-param": 1
+   "unsupported-keyword": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
-   "unsupported-keyword": "gap",
-   "unsupported-param": "gap"
+   "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
-   "unsupported-keyword",
-   "unsupported-param"
+   "unsupported-keyword"
   ]
  },
  "verification/mbbcdo3mcy_un_1e_2_ni.inp": {
@@ -24859,19 +25178,16 @@
   "diagnostics": {
    "control-param-ignored": 4,
    "ignored-keyword": 3,
-   "unsupported-keyword": 1,
-   "unsupported-param": 1
+   "unsupported-keyword": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
-   "unsupported-keyword": "gap",
-   "unsupported-param": "gap"
+   "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
-   "unsupported-keyword",
-   "unsupported-param"
+   "unsupported-keyword"
   ]
  },
  "verification/mbbcdo3mcy_un_23e_5_ni.inp": {
@@ -24890,19 +25206,16 @@
   "diagnostics": {
    "control-param-ignored": 4,
    "ignored-keyword": 3,
-   "unsupported-keyword": 1,
-   "unsupported-param": 1
+   "unsupported-keyword": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
-   "unsupported-keyword": "gap",
-   "unsupported-param": "gap"
+   "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
-   "unsupported-keyword",
-   "unsupported-param"
+   "unsupported-keyword"
   ]
  },
  "verification/mbbcdo3rcy_un_1e_1_cl15.inp": {
@@ -24924,19 +25237,16 @@
   "diagnostics": {
    "control-param-ignored": 10,
    "ignored-keyword": 3,
-   "unsupported-keyword": 1,
-   "unsupported-param": 1
+   "unsupported-keyword": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
-   "unsupported-keyword": "gap",
-   "unsupported-param": "gap"
+   "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
-   "unsupported-keyword",
-   "unsupported-param"
+   "unsupported-keyword"
   ]
  },
  "verification/mbbcdo3rcy_un_2e_3_cl15.inp": {
@@ -24963,19 +25273,16 @@
   "diagnostics": {
    "control-param-ignored": 20,
    "ignored-keyword": 3,
-   "unsupported-keyword": 1,
-   "unsupported-param": 1
+   "unsupported-keyword": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
-   "unsupported-keyword": "gap",
-   "unsupported-param": "gap"
+   "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
-   "unsupported-keyword",
-   "unsupported-param"
+   "unsupported-keyword"
   ]
  },
  "verification/mbbcdo3ruc_un_1e_1_cl15.inp": {
@@ -25002,19 +25309,16 @@
   "diagnostics": {
    "control-param-ignored": 20,
    "ignored-keyword": 3,
-   "unsupported-keyword": 1,
-   "unsupported-param": 1
+   "unsupported-keyword": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
-   "unsupported-keyword": "gap",
-   "unsupported-param": "gap"
+   "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
-   "unsupported-keyword",
-   "unsupported-param"
+   "unsupported-keyword"
   ]
  },
  "verification/mbbcoo3hut.inp": {
@@ -25034,19 +25338,19 @@
   "diagnostics": {
    "control-param-ignored": 6,
    "ignored-keyword": 4,
-   "unsupported-keyword": 1,
-   "unsupported-param": 1
+   "unsupported-feature": 1,
+   "unsupported-keyword": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
-   "unsupported-keyword": "gap",
-   "unsupported-param": "gap"
+   "unsupported-feature": "gap",
+   "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
-   "unsupported-keyword",
-   "unsupported-param"
+   "unsupported-feature",
+   "unsupported-keyword"
   ]
  },
  "verification/mbbcoo3vlp.inp": {
@@ -25065,17 +25369,20 @@
   "diagnostics": {
    "control-param-ignored": 2,
    "ignored-keyword": 4,
+   "unsupported-feature": 1,
    "unsupported-keyword": 3,
-   "unsupported-param": 2
+   "unsupported-param": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param"
   ]
@@ -25096,19 +25403,19 @@
   "diagnostics": {
    "control-param-ignored": 4,
    "ignored-keyword": 2,
-   "unsupported-keyword": 1,
-   "unsupported-param": 1
+   "unsupported-feature": 1,
+   "unsupported-keyword": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
-   "unsupported-keyword": "gap",
-   "unsupported-param": "gap"
+   "unsupported-feature": "gap",
+   "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
-   "unsupported-keyword",
-   "unsupported-param"
+   "unsupported-feature",
+   "unsupported-keyword"
   ]
  },
  "verification/mbbcot3hut_inst.inp": {
@@ -25127,19 +25434,19 @@
   "diagnostics": {
    "control-param-ignored": 4,
    "ignored-keyword": 2,
-   "unsupported-keyword": 1,
-   "unsupported-param": 1
+   "unsupported-feature": 1,
+   "unsupported-keyword": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
-   "unsupported-keyword": "gap",
-   "unsupported-param": "gap"
+   "unsupported-feature": "gap",
+   "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
-   "unsupported-keyword",
-   "unsupported-param"
+   "unsupported-feature",
+   "unsupported-keyword"
   ]
  },
  "verification/mbbtdo3hut.inp": {
@@ -25158,7 +25465,7 @@
    "control-param-ignored": 2,
    "ignored-keyword": 3,
    "unsupported-keyword": 5,
-   "unsupported-param": 2
+   "unsupported-param": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -28681,12 +28988,14 @@
   "diagnostics": {
    "control-param-ignored": 1,
    "ignored-keyword": 3,
+   "orientation-ignored-isotropic": 1,
    "unsupported-feature": 1,
    "unsupported-keyword": 2
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "orientation-ignored-isotropic": "info",
    "unsupported-feature": "gap",
    "unsupported-keyword": "gap"
   },
@@ -28712,12 +29021,14 @@
   "diagnostics": {
    "control-param-ignored": 1,
    "ignored-keyword": 3,
+   "orientation-ignored-isotropic": 1,
    "unsupported-feature": 1,
    "unsupported-keyword": 2
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "orientation-ignored-isotropic": "info",
    "unsupported-feature": "gap",
    "unsupported-keyword": "gap"
   },
@@ -28743,12 +29054,14 @@
   "diagnostics": {
    "control-param-ignored": 1,
    "ignored-keyword": 3,
+   "orientation-ignored-isotropic": 1,
    "unsupported-feature": 2,
    "unsupported-keyword": 4
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "orientation-ignored-isotropic": "info",
    "unsupported-feature": "gap",
    "unsupported-keyword": "gap"
   },
@@ -28775,6 +29088,8 @@
    "control-param-ignored": 1,
    "ignored-keyword": 3,
    "initial-condition-not-connected": 1,
+   "orientation-ignored-isotropic": 2,
+   "unsupported-feature": 1,
    "unsupported-keyword": 3,
    "unsupported-param": 2
   },
@@ -28782,12 +29097,15 @@
    "control-param-ignored": "info",
    "ignored-keyword": "info",
    "initial-condition-not-connected": "gap",
+   "orientation-ignored-isotropic": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
   "error_codes": [],
   "gap_codes": [
    "initial-condition-not-connected",
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param"
   ]
@@ -28808,15 +29126,20 @@
   "diagnostics": {
    "control-param-ignored": 1,
    "ignored-keyword": 3,
+   "orientation-ignored-isotropic": 1,
+   "unsupported-feature": 1,
    "unsupported-keyword": 2
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "orientation-ignored-isotropic": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword"
   ]
  },
@@ -28836,15 +29159,20 @@
   "diagnostics": {
    "control-param-ignored": 1,
    "ignored-keyword": 3,
+   "orientation-ignored-isotropic": 1,
+   "unsupported-feature": 1,
    "unsupported-keyword": 2
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "orientation-ignored-isotropic": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword"
   ]
  },
@@ -28866,17 +29194,22 @@
   "diagnostics": {
    "control-param-ignored": 1,
    "ignored-keyword": 3,
+   "orientation-ignored-isotropic": 1,
+   "unsupported-feature": 1,
    "unsupported-keyword": 4,
    "unsupported-param": 2
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "orientation-ignored-isotropic": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param"
   ]
@@ -29207,15 +29540,18 @@
   "diagnostics": {
    "control-param-ignored": 1,
    "ignored-keyword": 3,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword"
   ]
  },
@@ -29235,15 +29571,18 @@
   "diagnostics": {
    "control-param-ignored": 1,
    "ignored-keyword": 3,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword"
   ]
  },
@@ -29263,15 +29602,18 @@
   "diagnostics": {
    "control-param-ignored": 1,
    "ignored-keyword": 3,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword"
   ]
  },
@@ -29291,15 +29633,18 @@
   "diagnostics": {
    "control-param-ignored": 1,
    "ignored-keyword": 3,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword"
   ]
  },
@@ -29319,15 +29664,18 @@
   "diagnostics": {
    "control-param-ignored": 1,
    "ignored-keyword": 3,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword"
   ]
  },
@@ -29347,15 +29695,18 @@
   "diagnostics": {
    "control-param-ignored": 1,
    "ignored-keyword": 3,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword"
   ]
  },
@@ -29377,17 +29728,20 @@
   "diagnostics": {
    "control-param-ignored": 1,
    "ignored-keyword": 3,
+   "unsupported-feature": 1,
    "unsupported-keyword": 3,
    "unsupported-param": 2
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param"
   ]
@@ -33168,18 +33522,21 @@
   "warnings": [],
   "diagnostics": {
    "control-param-ignored": 3,
+   "dp-hardening-linear-extrapolation": 1,
    "ignored-keyword": 2,
    "initial-condition-not-connected": 1,
    "unsupported-keyword": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
+   "dp-hardening-linear-extrapolation": "gap",
    "ignored-keyword": "info",
    "initial-condition-not-connected": "gap",
    "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "dp-hardening-linear-extrapolation",
    "initial-condition-not-connected",
    "unsupported-keyword"
   ]
@@ -33199,18 +33556,21 @@
   "warnings": [],
   "diagnostics": {
    "control-param-ignored": 3,
+   "dp-hardening-linear-extrapolation": 1,
    "ignored-keyword": 2,
    "initial-condition-not-connected": 1,
    "unsupported-keyword": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
+   "dp-hardening-linear-extrapolation": "gap",
    "ignored-keyword": "info",
    "initial-condition-not-connected": "gap",
    "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "dp-hardening-linear-extrapolation",
    "initial-condition-not-connected",
    "unsupported-keyword"
   ]
@@ -33458,10 +33818,12 @@
   "warnings": [],
   "diagnostics": {
    "ignored-keyword": 2,
+   "orientation-ignored-isotropic": 1,
    "unsupported-value": 1
   },
   "diagnostic_levels": {
    "ignored-keyword": "info",
+   "orientation-ignored-isotropic": "info",
    "unsupported-value": "gap"
   },
   "error_codes": [],
@@ -33482,13 +33844,17 @@
   "gaps": [],
   "warnings": [],
   "diagnostics": {
-   "ignored-keyword": 2
+   "ignored-keyword": 2,
+   "orientation-not-connected": 1
   },
   "diagnostic_levels": {
-   "ignored-keyword": "info"
+   "ignored-keyword": "info",
+   "orientation-not-connected": "gap"
   },
   "error_codes": [],
-  "gap_codes": []
+  "gap_codes": [
+   "orientation-not-connected"
+  ]
  },
  "verification/melnco1euc.inp": {
   "path": "verification/melnco1euc.inp",
@@ -33550,10 +33916,12 @@
   "warnings": [],
   "diagnostics": {
    "ignored-keyword": 2,
+   "orientation-ignored-isotropic": 1,
    "unsupported-value": 1
   },
   "diagnostic_levels": {
    "ignored-keyword": "info",
+   "orientation-ignored-isotropic": "info",
    "unsupported-value": "gap"
   },
   "error_codes": [],
@@ -33575,10 +33943,12 @@
   "warnings": [],
   "diagnostics": {
    "ignored-keyword": 2,
+   "orientation-ignored-isotropic": 1,
    "unsupported-value": 1
   },
   "diagnostic_levels": {
    "ignored-keyword": "info",
+   "orientation-ignored-isotropic": "info",
    "unsupported-value": "gap"
   },
   "error_codes": [],
@@ -34655,14 +35025,18 @@
   "warnings": [],
   "diagnostics": {
    "control-param-ignored": 2,
-   "ignored-keyword": 2
+   "ignored-keyword": 2,
+   "unsupported-feature": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
-   "ignored-keyword": "info"
+   "ignored-keyword": "info",
+   "unsupported-feature": "gap"
   },
   "error_codes": [],
-  "gap_codes": []
+  "gap_codes": [
+   "unsupported-feature"
+  ]
  },
  "verification/mhacoo2hut.inp": {
   "path": "verification/mhacoo2hut.inp",
@@ -34678,14 +35052,18 @@
   "warnings": [],
   "diagnostics": {
    "control-param-ignored": 2,
-   "ignored-keyword": 2
+   "ignored-keyword": 2,
+   "unsupported-feature": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
-   "ignored-keyword": "info"
+   "ignored-keyword": "info",
+   "unsupported-feature": "gap"
   },
   "error_codes": [],
-  "gap_codes": []
+  "gap_codes": [
+   "unsupported-feature"
+  ]
  },
  "verification/mhacoo2ibt.inp": {
   "path": "verification/mhacoo2ibt.inp",
@@ -34701,14 +35079,18 @@
   "warnings": [],
   "diagnostics": {
    "control-param-ignored": 2,
-   "ignored-keyword": 2
+   "ignored-keyword": 2,
+   "unsupported-feature": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
-   "ignored-keyword": "info"
+   "ignored-keyword": "info",
+   "unsupported-feature": "gap"
   },
   "error_codes": [],
-  "gap_codes": []
+  "gap_codes": [
+   "unsupported-feature"
+  ]
  },
  "verification/mhacoo3gsh.inp": {
   "path": "verification/mhacoo3gsh.inp",
@@ -34724,14 +35106,18 @@
   "warnings": [],
   "diagnostics": {
    "control-param-ignored": 2,
-   "ignored-keyword": 2
+   "ignored-keyword": 2,
+   "unsupported-feature": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
-   "ignored-keyword": "info"
+   "ignored-keyword": "info",
+   "unsupported-feature": "gap"
   },
   "error_codes": [],
-  "gap_codes": []
+  "gap_codes": [
+   "unsupported-feature"
+  ]
  },
  "verification/mhacoo3hut.inp": {
   "path": "verification/mhacoo3hut.inp",
@@ -34747,14 +35133,18 @@
   "warnings": [],
   "diagnostics": {
    "control-param-ignored": 2,
-   "ignored-keyword": 2
+   "ignored-keyword": 2,
+   "unsupported-feature": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
-   "ignored-keyword": "info"
+   "ignored-keyword": "info",
+   "unsupported-feature": "gap"
   },
   "error_codes": [],
-  "gap_codes": []
+  "gap_codes": [
+   "unsupported-feature"
+  ]
  },
  "verification/mhacoo3ibt.inp": {
   "path": "verification/mhacoo3ibt.inp",
@@ -34770,14 +35160,18 @@
   "warnings": [],
   "diagnostics": {
    "control-param-ignored": 2,
-   "ignored-keyword": 2
+   "ignored-keyword": 2,
+   "unsupported-feature": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
-   "ignored-keyword": "info"
+   "ignored-keyword": "info",
+   "unsupported-feature": "gap"
   },
   "error_codes": [],
-  "gap_codes": []
+  "gap_codes": [
+   "unsupported-feature"
+  ]
  },
  "verification/mhacoo3vlp.inp": {
   "path": "verification/mhacoo3vlp.inp",
@@ -34798,17 +35192,20 @@
   "diagnostics": {
    "control-param-ignored": 4,
    "ignored-keyword": 2,
+   "unsupported-feature": 1,
    "unsupported-keyword": 2,
    "unsupported-param": 3
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param"
   ]
@@ -35138,17 +35535,20 @@
    "control-param-ignored": 2,
    "ignored-keyword": 5,
    "orientation-not-connected": 1,
-   "rotation-dofs-ignored": 1
+   "rotation-dofs-ignored": 1,
+   "unsupported-feature": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
    "orientation-not-connected": "gap",
-   "rotation-dofs-ignored": "info"
+   "rotation-dofs-ignored": "info",
+   "unsupported-feature": "gap"
   },
   "error_codes": [],
   "gap_codes": [
-   "orientation-not-connected"
+   "orientation-not-connected",
+   "unsupported-feature"
   ]
  },
  "verification/mhecoo2eit.inp": {
@@ -35168,17 +35568,20 @@
    "control-param-ignored": 2,
    "ignored-keyword": 5,
    "orientation-not-connected": 1,
-   "rotation-dofs-ignored": 2
+   "rotation-dofs-ignored": 2,
+   "unsupported-feature": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
    "orientation-not-connected": "gap",
-   "rotation-dofs-ignored": "info"
+   "rotation-dofs-ignored": "info",
+   "unsupported-feature": "gap"
   },
   "error_codes": [],
   "gap_codes": [
-   "orientation-not-connected"
+   "orientation-not-connected",
+   "unsupported-feature"
   ]
  },
  "verification/mhecoo2gsh.inp": {
@@ -35195,14 +35598,18 @@
   "warnings": [],
   "diagnostics": {
    "control-param-ignored": 2,
-   "ignored-keyword": 2
+   "ignored-keyword": 2,
+   "unsupported-feature": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
-   "ignored-keyword": "info"
+   "ignored-keyword": "info",
+   "unsupported-feature": "gap"
   },
   "error_codes": [],
-  "gap_codes": []
+  "gap_codes": [
+   "unsupported-feature"
+  ]
  },
  "verification/mhecoo2hut.inp": {
   "path": "verification/mhecoo2hut.inp",
@@ -35221,6 +35628,7 @@
    "equation-parsed": 1,
    "ignored-keyword": 2,
    "set-order-sorted": 1,
+   "unsupported-feature": 1,
    "unsupported-param": 1
   },
   "diagnostic_levels": {
@@ -35228,10 +35636,12 @@
    "equation-parsed": "info",
    "ignored-keyword": "info",
    "set-order-sorted": "warning",
+   "unsupported-feature": "gap",
    "unsupported-param": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-param"
   ]
  },
@@ -35249,14 +35659,18 @@
   "warnings": [],
   "diagnostics": {
    "control-param-ignored": 2,
-   "ignored-keyword": 2
+   "ignored-keyword": 2,
+   "unsupported-feature": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
-   "ignored-keyword": "info"
+   "ignored-keyword": "info",
+   "unsupported-feature": "gap"
   },
   "error_codes": [],
-  "gap_codes": []
+  "gap_codes": [
+   "unsupported-feature"
+  ]
  },
  "verification/mhecoo2spt.inp": {
   "path": "verification/mhecoo2spt.inp",
@@ -35274,17 +35688,20 @@
    "control-param-ignored": 1,
    "ignored-keyword": 8,
    "orientation-not-connected": 1,
-   "rotation-dofs-ignored": 6
+   "rotation-dofs-ignored": 6,
+   "unsupported-feature": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
    "orientation-not-connected": "gap",
-   "rotation-dofs-ignored": "info"
+   "rotation-dofs-ignored": "info",
+   "unsupported-feature": "gap"
   },
   "error_codes": [],
   "gap_codes": [
-   "orientation-not-connected"
+   "orientation-not-connected",
+   "unsupported-feature"
   ]
  },
  "verification/mhecoo3gsh.inp": {
@@ -35301,14 +35718,18 @@
   "warnings": [],
   "diagnostics": {
    "control-param-ignored": 2,
-   "ignored-keyword": 2
+   "ignored-keyword": 2,
+   "unsupported-feature": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
-   "ignored-keyword": "info"
+   "ignored-keyword": "info",
+   "unsupported-feature": "gap"
   },
   "error_codes": [],
-  "gap_codes": []
+  "gap_codes": [
+   "unsupported-feature"
+  ]
  },
  "verification/mhecoo3hut.inp": {
   "path": "verification/mhecoo3hut.inp",
@@ -35324,14 +35745,18 @@
   "warnings": [],
   "diagnostics": {
    "control-param-ignored": 2,
-   "ignored-keyword": 2
+   "ignored-keyword": 2,
+   "unsupported-feature": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
-   "ignored-keyword": "info"
+   "ignored-keyword": "info",
+   "unsupported-feature": "gap"
   },
   "error_codes": [],
-  "gap_codes": []
+  "gap_codes": [
+   "unsupported-feature"
+  ]
  },
  "verification/mhecoo3ibt.inp": {
   "path": "verification/mhecoo3ibt.inp",
@@ -35347,14 +35772,18 @@
   "warnings": [],
   "diagnostics": {
    "control-param-ignored": 2,
-   "ignored-keyword": 2
+   "ignored-keyword": 2,
+   "unsupported-feature": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
-   "ignored-keyword": "info"
+   "ignored-keyword": "info",
+   "unsupported-feature": "gap"
   },
   "error_codes": [],
-  "gap_codes": []
+  "gap_codes": [
+   "unsupported-feature"
+  ]
  },
  "verification/mhecoo3vlp.inp": {
   "path": "verification/mhecoo3vlp.inp",
@@ -35372,17 +35801,20 @@
   "diagnostics": {
    "control-param-ignored": 2,
    "ignored-keyword": 4,
+   "unsupported-feature": 1,
    "unsupported-keyword": 2,
    "unsupported-param": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param"
   ]
@@ -36021,17 +36453,20 @@
    "control-param-ignored": 2,
    "ignored-keyword": 5,
    "orientation-not-connected": 1,
-   "rotation-dofs-ignored": 1
+   "rotation-dofs-ignored": 1,
+   "unsupported-feature": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
    "orientation-not-connected": "gap",
-   "rotation-dofs-ignored": "info"
+   "rotation-dofs-ignored": "info",
+   "unsupported-feature": "gap"
   },
   "error_codes": [],
   "gap_codes": [
-   "orientation-not-connected"
+   "orientation-not-connected",
+   "unsupported-feature"
   ]
  },
  "verification/mhgcoo2eit.inp": {
@@ -36051,17 +36486,20 @@
    "control-param-ignored": 2,
    "ignored-keyword": 5,
    "orientation-not-connected": 1,
-   "rotation-dofs-ignored": 2
+   "rotation-dofs-ignored": 2,
+   "unsupported-feature": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
    "orientation-not-connected": "gap",
-   "rotation-dofs-ignored": "info"
+   "rotation-dofs-ignored": "info",
+   "unsupported-feature": "gap"
   },
   "error_codes": [],
   "gap_codes": [
-   "orientation-not-connected"
+   "orientation-not-connected",
+   "unsupported-feature"
   ]
  },
  "verification/mhgcoo2gsh.inp": {
@@ -36078,14 +36516,18 @@
   "warnings": [],
   "diagnostics": {
    "control-param-ignored": 2,
-   "ignored-keyword": 2
+   "ignored-keyword": 2,
+   "unsupported-feature": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
-   "ignored-keyword": "info"
+   "ignored-keyword": "info",
+   "unsupported-feature": "gap"
   },
   "error_codes": [],
-  "gap_codes": []
+  "gap_codes": [
+   "unsupported-feature"
+  ]
  },
  "verification/mhgcoo2hut.inp": {
   "path": "verification/mhgcoo2hut.inp",
@@ -36101,14 +36543,18 @@
   "warnings": [],
   "diagnostics": {
    "control-param-ignored": 2,
-   "ignored-keyword": 2
+   "ignored-keyword": 2,
+   "unsupported-feature": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
-   "ignored-keyword": "info"
+   "ignored-keyword": "info",
+   "unsupported-feature": "gap"
   },
   "error_codes": [],
-  "gap_codes": []
+  "gap_codes": [
+   "unsupported-feature"
+  ]
  },
  "verification/mhgcoo2ibt.inp": {
   "path": "verification/mhgcoo2ibt.inp",
@@ -36124,14 +36570,18 @@
   "warnings": [],
   "diagnostics": {
    "control-param-ignored": 2,
-   "ignored-keyword": 2
+   "ignored-keyword": 2,
+   "unsupported-feature": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
-   "ignored-keyword": "info"
+   "ignored-keyword": "info",
+   "unsupported-feature": "gap"
   },
   "error_codes": [],
-  "gap_codes": []
+  "gap_codes": [
+   "unsupported-feature"
+  ]
  },
  "verification/mhgcoo2spt.inp": {
   "path": "verification/mhgcoo2spt.inp",
@@ -36149,17 +36599,20 @@
    "control-param-ignored": 1,
    "ignored-keyword": 8,
    "orientation-not-connected": 1,
-   "rotation-dofs-ignored": 6
+   "rotation-dofs-ignored": 6,
+   "unsupported-feature": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
    "orientation-not-connected": "gap",
-   "rotation-dofs-ignored": "info"
+   "rotation-dofs-ignored": "info",
+   "unsupported-feature": "gap"
   },
   "error_codes": [],
   "gap_codes": [
-   "orientation-not-connected"
+   "orientation-not-connected",
+   "unsupported-feature"
   ]
  },
  "verification/mhgcoo3gsh.inp": {
@@ -36176,14 +36629,18 @@
   "warnings": [],
   "diagnostics": {
    "control-param-ignored": 2,
-   "ignored-keyword": 2
+   "ignored-keyword": 2,
+   "unsupported-feature": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
-   "ignored-keyword": "info"
+   "ignored-keyword": "info",
+   "unsupported-feature": "gap"
   },
   "error_codes": [],
-  "gap_codes": []
+  "gap_codes": [
+   "unsupported-feature"
+  ]
  },
  "verification/mhgcoo3hut.inp": {
   "path": "verification/mhgcoo3hut.inp",
@@ -36199,14 +36656,18 @@
   "warnings": [],
   "diagnostics": {
    "control-param-ignored": 2,
-   "ignored-keyword": 2
+   "ignored-keyword": 2,
+   "unsupported-feature": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
-   "ignored-keyword": "info"
+   "ignored-keyword": "info",
+   "unsupported-feature": "gap"
   },
   "error_codes": [],
-  "gap_codes": []
+  "gap_codes": [
+   "unsupported-feature"
+  ]
  },
  "verification/mhgcoo3ibt.inp": {
   "path": "verification/mhgcoo3ibt.inp",
@@ -36222,14 +36683,18 @@
   "warnings": [],
   "diagnostics": {
    "control-param-ignored": 2,
-   "ignored-keyword": 2
+   "ignored-keyword": 2,
+   "unsupported-feature": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
-   "ignored-keyword": "info"
+   "ignored-keyword": "info",
+   "unsupported-feature": "gap"
   },
   "error_codes": [],
-  "gap_codes": []
+  "gap_codes": [
+   "unsupported-feature"
+  ]
  },
  "verification/mhgcoo3vlp.inp": {
   "path": "verification/mhgcoo3vlp.inp",
@@ -36250,17 +36715,20 @@
   "diagnostics": {
    "control-param-ignored": 4,
    "ignored-keyword": 2,
+   "unsupported-feature": 1,
    "unsupported-keyword": 2,
    "unsupported-param": 3
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param"
   ]
@@ -36582,17 +37050,20 @@
   "diagnostics": {
    "control-param-ignored": 2,
    "ignored-keyword": 2,
+   "unsupported-feature": 1,
    "unsupported-keyword": 2,
    "unsupported-param": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param"
   ]
@@ -36612,17 +37083,20 @@
   "diagnostics": {
    "control-param-ignored": 2,
    "ignored-keyword": 2,
+   "unsupported-feature": 1,
    "unsupported-keyword": 2,
    "unsupported-param": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param"
   ]
@@ -36802,14 +37276,18 @@
   "warnings": [],
   "diagnostics": {
    "control-param-ignored": 2,
-   "ignored-keyword": 2
+   "ignored-keyword": 2,
+   "unsupported-feature": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
-   "ignored-keyword": "info"
+   "ignored-keyword": "info",
+   "unsupported-feature": "gap"
   },
   "error_codes": [],
-  "gap_codes": []
+  "gap_codes": [
+   "unsupported-feature"
+  ]
  },
  "verification/mhmcoo2hut.inp": {
   "path": "verification/mhmcoo2hut.inp",
@@ -36825,14 +37303,18 @@
   "warnings": [],
   "diagnostics": {
    "control-param-ignored": 2,
-   "ignored-keyword": 2
+   "ignored-keyword": 2,
+   "unsupported-feature": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
-   "ignored-keyword": "info"
+   "ignored-keyword": "info",
+   "unsupported-feature": "gap"
   },
   "error_codes": [],
-  "gap_codes": []
+  "gap_codes": [
+   "unsupported-feature"
+  ]
  },
  "verification/mhmcoo2ibt.inp": {
   "path": "verification/mhmcoo2ibt.inp",
@@ -36848,14 +37330,18 @@
   "warnings": [],
   "diagnostics": {
    "control-param-ignored": 2,
-   "ignored-keyword": 2
+   "ignored-keyword": 2,
+   "unsupported-feature": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
-   "ignored-keyword": "info"
+   "ignored-keyword": "info",
+   "unsupported-feature": "gap"
   },
   "error_codes": [],
-  "gap_codes": []
+  "gap_codes": [
+   "unsupported-feature"
+  ]
  },
  "verification/mhmcoo3gsh.inp": {
   "path": "verification/mhmcoo3gsh.inp",
@@ -36871,14 +37357,18 @@
   "warnings": [],
   "diagnostics": {
    "control-param-ignored": 2,
-   "ignored-keyword": 2
+   "ignored-keyword": 2,
+   "unsupported-feature": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
-   "ignored-keyword": "info"
+   "ignored-keyword": "info",
+   "unsupported-feature": "gap"
   },
   "error_codes": [],
-  "gap_codes": []
+  "gap_codes": [
+   "unsupported-feature"
+  ]
  },
  "verification/mhmcoo3hut.inp": {
   "path": "verification/mhmcoo3hut.inp",
@@ -36894,14 +37384,18 @@
   "warnings": [],
   "diagnostics": {
    "control-param-ignored": 2,
-   "ignored-keyword": 2
+   "ignored-keyword": 2,
+   "unsupported-feature": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
-   "ignored-keyword": "info"
+   "ignored-keyword": "info",
+   "unsupported-feature": "gap"
   },
   "error_codes": [],
-  "gap_codes": []
+  "gap_codes": [
+   "unsupported-feature"
+  ]
  },
  "verification/mhmcoo3ibt.inp": {
   "path": "verification/mhmcoo3ibt.inp",
@@ -36917,14 +37411,18 @@
   "warnings": [],
   "diagnostics": {
    "control-param-ignored": 2,
-   "ignored-keyword": 2
+   "ignored-keyword": 2,
+   "unsupported-feature": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
-   "ignored-keyword": "info"
+   "ignored-keyword": "info",
+   "unsupported-feature": "gap"
   },
   "error_codes": [],
-  "gap_codes": []
+  "gap_codes": [
+   "unsupported-feature"
+  ]
  },
  "verification/mhmcoo3vlp.inp": {
   "path": "verification/mhmcoo3vlp.inp",
@@ -36945,17 +37443,20 @@
   "diagnostics": {
    "control-param-ignored": 4,
    "ignored-keyword": 2,
+   "unsupported-feature": 1,
    "unsupported-keyword": 2,
    "unsupported-param": 3
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param"
   ]
@@ -37282,14 +37783,18 @@
   "warnings": [],
   "diagnostics": {
    "control-param-ignored": 2,
-   "ignored-keyword": 4
+   "ignored-keyword": 4,
+   "unsupported-feature": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
-   "ignored-keyword": "info"
+   "ignored-keyword": "info",
+   "unsupported-feature": "gap"
   },
   "error_codes": [],
-  "gap_codes": []
+  "gap_codes": [
+   "unsupported-feature"
+  ]
  },
  "verification/mhncoo2hut.inp": {
   "path": "verification/mhncoo2hut.inp",
@@ -37305,14 +37810,18 @@
   "warnings": [],
   "diagnostics": {
    "control-param-ignored": 2,
-   "ignored-keyword": 4
+   "ignored-keyword": 4,
+   "unsupported-feature": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
-   "ignored-keyword": "info"
+   "ignored-keyword": "info",
+   "unsupported-feature": "gap"
   },
   "error_codes": [],
-  "gap_codes": []
+  "gap_codes": [
+   "unsupported-feature"
+  ]
  },
  "verification/mhncoo2ibt.inp": {
   "path": "verification/mhncoo2ibt.inp",
@@ -37328,14 +37837,18 @@
   "warnings": [],
   "diagnostics": {
    "control-param-ignored": 2,
-   "ignored-keyword": 4
+   "ignored-keyword": 4,
+   "unsupported-feature": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
-   "ignored-keyword": "info"
+   "ignored-keyword": "info",
+   "unsupported-feature": "gap"
   },
   "error_codes": [],
-  "gap_codes": []
+  "gap_codes": [
+   "unsupported-feature"
+  ]
  },
  "verification/mhncoo3gsh.inp": {
   "path": "verification/mhncoo3gsh.inp",
@@ -37351,14 +37864,18 @@
   "warnings": [],
   "diagnostics": {
    "control-param-ignored": 2,
-   "ignored-keyword": 4
+   "ignored-keyword": 4,
+   "unsupported-feature": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
-   "ignored-keyword": "info"
+   "ignored-keyword": "info",
+   "unsupported-feature": "gap"
   },
   "error_codes": [],
-  "gap_codes": []
+  "gap_codes": [
+   "unsupported-feature"
+  ]
  },
  "verification/mhncoo3hut.inp": {
   "path": "verification/mhncoo3hut.inp",
@@ -37374,14 +37891,18 @@
   "warnings": [],
   "diagnostics": {
    "control-param-ignored": 2,
-   "ignored-keyword": 4
+   "ignored-keyword": 4,
+   "unsupported-feature": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
-   "ignored-keyword": "info"
+   "ignored-keyword": "info",
+   "unsupported-feature": "gap"
   },
   "error_codes": [],
-  "gap_codes": []
+  "gap_codes": [
+   "unsupported-feature"
+  ]
  },
  "verification/mhncoo3ibt.inp": {
   "path": "verification/mhncoo3ibt.inp",
@@ -37397,14 +37918,18 @@
   "warnings": [],
   "diagnostics": {
    "control-param-ignored": 2,
-   "ignored-keyword": 4
+   "ignored-keyword": 4,
+   "unsupported-feature": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
-   "ignored-keyword": "info"
+   "ignored-keyword": "info",
+   "unsupported-feature": "gap"
   },
   "error_codes": [],
-  "gap_codes": []
+  "gap_codes": [
+   "unsupported-feature"
+  ]
  },
  "verification/mhncoo3vlp.inp": {
   "path": "verification/mhncoo3vlp.inp",
@@ -37425,17 +37950,20 @@
   "diagnostics": {
    "control-param-ignored": 4,
    "ignored-keyword": 4,
+   "unsupported-feature": 1,
    "unsupported-keyword": 2,
    "unsupported-param": 3
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param"
   ]
@@ -37796,14 +38324,18 @@
   "warnings": [],
   "diagnostics": {
    "control-param-ignored": 2,
-   "ignored-keyword": 4
+   "ignored-keyword": 4,
+   "unsupported-feature": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
-   "ignored-keyword": "info"
+   "ignored-keyword": "info",
+   "unsupported-feature": "gap"
   },
   "error_codes": [],
-  "gap_codes": []
+  "gap_codes": [
+   "unsupported-feature"
+  ]
  },
  "verification/mhrcoo2hut.inp": {
   "path": "verification/mhrcoo2hut.inp",
@@ -37819,14 +38351,18 @@
   "warnings": [],
   "diagnostics": {
    "control-param-ignored": 2,
-   "ignored-keyword": 4
+   "ignored-keyword": 4,
+   "unsupported-feature": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
-   "ignored-keyword": "info"
+   "ignored-keyword": "info",
+   "unsupported-feature": "gap"
   },
   "error_codes": [],
-  "gap_codes": []
+  "gap_codes": [
+   "unsupported-feature"
+  ]
  },
  "verification/mhrcoo2ibt.inp": {
   "path": "verification/mhrcoo2ibt.inp",
@@ -37842,14 +38378,18 @@
   "warnings": [],
   "diagnostics": {
    "control-param-ignored": 2,
-   "ignored-keyword": 4
+   "ignored-keyword": 4,
+   "unsupported-feature": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
-   "ignored-keyword": "info"
+   "ignored-keyword": "info",
+   "unsupported-feature": "gap"
   },
   "error_codes": [],
-  "gap_codes": []
+  "gap_codes": [
+   "unsupported-feature"
+  ]
  },
  "verification/mhrcoo3gsh.inp": {
   "path": "verification/mhrcoo3gsh.inp",
@@ -37865,14 +38405,18 @@
   "warnings": [],
   "diagnostics": {
    "control-param-ignored": 2,
-   "ignored-keyword": 4
+   "ignored-keyword": 4,
+   "unsupported-feature": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
-   "ignored-keyword": "info"
+   "ignored-keyword": "info",
+   "unsupported-feature": "gap"
   },
   "error_codes": [],
-  "gap_codes": []
+  "gap_codes": [
+   "unsupported-feature"
+  ]
  },
  "verification/mhrcoo3hut.inp": {
   "path": "verification/mhrcoo3hut.inp",
@@ -37888,14 +38432,18 @@
   "warnings": [],
   "diagnostics": {
    "control-param-ignored": 2,
-   "ignored-keyword": 4
+   "ignored-keyword": 4,
+   "unsupported-feature": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
-   "ignored-keyword": "info"
+   "ignored-keyword": "info",
+   "unsupported-feature": "gap"
   },
   "error_codes": [],
-  "gap_codes": []
+  "gap_codes": [
+   "unsupported-feature"
+  ]
  },
  "verification/mhrcoo3ibt.inp": {
   "path": "verification/mhrcoo3ibt.inp",
@@ -37911,14 +38459,18 @@
   "warnings": [],
   "diagnostics": {
    "control-param-ignored": 2,
-   "ignored-keyword": 4
+   "ignored-keyword": 4,
+   "unsupported-feature": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
-   "ignored-keyword": "info"
+   "ignored-keyword": "info",
+   "unsupported-feature": "gap"
   },
   "error_codes": [],
-  "gap_codes": []
+  "gap_codes": [
+   "unsupported-feature"
+  ]
  },
  "verification/mhrcoo3vlp.inp": {
   "path": "verification/mhrcoo3vlp.inp",
@@ -37939,17 +38491,20 @@
   "diagnostics": {
    "control-param-ignored": 4,
    "ignored-keyword": 4,
+   "unsupported-feature": 1,
    "unsupported-keyword": 2,
    "unsupported-param": 3
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param"
   ]
@@ -38928,14 +39483,18 @@
   "warnings": [],
   "diagnostics": {
    "control-param-ignored": 2,
-   "ignored-keyword": 4
+   "ignored-keyword": 4,
+   "unsupported-feature": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
-   "ignored-keyword": "info"
+   "ignored-keyword": "info",
+   "unsupported-feature": "gap"
   },
   "error_codes": [],
-  "gap_codes": []
+  "gap_codes": [
+   "unsupported-feature"
+  ]
  },
  "verification/mhycoo2hut.inp": {
   "path": "verification/mhycoo2hut.inp",
@@ -38951,14 +39510,18 @@
   "warnings": [],
   "diagnostics": {
    "control-param-ignored": 2,
-   "ignored-keyword": 4
+   "ignored-keyword": 4,
+   "unsupported-feature": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
-   "ignored-keyword": "info"
+   "ignored-keyword": "info",
+   "unsupported-feature": "gap"
   },
   "error_codes": [],
-  "gap_codes": []
+  "gap_codes": [
+   "unsupported-feature"
+  ]
  },
  "verification/mhycoo2ibt.inp": {
   "path": "verification/mhycoo2ibt.inp",
@@ -38974,14 +39537,18 @@
   "warnings": [],
   "diagnostics": {
    "control-param-ignored": 2,
-   "ignored-keyword": 4
+   "ignored-keyword": 4,
+   "unsupported-feature": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
-   "ignored-keyword": "info"
+   "ignored-keyword": "info",
+   "unsupported-feature": "gap"
   },
   "error_codes": [],
-  "gap_codes": []
+  "gap_codes": [
+   "unsupported-feature"
+  ]
  },
  "verification/mhycoo3gsh.inp": {
   "path": "verification/mhycoo3gsh.inp",
@@ -38997,14 +39564,18 @@
   "warnings": [],
   "diagnostics": {
    "control-param-ignored": 2,
-   "ignored-keyword": 4
+   "ignored-keyword": 4,
+   "unsupported-feature": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
-   "ignored-keyword": "info"
+   "ignored-keyword": "info",
+   "unsupported-feature": "gap"
   },
   "error_codes": [],
-  "gap_codes": []
+  "gap_codes": [
+   "unsupported-feature"
+  ]
  },
  "verification/mhycoo3hut.inp": {
   "path": "verification/mhycoo3hut.inp",
@@ -39020,14 +39591,18 @@
   "warnings": [],
   "diagnostics": {
    "control-param-ignored": 2,
-   "ignored-keyword": 4
+   "ignored-keyword": 4,
+   "unsupported-feature": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
-   "ignored-keyword": "info"
+   "ignored-keyword": "info",
+   "unsupported-feature": "gap"
   },
   "error_codes": [],
-  "gap_codes": []
+  "gap_codes": [
+   "unsupported-feature"
+  ]
  },
  "verification/mhycoo3ibt.inp": {
   "path": "verification/mhycoo3ibt.inp",
@@ -39043,14 +39618,18 @@
   "warnings": [],
   "diagnostics": {
    "control-param-ignored": 2,
-   "ignored-keyword": 4
+   "ignored-keyword": 4,
+   "unsupported-feature": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
-   "ignored-keyword": "info"
+   "ignored-keyword": "info",
+   "unsupported-feature": "gap"
   },
   "error_codes": [],
-  "gap_codes": []
+  "gap_codes": [
+   "unsupported-feature"
+  ]
  },
  "verification/mhycoo3vlp.inp": {
   "path": "verification/mhycoo3vlp.inp",
@@ -39071,17 +39650,20 @@
   "diagnostics": {
    "control-param-ignored": 4,
    "ignored-keyword": 4,
+   "unsupported-feature": 1,
    "unsupported-keyword": 2,
    "unsupported-param": 3
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param"
   ]
@@ -39282,7 +39864,7 @@
    "control-param-ignored": 1,
    "ignored-keyword": 2,
    "rotation-dofs-ignored": 1,
-   "unsupported-feature": 1,
+   "unsupported-feature": 2,
    "unsupported-keyword": 2
   },
   "diagnostic_levels": {
@@ -39403,15 +39985,18 @@
   "diagnostics": {
    "control-param-ignored": 1,
    "ignored-keyword": 2,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword"
   ]
  },
@@ -39431,16 +40016,19 @@
    "control-param-ignored": 1,
    "ignored-keyword": 3,
    "rotation-dofs-ignored": 3,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
    "rotation-dofs-ignored": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword"
   ]
  },
@@ -39461,6 +40049,7 @@
    "control-param-ignored": 1,
    "ignored-keyword": 3,
    "rotation-dofs-ignored": 3,
+   "unsupported-feature": 1,
    "unsupported-keyword": 3,
    "unsupported-param": 1
   },
@@ -39468,11 +40057,13 @@
    "control-param-ignored": "info",
    "ignored-keyword": "info",
    "rotation-dofs-ignored": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param"
   ]
@@ -39493,17 +40084,20 @@
   "diagnostics": {
    "control-param-ignored": 2,
    "ignored-keyword": 2,
+   "unsupported-feature": 2,
    "unsupported-keyword": 1,
    "unsupported-param": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param"
   ]
@@ -39523,15 +40117,18 @@
   "diagnostics": {
    "control-param-ignored": 1,
    "ignored-keyword": 2,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword"
   ]
  },
@@ -40247,6 +40844,7 @@
    "control-param-ignored": 5,
    "ignored-keyword": 3,
    "initial-condition-not-connected": 1,
+   "unsupported-feature": 2,
    "unsupported-keyword": 1,
    "unsupported-param": 4
   },
@@ -40254,12 +40852,14 @@
    "control-param-ignored": "info",
    "ignored-keyword": "info",
    "initial-condition-not-connected": "gap",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
   "error_codes": [],
   "gap_codes": [
    "initial-condition-not-connected",
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param"
   ]
@@ -40283,17 +40883,20 @@
    "control-param-ignored": 5,
    "ignored-keyword": 2,
    "mullins-not-connected": 1,
-   "rotation-dofs-ignored": 1
+   "rotation-dofs-ignored": 1,
+   "unsupported-feature": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
    "mullins-not-connected": "gap",
-   "rotation-dofs-ignored": "info"
+   "rotation-dofs-ignored": "info",
+   "unsupported-feature": "gap"
   },
   "error_codes": [],
   "gap_codes": [
-   "mullins-not-connected"
+   "mullins-not-connected",
+   "unsupported-feature"
   ]
  },
  "verification/mmecoo2cut_yeoh_visco.inp": {
@@ -40316,6 +40919,7 @@
    "ignored-keyword": 2,
    "mullins-not-connected": 1,
    "rotation-dofs-ignored": 1,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1
   },
   "diagnostic_levels": {
@@ -40323,11 +40927,13 @@
    "ignored-keyword": "info",
    "mullins-not-connected": "gap",
    "rotation-dofs-ignored": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
    "mullins-not-connected",
+   "unsupported-feature",
    "unsupported-keyword"
   ]
  },
@@ -40351,18 +40957,21 @@
    "equation-parsed": 1,
    "equation-set-broadcast": 1,
    "ignored-keyword": 2,
-   "mullins-not-connected": 1
+   "mullins-not-connected": 1,
+   "unsupported-feature": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "equation-parsed": "info",
    "equation-set-broadcast": "info",
    "ignored-keyword": "info",
-   "mullins-not-connected": "gap"
+   "mullins-not-connected": "gap",
+   "unsupported-feature": "gap"
   },
   "error_codes": [],
   "gap_codes": [
-   "mullins-not-connected"
+   "mullins-not-connected",
+   "unsupported-feature"
   ]
  },
  "verification/mmecoo3cut_ogden_visco.inp": {
@@ -40386,6 +40995,7 @@
    "equation-set-broadcast": 1,
    "ignored-keyword": 2,
    "mullins-not-connected": 1,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1
   },
   "diagnostic_levels": {
@@ -40394,11 +41004,13 @@
    "equation-set-broadcast": "info",
    "ignored-keyword": "info",
    "mullins-not-connected": "gap",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
    "mullins-not-connected",
+   "unsupported-feature",
    "unsupported-keyword"
   ]
  },
@@ -40422,18 +41034,21 @@
    "equation-parsed": 1,
    "equation-set-broadcast": 1,
    "ignored-keyword": 2,
-   "mullins-not-connected": 1
+   "mullins-not-connected": 1,
+   "unsupported-feature": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "equation-parsed": "info",
    "equation-set-broadcast": "info",
    "ignored-keyword": "info",
-   "mullins-not-connected": "gap"
+   "mullins-not-connected": "gap",
+   "unsupported-feature": "gap"
   },
   "error_codes": [],
   "gap_codes": [
-   "mullins-not-connected"
+   "mullins-not-connected",
+   "unsupported-feature"
   ]
  },
  "verification/mmetdo3cbt.inp": {
@@ -40456,6 +41071,7 @@
    "equation-parsed": 2,
    "equation-set-broadcast": 2,
    "ignored-keyword": 3,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1,
    "unsupported-param": 1
   },
@@ -40464,11 +41080,13 @@
    "equation-parsed": "info",
    "equation-set-broadcast": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param"
   ]
@@ -40531,6 +41149,7 @@
    "equation-parsed": 2,
    "equation-set-broadcast": 2,
    "ignored-keyword": 3,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1,
    "unsupported-param": 1
   },
@@ -40539,11 +41158,13 @@
    "equation-parsed": "info",
    "equation-set-broadcast": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param"
   ]
@@ -40568,6 +41189,7 @@
    "equation-parsed": 2,
    "equation-set-broadcast": 2,
    "ignored-keyword": 3,
+   "unsupported-feature": 1,
    "unsupported-keyword": 3,
    "unsupported-param": 2
   },
@@ -40576,11 +41198,13 @@
    "equation-parsed": "info",
    "equation-set-broadcast": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param"
   ]
@@ -40640,6 +41264,7 @@
    "equation-parsed": 2,
    "equation-set-broadcast": 2,
    "ignored-keyword": 3,
+   "unsupported-feature": 1,
    "unsupported-keyword": 3,
    "unsupported-param": 2
   },
@@ -40648,11 +41273,13 @@
    "equation-parsed": "info",
    "equation-set-broadcast": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param"
   ]
@@ -40712,6 +41339,7 @@
    "equation-parsed": 2,
    "equation-set-broadcast": 2,
    "ignored-keyword": 3,
+   "unsupported-feature": 1,
    "unsupported-keyword": 3,
    "unsupported-param": 1
   },
@@ -40720,11 +41348,13 @@
    "equation-parsed": "info",
    "equation-set-broadcast": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param"
   ]
@@ -40749,6 +41379,7 @@
    "equation-parsed": 2,
    "equation-set-broadcast": 2,
    "ignored-keyword": 3,
+   "unsupported-feature": 1,
    "unsupported-keyword": 3,
    "unsupported-param": 2
   },
@@ -40757,11 +41388,13 @@
    "equation-parsed": "info",
    "equation-set-broadcast": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param"
   ]
@@ -40786,6 +41419,7 @@
    "equation-parsed": 2,
    "equation-set-broadcast": 2,
    "ignored-keyword": 3,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1,
    "unsupported-param": 1
   },
@@ -40794,11 +41428,13 @@
    "equation-parsed": "info",
    "equation-set-broadcast": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param"
   ]
@@ -42421,6 +43057,7 @@
    "ignored-keyword": 5,
    "initial-condition-not-connected": 1,
    "mpc-not-connected": 1,
+   "orientation-ignored-isotropic": 1,
    "unsupported-feature": 1,
    "unsupported-keyword": 3,
    "unsupported-param": 1,
@@ -42431,6 +43068,7 @@
    "ignored-keyword": "info",
    "initial-condition-not-connected": "gap",
    "mpc-not-connected": "gap",
+   "orientation-ignored-isotropic": "info",
    "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap",
@@ -42461,6 +43099,7 @@
   "diagnostics": {
    "ignored-keyword": 3,
    "initial-condition-not-connected": 1,
+   "orientation-ignored-isotropic": 1,
    "unsupported-keyword": 1,
    "unsupported-param": 2,
    "unsupported-value": 1
@@ -42468,6 +43107,7 @@
   "diagnostic_levels": {
    "ignored-keyword": "info",
    "initial-condition-not-connected": "gap",
+   "orientation-ignored-isotropic": "info",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
@@ -42497,6 +43137,7 @@
    "ignored-keyword": 5,
    "initial-condition-not-connected": 1,
    "mpc-not-connected": 1,
+   "orientation-ignored-isotropic": 1,
    "unsupported-feature": 1,
    "unsupported-keyword": 3,
    "unsupported-param": 2,
@@ -42507,6 +43148,7 @@
    "ignored-keyword": "info",
    "initial-condition-not-connected": "gap",
    "mpc-not-connected": "gap",
+   "orientation-ignored-isotropic": "info",
    "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap",
@@ -42537,6 +43179,7 @@
   "diagnostics": {
    "ignored-keyword": 3,
    "initial-condition-not-connected": 1,
+   "orientation-ignored-isotropic": 1,
    "unsupported-keyword": 1,
    "unsupported-param": 3,
    "unsupported-value": 1
@@ -42544,6 +43187,7 @@
   "diagnostic_levels": {
    "ignored-keyword": "info",
    "initial-condition-not-connected": "gap",
+   "orientation-ignored-isotropic": "info",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
@@ -43700,6 +44344,7 @@
   "diagnostics": {
    "control-param-ignored": 2,
    "ignored-keyword": 3,
+   "orientation-ignored-isotropic": 1,
    "unresolved-ref": 1,
    "unsupported-feature": 2,
    "unsupported-keyword": 3
@@ -43707,6 +44352,7 @@
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "orientation-ignored-isotropic": "info",
    "unresolved-ref": "error",
    "unsupported-feature": "gap",
    "unsupported-keyword": "gap"
@@ -43734,11 +44380,13 @@
   "diagnostics": {
    "control-param-ignored": 2,
    "ignored-keyword": 3,
+   "orientation-ignored-isotropic": 1,
    "unsupported-keyword": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "orientation-ignored-isotropic": "info",
    "unsupported-keyword": "gap"
   },
   "error_codes": [],
@@ -43761,11 +44409,13 @@
   "diagnostics": {
    "control-param-ignored": 2,
    "ignored-keyword": 3,
+   "orientation-ignored-isotropic": 1,
    "unsupported-keyword": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "orientation-ignored-isotropic": "info",
    "unsupported-keyword": "gap"
   },
   "error_codes": [],
@@ -43791,12 +44441,14 @@
   "diagnostics": {
    "control-param-ignored": 8,
    "ignored-keyword": 2,
+   "orientation-ignored-isotropic": 1,
    "unsupported-keyword": 3,
    "unsupported-param": 2
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "orientation-ignored-isotropic": "info",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
@@ -44096,11 +44748,13 @@
   "diagnostics": {
    "control-param-ignored": 6,
    "ignored-keyword": 4,
+   "orientation-ignored-isotropic": 1,
    "unsupported-keyword": 3
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "orientation-ignored-isotropic": "info",
    "unsupported-keyword": "gap"
   },
   "error_codes": [],
@@ -44158,18 +44812,18 @@
   "warnings": [],
   "diagnostics": {
    "ignored-keyword": 2,
-   "unsupported-keyword": 1,
-   "unsupported-param": 1
+   "unsupported-feature": 1,
+   "unsupported-keyword": 1
   },
   "diagnostic_levels": {
    "ignored-keyword": "info",
-   "unsupported-keyword": "gap",
-   "unsupported-param": "gap"
+   "unsupported-feature": "gap",
+   "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
-   "unsupported-keyword",
-   "unsupported-param"
+   "unsupported-feature",
+   "unsupported-keyword"
   ]
  },
  "verification/mvacoo3vlp.inp": {
@@ -44190,16 +44844,19 @@
   "warnings": [],
   "diagnostics": {
    "ignored-keyword": 1,
+   "unsupported-feature": 1,
    "unsupported-keyword": 3,
-   "unsupported-param": 4
+   "unsupported-param": 3
   },
   "diagnostic_levels": {
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param"
   ]
@@ -44218,18 +44875,18 @@
   "warnings": [],
   "diagnostics": {
    "ignored-keyword": 3,
-   "unsupported-keyword": 3,
-   "unsupported-param": 1
+   "unsupported-feature": 1,
+   "unsupported-keyword": 3
   },
   "diagnostic_levels": {
    "ignored-keyword": "info",
-   "unsupported-keyword": "gap",
-   "unsupported-param": "gap"
+   "unsupported-feature": "gap",
+   "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
-   "unsupported-keyword",
-   "unsupported-param"
+   "unsupported-feature",
+   "unsupported-keyword"
   ]
  },
  "verification/mveff02the.inp": {
@@ -44257,7 +44914,7 @@
    "ignored-keyword": 5,
    "unresolved-ref": 6,
    "unsupported-keyword": 2,
-   "unsupported-param": 2
+   "unsupported-param": 1
   },
   "diagnostic_levels": {
    "bad-input": "error",
@@ -44298,7 +44955,7 @@
    "control-param-ignored": 2,
    "ignored-keyword": 5,
    "unsupported-keyword": 2,
-   "unsupported-param": 2
+   "unsupported-param": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -44335,7 +44992,7 @@
    "control-param-ignored": 2,
    "ignored-keyword": 5,
    "unsupported-keyword": 2,
-   "unsupported-param": 2
+   "unsupported-param": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -44372,7 +45029,7 @@
    "control-param-ignored": 2,
    "ignored-keyword": 5,
    "unsupported-keyword": 2,
-   "unsupported-param": 2
+   "unsupported-param": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -44462,15 +45119,18 @@
   "diagnostics": {
    "control-param-ignored": 1,
    "ignored-keyword": 2,
+   "unsupported-feature": 1,
    "unsupported-keyword": 3
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword"
   ]
  },
@@ -44489,15 +45149,18 @@
   "diagnostics": {
    "control-param-ignored": 1,
    "ignored-keyword": 2,
+   "unsupported-feature": 1,
    "unsupported-keyword": 3
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword"
   ]
  },
@@ -44516,20 +45179,20 @@
   "diagnostics": {
    "ignored-keyword": 8,
    "orientation-not-connected": 1,
-   "unsupported-keyword": 2,
-   "unsupported-param": 1
+   "unsupported-feature": 1,
+   "unsupported-keyword": 2
   },
   "diagnostic_levels": {
    "ignored-keyword": "info",
    "orientation-not-connected": "gap",
-   "unsupported-keyword": "gap",
-   "unsupported-param": "gap"
+   "unsupported-feature": "gap",
+   "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
    "orientation-not-connected",
-   "unsupported-keyword",
-   "unsupported-param"
+   "unsupported-feature",
+   "unsupported-keyword"
   ]
  },
  "verification/mvhcdo2rre.inp": {
@@ -44548,7 +45211,7 @@
    "control-param-ignored": 1,
    "ignored-keyword": 2,
    "unsupported-keyword": 2,
-   "unsupported-param": 2
+   "unsupported-param": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -44578,20 +45241,17 @@
    "control-param-ignored": 1,
    "ignored-keyword": 6,
    "unsupported-keyword": 1,
-   "unsupported-param": 1,
    "unsupported-value": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
    "unsupported-keyword": "gap",
-   "unsupported-param": "gap",
    "unsupported-value": "gap"
   },
   "error_codes": [],
   "gap_codes": [
    "unsupported-keyword",
-   "unsupported-param",
    "unsupported-value"
   ]
  },
@@ -44620,7 +45280,7 @@
    "control-param-ignored": 1,
    "ignored-keyword": 8,
    "unsupported-keyword": 1,
-   "unsupported-param": 2
+   "unsupported-param": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -44650,7 +45310,7 @@
    "control-param-ignored": 1,
    "ignored-keyword": 1,
    "unsupported-keyword": 3,
-   "unsupported-param": 2
+   "unsupported-param": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -44700,18 +45360,18 @@
   "warnings": [],
   "diagnostics": {
    "ignored-keyword": 2,
-   "unsupported-keyword": 1,
-   "unsupported-param": 1
+   "unsupported-feature": 1,
+   "unsupported-keyword": 1
   },
   "diagnostic_levels": {
    "ignored-keyword": "info",
-   "unsupported-keyword": "gap",
-   "unsupported-param": "gap"
+   "unsupported-feature": "gap",
+   "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
-   "unsupported-keyword",
-   "unsupported-param"
+   "unsupported-feature",
+   "unsupported-keyword"
   ]
  },
  "verification/mvhcdo3kc2.inp": {
@@ -44732,7 +45392,6 @@
    "equation-parsed": 1,
    "ignored-keyword": 5,
    "unsupported-keyword": 1,
-   "unsupported-param": 1,
    "unsupported-value": 1
   },
   "diagnostic_levels": {
@@ -44740,13 +45399,11 @@
    "equation-parsed": "info",
    "ignored-keyword": "info",
    "unsupported-keyword": "gap",
-   "unsupported-param": "gap",
    "unsupported-value": "gap"
   },
   "error_codes": [],
   "gap_codes": [
    "unsupported-keyword",
-   "unsupported-param",
    "unsupported-value"
   ]
  },
@@ -44767,20 +45424,17 @@
    "control-param-ignored": 2,
    "equation-parsed": 1,
    "ignored-keyword": 4,
-   "unsupported-keyword": 1,
-   "unsupported-param": 1
+   "unsupported-keyword": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "equation-parsed": "info",
    "ignored-keyword": "info",
-   "unsupported-keyword": "gap",
-   "unsupported-param": "gap"
+   "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
-   "unsupported-keyword",
-   "unsupported-param"
+   "unsupported-keyword"
   ]
  },
  "verification/mvhcdo3rre.inp": {
@@ -44797,18 +45451,15 @@
   "warnings": [],
   "diagnostics": {
    "ignored-keyword": 2,
-   "unsupported-keyword": 1,
-   "unsupported-param": 1
+   "unsupported-keyword": 1
   },
   "diagnostic_levels": {
    "ignored-keyword": "info",
-   "unsupported-keyword": "gap",
-   "unsupported-param": "gap"
+   "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
-   "unsupported-keyword",
-   "unsupported-param"
+   "unsupported-keyword"
   ]
  },
  "verification/mvhcdo3srs.inp": {
@@ -44828,19 +45479,19 @@
   "diagnostics": {
    "control-param-ignored": 2,
    "ignored-keyword": 2,
-   "unsupported-keyword": 1,
-   "unsupported-param": 1
+   "unsupported-feature": 1,
+   "unsupported-keyword": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
-   "unsupported-keyword": "gap",
-   "unsupported-param": "gap"
+   "unsupported-feature": "gap",
+   "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
-   "unsupported-keyword",
-   "unsupported-param"
+   "unsupported-feature",
+   "unsupported-keyword"
   ]
  },
  "verification/mvhcdo3ss2.inp": {
@@ -44860,7 +45511,7 @@
    "equation-parsed": 1,
    "ignored-keyword": 8,
    "unsupported-keyword": 1,
-   "unsupported-param": 2
+   "unsupported-param": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -44892,7 +45543,7 @@
    "equation-parsed": 1,
    "ignored-keyword": 8,
    "unsupported-keyword": 1,
-   "unsupported-param": 2
+   "unsupported-param": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -44934,18 +45585,18 @@
   "warnings": [],
   "diagnostics": {
    "ignored-keyword": 2,
-   "unsupported-keyword": 1,
-   "unsupported-param": 1
+   "unsupported-feature": 1,
+   "unsupported-keyword": 1
   },
   "diagnostic_levels": {
    "ignored-keyword": "info",
-   "unsupported-keyword": "gap",
-   "unsupported-param": "gap"
+   "unsupported-feature": "gap",
+   "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
-   "unsupported-keyword",
-   "unsupported-param"
+   "unsupported-feature",
+   "unsupported-keyword"
   ]
  },
  "verification/mvhcoo3hut.inp": {
@@ -44962,18 +45613,18 @@
   "warnings": [],
   "diagnostics": {
    "ignored-keyword": 2,
-   "unsupported-keyword": 1,
-   "unsupported-param": 1
+   "unsupported-feature": 1,
+   "unsupported-keyword": 1
   },
   "diagnostic_levels": {
    "ignored-keyword": "info",
-   "unsupported-keyword": "gap",
-   "unsupported-param": "gap"
+   "unsupported-feature": "gap",
+   "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
-   "unsupported-keyword",
-   "unsupported-param"
+   "unsupported-feature",
+   "unsupported-keyword"
   ]
  },
  "verification/mvhcoo3ltr.inp": {
@@ -44990,18 +45641,18 @@
   "warnings": [],
   "diagnostics": {
    "ignored-keyword": 2,
-   "unsupported-keyword": 1,
-   "unsupported-param": 1
+   "unsupported-feature": 1,
+   "unsupported-keyword": 1
   },
   "diagnostic_levels": {
    "ignored-keyword": "info",
-   "unsupported-keyword": "gap",
-   "unsupported-param": "gap"
+   "unsupported-feature": "gap",
+   "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
-   "unsupported-keyword",
-   "unsupported-param"
+   "unsupported-feature",
+   "unsupported-keyword"
   ]
  },
  "verification/mvhcoo3rre.inp": {
@@ -45018,18 +45669,18 @@
   "warnings": [],
   "diagnostics": {
    "ignored-keyword": 2,
-   "unsupported-keyword": 1,
-   "unsupported-param": 1
+   "unsupported-feature": 1,
+   "unsupported-keyword": 1
   },
   "diagnostic_levels": {
    "ignored-keyword": "info",
-   "unsupported-keyword": "gap",
-   "unsupported-param": "gap"
+   "unsupported-feature": "gap",
+   "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
-   "unsupported-keyword",
-   "unsupported-param"
+   "unsupported-feature",
+   "unsupported-keyword"
   ]
  },
  "verification/mvhcoo3vlp.inp": {
@@ -45050,16 +45701,19 @@
   "warnings": [],
   "diagnostics": {
    "ignored-keyword": 3,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1,
-   "unsupported-param": 4
+   "unsupported-param": 3
   },
   "diagnostic_levels": {
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param"
   ]
@@ -45082,20 +45736,17 @@
    "control-param-ignored": 4,
    "ignored-keyword": 3,
    "unsupported-keyword": 1,
-   "unsupported-param": 2,
    "unsupported-value": 2
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
    "unsupported-keyword": "gap",
-   "unsupported-param": "gap",
    "unsupported-value": "gap"
   },
   "error_codes": [],
   "gap_codes": [
    "unsupported-keyword",
-   "unsupported-param",
    "unsupported-value"
   ]
  },
@@ -45117,20 +45768,17 @@
    "control-param-ignored": 2,
    "ignored-keyword": 2,
    "unsupported-keyword": 3,
-   "unsupported-param": 2,
    "unsupported-value": 2
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
    "unsupported-keyword": "gap",
-   "unsupported-param": "gap",
    "unsupported-value": "gap"
   },
   "error_codes": [],
   "gap_codes": [
    "unsupported-keyword",
-   "unsupported-param",
    "unsupported-value"
   ]
  },
@@ -45152,20 +45800,17 @@
    "control-param-ignored": 2,
    "ignored-keyword": 3,
    "unsupported-keyword": 2,
-   "unsupported-param": 2,
    "unsupported-value": 2
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
    "unsupported-keyword": "gap",
-   "unsupported-param": "gap",
    "unsupported-value": "gap"
   },
   "error_codes": [],
   "gap_codes": [
    "unsupported-keyword",
-   "unsupported-param",
    "unsupported-value"
   ]
  },
@@ -45185,7 +45830,7 @@
    "control-param-ignored": 1,
    "ignored-keyword": 7,
    "unsupported-keyword": 1,
-   "unsupported-param": 4
+   "unsupported-param": 2
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -45215,7 +45860,7 @@
    "control-param-ignored": 1,
    "ignored-keyword": 7,
    "unsupported-keyword": 1,
-   "unsupported-param": 4
+   "unsupported-param": 2
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -45245,7 +45890,7 @@
    "control-param-ignored": 1,
    "ignored-keyword": 7,
    "unsupported-keyword": 3,
-   "unsupported-param": 4
+   "unsupported-param": 2
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -45296,7 +45941,7 @@
   "diagnostics": {
    "ignored-keyword": 2,
    "unsupported-keyword": 1,
-   "unsupported-param": 2
+   "unsupported-param": 1
   },
   "diagnostic_levels": {
    "ignored-keyword": "info",
@@ -45328,7 +45973,7 @@
   "diagnostics": {
    "ignored-keyword": 3,
    "unsupported-keyword": 1,
-   "unsupported-param": 5
+   "unsupported-param": 4
   },
   "diagnostic_levels": {
    "ignored-keyword": "info",
@@ -45364,7 +46009,7 @@
    "control-param-ignored": 2,
    "ignored-keyword": 5,
    "unsupported-keyword": 2,
-   "unsupported-param": 2
+   "unsupported-param": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -45401,7 +46046,7 @@
    "control-param-ignored": 2,
    "ignored-keyword": 5,
    "unsupported-keyword": 2,
-   "unsupported-param": 2
+   "unsupported-param": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -45438,7 +46083,7 @@
    "control-param-ignored": 2,
    "ignored-keyword": 5,
    "unsupported-keyword": 2,
-   "unsupported-param": 2
+   "unsupported-param": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -45475,7 +46120,7 @@
    "control-param-ignored": 2,
    "ignored-keyword": 5,
    "unsupported-keyword": 2,
-   "unsupported-param": 2
+   "unsupported-param": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -45512,7 +46157,7 @@
    "control-param-ignored": 2,
    "ignored-keyword": 5,
    "unsupported-keyword": 2,
-   "unsupported-param": 2
+   "unsupported-param": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -45549,7 +46194,7 @@
    "control-param-ignored": 2,
    "ignored-keyword": 5,
    "unsupported-keyword": 2,
-   "unsupported-param": 2
+   "unsupported-param": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -45586,7 +46231,7 @@
    "control-param-ignored": 2,
    "ignored-keyword": 5,
    "unsupported-keyword": 2,
-   "unsupported-param": 2
+   "unsupported-param": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -45623,7 +46268,7 @@
    "control-param-ignored": 2,
    "ignored-keyword": 5,
    "unsupported-keyword": 2,
-   "unsupported-param": 2
+   "unsupported-param": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -45660,7 +46305,7 @@
    "control-param-ignored": 2,
    "ignored-keyword": 5,
    "unsupported-keyword": 2,
-   "unsupported-param": 2
+   "unsupported-param": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -45697,7 +46342,7 @@
    "control-param-ignored": 2,
    "ignored-keyword": 5,
    "unsupported-keyword": 2,
-   "unsupported-param": 2
+   "unsupported-param": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -45734,7 +46379,7 @@
    "control-param-ignored": 2,
    "ignored-keyword": 5,
    "unsupported-keyword": 2,
-   "unsupported-param": 3
+   "unsupported-param": 2
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -45771,7 +46416,7 @@
    "control-param-ignored": 2,
    "ignored-keyword": 5,
    "unsupported-keyword": 2,
-   "unsupported-param": 3
+   "unsupported-param": 2
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -45808,7 +46453,7 @@
    "control-param-ignored": 2,
    "ignored-keyword": 5,
    "unsupported-keyword": 2,
-   "unsupported-param": 3
+   "unsupported-param": 2
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -45845,7 +46490,7 @@
    "control-param-ignored": 2,
    "ignored-keyword": 5,
    "unsupported-keyword": 2,
-   "unsupported-param": 3
+   "unsupported-param": 2
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -45886,21 +46531,21 @@
    "ignored-keyword": 1,
    "rotation-dofs-ignored": 2,
    "unknown-param": 2,
-   "unsupported-keyword": 2,
-   "unsupported-param": 2
+   "unsupported-feature": 1,
+   "unsupported-keyword": 2
   },
   "diagnostic_levels": {
    "ignored-keyword": "info",
    "rotation-dofs-ignored": "info",
    "unknown-param": "gap",
-   "unsupported-keyword": "gap",
-   "unsupported-param": "gap"
+   "unsupported-feature": "gap",
+   "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
    "unknown-param",
-   "unsupported-keyword",
-   "unsupported-param"
+   "unsupported-feature",
+   "unsupported-keyword"
   ]
  },
  "verification/neoh_ve_relax_b31.inp": {
@@ -45921,21 +46566,21 @@
    "ignored-keyword": 1,
    "rotation-dofs-ignored": 2,
    "unknown-param": 2,
-   "unsupported-keyword": 2,
-   "unsupported-param": 2
+   "unsupported-feature": 1,
+   "unsupported-keyword": 2
   },
   "diagnostic_levels": {
    "ignored-keyword": "info",
    "rotation-dofs-ignored": "info",
    "unknown-param": "gap",
-   "unsupported-keyword": "gap",
-   "unsupported-param": "gap"
+   "unsupported-feature": "gap",
+   "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
    "unknown-param",
-   "unsupported-keyword",
-   "unsupported-param"
+   "unsupported-feature",
+   "unsupported-keyword"
   ]
  },
  "verification/neoh_ve_unicyclic_b31.inp": {
@@ -45956,22 +46601,22 @@
    "ignored-keyword": 1,
    "rotation-dofs-ignored": 2,
    "unknown-param": 1,
-   "unsupported-keyword": 2,
-   "unsupported-param": 1
+   "unsupported-feature": 1,
+   "unsupported-keyword": 2
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
    "rotation-dofs-ignored": "info",
    "unknown-param": "gap",
-   "unsupported-keyword": "gap",
-   "unsupported-param": "gap"
+   "unsupported-feature": "gap",
+   "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
    "unknown-param",
-   "unsupported-keyword",
-   "unsupported-param"
+   "unsupported-feature",
+   "unsupported-keyword"
   ]
  },
  "verification/ogden_ve_ssh_cyclic.inp": {
@@ -45989,23 +46634,23 @@
   "diagnostics": {
    "control-param-ignored": 1,
    "unresolved-ref": 1,
+   "unsupported-feature": 1,
    "unsupported-keyword": 4,
-   "unsupported-param": 1,
    "unsupported-value": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "unresolved-ref": "error",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
-   "unsupported-param": "gap",
    "unsupported-value": "gap"
   },
   "error_codes": [
    "unresolved-ref"
   ],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword",
-   "unsupported-param",
    "unsupported-value"
   ]
  },
@@ -46411,12 +47056,14 @@
   "diagnostics": {
    "control-param-ignored": 1,
    "ignored-keyword": 2,
+   "orientation-ignored-isotropic": 1,
    "unsupported-keyword": 1,
    "unsupported-param": 3
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "orientation-ignored-isotropic": "info",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
@@ -46668,12 +47315,14 @@
   "diagnostics": {
    "control-param-ignored": 1,
    "ignored-keyword": 1,
+   "orientation-ignored-isotropic": 1,
    "unsupported-keyword": 1,
    "unsupported-param": 3
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "orientation-ignored-isotropic": "info",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
@@ -46731,6 +47380,7 @@
   "diagnostics": {
    "control-param-ignored": 1,
    "ignored-keyword": 1,
+   "orientation-ignored-isotropic": 1,
    "unsupported-keyword": 1,
    "unsupported-param": 3,
    "unsupported-value": 1
@@ -46738,6 +47388,7 @@
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "orientation-ignored-isotropic": "info",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
@@ -47345,15 +47996,18 @@
   "diagnostics": {
    "control-param-ignored": 1,
    "ignored-keyword": 3,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword"
   ]
  },
@@ -47372,12 +48026,14 @@
   "diagnostics": {
    "control-param-ignored": 1,
    "ignored-keyword": 2,
+   "orientation-ignored-isotropic": 4,
    "unsupported-feature": 4,
    "unsupported-keyword": 2
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "orientation-ignored-isotropic": "info",
    "unsupported-feature": "gap",
    "unsupported-keyword": "gap"
   },
@@ -47900,7 +48556,7 @@
    "control-param-ignored": 1,
    "ignored-keyword": 2,
    "unsupported-keyword": 1,
-   "unsupported-param": 9
+   "unsupported-param": 8
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -47931,7 +48587,7 @@
    "control-param-ignored": 1,
    "ignored-keyword": 2,
    "unsupported-keyword": 1,
-   "unsupported-param": 13
+   "unsupported-param": 12
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -47961,17 +48617,20 @@
   "diagnostics": {
    "control-param-ignored": 1,
    "ignored-keyword": 3,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1,
-   "unsupported-param": 9
+   "unsupported-param": 8
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param"
   ]
@@ -47992,17 +48651,20 @@
   "diagnostics": {
    "control-param-ignored": 1,
    "ignored-keyword": 2,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1,
-   "unsupported-param": 10
+   "unsupported-param": 9
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param"
   ]
@@ -48023,17 +48685,20 @@
   "diagnostics": {
    "control-param-ignored": 1,
    "ignored-keyword": 2,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1,
-   "unsupported-param": 13
+   "unsupported-param": 12
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param"
   ]
@@ -48054,17 +48719,20 @@
   "diagnostics": {
    "control-param-ignored": 1,
    "ignored-keyword": 3,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1,
-   "unsupported-param": 15
+   "unsupported-param": 14
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param"
   ]
@@ -48085,17 +48753,20 @@
   "diagnostics": {
    "control-param-ignored": 1,
    "ignored-keyword": 2,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1,
-   "unsupported-param": 9
+   "unsupported-param": 8
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param"
   ]
@@ -48116,17 +48787,20 @@
   "diagnostics": {
    "control-param-ignored": 1,
    "ignored-keyword": 2,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1,
-   "unsupported-param": 13
+   "unsupported-param": 12
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param"
   ]
@@ -48147,17 +48821,20 @@
   "diagnostics": {
    "control-param-ignored": 1,
    "ignored-keyword": 3,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1,
-   "unsupported-param": 9
+   "unsupported-param": 8
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param"
   ]
@@ -48179,7 +48856,7 @@
    "control-param-ignored": 1,
    "ignored-keyword": 2,
    "unsupported-keyword": 1,
-   "unsupported-param": 10
+   "unsupported-param": 9
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -48210,7 +48887,7 @@
    "control-param-ignored": 1,
    "ignored-keyword": 2,
    "unsupported-keyword": 1,
-   "unsupported-param": 9
+   "unsupported-param": 8
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -48240,17 +48917,20 @@
   "diagnostics": {
    "control-param-ignored": 1,
    "ignored-keyword": 2,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1,
-   "unsupported-param": 9
+   "unsupported-param": 8
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param"
   ]
@@ -48271,17 +48951,20 @@
   "diagnostics": {
    "control-param-ignored": 1,
    "ignored-keyword": 2,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1,
-   "unsupported-param": 9
+   "unsupported-param": 8
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param"
   ]
@@ -48303,7 +48986,7 @@
    "control-param-ignored": 1,
    "ignored-keyword": 2,
    "unsupported-keyword": 1,
-   "unsupported-param": 10
+   "unsupported-param": 9
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -48334,7 +49017,7 @@
    "control-param-ignored": 1,
    "ignored-keyword": 2,
    "unsupported-keyword": 1,
-   "unsupported-param": 9
+   "unsupported-param": 8
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -48364,17 +49047,20 @@
   "diagnostics": {
    "control-param-ignored": 1,
    "ignored-keyword": 3,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1,
-   "unsupported-param": 9
+   "unsupported-param": 8
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param"
   ]
@@ -48395,17 +49081,20 @@
   "diagnostics": {
    "control-param-ignored": 1,
    "ignored-keyword": 2,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1,
-   "unsupported-param": 9
+   "unsupported-param": 8
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param"
   ]
@@ -48426,17 +49115,20 @@
   "diagnostics": {
    "control-param-ignored": 1,
    "ignored-keyword": 2,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1,
-   "unsupported-param": 9
+   "unsupported-param": 8
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param"
   ]
@@ -48458,7 +49150,7 @@
    "control-param-ignored": 1,
    "ignored-keyword": 2,
    "unsupported-keyword": 1,
-   "unsupported-param": 10
+   "unsupported-param": 9
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -48489,7 +49181,7 @@
    "control-param-ignored": 1,
    "ignored-keyword": 2,
    "unsupported-keyword": 1,
-   "unsupported-param": 14
+   "unsupported-param": 13
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -48520,7 +49212,7 @@
    "control-param-ignored": 1,
    "ignored-keyword": 2,
    "unsupported-keyword": 1,
-   "unsupported-param": 10
+   "unsupported-param": 9
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -48551,7 +49243,7 @@
    "control-param-ignored": 1,
    "ignored-keyword": 2,
    "unsupported-keyword": 1,
-   "unsupported-param": 9
+   "unsupported-param": 8
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -48581,17 +49273,20 @@
   "diagnostics": {
    "control-param-ignored": 1,
    "ignored-keyword": 2,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1,
-   "unsupported-param": 9
+   "unsupported-param": 8
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param"
   ]
@@ -48612,17 +49307,20 @@
   "diagnostics": {
    "control-param-ignored": 1,
    "ignored-keyword": 2,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1,
-   "unsupported-param": 9
+   "unsupported-param": 8
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param"
   ]
@@ -48644,7 +49342,7 @@
    "control-param-ignored": 1,
    "ignored-keyword": 2,
    "unsupported-keyword": 1,
-   "unsupported-param": 10
+   "unsupported-param": 9
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -48675,7 +49373,7 @@
    "control-param-ignored": 1,
    "ignored-keyword": 3,
    "unsupported-keyword": 1,
-   "unsupported-param": 9
+   "unsupported-param": 8
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -48706,7 +49404,7 @@
    "control-param-ignored": 1,
    "ignored-keyword": 3,
    "unsupported-keyword": 1,
-   "unsupported-param": 9
+   "unsupported-param": 8
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -48736,17 +49434,20 @@
   "diagnostics": {
    "control-param-ignored": 1,
    "ignored-keyword": 2,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1,
-   "unsupported-param": 9
+   "unsupported-param": 8
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param"
   ]
@@ -48767,17 +49468,20 @@
   "diagnostics": {
    "control-param-ignored": 1,
    "ignored-keyword": 2,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1,
-   "unsupported-param": 9
+   "unsupported-param": 8
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param"
   ]
@@ -48799,7 +49503,7 @@
    "control-param-ignored": 1,
    "ignored-keyword": 2,
    "unsupported-keyword": 1,
-   "unsupported-param": 10
+   "unsupported-param": 9
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -48830,7 +49534,7 @@
    "control-param-ignored": 1,
    "ignored-keyword": 2,
    "unsupported-keyword": 1,
-   "unsupported-param": 9
+   "unsupported-param": 8
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -48860,17 +49564,20 @@
   "diagnostics": {
    "control-param-ignored": 1,
    "ignored-keyword": 2,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1,
-   "unsupported-param": 9
+   "unsupported-param": 8
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param"
   ]
@@ -48891,17 +49598,20 @@
   "diagnostics": {
    "control-param-ignored": 1,
    "ignored-keyword": 2,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1,
-   "unsupported-param": 9
+   "unsupported-param": 8
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param"
   ]
@@ -48922,17 +49632,20 @@
   "diagnostics": {
    "control-param-ignored": 1,
    "ignored-keyword": 2,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1,
-   "unsupported-param": 13
+   "unsupported-param": 12
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param"
   ]
@@ -48954,7 +49667,7 @@
    "control-param-ignored": 1,
    "ignored-keyword": 2,
    "unsupported-keyword": 1,
-   "unsupported-param": 10
+   "unsupported-param": 9
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -49000,16 +49713,19 @@
   "warnings": [],
   "diagnostics": {
    "ignored-keyword": 2,
-   "unsupported-param": 2,
+   "unsupported-feature": 1,
+   "unsupported-param": 1,
    "unsupported-value": 2
   },
   "diagnostic_levels": {
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-param",
    "unsupported-value"
   ]
@@ -49030,13 +49746,15 @@
   "diagnostics": {
    "ignored-keyword": 2,
    "trs-not-connected": 1,
+   "unsupported-feature": 2,
    "unsupported-keyword": 1,
-   "unsupported-param": 4,
+   "unsupported-param": 2,
    "unsupported-value": 3
   },
   "diagnostic_levels": {
    "ignored-keyword": "info",
    "trs-not-connected": "gap",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
@@ -49044,6 +49762,7 @@
   "error_codes": [],
   "gap_codes": [
    "trs-not-connected",
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param",
    "unsupported-value"
@@ -49065,13 +49784,15 @@
   "diagnostics": {
    "ignored-keyword": 2,
    "trs-not-connected": 1,
+   "unsupported-feature": 2,
    "unsupported-keyword": 1,
-   "unsupported-param": 4,
+   "unsupported-param": 2,
    "unsupported-value": 3
   },
   "diagnostic_levels": {
    "ignored-keyword": "info",
    "trs-not-connected": "gap",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
@@ -49079,6 +49800,7 @@
   "error_codes": [],
   "gap_codes": [
    "trs-not-connected",
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param",
    "unsupported-value"
@@ -49099,13 +49821,15 @@
   "diagnostics": {
    "ignored-keyword": 2,
    "trs-not-connected": 1,
+   "unsupported-feature": 2,
    "unsupported-keyword": 1,
-   "unsupported-param": 7,
+   "unsupported-param": 5,
    "unsupported-value": 6
   },
   "diagnostic_levels": {
    "ignored-keyword": "info",
    "trs-not-connected": "gap",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
@@ -49113,6 +49837,7 @@
   "error_codes": [],
   "gap_codes": [
    "trs-not-connected",
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param",
    "unsupported-value"
@@ -49133,13 +49858,15 @@
   "diagnostics": {
    "ignored-keyword": 2,
    "trs-not-connected": 1,
+   "unsupported-feature": 2,
    "unsupported-keyword": 1,
-   "unsupported-param": 7,
+   "unsupported-param": 5,
    "unsupported-value": 6
   },
   "diagnostic_levels": {
    "ignored-keyword": "info",
    "trs-not-connected": "gap",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
@@ -49147,6 +49874,7 @@
   "error_codes": [],
   "gap_codes": [
    "trs-not-connected",
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param",
    "unsupported-value"
@@ -49185,7 +49913,7 @@
   "diagnostics": {
    "ignored-keyword": 3,
    "unsupported-keyword": 1,
-   "unsupported-param": 2,
+   "unsupported-param": 1,
    "unsupported-value": 1
   },
   "diagnostic_levels": {
@@ -49216,7 +49944,7 @@
   "diagnostics": {
    "ignored-keyword": 3,
    "unsupported-keyword": 1,
-   "unsupported-param": 2,
+   "unsupported-param": 1,
    "unsupported-value": 1
   },
   "diagnostic_levels": {
@@ -49247,7 +49975,7 @@
   "diagnostics": {
    "control-param-ignored": 2,
    "ignored-keyword": 4,
-   "unsupported-param": 2,
+   "unsupported-param": 1,
    "unsupported-value": 2
   },
   "diagnostic_levels": {
@@ -49276,16 +50004,19 @@
   "warnings": [],
   "diagnostics": {
    "ignored-keyword": 3,
-   "unsupported-param": 2,
+   "unsupported-feature": 1,
+   "unsupported-param": 1,
    "unsupported-value": 1
   },
   "diagnostic_levels": {
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-param",
    "unsupported-value"
   ]
@@ -49304,16 +50035,19 @@
   "warnings": [],
   "diagnostics": {
    "ignored-keyword": 3,
-   "unsupported-param": 2,
+   "unsupported-feature": 1,
+   "unsupported-param": 1,
    "unsupported-value": 1
   },
   "diagnostic_levels": {
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-param",
    "unsupported-value"
   ]
@@ -49334,7 +50068,7 @@
    "control-param-ignored": 2,
    "ignored-keyword": 5,
    "unsupported-feature": 1,
-   "unsupported-param": 2
+   "unsupported-param": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -49365,7 +50099,7 @@
    "ignored-keyword": 6,
    "unsupported-feature": 1,
    "unsupported-keyword": 1,
-   "unsupported-param": 2
+   "unsupported-param": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -49398,7 +50132,7 @@
    "ignored-keyword": 6,
    "unsupported-feature": 1,
    "unsupported-keyword": 1,
-   "unsupported-param": 2
+   "unsupported-param": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -49453,7 +50187,7 @@
    "control-param-ignored": 2,
    "ignored-keyword": 5,
    "unsupported-feature": 1,
-   "unsupported-param": 2
+   "unsupported-param": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -49484,7 +50218,7 @@
    "ignored-keyword": 6,
    "unsupported-feature": 1,
    "unsupported-keyword": 1,
-   "unsupported-param": 2
+   "unsupported-param": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -49517,7 +50251,7 @@
    "ignored-keyword": 5,
    "unsupported-feature": 1,
    "unsupported-keyword": 1,
-   "unsupported-param": 2
+   "unsupported-param": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -49548,14 +50282,16 @@
   "diagnostics": {
    "control-param-ignored": 1,
    "ignored-keyword": 6,
+   "orientation-ignored-isotropic": 1,
    "orientation-not-connected": 1,
    "unsupported-feature": 1,
    "unsupported-keyword": 1,
-   "unsupported-param": 2
+   "unsupported-param": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
+   "orientation-ignored-isotropic": "info",
    "orientation-not-connected": "gap",
    "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
@@ -49586,7 +50322,7 @@
    "ignored-keyword": 5,
    "unsupported-feature": 1,
    "unsupported-keyword": 1,
-   "unsupported-param": 2
+   "unsupported-param": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -49641,10 +50377,12 @@
   "gaps": [],
   "warnings": [],
   "diagnostics": {
+   "orientation-ignored-isotropic": 1,
    "unsupported-keyword": 1,
    "unsupported-param": 4
   },
   "diagnostic_levels": {
+   "orientation-ignored-isotropic": "info",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
@@ -49667,10 +50405,12 @@
   "gaps": [],
   "warnings": [],
   "diagnostics": {
+   "orientation-ignored-isotropic": 1,
    "unsupported-keyword": 2,
    "unsupported-param": 6
   },
   "diagnostic_levels": {
+   "orientation-ignored-isotropic": "info",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
@@ -49693,10 +50433,12 @@
   "gaps": [],
   "warnings": [],
   "diagnostics": {
+   "orientation-ignored-isotropic": 1,
    "unsupported-keyword": 2,
    "unsupported-param": 6
   },
   "diagnostic_levels": {
+   "orientation-ignored-isotropic": "info",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
@@ -49793,12 +50535,14 @@
   "warnings": [],
   "diagnostics": {
    "mullins-not-connected": 1,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1,
    "unsupported-param": 4,
    "unsupported-value": 4
   },
   "diagnostic_levels": {
    "mullins-not-connected": "gap",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
@@ -49806,6 +50550,7 @@
   "error_codes": [],
   "gap_codes": [
    "mullins-not-connected",
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param",
    "unsupported-value"
@@ -49974,6 +50719,7 @@
   "diagnostics": {
    "equation-parsed": 1,
    "mullins-not-connected": 1,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1,
    "unsupported-param": 4,
    "unsupported-value": 4
@@ -49981,6 +50727,7 @@
   "diagnostic_levels": {
    "equation-parsed": "info",
    "mullins-not-connected": "gap",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
@@ -49988,6 +50735,7 @@
   "error_codes": [],
   "gap_codes": [
    "mullins-not-connected",
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param",
    "unsupported-value"
@@ -50126,6 +50874,7 @@
    "equation-set-broadcast": 2,
    "ignored-keyword": 1,
    "mullins-not-connected": 1,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1,
    "unsupported-param": 4,
    "unsupported-value": 5
@@ -50135,6 +50884,7 @@
    "equation-set-broadcast": "info",
    "ignored-keyword": "info",
    "mullins-not-connected": "gap",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
@@ -50142,6 +50892,7 @@
   "error_codes": [],
   "gap_codes": [
    "mullins-not-connected",
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param",
    "unsupported-value"
@@ -50208,6 +50959,7 @@
    "equation-set-broadcast": 2,
    "ignored-keyword": 1,
    "mullins-not-connected": 1,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1,
    "unsupported-param": 4,
    "unsupported-value": 4
@@ -50217,6 +50969,7 @@
    "equation-set-broadcast": "info",
    "ignored-keyword": "info",
    "mullins-not-connected": "gap",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
@@ -50224,6 +50977,7 @@
   "error_codes": [],
   "gap_codes": [
    "mullins-not-connected",
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param",
    "unsupported-value"
@@ -50363,6 +51117,7 @@
    "equation-set-broadcast": 1,
    "ignored-keyword": 1,
    "mullins-not-connected": 1,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1,
    "unsupported-param": 4,
    "unsupported-value": 4
@@ -50372,6 +51127,7 @@
    "equation-set-broadcast": "info",
    "ignored-keyword": "info",
    "mullins-not-connected": "gap",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
@@ -50379,6 +51135,7 @@
   "error_codes": [],
   "gap_codes": [
    "mullins-not-connected",
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param",
    "unsupported-value"
@@ -50555,6 +51312,7 @@
    "equation-parsed": 2,
    "equation-set-broadcast": 2,
    "ignored-keyword": 1,
+   "unsupported-feature": 1,
    "unsupported-keyword": 2,
    "unsupported-param": 5,
    "unsupported-value": 5
@@ -50563,12 +51321,14 @@
    "equation-parsed": "info",
    "equation-set-broadcast": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param",
    "unsupported-value"
@@ -50669,6 +51429,7 @@
    "equation-parsed": 2,
    "equation-set-broadcast": 2,
    "ignored-keyword": 1,
+   "unsupported-feature": 1,
    "unsupported-keyword": 4,
    "unsupported-param": 5,
    "unsupported-value": 4
@@ -50677,12 +51438,14 @@
    "equation-parsed": "info",
    "equation-set-broadcast": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param",
    "unsupported-value"
@@ -50707,6 +51470,7 @@
    "equation-parsed": 2,
    "equation-set-broadcast": 2,
    "ignored-keyword": 1,
+   "unsupported-feature": 1,
    "unsupported-keyword": 2,
    "unsupported-param": 5,
    "unsupported-value": 4
@@ -50715,12 +51479,14 @@
    "equation-parsed": "info",
    "equation-set-broadcast": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param",
    "unsupported-value"
@@ -50783,6 +51549,7 @@
    "equation-parsed": 1,
    "equation-set-broadcast": 1,
    "ignored-keyword": 1,
+   "unsupported-feature": 1,
    "unsupported-keyword": 2,
    "unsupported-param": 5,
    "unsupported-value": 4
@@ -50791,12 +51558,14 @@
    "equation-parsed": "info",
    "equation-set-broadcast": "info",
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param",
    "unsupported-value"
@@ -50817,7 +51586,7 @@
   "warnings": [],
   "diagnostics": {
    "ignored-keyword": 2,
-   "unsupported-param": 11
+   "unsupported-param": 10
   },
   "diagnostic_levels": {
    "ignored-keyword": "info",
@@ -50843,7 +51612,7 @@
   "warnings": [],
   "diagnostics": {
    "ignored-keyword": 2,
-   "unsupported-param": 15
+   "unsupported-param": 14
   },
   "diagnostic_levels": {
    "ignored-keyword": "info",
@@ -50869,7 +51638,7 @@
   "warnings": [],
   "diagnostics": {
    "ignored-keyword": 2,
-   "unsupported-param": 11
+   "unsupported-param": 10
   },
   "diagnostic_levels": {
    "ignored-keyword": "info",
@@ -50895,7 +51664,7 @@
   "warnings": [],
   "diagnostics": {
    "ignored-keyword": 2,
-   "unsupported-param": 15
+   "unsupported-param": 14
   },
   "diagnostic_levels": {
    "ignored-keyword": "info",
@@ -50921,7 +51690,7 @@
   "warnings": [],
   "diagnostics": {
    "ignored-keyword": 3,
-   "unsupported-param": 11
+   "unsupported-param": 10
   },
   "diagnostic_levels": {
    "ignored-keyword": "info",
@@ -50947,7 +51716,7 @@
   "warnings": [],
   "diagnostics": {
    "ignored-keyword": 2,
-   "unsupported-param": 12
+   "unsupported-param": 11
   },
   "diagnostic_levels": {
    "ignored-keyword": "info",
@@ -50973,7 +51742,7 @@
   "warnings": [],
   "diagnostics": {
    "ignored-keyword": 2,
-   "unsupported-param": 11
+   "unsupported-param": 10
   },
   "diagnostic_levels": {
    "ignored-keyword": "info",
@@ -50999,7 +51768,7 @@
   "warnings": [],
   "diagnostics": {
    "ignored-keyword": 2,
-   "unsupported-param": 7
+   "unsupported-param": 6
   },
   "diagnostic_levels": {
    "ignored-keyword": "info",
@@ -51025,7 +51794,7 @@
   "warnings": [],
   "diagnostics": {
    "ignored-keyword": 2,
-   "unsupported-param": 11
+   "unsupported-param": 10
   },
   "diagnostic_levels": {
    "ignored-keyword": "info",
@@ -51051,7 +51820,7 @@
   "warnings": [],
   "diagnostics": {
    "ignored-keyword": 2,
-   "unsupported-param": 11
+   "unsupported-param": 10
   },
   "diagnostic_levels": {
    "ignored-keyword": "info",
@@ -51077,7 +51846,7 @@
   "warnings": [],
   "diagnostics": {
    "ignored-keyword": 2,
-   "unsupported-param": 12
+   "unsupported-param": 11
   },
   "diagnostic_levels": {
    "ignored-keyword": "info",
@@ -51103,7 +51872,7 @@
   "warnings": [],
   "diagnostics": {
    "ignored-keyword": 2,
-   "unsupported-param": 11
+   "unsupported-param": 10
   },
   "diagnostic_levels": {
    "ignored-keyword": "info",
@@ -51129,7 +51898,7 @@
   "warnings": [],
   "diagnostics": {
    "ignored-keyword": 2,
-   "unsupported-param": 11
+   "unsupported-param": 10
   },
   "diagnostic_levels": {
    "ignored-keyword": "info",
@@ -51155,7 +51924,7 @@
   "warnings": [],
   "diagnostics": {
    "ignored-keyword": 2,
-   "unsupported-param": 11
+   "unsupported-param": 10
   },
   "diagnostic_levels": {
    "ignored-keyword": "info",
@@ -51181,7 +51950,7 @@
   "warnings": [],
   "diagnostics": {
    "ignored-keyword": 2,
-   "unsupported-param": 12
+   "unsupported-param": 11
   },
   "diagnostic_levels": {
    "ignored-keyword": "info",
@@ -51207,7 +51976,7 @@
   "warnings": [],
   "diagnostics": {
    "ignored-keyword": 2,
-   "unsupported-param": 11
+   "unsupported-param": 10
   },
   "diagnostic_levels": {
    "ignored-keyword": "info",
@@ -51233,7 +52002,7 @@
   "warnings": [],
   "diagnostics": {
    "ignored-keyword": 2,
-   "unsupported-param": 11
+   "unsupported-param": 10
   },
   "diagnostic_levels": {
    "ignored-keyword": "info",
@@ -51259,7 +52028,7 @@
   "warnings": [],
   "diagnostics": {
    "ignored-keyword": 2,
-   "unsupported-param": 11
+   "unsupported-param": 10
   },
   "diagnostic_levels": {
    "ignored-keyword": "info",
@@ -51285,14 +52054,17 @@
   "warnings": [],
   "diagnostics": {
    "ignored-keyword": 2,
-   "unsupported-param": 15
+   "unsupported-feature": 1,
+   "unsupported-param": 14
   },
   "diagnostic_levels": {
    "ignored-keyword": "info",
+   "unsupported-feature": "gap",
    "unsupported-param": "gap"
   },
   "error_codes": [],
   "gap_codes": [
+   "unsupported-feature",
    "unsupported-param"
   ]
  },
@@ -51311,7 +52083,7 @@
   "warnings": [],
   "diagnostics": {
    "ignored-keyword": 2,
-   "unsupported-param": 12
+   "unsupported-param": 11
   },
   "diagnostic_levels": {
    "ignored-keyword": "info",
@@ -51470,18 +52242,21 @@
   "diagnostics": {
    "ignored-keyword": 1,
    "mullins-not-connected": 1,
+   "unsupported-feature": 1,
    "unsupported-keyword": 2,
    "unsupported-param": 2
   },
   "diagnostic_levels": {
    "ignored-keyword": "info",
    "mullins-not-connected": "gap",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
   "error_codes": [],
   "gap_codes": [
    "mullins-not-connected",
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param"
   ]
@@ -51501,6 +52276,7 @@
   "diagnostics": {
    "ignored-keyword": 2,
    "mullins-not-connected": 1,
+   "unsupported-feature": 1,
    "unsupported-keyword": 1,
    "unsupported-param": 2,
    "unsupported-value": 1
@@ -51508,6 +52284,7 @@
   "diagnostic_levels": {
    "ignored-keyword": "info",
    "mullins-not-connected": "gap",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
@@ -51515,6 +52292,7 @@
   "error_codes": [],
   "gap_codes": [
    "mullins-not-connected",
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param",
    "unsupported-value"
@@ -51536,6 +52314,7 @@
    "control-param-ignored": 1,
    "ignored-keyword": 1,
    "mullins-not-connected": 1,
+   "unsupported-feature": 1,
    "unsupported-keyword": 2,
    "unsupported-param": 2,
    "unsupported-value": 1
@@ -51544,6 +52323,7 @@
    "control-param-ignored": "info",
    "ignored-keyword": "info",
    "mullins-not-connected": "gap",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
@@ -51551,6 +52331,7 @@
   "error_codes": [],
   "gap_codes": [
    "mullins-not-connected",
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param",
    "unsupported-value"
@@ -51571,6 +52352,7 @@
   "diagnostics": {
    "ignored-keyword": 2,
    "mullins-not-connected": 1,
+   "unsupported-feature": 1,
    "unsupported-keyword": 2,
    "unsupported-param": 2,
    "unsupported-value": 1
@@ -51578,6 +52360,7 @@
   "diagnostic_levels": {
    "ignored-keyword": "info",
    "mullins-not-connected": "gap",
+   "unsupported-feature": "gap",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap",
    "unsupported-value": "gap"
@@ -51585,6 +52368,7 @@
   "error_codes": [],
   "gap_codes": [
    "mullins-not-connected",
+   "unsupported-feature",
    "unsupported-keyword",
    "unsupported-param",
    "unsupported-value"
@@ -52083,11 +52867,13 @@
   "warnings": [],
   "diagnostics": {
    "ignored-keyword": 1,
+   "orientation-ignored-isotropic": 1,
    "unsupported-keyword": 1,
    "unsupported-param": 4
   },
   "diagnostic_levels": {
    "ignored-keyword": "info",
+   "orientation-ignored-isotropic": "info",
    "unsupported-keyword": "gap",
    "unsupported-param": "gap"
   },
