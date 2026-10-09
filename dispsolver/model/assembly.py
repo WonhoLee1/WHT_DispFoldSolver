@@ -212,14 +212,20 @@ class Assembly:
             "region": str(region)
         })
 
-    def build_solver_system(self, model: Any) -> FlattenedSolverSystem:
+    def build_solver_system(self, model: Any, resolve_materials: bool = True) -> FlattenedSolverSystem:
         """Flatten instances into global contiguous solver arrays and CSR sparsity topology.
-        
+
         Guarantees:
         1. Zero-collision global node/element ID reassignment.
         2. Exact Section/Material -> PID resolution with sharing optimization.
         3. 3D affine transformation applied to all node coordinates.
         4. Instant CSR Sparsity Topology pre-calculation (Numba-compatible).
+
+        resolve_materials=False skips the Numba material catalog (materials_by_pid
+        then holds the Material objects themselves). Only for a caller that builds
+        its own material instances -- io.legacy_adapter, whose legacy JAX materials
+        are a different set from the catalog's (e.g. ViscoelasticMaterial consumes
+        a *TRS WLF shift the Numba kernels do not).
         """
         dim = self.dim
         dof_per_node = dim
@@ -340,7 +346,9 @@ class Assembly:
                         raise ValueError(f"section {sec_name!r}" + (f" [{loc}]" if loc else "")
                                          + f" refers to material {mat_name!r}, which the deck does not define")
                     
-                    if mat_obj is not None:
+                    if mat_obj is not None and not resolve_materials:
+                        materials_by_pid[assigned_pid] = mat_obj
+                    elif mat_obj is not None:
                         # A material the catalog cannot map (or has not implemented in
                         # this dimension) raises here, naming the deck location (A5).
                         from dispsolver.material.resolve import resolve_material, MaterialProps

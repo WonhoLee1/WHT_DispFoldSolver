@@ -274,7 +274,8 @@ def model_to_builder_result(model: Model) -> ModelBuilderResult:
         Complete legacy bundle matching what `read_abaqus_input` produced.
     """
     result = ModelBuilderResult()
-    sys = model.root_assembly.build_solver_system(model)
+    # topology / pid flattening only: the materials are built below by _build_material_instance
+    sys = model.root_assembly.build_solver_system(model, resolve_materials=False)
 
     single_instance = (len(model.root_assembly.instances) <= 1)
 

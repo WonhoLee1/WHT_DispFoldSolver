@@ -970,3 +970,13 @@ def test_creep_validates_its_data_before_refusing():
     reader, _ = _read_snippet("*MATERIAL, NAME=M\n*ELASTIC\n1000., 0.3\n*CREEP, LAW=ANAND\n1.,2.,3.\n")
     assert any("ANAND needs two data lines" in d.message for d in reader.diagnostics)   # input error first
 
+
+
+def test_ductile_damage_with_perfect_plasticity_resolves():
+    # one yield stress (single point, or a flat table) is perfect plasticity: the kernel's H is 0 there
+    tail = "*DAMAGE INITIATION, CRITERION=DUCTILE\n0.3\n*DAMAGE EVOLUTION, TYPE=ENERGY\n10.\n"
+    for plastic in ("200., 0.\n", "200., 0.\n200., 0.1\n"):
+        _, _, run = _resolve_first("*MATERIAL, NAME=M\n*ELASTIC\n200000., 0.3\n*PLASTIC\n" + plastic + tail)
+        res = run()
+        props = res[1] if isinstance(res, tuple) else res.props
+        assert props[2] == 200.0 and props[3] == 0.0, plastic

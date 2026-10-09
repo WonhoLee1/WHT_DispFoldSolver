@@ -329,14 +329,15 @@ def _refuse_unconsumed_definitions(m, mid: int, label: str) -> None:
                 f"{where}: *VISCOELASTIC on a {base or 'missing'} hyperelastic base is not implemented (the "
                 f"hyper-viscoelastic kernel carries Neo-Hooke and Arruda-Boyce bases; Mooney-Rivlin, Yeoh, "
                 f"Ogden, polynomial constants would be replaced by Neo-Hooke defaults)")
-    if mid == MAT_J2_DUCTILE_DAMAGE and m.plastic and len(m.plastic) >= 2:
+    if mid == MAT_J2_DUCTILE_DAMAGE and m.plastic and len({float(r[0]) for r in m.plastic}) >= 2:
         # the damage kernel hardens linearly WITHOUT bound from the first two points
-        # (numba_materials.py ~1270); Abaqus holds the last yield stress after the last point
+        # (numba_materials.py ~1270); Abaqus holds the last yield stress after the last point.
+        # A flat table (one yield stress throughout) gives H=0 there: perfect plasticity, accepted.
         where = describe(m, label) + (f" (material {m.name!r})" if getattr(m, "name", None) else "")
         raise NotImplementedError(
             f"{where}: ductile damage with a tabular *PLASTIC ({len(m.plastic)} points) is not implemented: "
             f"the damage kernel extrapolates linearly without bound where Abaqus holds the last yield stress "
-            f"(a single point, perfect plasticity, is accepted)")
+            f"(a single yield stress, perfect plasticity, is accepted)")
     if (mid in _HYPER_IDS or mid == MAT_HYPER_VISCOELASTIC) and getattr(m, "elastic", None) is not None:
         # Abaqus rejects *ELASTIC together with *HYPERELASTIC; the hyperelastic kernel would ignore it
         where = describe(m, label) + (f" (material {m.name!r})" if getattr(m, "name", None) else "")
