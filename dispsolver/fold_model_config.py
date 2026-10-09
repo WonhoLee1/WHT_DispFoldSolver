@@ -532,6 +532,21 @@ class FoldModelConfig:
                 value = int(value)
             elif isinstance(curr_val, float):
                 value = float(value)
+        elif isinstance(value, str):
+            # Optional[...] field currently None: the declared type is gone, so parse the text
+            # ("none"/"null" -> None, else int, float or bool when it reads as one)
+            text = value.strip()
+            if text.lower() in ("none", "null"):
+                value = None
+            elif text.lower() in ("true", "false"):
+                value = text.lower() == "true"
+            else:
+                for conv in (int, float):
+                    try:
+                        value = conv(text)
+                        break
+                    except ValueError:
+                        pass
         setattr(target, attr_name, value)
 
     def get_path(self, key_path: str) -> Any:
