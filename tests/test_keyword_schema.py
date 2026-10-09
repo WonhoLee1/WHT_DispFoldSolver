@@ -139,7 +139,7 @@ Test Unsupported Params
 *ELEMENT, TYPE=CPS4, ELSET=EALL
 1, 1, 2, 3, 4
 *MATERIAL, NAME=MAT1
-*ELASTIC, MODULI=INSTANTANEOUS
+*ELASTIC, COMPRESSION FACTOR=2.0
 1000.0, 0.3
 *SOLID SECTION, ELSET=EALL, MATERIAL=MAT1
 *STEP, NAME=STEP1, FOOBAR_NONEXISTENT=123
@@ -153,13 +153,13 @@ Test Unsupported Params
     unknown_entries = [p for p in reader.unsupported_params if p[2] == "unknown"]
     assert any(p[0] == "STEP" and "FOOBAR_NONEXISTENT" in p[1].upper() for p in unknown_entries)
 
-    # Check unsupported parameter on ELASTIC (MODULI is supported=False)
+    # Check unsupported parameter on ELASTIC (COMPRESSION FACTOR is supported=False)
     unsupported_entries = [p for p in reader.unsupported_params if p[2] == "unsupported"]
-    assert any(p[0] == "ELASTIC" and "MODULI" in p[1].upper() for p in unsupported_entries)
+    assert any(p[0] == "ELASTIC" and "COMPRESSION" in p[1].upper() for p in unsupported_entries)
 
     # Verify physics_gaps reflects this gap
     gaps = reader.physics_gaps()
-    assert any("MODULI" in g for g in gaps)
+    assert any("COMPRESSION" in g for g in gaps)
     assert any("FOOBAR_NONEXISTENT" in g for g in gaps)
 
 

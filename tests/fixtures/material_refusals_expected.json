@@ -1,0 +1,762 @@
+{
+ "benchmark_inp/official/anisoplate_s9r5_orient_sect.inp::LAMINA": [
+  "*ELASTIC, TYPE=LAMINA (TYPE=LAMINA is not implemented (supported: ISOTROPIC, ENGINEERING CONSTANTS))"
+ ],
+ "benchmark_inp/official/elasticsheet_cps8r_biderman.inp::BIDERMAN": [
+  "*HYPERELASTIC, N=3 (*HYPERELASTIC, POLYNOMIAL, N=3: only N=1 and N=2 are represented)"
+ ],
+ "benchmark_inp/official/neckingtensilebar_cax4r.inp::MAT1": [
+  "*PLASTIC (*PLASTIC: 23 hardening points; the tabular kernel holds 10)"
+ ],
+ "benchmark_inp/official/thickcompcyl_8el.inp::Maxial": [
+  "section 'SEC_SOLID_PART_DEFAULT_Eaxial' orientation 'Ocircum' on an anisotropic material (no solver reads the section orientation)"
+ ],
+ "benchmark_inp/official/thickcompcyl_8el.inp::Mcircum": [
+  "section 'SEC_SOLID_PART_DEFAULT_Ecircum' orientation 'Ocircum' on an anisotropic material (no solver reads the section orientation)"
+ ],
+ "benchmark_inp/verification/annealtemp.inp::johnsoncook": [
+  "*PLASTIC, HARDENING=johnson cook (HARDENING=JOHNSON COOK is not implemented (supported: ISOTROPIC))"
+ ],
+ "benchmark_inp/verification/annealtemp.inp::mises": [
+  "*PLASTIC (*PLASTIC: temperature-dependent hardening is not represented (the tables would be merged into one curve))"
+ ],
+ "benchmark_inp/verification/cdp_c3d8r_ss_s1.inp::alle": [
+  "CONCRETE_DAMAGED_PLASTICITY table rejected (compression needs 1..6 points)"
+ ],
+ "benchmark_inp/verification/cdpsu_c3d8r.inp::alle": [
+  "*CONCRETE TENSION STIFFENING, TYPE=displacement (TYPE=DISPLACEMENT is not implemented (supported: STRAIN))",
+  "*CONCRETE TENSION DAMAGE, TYPE=displacement (TYPE=DISPLACEMENT is not implemented (supported: STRAIN))",
+  "*CONCRETE DAMAGED PLASTICITY requires *CONCRETE COMPRESSION HARDENING and *CONCRETE TENSION STIFFENING"
+ ],
+ "benchmark_inp/verification/clayorthelaspoten3d.inp::ALLE": [
+  "section 'SEC_SOLID_PART_DEFAULT_qa_test_1' orientation 'rect' on an anisotropic material (no solver reads the section orientation)",
+  "section 'SEC_SOLID_PART_DEFAULT_qa_test_2' orientation 'rect' on an anisotropic material (no solver reads the section orientation)",
+  "section 'SEC_SOLID_PART_DEFAULT_qa_test_3' orientation 'rect' on an anisotropic material (no solver reads the section orientation)",
+  "section 'SEC_SOLID_PART_DEFAULT_qa_test_4' orientation 'rect' on an anisotropic material (no solver reads the section orientation)",
+  "section 'SEC_SOLID_PART_DEFAULT_qa_test_5' orientation 'rect' on an anisotropic material (no solver reads the section orientation)",
+  "section 'SEC_SOLID_PART_DEFAULT_qa_test_6' orientation 'rect' on an anisotropic material (no solver reads the section orientation)"
+ ],
+ "benchmark_inp/verification/coh2d4_compfac.inp::mat1": [
+  "*ELASTIC, TYPE=traction, COMPRESSION FACTOR=2.0 ((unsupported parameter: COMPRESSION FACTOR not supported))"
+ ],
+ "benchmark_inp/verification/coh2d4_eig.inp::COH": [
+  "*ELASTIC, TYPE=TRACTION (TYPE=TRACTION is not implemented (supported: ISOTROPIC, ENGINEERING CONSTANTS))"
+ ],
+ "benchmark_inp/verification/ctintegral1.inp::A1": [
+  "*ELASTIC (*ELASTIC: spatially varying data (distribution name 'distElastic') is not represented)",
+  "*CREEP, LAW=STRAIN (*CREEP: no solver material consumes creep laws yet)"
+ ],
+ "benchmark_inp/verification/damage_combine_deg.inp::MAT1": [
+  "*PLASTIC, HARDENING=JOHNSON COOK (HARDENING=JOHNSON COOK is not implemented (supported: ISOTROPIC))",
+  "*DAMAGE INITIATION, CRITERION=DUCTILE, DEPENDENCIES=8 ((unsupported parameter: DAMAGE INITIATION DEPENDENCIES not supported))",
+  "*DAMAGE EVOLUTION, SOFTENING=LINEAR, TYPE=DISPLACEMENT, DEPENDENCIES=8 ((unsupported parameter: DAMAGE EVOLUTION DEPENDENCIES not supported))"
+ ],
+ "benchmark_inp/verification/damage_combine_deg.inp::MAT2": [
+  "*PLASTIC, HARDENING=JOHNSON COOK (HARDENING=JOHNSON COOK is not implemented (supported: ISOTROPIC))",
+  "*DAMAGE INITIATION, CRITERION=SHEAR, KS=0.8, DEPENDENCIES=8 ((unsupported parameter: DAMAGE INITIATION DEPENDENCIES not supported))",
+  "*DAMAGE EVOLUTION, SOFTENING=EXPONENTIAL, TYPE=ENERGY, DEPENDENCIES=8 ((unsupported parameter: DAMAGE EVOLUTION DEPENDENCIES not supported))"
+ ],
+ "benchmark_inp/verification/damage_combine_deg.inp::MAT6": [
+  "*PLASTIC, HARDENING=JOHNSON COOK (HARDENING=JOHNSON COOK is not implemented (supported: ISOTROPIC))",
+  "*DAMAGE INITIATION, CRITERION=DUCTILE, DEPENDENCIES=8 ((unsupported parameter: DAMAGE INITIATION DEPENDENCIES not supported))",
+  "*DAMAGE EVOLUTION, SOFTENING=LINEAR, TYPE=DISPLACEMENT, DEPENDENCIES=8 ((unsupported parameter: DAMAGE EVOLUTION DEPENDENCIES not supported))",
+  "*DAMAGE INITIATION, CRITERION=SHEAR, KS=0.8, DEPENDENCIES=8 ((unsupported parameter: DAMAGE INITIATION DEPENDENCIES not supported))",
+  "*DAMAGE EVOLUTION, SOFTENING=EXPONENTIAL, TYPE=ENERGY, DEPENDENCIES=8, DEGRADATION=MULTIPLICATIVE (DEGRADATION=MULTIPLICATIVE is not implemented (supported: MAXIMUM))",
+  "*DAMAGE INITIATION, CRITERION=FLD, DEPENDENCIES=8 ((unsupported parameter: DAMAGE INITIATION DEPENDENCIES not supported))",
+  "*DAMAGE EVOLUTION, SOFTENING=EXPONENTIAL, TYPE=DISPLACEMENT, DEPENDENCIES=8, DEGRADATION=MULTIPLICATIVE (DEGRADATION=MULTIPLICATIVE is not implemented (supported: MAXIMUM))",
+  "*DAMAGE INITIATION, CRITERION=FLSD, DEPENDENCIES=8 ((unsupported parameter: DAMAGE INITIATION DEPENDENCIES not supported))",
+  "*DAMAGE EVOLUTION, SOFTENING=LINEAR, TYPE=ENERGY, DEPENDENCIES=8, DEGRADATION=MULTIPLICATIVE (DEGRADATION=MULTIPLICATIVE is not implemented (supported: MAXIMUM))",
+  "*DAMAGE INITIATION, CRITERION=MK, FNN=0, FNT=0, FEQ=0, NUMBER IMPERFECTION=100, DEPENDENCIES=8 ((unsupported parameter: DAMAGE INITIATION DEPENDENCIES not supported))",
+  "*DAMAGE EVOLUTION, SOFTENING=TABULAR, TYPE=DISPLACEMENT, DEPENDENCIES=8 ((unsupported parameter: DAMAGE EVOLUTION DEPENDENCIES not supported))"
+ ],
+ "benchmark_inp/verification/damage_ductile_dp.inp::MAT_DP": [
+  "*DRUCKER PRAGER (*DRUCKER PRAGER: K=0.8 (flow-stress ratio) is not represented; only K=1.0)",
+  "*DAMAGE EVOLUTION, TYPE=DISPLACEMENT, SOFTENING=EXPONENTIAL (TYPE=DISPLACEMENT is not implemented (supported: ENERGY))",
+  "*DRUCKER PRAGER HARDENING without a *DRUCKER PRAGER in this material (absent or refused above)"
+ ],
+ "benchmark_inp/verification/damage_ductile_dp_hc_std.inp::MAT_DP": [
+  "*DRUCKER PRAGER (*DRUCKER PRAGER: K=0.8 (flow-stress ratio) is not represented; only K=1.0)",
+  "*DAMAGE INITIATION, CRITERION=MaxPS (CRITERION=MAXPS is not implemented (supported: DUCTILE, JOHNSON COOK))",
+  "*DAMAGE INITIATION, CRITERION=HC (CRITERION=HC is not implemented (supported: DUCTILE, JOHNSON COOK))",
+  "*DAMAGE EVOLUTION, TYPE=DISPLACEMENT, SOFTENING=EXPONENTIAL (TYPE=DISPLACEMENT is not implemented (supported: ENERGY))",
+  "*DRUCKER PRAGER HARDENING without a *DRUCKER PRAGER in this material (absent or refused above)"
+ ],
+ "benchmark_inp/verification/damage_ductile_hill.inp::MAT_HILL": [
+  "*PLASTIC, HARDENING=ISOTROPIC (*PLASTIC: 26 hardening points; the tabular kernel holds 10)"
+ ],
+ "benchmark_inp/verification/damage_ductile_hill_hc_std.inp::MAT_HILL": [
+  "*PLASTIC, HARDENING=ISOTROPIC (*PLASTIC: 26 hardening points; the tabular kernel holds 10)",
+  "*DAMAGE INITIATION, CRITERION=HC (CRITERION=HC is not implemented (supported: DUCTILE, JOHNSON COOK))"
+ ],
+ "benchmark_inp/verification/damage_ductile_lode_mises.inp::MAT_MISES": [
+  "*PLASTIC, HARDENING=Isotropic, RATE=0 ((unsupported parameter: PLASTIC RATE not supported))",
+  "*PLASTIC, HARDENING=Isotropic, RATE=1.00e-02 ((unsupported parameter: PLASTIC RATE not supported))",
+  "*PLASTIC, HARDENING=Isotropic, RATE=1.00e-01 ((unsupported parameter: PLASTIC RATE not supported))",
+  "*PLASTIC, HARDENING=Isotropic, RATE=1.00e+00 ((unsupported parameter: PLASTIC RATE not supported))",
+  "*PLASTIC, HARDENING=Isotropic, RATE=1.00e+01 ((unsupported parameter: PLASTIC RATE not supported))",
+  "*PLASTIC, HARDENING=Isotropic, RATE=2.50e+01 ((unsupported parameter: PLASTIC RATE not supported))",
+  "*PLASTIC, HARDENING=Isotropic, RATE=1.00e+02 ((unsupported parameter: PLASTIC RATE not supported))",
+  "*PLASTIC, HARDENING=Isotropic, RATE=1.00e+03 ((unsupported parameter: PLASTIC RATE not supported))",
+  "*PLASTIC, HARDENING=Isotropic, RATE=1.00e+04 ((unsupported parameter: PLASTIC RATE not supported))",
+  "*DAMAGE INITIATION, CRITERION=Ductile, LODE DEPENDENT ((unsupported parameter))"
+ ],
+ "benchmark_inp/verification/damage_fld_mises.inp::MAT_MISES": [
+  "*PLASTIC, HARDENING=Isotropic, RATE=0 ((unsupported parameter: PLASTIC RATE not supported))",
+  "*PLASTIC, HARDENING=Isotropic, RATE=0.001 ((unsupported parameter: PLASTIC RATE not supported))",
+  "*PLASTIC, HARDENING=Isotropic, RATE=0.01 ((unsupported parameter: PLASTIC RATE not supported))",
+  "*PLASTIC, HARDENING=Isotropic, RATE=0.1 ((unsupported parameter: PLASTIC RATE not supported))",
+  "*PLASTIC, HARDENING=Isotropic, RATE=1. ((unsupported parameter: PLASTIC RATE not supported))",
+  "*PLASTIC, HARDENING=Isotropic, RATE=10. ((unsupported parameter: PLASTIC RATE not supported))",
+  "*PLASTIC, HARDENING=Isotropic, RATE=100. ((unsupported parameter: PLASTIC RATE not supported))",
+  "*PLASTIC, HARDENING=Isotropic, RATE=1000. ((unsupported parameter: PLASTIC RATE not supported))",
+  "*DAMAGE INITIATION, CRITERION=FLD (CRITERION=FLD is not implemented (supported: DUCTILE, JOHNSON COOK))"
+ ],
+ "benchmark_inp/verification/damage_jc_eos.inp::MAT_EOS": [
+  "*ELASTIC, TYPE=SHEAR (TYPE=SHEAR is not implemented (supported: ISOTROPIC, ENGINEERING CONSTANTS))",
+  "*DAMAGE EVOLUTION, TYPE=DISPLACEMENT, SOFTENING=LINEAR (TYPE=DISPLACEMENT is not implemented (supported: ENERGY))"
+ ],
+ "benchmark_inp/verification/damage_jc_jc.inp::MAT_MISES": [
+  "*PLASTIC, HARDENING=JOHNSON COOK (HARDENING=JOHNSON COOK is not implemented (supported: ISOTROPIC))"
+ ],
+ "benchmark_inp/verification/damp3deostab.inp::MAT1": [
+  "*ELASTIC, TYPE=SHEAR (TYPE=SHEAR is not implemented (supported: ISOTROPIC, ENGINEERING CONSTANTS))"
+ ],
+ "benchmark_inp/verification/field_elastic.inp::A1AN": [
+  "*ELASTIC, TYPE=ANISOTROPIC, DEPE=1 (TYPE=ANISOTROPIC is not implemented (supported: ISOTROPIC, ENGINEERING CONSTANTS))"
+ ],
+ "benchmark_inp/verification/field_elastic.inp::A1EC": [
+  "*ELASTIC, TYPE=ENGINEERING CONSTANTS, DEPE=1 (*ELASTIC, TYPE=ENGINEERING CONSTANTS: DEPENDENCIES not represented)"
+ ],
+ "benchmark_inp/verification/field_elastic.inp::A1EC1": [
+  "*ELASTIC, TYPE=ENGINEERING CONSTANTS, DEPE=1 (*ELASTIC, TYPE=ENGINEERING CONSTANTS: DEPENDENCIES not represented)"
+ ],
+ "benchmark_inp/verification/field_elastic.inp::A1ELAS": [
+  "*ELASTIC, DEPE=1 (*ELASTIC: joint temperature and field-variable dependence is not represented)"
+ ],
+ "benchmark_inp/verification/field_elastic.inp::A1LAMINA": [
+  "*ELASTIC, TYPE=LAMINA, DEPE=1 (TYPE=LAMINA is not implemented (supported: ISOTROPIC, ENGINEERING CONSTANTS))"
+ ],
+ "benchmark_inp/verification/field_elastic.inp::A1LAMSAX": [
+  "*ELASTIC, TYPE=LAMINA, DEPE=1 (TYPE=LAMINA is not implemented (supported: ISOTROPIC, ENGINEERING CONSTANTS))"
+ ],
+ "benchmark_inp/verification/field_elastic.inp::A1ORTH": [
+  "*ELASTIC, TYPE=ORTHOTROPIC, DEPE=1 (TYPE=ORTHOTROPIC is not implemented (supported: ISOTROPIC, ENGINEERING CONSTANTS))"
+ ],
+ "benchmark_inp/verification/field_elastic.inp::A1ORTHSAX": [
+  "*ELASTIC, TYPE=ORTHOTROPIC, DEPE=1 (TYPE=ORTHOTROPIC is not implemented (supported: ISOTROPIC, ENGINEERING CONSTANTS))"
+ ],
+ "benchmark_inp/verification/field_plastic.inp::A1": [
+  "*ELASTIC, DEPE=1 (*ELASTIC: joint temperature and field-variable dependence is not represented)",
+  "*PLASTIC, DEPE=1 (*PLASTIC: joint temperature and field-variable dependence is not represented)"
+ ],
+ "benchmark_inp/verification/field_plastic.inp::A1CAP": [
+  "*ELASTIC, DEPE=1 (*ELASTIC: joint temperature and field-variable dependence is not represented)"
+ ],
+ "benchmark_inp/verification/field_plastic.inp::A1CFOAM": [
+  "*ELASTIC, DEPENDENCIES=1 (*ELASTIC: joint temperature and field-variable dependence is not represented)"
+ ],
+ "benchmark_inp/verification/field_plastic.inp::A1DRUCKER": [
+  "*ELASTIC, DEPE=1 (*ELASTIC: joint temperature and field-variable dependence is not represented)",
+  "*DRUCKER PRAGER, DEPE=1 ((unsupported parameter: DRUCKER PRAGER DEPENDENCIES not supported))",
+  "*DRUCKER PRAGER HARDENING, DEPE=1 ((unsupported parameter: DRUCKER PRAGER HARDENING DEPENDENCIES not supported))"
+ ],
+ "benchmark_inp/verification/field_plastic.inp::A1DUCT": [
+  "*ELASTIC, DEPE=1 (*ELASTIC: joint temperature and field-variable dependence is not represented)",
+  "*PLASTIC, DEPE=1 (*PLASTIC: joint temperature and field-variable dependence is not represented)"
+ ],
+ "benchmark_inp/verification/field_plastic.inp::A1HILL": [
+  "*ELASTIC, DEPE=1 (*ELASTIC: joint temperature and field-variable dependence is not represented)",
+  "*PLASTIC, DEPE=1 (*PLASTIC: joint temperature and field-variable dependence is not represented)"
+ ],
+ "benchmark_inp/verification/field_plastic.inp::A1PORO": [
+  "*ELASTIC, DEPE=1 (*ELASTIC: joint temperature and field-variable dependence is not represented)"
+ ],
+ "benchmark_inp/verification/field_plastic.inp::A1RHILL": [
+  "*ELASTIC, DEPE=1 (*ELASTIC: joint temperature and field-variable dependence is not represented)",
+  "*PLASTIC, DEPE=1 (*PLASTIC: joint temperature and field-variable dependence is not represented)"
+ ],
+ "benchmark_inp/verification/field_plastic.inp::A1RPL": [
+  "*ELASTIC, DEPE=1 (*ELASTIC: joint temperature and field-variable dependence is not represented)",
+  "*PLASTIC, DEPE=1 (*PLASTIC: joint temperature and field-variable dependence is not represented)"
+ ],
+ "benchmark_inp/verification/frq_visco_formula_ortho_c3d8.inp::VISCO": [
+  "*ELASTIC, TYPE=ORTHO, MODULI=LONG TERM (TYPE=ORTHOTROPIC is not implemented (supported: ISOTROPIC, ENGINEERING CONSTANTS))",
+  "*VISCOELASTIC, FREQUENCY=FORMULA ((unsupported parameter: VISCOELASTIC FREQUENCY not supported))"
+ ],
+ "benchmark_inp/verification/frq_visco_interp.inp::POLY2": [
+  "*HYPERELASTIC, N=1, MODULI=LONG TERM (*HYPERELASTIC: incompressible hyperelasticity (D=0) is not implemented (no hybrid / incompressible path consumes it))",
+  "*VISCOELASTIC, FREQUENCY=TABULAR, PRELOAD=UNIAXIAL ((unsupported parameter: VISCOELASTIC PRELOAD not supported))"
+ ],
+ "benchmark_inp/verification/frq_visco_prldu_ab.inp::POLY1": [
+  "*HYPERELASTIC, ARRUDA-BOYCE, MODULI=LONG TERM (*HYPERELASTIC: incompressible hyperelasticity (D=0) is not implemented (no hybrid / incompressible path consumes it))",
+  "*VISCOELASTIC, FREQUENCY=TABULAR ((unsupported parameter: VISCOELASTIC FREQUENCY not supported))"
+ ],
+ "benchmark_inp/verification/frq_visco_prldu_ab.inp::POLY2": [
+  "*HYPERELASTIC, ARRUDA-BOYCE, MODULI=LONG TERM (*HYPERELASTIC: incompressible hyperelasticity (D=0) is not implemented (no hybrid / incompressible path consumes it))",
+  "*VISCOELASTIC, FREQUENCY=TABULAR, PRELOAD=UNIAXIAL ((unsupported parameter: VISCOELASTIC PRELOAD not supported))"
+ ],
+ "benchmark_inp/verification/frq_visco_prldu_hfoam.inp::POLY1": [
+  "*VISCOELASTIC, FREQUENCY=TABULAR ((unsupported parameter: VISCOELASTIC FREQUENCY not supported))"
+ ],
+ "benchmark_inp/verification/frq_visco_prldu_hfoam.inp::POLY2": [
+  "*VISCOELASTIC, FREQUENCY=TABULAR, PRELOAD=UNIAXIAL ((unsupported parameter: VISCOELASTIC PRELOAD not supported))"
+ ],
+ "benchmark_inp/verification/frq_visco_prldu_marlow.inp::POLY1": [
+  "*HYPERELASTIC, MARLOW, MODULI=LONG TERM ((unsupported parameter: MARLOW needs *UNIAXIAL TEST DATA, which is not read))",
+  "*VISCOELASTIC, FREQUENCY=TABULAR ((unsupported parameter: VISCOELASTIC FREQUENCY not supported))"
+ ],
+ "benchmark_inp/verification/frq_visco_prldu_marlow.inp::POLY2": [
+  "*HYPERELASTIC, MARLOW, MODULI=LONG TERM ((unsupported parameter: MARLOW needs *UNIAXIAL TEST DATA, which is not read))",
+  "*VISCOELASTIC, FREQUENCY=TABULAR, PRELOAD=UNIAXIAL ((unsupported parameter: VISCOELASTIC PRELOAD not supported))"
+ ],
+ "benchmark_inp/verification/frq_visco_prldu_ogden.inp::POLY1": [
+  "*VISCOELASTIC, FREQUENCY=TABULAR ((unsupported parameter: VISCOELASTIC FREQUENCY not supported))"
+ ],
+ "benchmark_inp/verification/frq_visco_prldu_ogden.inp::POLY2": [
+  "*VISCOELASTIC, FREQUENCY=TABULAR, PRELOAD=UNIAXIAL ((unsupported parameter: VISCOELASTIC PRELOAD not supported))"
+ ],
+ "benchmark_inp/verification/frq_visco_prldu_poly1.inp::POLY1": [
+  "*VISCOELASTIC, FREQUENCY=TABULAR ((unsupported parameter: VISCOELASTIC FREQUENCY not supported))"
+ ],
+ "benchmark_inp/verification/frq_visco_prldu_vdw.inp::POLY1": [
+  "*HYPERELASTIC, VAN DER WAALS, MODULI=LONG TERM ((unsupported parameter: VAN DER WAALS not supported))",
+  "*VISCOELASTIC, FREQUENCY=TABULAR ((unsupported parameter: VISCOELASTIC FREQUENCY not supported))"
+ ],
+ "benchmark_inp/verification/frq_visco_tabular_aniso_c3d8.inp::VISCO": [
+  "*ELASTIC, TYPE=ANISO, MODULI=LONG TERM (TYPE=ANISOTROPIC is not implemented (supported: ISOTROPIC, ENGINEERING CONSTANTS))",
+  "*VISCOELASTIC, FREQUENCY=TABULAR ((unsupported parameter: VISCOELASTIC FREQUENCY not supported))"
+ ],
+ "benchmark_inp/verification/fung_visco_xpl.inp::fung": [
+  "*DENSITY (*DENSITY: spatially varying data (distribution name '<density>') is not represented)"
+ ],
+ "benchmark_inp/verification/hencky_b31.inp::MATHENCKY": [
+  "*HYPERELASTIC, HENCKY ((unsupported parameter: HYPERELASTIC HENCKY not supported))"
+ ],
+ "benchmark_inp/verification/hencky_shear_c3d8h.inp::MATVL": [
+  "*HYPERELASTIC, HENCKY ((unsupported parameter: HYPERELASTIC HENCKY not supported))"
+ ],
+ "benchmark_inp/verification/heplmu_marlow_2d_bi.inp::mat-129": [
+  "*HYPERELASTIC, MARLOW, POISSON=0.5 ((unsupported parameter: HYPERELASTIC POISSON not supported))",
+  "*MULLINS EFFECT, TEST DATA INPUT ((unsupported parameter: MULLINS EFFECT TEST DATA INPUT not supported))"
+ ],
+ "benchmark_inp/verification/heplmu_marlow_2d_uniori.inp::mat-129": [
+  "*HYPERELASTIC, MARLOW, POISSON=0.5 ((unsupported parameter: HYPERELASTIC POISSON not supported))",
+  "*MULLINS EFFECT, TEST DATA INPUT ((unsupported parameter: MULLINS EFFECT TEST DATA INPUT not supported))"
+ ],
+ "benchmark_inp/verification/heplmu_ogden_2d_biori.inp::mat-129": [
+  "*HYPERELASTIC, OGDEN, N=3, TEST ((unsupported parameter: HYPERELASTIC TEST DATA INPUT not supported))",
+  "*MULLINS EFFECT, TEST DATA INPUT, M=0.4, BETA=0.05 ((unsupported parameter: MULLINS EFFECT BETA applies only with TEST DATA INPUT))"
+ ],
+ "benchmark_inp/verification/heplmu_polycomp_2d_biori.inp::epdm_poly": [
+  "*HYPERELASTIC, POLYNOMIAL, N=1, TEST DATA, POISSON=0.495 ((unsupported parameter: HYPERELASTIC POISSON not supported))",
+  "*PLASTIC (*PLASTIC: 370 hardening points; the tabular kernel holds 10)"
+ ],
+ "benchmark_inp/verification/holzapfelogden_visco_xpl.inp::holzapfel-ogden": [
+  "*VISCOELASTIC, TIME=prony (*VISCOELASTIC: bulk relaxation (k_i != 0) is not represented (the Prony kernels relax the deviatoric response only))"
+ ],
+ "benchmark_inp/verification/hzplaniso_ve.inp::holzapfel": [
+  "*DENSITY (*DENSITY: spatially varying data (distribution name '<density>') is not represented)"
+ ],
+ "benchmark_inp/verification/jcratedpexpuni.inp::MAT": [
+  "*DRUCKER PRAGER, SHEAR CRITERION=exponent (SHEAR CRITERION=EXPONENT FORM is not implemented (supported: LINEAR))",
+  "*DRUCKER PRAGER HARDENING without a *DRUCKER PRAGER in this material (absent or refused above)"
+ ],
+ "benchmark_inp/verification/jcratedphypuni.inp::MAT": [
+  "*DRUCKER PRAGER, SHEAR CRITERION=hyperbolic (SHEAR CRITERION=HYPERBOLIC is not implemented (supported: LINEAR))",
+  "*DRUCKER PRAGER HARDENING without a *DRUCKER PRAGER in this material (absent or refused above)"
+ ],
+ "benchmark_inp/verification/johnsoncook.inp::A1": [
+  "*PLASTIC (*PLASTIC: 26 hardening points; the tabular kernel holds 10)"
+ ],
+ "benchmark_inp/verification/johnsoncook_dmg_s.inp::A1": [
+  "*PLASTIC (*PLASTIC: 26 hardening points; the tabular kernel holds 10)",
+  "*DAMAGE INITIATION, CRITERION=Ductile (*DAMAGE INITIATION, CRITERION=DUCTILE: strain-rate dependence is not represented)"
+ ],
+ "benchmark_inp/verification/mancht2tua.inp::ALLE": [
+  "*PLASTIC, HARDENING=COMBINED, DATA TYPE=PARAMETERS ((unsupported parameter: PLASTIC DATA TYPE not supported))"
+ ],
+ "benchmark_inp/verification/mankht1tua.inp::ALLE": [
+  "*PLASTIC, HARDENING=KINEMATIC (HARDENING=KINEMATIC is not implemented (supported: ISOTROPIC))"
+ ],
+ "benchmark_inp/verification/marlow_b21_cmp.inp::MARLOW": [
+  "*HYPERELASTIC, MARLOW, POISSON=0.475 ((unsupported parameter: HYPERELASTIC POISSON not supported))"
+ ],
+ "benchmark_inp/verification/marlow_xpl_initstress.inp::hyper": [
+  "*HYPERELASTIC, MARLOW, POISSON=0.49 ((unsupported parameter: HYPERELASTIC POISSON not supported))"
+ ],
+ "benchmark_inp/verification/mbbcdo3gsh_vwaals.inp::VWAALS": [
+  "*HYPERELASTIC, VAN DER WAALS, MODULI=LONG TERM ((unsupported parameter: VAN DER WAALS not supported))"
+ ],
+ "benchmark_inp/verification/mbbcoo3vlp.inp::POLY": [
+  "*HYPERELASTIC, N=1, MODULI=LONG TERM (*HYPERELASTIC: incompressible hyperelasticity (D=0) is not implemented (no hybrid / incompressible path consumes it))"
+ ],
+ "benchmark_inp/verification/mbbcot3hut_inst.inp::POLY": [
+  "*HYPERELASTIC, N=1, MODULI=INSTANTANEOUS (*HYPERELASTIC: several data lines (temperature sets) are not represented)"
+ ],
+ "benchmark_inp/verification/mbbtdo3hut.inp::POLY": [
+  "*HYPERELASTIC, TEST DATA INPUT, N=1, MODULI=LONG TERM ((unsupported parameter: HYPERELASTIC TEST DATA INPUT not supported))"
+ ],
+ "benchmark_inp/verification/mcpsto3nt1.inp::DATSTR": [
+  "*CREEP, LAW=STRAIN (*CREEP: no solver material consumes creep laws yet)"
+ ],
+ "benchmark_inp/verification/mcpsto3pt3.inp::DATSTR": [
+  "*ELASTIC (*ELASTIC: spatially varying data (distribution name 'distElastic') is not represented)",
+  "*CREEP, LAW=STRAIN (*CREEP: no solver material consumes creep laws yet)"
+ ],
+ "benchmark_inp/verification/mdcsmo3euc.inp::ALLE": [
+  "*DRUCKER PRAGER HARDENING with more than two points (the model has linear hardening only)"
+ ],
+ "benchmark_inp/verification/mdcsmt3euc.inp::ALLE": [
+  "*DRUCKER PRAGER (*DRUCKER PRAGER: several data lines (temperature dependence) are not represented)",
+  "*DRUCKER PRAGER HARDENING without a *DRUCKER PRAGER in this material (absent or refused above)"
+ ],
+ "benchmark_inp/verification/mdcuco3hut.inp::ALLE": [
+  "*ELASTIC (*ELASTIC: spatially varying data (distribution name 'distElastic') is not represented)",
+  "*DRUCKER PRAGER HARDENING with more than two points (the model has linear hardening only)"
+ ],
+ "benchmark_inp/verification/mdedos3euc.inp::ALLE": [
+  "*DRUCKER PRAGER HARDENING with more than two points (the model has linear hardening only)"
+ ],
+ "benchmark_inp/verification/mdeeoo2euc.inp::ALLE": [
+  "*DRUCKER PRAGER, SHEAR CRITERION=EXPONENT (SHEAR CRITERION=EXPONENT FORM is not implemented (supported: LINEAR))",
+  "*DRUCKER PRAGER HARDENING without a *DRUCKER PRAGER in this material (absent or refused above)"
+ ],
+ "benchmark_inp/verification/mdeeoo2hut.inp::ALLE": [
+  "*ELASTIC (*ELASTIC: spatially varying data (distribution name 'distElastic') is not represented)",
+  "*DRUCKER PRAGER, SHEAR CRITERION=EXPONENT (SHEAR CRITERION=EXPONENT FORM is not implemented (supported: LINEAR))",
+  "*DRUCKER PRAGER HARDENING without a *DRUCKER PRAGER in this material (absent or refused above)"
+ ],
+ "benchmark_inp/verification/mdeeos3euc.inp::ALLE": [
+  "*DRUCKER PRAGER, SHEAR CRITERION=EXPONENT (SHEAR CRITERION=EXPONENT FORM is not implemented (supported: LINEAR))",
+  "*DRUCKER PRAGER HARDENING without a *DRUCKER PRAGER in this material (absent or refused above)"
+ ],
+ "benchmark_inp/verification/mdeeot3euc.inp::ALLE": [
+  "*DRUCKER PRAGER, SHEAR CRITERION=EXPONENT (SHEAR CRITERION=EXPONENT FORM is not implemented (supported: LINEAR))",
+  "*DRUCKER PRAGER HARDENING without a *DRUCKER PRAGER in this material (absent or refused above)"
+ ],
+ "benchmark_inp/verification/mdeeto2euc.inp::ALLE": [
+  "*DRUCKER PRAGER, SHEAR CRITERION=EXPONENT, TEST DATA ((unsupported parameter: DRUCKER PRAGER TEST DATA not supported))",
+  "*DRUCKER PRAGER HARDENING without a *DRUCKER PRAGER in this material (absent or refused above)"
+ ],
+ "benchmark_inp/verification/mdeets3euc.inp::ALLE": [
+  "*DRUCKER PRAGER, SHEAR CRITERION=EXPONENT, TEST DATA ((unsupported parameter: DRUCKER PRAGER TEST DATA not supported))",
+  "*DRUCKER PRAGER HARDENING without a *DRUCKER PRAGER in this material (absent or refused above)"
+ ],
+ "benchmark_inp/verification/mdekot3hut.inp::ALLE": [
+  "*ELASTIC (*ELASTIC: spatially varying data (distribution name 'distElastic') is not represented)",
+  "*DRUCKER PRAGER (*DRUCKER PRAGER: several data lines (temperature dependence) are not represented)",
+  "*DRUCKER PRAGER HARDENING without a *DRUCKER PRAGER in this material (absent or refused above)"
+ ],
+ "benchmark_inp/verification/mdpeoo3bus.inp::SAMPLE": [
+  "*DRUCKER PRAGER, SHEAR CRITERION=EXPONENT (SHEAR CRITERION=EXPONENT FORM is not implemented (supported: LINEAR))",
+  "*DRUCKER PRAGER HARDENING without a *DRUCKER PRAGER in this material (absent or refused above)"
+ ],
+ "benchmark_inp/verification/mdpeto3bus.inp::SAMPLE": [
+  "*DRUCKER PRAGER, SHEAR CRITERION=EXPONENT, TEST DATA ((unsupported parameter: DRUCKER PRAGER TEST DATA not supported))",
+  "*DRUCKER PRAGER HARDENING without a *DRUCKER PRAGER in this material (absent or refused above)"
+ ],
+ "benchmark_inp/verification/meleco3ltr.inp::A1": [
+  "section 'SEC_SOLID_PART_DEFAULT_A1' orientation 'RECT' on an anisotropic material (no solver reads the section orientation)"
+ ],
+ "benchmark_inp/verification/meloro2ltr.inp::A1": [
+  "*ELASTIC, TYPE=ORTHO (TYPE=ORTHOTROPIC is not implemented (supported: ISOTROPIC, ENGINEERING CONSTANTS))"
+ ],
+ "benchmark_inp/verification/meloro3ltr.inp::A1": [
+  "*ELASTIC, TYPE=ORTHO (TYPE=ORTHOTROPIC is not implemented (supported: ISOTROPIC, ENGINEERING CONSTANTS))"
+ ],
+ "benchmark_inp/verification/mgrono2xmx.inp::FOAM": [
+  "*ELASTIC (*ELASTIC: spatially varying data (distribution name 'distElastic') is not represented)"
+ ],
+ "benchmark_inp/verification/mhacoo2gsh.inp::ARRUDA": [
+  "*HYPERELASTIC, ARRUDA-BOYCE (*HYPERELASTIC: incompressible hyperelasticity (D=0) is not implemented (no hybrid / incompressible path consumes it))"
+ ],
+ "benchmark_inp/verification/mhacot3hut.inp::ARRUDA": [
+  "*HYPERELASTIC, ARRUDA-BOYCE (*HYPERELASTIC: several data lines (temperature sets) are not represented)"
+ ],
+ "benchmark_inp/verification/mhatdo3ahc.inp::ARRUDA": [
+  "*HYPERELASTIC, ARRUDA-BOYCE, TEST DATA INPUT ((unsupported parameter: HYPERELASTIC TEST DATA INPUT not supported))"
+ ],
+ "benchmark_inp/verification/mhgcoo2eis.inp::A1": [
+  "*HYPERELASTIC, N=2, OGDEN (*HYPERELASTIC: incompressible hyperelasticity (D=0) is not implemented (no hybrid / incompressible path consumes it))"
+ ],
+ "benchmark_inp/verification/mhgtdo3ahc.inp::TRELOAR": [
+  "*HYPERELASTIC, TEST DATA INPUT, N=3, OGDEN ((unsupported parameter: HYPERELASTIC TEST DATA INPUT not supported))"
+ ],
+ "benchmark_inp/verification/mhliho3hut.inp::ALLE": [
+  "*ELASTIC (*ELASTIC: spatially varying data (distribution name 'distElastic') is not represented)",
+  "*DENSITY (*DENSITY: spatially varying data (distribution name 'distDensity') is not represented)"
+ ],
+ "benchmark_inp/verification/mhliht3hut.inp::ALLE": [
+  "*PLASTIC (*PLASTIC: temperature-dependent hardening is not represented (the tables would be merged into one curve))"
+ ],
+ "benchmark_inp/verification/mhmcoo2gsh.inp::MOONEY": [
+  "*HYPERELASTIC, MOONEY-RIVLIN (*HYPERELASTIC: incompressible hyperelasticity (D=0) is not implemented (no hybrid / incompressible path consumes it))"
+ ],
+ "benchmark_inp/verification/mhmcot3hut.inp::MOONEY": [
+  "*HYPERELASTIC, MOONEY-RIVLIN (*HYPERELASTIC: several data lines (temperature sets) are not represented)"
+ ],
+ "benchmark_inp/verification/mhmtdo3ahc.inp::MOONEY": [
+  "*HYPERELASTIC, MOONEY-RIVLIN, TEST DATA INPUT ((unsupported parameter: HYPERELASTIC TEST DATA INPUT not supported))"
+ ],
+ "benchmark_inp/verification/mhncoo2gsh.inp::NEOHOOK": [
+  "*HYPERELASTIC, NEO HOOKE (*HYPERELASTIC: incompressible hyperelasticity (D=0) is not implemented (no hybrid / incompressible path consumes it))"
+ ],
+ "benchmark_inp/verification/mhncoo3vlp.inp::NEOHOOK": [
+  "*HYPERELASTIC, NEO HOOKE (*HYPERELASTIC: incompressible hyperelasticity (D=0) is not implemented (no hybrid / incompressible path consumes it))"
+ ],
+ "benchmark_inp/verification/mhrcoo2gsh.inp::REDUCED": [
+  "*HYPERELASTIC, REDUCED POLYNOMIAL, N=1 (*HYPERELASTIC: incompressible hyperelasticity (D=0) is not implemented (no hybrid / incompressible path consumes it))"
+ ],
+ "benchmark_inp/verification/mhrcot3hut.inp::REDUCED": [
+  "*HYPERELASTIC, REDUCED POLYNOMIAL, N=1 (*HYPERELASTIC: several data lines (temperature sets) are not represented)"
+ ],
+ "benchmark_inp/verification/mhrtdo3ahc.inp::REDUCED": [
+  "*HYPERELASTIC, REDUCED POLYNOMIAL, N=1, TEST DATA INPUT ((unsupported parameter: HYPERELASTIC TEST DATA INPUT not supported))"
+ ],
+ "benchmark_inp/verification/mhvcdo2gsh.inp::VANWAALS": [
+  "*HYPERELASTIC, VAN DER WAALS ((unsupported parameter: VAN DER WAALS not supported))"
+ ],
+ "benchmark_inp/verification/mhycoo2gsh.inp::YEOH": [
+  "*HYPERELASTIC, YEOH (*HYPERELASTIC: incompressible hyperelasticity (D=0) is not implemented (no hybrid / incompressible path consumes it))"
+ ],
+ "benchmark_inp/verification/mhycot3hut.inp::YEOH": [
+  "*HYPERELASTIC, YEOH (*HYPERELASTIC: several data lines (temperature sets) are not represented)"
+ ],
+ "benchmark_inp/verification/mhytdo3ahc.inp::YEOH": [
+  "*HYPERELASTIC, YEOH, TEST DATA INPUT ((unsupported parameter: HYPERELASTIC TEST DATA INPUT not supported))"
+ ],
+ "benchmark_inp/verification/mkcsto3hut.inp::ALLE": [
+  "*PLASTIC, HARDENING=KINEMATIC (HARDENING=KINEMATIC is not implemented (supported: ISOTROPIC))",
+  "*CREEP, LAW=STRAIN (*CREEP: no solver material consumes creep laws yet)"
+ ],
+ "benchmark_inp/verification/mmcsto1xmx.inp::ALLE": [
+  "*CREEP, LAW=TIME (*CREEP: no solver material consumes creep laws yet)"
+ ],
+ "benchmark_inp/verification/mmctmo2hut.inp::ALLE": [
+  "*ELASTIC (*ELASTIC: temperature-dependent moduli are not represented (deck temperatures are not passed to the solver))",
+  "*CREEP, LAW=TIME (*CREEP: no solver material consumes creep laws yet)"
+ ],
+ "benchmark_inp/verification/mmecdo2cut.inp::MOONEY": [
+  "*MULLINS EFFECT, DEPENDENCIES=1 ((unsupported parameter: MULLINS EFFECT DEPENDENCIES not supported))"
+ ],
+ "benchmark_inp/verification/mmecdo2cut_vdw.inp::TREL": [
+  "*HYPERELASTIC, VAN DER WAALS ((unsupported parameter: VAN DER WAALS not supported))"
+ ],
+ "benchmark_inp/verification/mmecdo3cut_user.inp::YEOH-MAT": [
+  "*HYPERELASTIC, USER, TYPE=COMPRESSIBLE, PROPERTIES=4 ((unsupported parameter: HYPERELASTIC PROPERTIES not supported))"
+ ],
+ "benchmark_inp/verification/mmecoo2cut_yeoh_visco.inp::TREL": [
+  "*HYPERELASTIC, YEOH (*HYPERELASTIC: incompressible hyperelasticity (D=0) is not implemented (no hybrid / incompressible path consumes it))"
+ ],
+ "benchmark_inp/verification/mmecoo3cut_ogden.inp::OGDEN": [
+  "*HYPERELASTIC, N=2, OGDEN (*HYPERELASTIC: incompressible hyperelasticity (D=0) is not implemented (no hybrid / incompressible path consumes it))"
+ ],
+ "benchmark_inp/verification/mplchb2hut.inp::steel": [
+  "*PLASTIC, HARDENING=combined, DATA TYPE=parameters, DEPENDENCIES=1 ((unsupported parameter: PLASTIC DATA TYPE not supported))"
+ ],
+ "benchmark_inp/verification/mplchb2hutmb.inp::steel": [
+  "*PLASTIC, HARDENING=combined, DATA TYPE=parameters, DEPENDENCIES=1, NUMBERBACKSTRESS=3 ((unsupported parameter: PLASTIC NUMBER BACKSTRESSES not supported))"
+ ],
+ "benchmark_inp/verification/mplchb3hut.inp::alle": [
+  "*ELASTIC (*ELASTIC: spatially varying data (distribution name 'distElastic') is not represented)",
+  "*PLASTIC, HARDENING=combined, DATA TYPE=parameters ((unsupported parameter: PLASTIC DATA TYPE not supported))"
+ ],
+ "benchmark_inp/verification/mplchb3hut_xpl.inp::alle": [
+  "*PLASTIC, HARDENING=combined, DATA TYPE=parameters ((unsupported parameter: PLASTIC DATA TYPE not supported))"
+ ],
+ "benchmark_inp/verification/mplchi2hut.inp::steel": [
+  "*ELASTIC (*ELASTIC: spatially varying data (distribution name 'distElastic') is not represented)",
+  "*PLASTIC, HARDENING=combined, DATA TYPE=parameters ((unsupported parameter: PLASTIC DATA TYPE not supported))"
+ ],
+ "benchmark_inp/verification/mplchi2hut_xpl.inp::steel": [
+  "*PLASTIC, HARDENING=combined, DATA TYPE=parameters ((unsupported parameter: PLASTIC DATA TYPE not supported))"
+ ],
+ "benchmark_inp/verification/mplchi2hutmb.inp::steel": [
+  "*ELASTIC (*ELASTIC: spatially varying data (distribution name 'distElastic') is not represented)",
+  "*PLASTIC, HARDENING=combined, DATA TYPE=parameters, NUMBERBACKSTRESS=3, DEP=1 ((unsupported parameter: PLASTIC NUMBER BACKSTRESSES not supported))"
+ ],
+ "benchmark_inp/verification/mplchi2hutmb_xpl.inp::steel": [
+  "*PLASTIC, HARDENING=combined, DATA TYPE=parameters, NUMBERBACKSTRESS=3 ((unsupported parameter: PLASTIC NUMBER BACKSTRESSES not supported))"
+ ],
+ "benchmark_inp/verification/mplchi3nt1.inp::ALLE": [
+  "*PLASTIC, HARD=COMBINED, DATA TYPE=PARAMETERS ((unsupported parameter: PLASTIC DATA TYPE not supported))"
+ ],
+ "benchmark_inp/verification/mplchi3nt1mb.inp::ALLE": [
+  "*PLASTIC, HARD=COMBINED, DATA TYPE=PARAMETERS, NUMBERBACKSTRESS=3 ((unsupported parameter: PLASTIC NUMBER BACKSTRESSES not supported))"
+ ],
+ "benchmark_inp/verification/mplcho1hut.inp::ALLE": [
+  "*PLASTIC, HARDENING=COMBINED, DATA TYPE=HALF CYCLE ((unsupported parameter: PLASTIC DATA TYPE not supported))"
+ ],
+ "benchmark_inp/verification/mplcho1mcy.inp::ALLE": [
+  "*PLASTIC, HARD=COMBINED, DATA TYPE=HALF CYCLE ((unsupported parameter: PLASTIC DATA TYPE not supported))"
+ ],
+ "benchmark_inp/verification/mplihi3hut.inp::ALLE": [
+  "*ELASTIC (*ELASTIC: spatially varying data (distribution name 'distElastic') is not represented)"
+ ],
+ "benchmark_inp/verification/mplkhi1hut.inp::ALLE": [
+  "*PLASTIC, HARDENING=KINEMATIC (HARDENING=KINEMATIC is not implemented (supported: ISOTROPIC))"
+ ],
+ "benchmark_inp/verification/mtvsto3mcy.inp::ALLE": [
+  "*PLASTIC, HARDENING=KINEMATIC (HARDENING=KINEMATIC is not implemented (supported: ISOTROPIC))"
+ ],
+ "benchmark_inp/verification/multilinkinhard_fv.inp::MULTILINKINHARD": [
+  "*PLASTIC, HARDENING=MULTILINEAR KINEMATIC, DEP=1 (HARDENING=MULTILINEAR KINEMATIC is not implemented (supported: ISOTROPIC))"
+ ],
+ "benchmark_inp/verification/mvacoo3rre.inp::ARRUDA": [
+  "*HYPERELASTIC, ARRUDA-BOYCE, MODULI=INSTANTANEOUS (*HYPERELASTIC: incompressible hyperelasticity (D=0) is not implemented (no hybrid / incompressible path consumes it))"
+ ],
+ "benchmark_inp/verification/mvccoo3hut.inp::SIMPLE": [
+  "*HYPERELASTIC, N=1, MODULI=INSTANTANEOUS (*HYPERELASTIC: incompressible hyperelasticity (D=0) is not implemented (no hybrid / incompressible path consumes it))"
+ ],
+ "benchmark_inp/verification/mveff02the.inp::VISCO": [
+  "*VISCOELASTIC, FREQUENCY=FORMULA ((unsupported parameter: VISCOELASTIC FREQUENCY not supported))"
+ ],
+ "benchmark_inp/verification/mveft02the.inp::VISCO": [
+  "*VISCOELASTIC, FREQUENCY=TABULAR ((unsupported parameter: VISCOELASTIC FREQUENCY not supported))"
+ ],
+ "benchmark_inp/verification/mvhcdo2ahc.inp::SIMPLE": [
+  "*VISCOELASTIC, TIME=PRONY (*VISCOELASTIC: bulk relaxation (k_i != 0) is not represented (the Prony kernels relax the deviatoric response only))"
+ ],
+ "benchmark_inp/verification/mvhcdo2srs.inp::BIDERMAN": [
+  "*VISCOELASTIC, TIME=PRONY (*VISCOELASTIC: bulk relaxation (k_i != 0) is not represented (the Prony kernels relax the deviatoric response only))"
+ ],
+ "benchmark_inp/verification/mvhcdo3ssd.inp::VISCO": [
+  "*VISCOELASTIC, FREQUENCY=PRONY ((unsupported parameter: VISCOELASTIC FREQUENCY not supported))"
+ ],
+ "benchmark_inp/verification/mvhcoo3rre.inp::SIMPLE": [
+  "*HYPERELASTIC, OGDEN, N=2, MODULI=INSTANTANEOUS (*HYPERELASTIC: incompressible hyperelasticity (D=0) is not implemented (no hybrid / incompressible path consumes it))"
+ ],
+ "benchmark_inp/verification/mvhtdo3ss2.inp::MCREEP": [
+  "*VISCOELASTIC, FREQUENCY=prony ((unsupported parameter: VISCOELASTIC FREQUENCY not supported))"
+ ],
+ "benchmark_inp/verification/mvhtdo3ss2.inp::MSTRESS": [
+  "*VISCOELASTIC, FREQUENCY=prony ((unsupported parameter: VISCOELASTIC FREQUENCY not supported))"
+ ],
+ "benchmark_inp/verification/mvliso2srs.inp::BIDERMAN": [
+  "*VISCOELASTIC, TIME=PRONY (*VISCOELASTIC: bulk relaxation (k_i != 0) is not represented (the Prony kernels relax the deviatoric response only))"
+ ],
+ "benchmark_inp/verification/mvvcoo3rre.inp::VANWAALS": [
+  "*HYPERELASTIC, VAN DER WAALS, MODULI=INSTANTANEOUS ((unsupported parameter: VAN DER WAALS not supported))"
+ ],
+ "benchmark_inp/verification/mvvcoo3vlp.inp::VANWAALS": [
+  "*HYPERELASTIC, VAN DER WAALS, MODULI=INSTANTANEOUS ((unsupported parameter: VAN DER WAALS not supported))"
+ ],
+ "benchmark_inp/verification/mvxfn02the.inp::VISCO": [
+  "*VISCOELASTIC, FREQUENCY=FORMULA ((unsupported parameter: VISCOELASTIC FREQUENCY not supported))"
+ ],
+ "benchmark_inp/verification/mvxft02the.inp::VISCO": [
+  "*VISCOELASTIC, FREQUENCY=TABULAR ((unsupported parameter: VISCOELASTIC FREQUENCY not supported))"
+ ],
+ "benchmark_inp/verification/mvyff02the.inp::VISCO": [
+  "*VISCOELASTIC, FREQUENCY=FORMULA ((unsupported parameter: VISCOELASTIC FREQUENCY not supported))"
+ ],
+ "benchmark_inp/verification/mvyfn02the.inp::VISCO": [
+  "*VISCOELASTIC, FREQUENCY=FORMULA ((unsupported parameter: VISCOELASTIC FREQUENCY not supported))"
+ ],
+ "benchmark_inp/verification/mvyft02the.inp::VISCO": [
+  "*VISCOELASTIC, FREQUENCY=TABULAR ((unsupported parameter: VISCOELASTIC FREQUENCY not supported))"
+ ],
+ "benchmark_inp/verification/mvzfn02the.inp::VISCO": [
+  "*HYPERELASTIC, VAN DER WAALS, MODULI=LONG TERM ((unsupported parameter: VAN DER WAALS not supported))",
+  "*VISCOELASTIC, FREQUENCY=FORMULA ((unsupported parameter: VISCOELASTIC FREQUENCY not supported))"
+ ],
+ "benchmark_inp/verification/mvzft02the.inp::VISCO": [
+  "*HYPERELASTIC, VAN DER WAALS, MODULI=LONG TERM ((unsupported parameter: VAN DER WAALS not supported))",
+  "*VISCOELASTIC, FREQUENCY=TABULAR ((unsupported parameter: VISCOELASTIC FREQUENCY not supported))"
+ ],
+ "benchmark_inp/verification/neoh_mullins_ve.inp::holzinc": [
+  "*DENSITY (*DENSITY: spatially varying data (distribution name '<density>') is not represented)",
+  "*HYPERELASTIC, NEOH (items: could not convert string to float: '<C10>')"
+ ],
+ "benchmark_inp/verification/neoh_ve_creep_b31.inp::TEST": [
+  "*VISCOELASTIC, TIME=PRONY, FORMULATION=SOLID (FORMULATION is not a documented parameter of *VISCOELASTIC)"
+ ],
+ "benchmark_inp/verification/neoh_ve_creep_b31.inp::TESTinc": [
+  "*HYPERELASTIC, NEO HOOKE, MODULI=INSTANTANEOUS (*HYPERELASTIC: incompressible hyperelasticity (D=0) is not implemented (no hybrid / incompressible path consumes it))",
+  "*VISCOELASTIC, TIME=PRONY, FORMULATION=SOLID (FORMULATION is not a documented parameter of *VISCOELASTIC)"
+ ],
+ "benchmark_inp/verification/neoh_ve_unicyclic_b31.inp::TEST": [
+  "*HYPERELASTIC, NEO HOOKE, MODULI=INSTANTANEOUS (*HYPERELASTIC: incompressible hyperelasticity (D=0) is not implemented (no hybrid / incompressible path consumes it))",
+  "*VISCOELASTIC, TIME=PRONY, FORMULATION=SOLID (FORMULATION is not a documented parameter of *VISCOELASTIC)"
+ ],
+ "benchmark_inp/verification/ogden_ve_ssh_cyclic.inp::mat1": [
+  "*HYPERELASTIC, OGDEN, N=3, MODULI=instantaneous (*HYPERELASTIC: incompressible hyperelasticity (D=0) is not implemented (no hybrid / incompressible path consumes it))"
+ ],
+ "benchmark_inp/verification/prf_network_stiff_xpl_vl.inp::mValanisLandel": [
+  "*HYPERELASTIC, VALANIS-LANDEL ((unsupported parameter: VALANIS LANDEL not supported))",
+  "*VISCOELASTIC, NONLINEAR, NETWORKID=1, LAW=POWERLAW ((unsupported parameter: VISCOELASTIC LAW not supported))"
+ ],
+ "benchmark_inp/verification/ratedep_tabular.inp::DIRECT": [
+  "*PLASTIC, RATE=0.1 ((unsupported parameter: PLASTIC RATE not supported))",
+  "*PLASTIC, RATE=0.5 ((unsupported parameter: PLASTIC RATE not supported))",
+  "*PLASTIC, RATE=1.0 ((unsupported parameter: PLASTIC RATE not supported))",
+  "*PLASTIC, RATE=2.5 ((unsupported parameter: PLASTIC RATE not supported))",
+  "*PLASTIC, RATE=5.0 ((unsupported parameter: PLASTIC RATE not supported))",
+  "*PLASTIC, RATE=7.5 ((unsupported parameter: PLASTIC RATE not supported))",
+  "*PLASTIC, RATE=10.0 ((unsupported parameter: PLASTIC RATE not supported))",
+  "*PLASTIC, RATE=20.0 ((unsupported parameter: PLASTIC RATE not supported))",
+  "*PLASTIC, RATE=30.0 ((unsupported parameter: PLASTIC RATE not supported))",
+  "*PLASTIC, RATE=40.0 ((unsupported parameter: PLASTIC RATE not supported))",
+  "*PLASTIC, RATE=50.0 ((unsupported parameter: PLASTIC RATE not supported))",
+  "*PLASTIC, RATE=60.0 ((unsupported parameter: PLASTIC RATE not supported))",
+  "*PLASTIC, RATE=70.0 ((unsupported parameter: PLASTIC RATE not supported))",
+  "*PLASTIC, RATE=80.0 ((unsupported parameter: PLASTIC RATE not supported))",
+  "*PLASTIC, RATE=90.0 ((unsupported parameter: PLASTIC RATE not supported))",
+  "*PLASTIC, RATE=100.0 ((unsupported parameter: PLASTIC RATE not supported))",
+  "*PLASTIC, RATE=120.0 ((unsupported parameter: PLASTIC RATE not supported))",
+  "*PLASTIC, RATE=140.0 ((unsupported parameter: PLASTIC RATE not supported))",
+  "*PLASTIC, RATE=160.0 ((unsupported parameter: PLASTIC RATE not supported))",
+  "*PLASTIC, RATE=180.0 ((unsupported parameter: PLASTIC RATE not supported))",
+  "*PLASTIC, RATE=200.0 ((unsupported parameter: PLASTIC RATE not supported))",
+  "*PLASTIC, RATE=250.0 ((unsupported parameter: PLASTIC RATE not supported))",
+  "*PLASTIC, RATE=300.0 ((unsupported parameter: PLASTIC RATE not supported))",
+  "*PLASTIC, RATE=350.0 ((unsupported parameter: PLASTIC RATE not supported))",
+  "*PLASTIC, RATE=500.0 ((unsupported parameter: PLASTIC RATE not supported))",
+  "*PLASTIC, RATE=1000.0 ((unsupported parameter: PLASTIC RATE not supported))"
+ ],
+ "benchmark_inp/verification/simple_expansion.inp::A1AN": [
+  "*ELASTIC, TYPE=ANISOTROPIC (TYPE=ANISOTROPIC is not implemented (supported: ISOTROPIC, ENGINEERING CONSTANTS))",
+  "*EXPANSION, TYPE=ORTHO (TYPE=ORTHO is not implemented (supported: ISO))"
+ ],
+ "benchmark_inp/verification/simple_expansion.inp::A1EC": [
+  "section 'SEC_SOLID_PART_DEFAULT_S3DEC' orientation 'RECT' on an anisotropic material (no solver reads the section orientation)",
+  "section 'SEC_SOLID_PART_DEFAULT_PE2DEC' orientation 'RECT' on an anisotropic material (no solver reads the section orientation)",
+  "section 'SEC_SOLID_PART_DEFAULT_PS2DEC' orientation 'RECT' on an anisotropic material (no solver reads the section orientation)",
+  "section 'SEC_SOLID_PART_DEFAULT_CAXEC' orientation 'RECT' on an anisotropic material (no solver reads the section orientation)"
+ ],
+ "benchmark_inp/verification/simple_expansion.inp::A1HILL": [
+  "*EXPANSION, TYPE=ORTHO (TYPE=ORTHO is not implemented (supported: ISO))"
+ ],
+ "benchmark_inp/verification/simple_expansion.inp::A1LAMINA": [
+  "*ELASTIC, TYPE=LAMINA (TYPE=LAMINA is not implemented (supported: ISOTROPIC, ENGINEERING CONSTANTS))"
+ ],
+ "benchmark_inp/verification/simple_expansion.inp::A1LAMISX": [
+  "*ELASTIC, TYPE=LAMINA (TYPE=LAMINA is not implemented (supported: ISOTROPIC, ENGINEERING CONSTANTS))"
+ ],
+ "benchmark_inp/verification/simple_expansion.inp::A1ORTH": [
+  "*ELASTIC, TYPE=ORTHOTROPIC (TYPE=ORTHOTROPIC is not implemented (supported: ISOTROPIC, ENGINEERING CONSTANTS))",
+  "*EXPANSION, TYPE=ORTHO (TYPE=ORTHO is not implemented (supported: ISO))"
+ ],
+ "benchmark_inp/verification/simple_expansion.inp::A1ORTHSX": [
+  "*ELASTIC, TYPE=ORTHOTROPIC (TYPE=ORTHOTROPIC is not implemented (supported: ISOTROPIC, ENGINEERING CONSTANTS))",
+  "*EXPANSION, TYPE=ORTHO (TYPE=ORTHO is not implemented (supported: ISO))"
+ ],
+ "benchmark_inp/verification/simple_expansion.inp::A1RHILL": [
+  "*EXPANSION, TYPE=ORTHO (TYPE=ORTHO is not implemented (supported: ISO))"
+ ],
+ "benchmark_inp/verification/simple_expansion.inp::A1VHAB": [
+  "*HYPERELASTIC, TEST DATA INPUT, ARRUDA-BOYCE, MODULI=INSTANTANEOUS ((unsupported parameter: HYPERELASTIC TEST DATA INPUT not supported))"
+ ],
+ "benchmark_inp/verification/simple_expansion.inp::A1VHO": [
+  "*HYPERELASTIC, TEST DATA INPUT, OGDEN, N=3, MODULI=INSTANTANEOUS ((unsupported parameter: HYPERELASTIC TEST DATA INPUT not supported))"
+ ],
+ "benchmark_inp/verification/simple_expansion.inp::A1VHPOLY": [
+  "*HYPERELASTIC, TEST DATA INPUT, N=2, MODULI=INSTANTANEOUS ((unsupported parameter: HYPERELASTIC TEST DATA INPUT not supported))"
+ ],
+ "benchmark_inp/verification/temp_elastic.inp::A1LAMINA": [
+  "*ELASTIC, TYPE=LAMINA (TYPE=LAMINA is not implemented (supported: ISOTROPIC, ENGINEERING CONSTANTS))"
+ ],
+ "benchmark_inp/verification/temp_elastic.inp::A1LAMSAX": [
+  "*ELASTIC, TYPE=LAMINA (TYPE=LAMINA is not implemented (supported: ISOTROPIC, ENGINEERING CONSTANTS))"
+ ],
+ "benchmark_inp/verification/temp_plastic.inp::A1": [
+  "*ELASTIC (*ELASTIC: temperature-dependent moduli are not represented (deck temperatures are not passed to the solver))",
+  "*PLASTIC, SCALESTRESS=1.0 ((unsupported parameter: PLASTIC SCALESTRESS not supported))"
+ ],
+ "benchmark_inp/verification/temp_plastic.inp::A1CFOAM": [
+  "*ELASTIC (*ELASTIC: temperature-dependent moduli are not represented (deck temperatures are not passed to the solver))"
+ ],
+ "benchmark_inp/verification/temp_plastic.inp::A1DUCT": [
+  "*ELASTIC (*ELASTIC: temperature-dependent moduli are not represented (deck temperatures are not passed to the solver))",
+  "*PLASTIC, SCALESTRESS=1.0 ((unsupported parameter: PLASTIC SCALESTRESS not supported))"
+ ],
+ "benchmark_inp/verification/temp_plastic.inp::A1HILL": [
+  "*ELASTIC (*ELASTIC: temperature-dependent moduli are not represented (deck temperatures are not passed to the solver))",
+  "*PLASTIC, SCALESTRESS=1.0 ((unsupported parameter: PLASTIC SCALESTRESS not supported))"
+ ],
+ "benchmark_inp/verification/temp_plastic.inp::A1RHILL": [
+  "*ELASTIC (*ELASTIC: temperature-dependent moduli are not represented (deck temperatures are not passed to the solver))",
+  "*PLASTIC, SCALESTRESS=1.0 ((unsupported parameter: PLASTIC SCALESTRESS not supported))"
+ ],
+ "benchmark_inp/verification/temp_plastic.inp::A1RPL": [
+  "*ELASTIC (*ELASTIC: temperature-dependent moduli are not represented (deck temperatures are not passed to the solver))",
+  "*PLASTIC, SCALESTRESS=1.0 ((unsupported parameter: PLASTIC SCALESTRESS not supported))"
+ ],
+ "benchmark_inp/verification/uaniso_inv_isople.inp::polyabq": [
+  "*HYPERELASTIC, N=2 (*HYPERELASTIC: incompressible hyperelasticity (D=0) is not implemented (no hybrid / incompressible path consumes it))"
+ ],
+ "benchmark_inp/verification/viscnet_c3d8_nh_n2.inp::NEOHVISC": [
+  "*VISCOELASTIC, NONLINEAR, NETWORKID=1, SRATIO=0.5, LAW=STRAIN ((unsupported parameter: VISCOELASTIC LAW not supported))",
+  "*VISCOELASTIC, NONLINEAR, NETWORKID=2, SRATIO=0.3, LAW=HYPERB ((unsupported parameter: VISCOELASTIC LAW not supported))"
+ ],
+ "benchmark_inp/verification/viscnet_c3d8h_ab_bb_n3_user.inp::ABVISC": [
+  "*HYPERELASTIC, ARRUDA-BOYCE, MODULI=INSTANTANEOUS (*HYPERELASTIC: incompressible hyperelasticity (D=0) is not implemented (no hybrid / incompressible path consumes it))",
+  "*VISCOELASTIC, NONLINEAR, NETWORKID=1, SRATIO=0.3, LAW=USER, PROPERTIES=4 ((unsupported parameter: VISCOELASTIC PROPERTIES not supported))",
+  "*VISCOELASTIC, NETWORKID=2, NONLINEAR, SRATIO=0.5, LAW=POWERLAW ((unsupported parameter: VISCOELASTIC LAW not supported))",
+  "*VISCOELASTIC, NONLINEAR, NETWORKID=3, SRATIO=0.15, LAW=USER, PROPERTIES=3 ((unsupported parameter: VISCOELASTIC PROPERTIES not supported))"
+ ],
+ "benchmark_inp/verification/viscnet_c3d8h_ab_n2.inp::ABVISC": [
+  "*HYPERELASTIC, ARRUDA-BOYCE, MODULI=INSTANTANEOUS (*HYPERELASTIC: incompressible hyperelasticity (D=0) is not implemented (no hybrid / incompressible path consumes it))",
+  "*VISCOELASTIC, NONLINEAR, NETWORKID=1, SRATIO=0.5, LAW=STRAIN ((unsupported parameter: VISCOELASTIC LAW not supported))",
+  "*VISCOELASTIC, NONLINEAR, NETWORKID=2, SRATIO=0.3, LAW=HYPERB ((unsupported parameter: VISCOELASTIC LAW not supported))"
+ ],
+ "benchmark_inp/verification/viscnet_c3d8h_ogden_n2.inp::OGDENVISC": [
+  "*HYPERELASTIC, OGDEN, N=2, MODULI=INSTANTANEOUS (*HYPERELASTIC: incompressible hyperelasticity (D=0) is not implemented (no hybrid / incompressible path consumes it))",
+  "*VISCOELASTIC, NONLINEAR, NETWORKID=1, SRATIO=0.5, LAW=STRAIN ((unsupported parameter: VISCOELASTIC LAW not supported))",
+  "*VISCOELASTIC, NONLINEAR, NETWORKID=2, SRATIO=0.3, LAW=HYPERB ((unsupported parameter: VISCOELASTIC LAW not supported))"
+ ],
+ "benchmark_inp/verification/viscnet_c3d8h_vanwaals_n2.inp::VWAALSVISC": [
+  "*HYPERELASTIC, VAN DER WAALS, MODULI=INSTANTANEOUS ((unsupported parameter: VAN DER WAALS not supported))",
+  "*VISCOELASTIC, NONLINEAR, NETWORKID=1, SRATIO=0.5, LAW=STRAIN ((unsupported parameter: VISCOELASTIC LAW not supported))",
+  "*VISCOELASTIC, NONLINEAR, NETWORKID=2, SRATIO=0.3, LAW=HYPERB ((unsupported parameter: VISCOELASTIC LAW not supported))"
+ ],
+ "benchmark_inp/verification/visco_aniso_creep.inp::POLY": [
+  "*ELASTIC, MODULI=LONG TERM, TYPE=ANISOTROPIC (TYPE=ANISOTROPIC is not implemented (supported: ISOTROPIC, ENGINEERING CONSTANTS))",
+  "*VISCOELASTIC, TIME=CREEP TEST DATA (TIME=CREEP TEST DATA is not implemented (supported: PRONY))"
+ ],
+ "benchmark_inp/verification/visco_circum_axi.inp::MAT1": [
+  "*VISCOELASTIC, TIME=PRONY (*VISCOELASTIC: bulk relaxation (k_i != 0) is not represented (the Prony kernels relax the deviatoric response only))"
+ ],
+ "benchmark_inp/verification/visco_coh2d.inp::mat1": [
+  "*ELASTIC, TYPE=traction, MODULI=long term (TYPE=TRACTION is not implemented (supported: ISOTROPIC, ENGINEERING CONSTANTS))",
+  "*VISCOELASTIC, TIME=prony (*VISCOELASTIC: bulk relaxation (k_i != 0) is not represented (the Prony kernels relax the deviatoric response only))"
+ ],
+ "benchmark_inp/verification/visco_ortho_creep.inp::POLY": [
+  "*VISCOELASTIC, TIME=CREEP TEST DATA (TIME=CREEP TEST DATA is not implemented (supported: PRONY))",
+  "section 'SEC_SOLID_PART_DEFAULT_C3D8R' orientation 'ORI' on an anisotropic material (no solver reads the section orientation)",
+  "section 'SEC_SOLID_PART_DEFAULT_CPE4R' orientation 'ORI' on an anisotropic material (no solver reads the section orientation)",
+  "section 'SEC_SOLID_PART_DEFAULT_CPS4R' orientation 'ORI' on an anisotropic material (no solver reads the section orientation)"
+ ],
+ "benchmark_inp/verification/visco_ortho_creep.inp::POLY-LAMINA": [
+  "*ELASTIC, MODULI=LONG TERM, TYPE=LAMINA (TYPE=LAMINA is not implemented (supported: ISOTROPIC, ENGINEERING CONSTANTS))",
+  "*VISCOELASTIC, TIME=PRONY (*VISCOELASTIC: bulk relaxation (k_i != 0) is not represented (the Prony kernels relax the deviatoric response only))"
+ ],
+ "benchmark_inp/verification/visco_vol_pe.inp::MAT1": [
+  "*VISCOELASTIC, TIME=PRONY (*VISCOELASTIC: bulk relaxation (k_i != 0) is not represented (the Prony kernels relax the deviatoric response only))"
+ ],
+ "benchmark_inp/verification/visco_vol_ps.inp::SIMPLE": [
+  "*VISCOELASTIC, TIME=PRONY (*VISCOELASTIC: bulk relaxation (k_i != 0) is not represented (the Prony kernels relax the deviatoric response only))"
+ ],
+ "benchmark_inp/verification/x_mmecdo1cut_vishfoam.inp::low_density_foam": [
+  "*VISCOELASTIC, TIME=prony (*VISCOELASTIC: bulk relaxation (k_i != 0) is not represented (the Prony kernels relax the deviatoric response only))"
+ ],
+ "benchmark_inp/verification/x_mmecdo2cut_visvdw.inp::TREL": [
+  "*HYPERELASTIC, VAN DER WAALS ((unsupported parameter: VAN DER WAALS not supported))"
+ ],
+ "benchmark_inp/verification/x_viscnet_c3d8_ab_n2.inp::ABVISC": [
+  "*VISCOELASTIC, NONLINEAR, NETWORKID=1, SRATIO=0.5, LAW=STRAIN ((unsupported parameter: VISCOELASTIC LAW not supported))",
+  "*VISCOELASTIC, NONLINEAR, NETWORKID=2, SRATIO=0.3, LAW=HYPERB ((unsupported parameter: VISCOELASTIC LAW not supported))"
+ ],
+ "benchmark_inp/verification/x_viscnet_c3d8_ab_n3.inp::ABVISC": [
+  "*VISCOELASTIC, NONLINEAR, NETWORKID=1, SRATIO=0.2, LAW=STRAIN ((unsupported parameter: VISCOELASTIC LAW not supported))",
+  "*VISCOELASTIC, NONLINEAR, NETWORKID=2, SRATIO=0.1, LAW=HYPERB ((unsupported parameter: VISCOELASTIC LAW not supported))",
+  "*VISCOELASTIC, NONLINEAR, NETWORKID=3, SRATIO=0.5, LAW=DARVEAUX ((unsupported parameter: VISCOELASTIC LAW not supported))"
+ ],
+ "benchmark_inp/verification/xpl_valanis_landel_fefp_3d_1d.inp::epdm_valanis": [
+  "*HYPERELASTIC, VALANIS-LANDEL ((unsupported parameter: VALANIS LANDEL not supported))",
+  "*PLASTIC (*PLASTIC: 370 hardening points; the tabular kernel holds 10)"
+ ],
+ "benchmark_inp/verification/xpl_valanis_landel_ve_c3d8_vol.inp::MATVL": [
+  "*HYPERELASTIC, VALANIS-LANDEL ((unsupported parameter: VALANIS LANDEL not supported))"
+ ]
+}

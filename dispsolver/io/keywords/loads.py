@@ -140,8 +140,8 @@ class DLoad(Keyword):
             region, lt, mag = r.region or "", r.load_type.upper(), r.magnitude
             if lt != "GRAV" and lt not in ("BX", "BY", "BZ") and not re.fullmatch(r"P[1-6]?", lt):
                 raise Unsupported(f"*DLOAD load type {lt} on {region!r} is not implemented")
-            if mag is None:
-                raise InputError(f"*DLOAD {lt} on {region!r} at {r.loc}: magnitude missing")
+            if mag is None:                    # blank / omitted numeric item: zero (Input Syntax Rules)
+                mag = 0.0
             if lt == "GRAV":
                 if len(r.comps) < 3:
                     raise InputError(f"*DLOAD GRAV on {region!r} at {r.loc}: direction vector missing")
@@ -206,8 +206,7 @@ class DSLoad(Keyword):
             lt = r.load_type.upper()
             if lt != "P":
                 raise Unsupported(f"*DSLOAD load type {lt} on {r.surface!r} is not implemented (P only)")
-            if r.magnitude is None:
-                raise InputError(f"*DSLOAD P on {r.surface!r} at {r.loc}: magnitude missing")
             if any(c is not None for c in r.comps):
                 raise InputError(f"*DSLOAD P on {r.surface!r} at {r.loc}: a uniform pressure takes one value")
-            yield PressureRecord(ctx.step, "DSLOAD", r.surface, None, "P", r.magnitude, p.amplitude, loc=r.loc)
+            mag = 0.0 if r.magnitude is None else r.magnitude   # blank magnitude: zero (Input Syntax Rules)
+            yield PressureRecord(ctx.step, "DSLOAD", r.surface, None, "P", mag, p.amplitude, loc=r.loc)

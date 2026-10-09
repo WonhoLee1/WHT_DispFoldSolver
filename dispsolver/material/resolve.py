@@ -38,7 +38,7 @@ from typing import Any, Tuple
 
 import numpy as np
 
-from dispsolver.material.catalog import MATERIALS, material_id, pack_props
+from dispsolver.material.catalog import MATERIALS, material_id, moduli_factor, pack_props, prony_check
 from dispsolver.material3d.numba_materials import (
     MAT_LINEAR_ELASTIC,
     MAT_J2_PLASTICITY,
@@ -52,6 +52,11 @@ from dispsolver.material3d.numba_materials import (
     MAT_CUSTOM_ELASTIC,
     MAT_HYPERELASTIC_NEOHOOKEAN,
     MAT_HYPERELASTIC_ARRUDA_BOYCE,
+    MAT_HYPERELASTIC_YEOH,
+    MAT_HYPERELASTIC_MOONEY_RIVLIN,
+    MAT_HYPERELASTIC_OGDEN,
+    MAT_HYPERELASTIC_POLYNOMIAL,
+    MAT_HYPERELASTIC_MARLOW,
 )
 
 
@@ -90,12 +95,18 @@ def _pack_hyper_viscoelastic(md: dict, where: str) -> np.ndarray:
     base = int(md.get("base_model", MAT_HYPERELASTIC_NEOHOOKEAN))
     props = np.zeros(64, dtype=np.float64)
     props[0] = float(base)
+    prony_check(prony, capacity=6, kernel="hyper-viscoelastic (id 6)")
+    # LONG TERM constants (Keywords Guide default MODULI) -> the kernel's instantaneous shear constants;
+    # the volumetric constant K is not relaxed by the kernel and is not scaled
+    f_mod = moduli_factor(md, prony)
     if base == MAT_HYPERELASTIC_NEOHOOKEAN:
-        props[1] = float(md.get("mu", md.get("c10", 0.2)))
+        props[1] = f_mod * float(md.get("mu", md.get("c10", 0.2)))
         props[2] = float(md.get("K", 10.0))
     elif base == MAT_HYPERELASTIC_ARRUDA_BOYCE:
-        props[1] = float(md.get("mu", 0.16785))
+        props[1] = f_mod * float(md.get("mu", 0.16785))
         props[2] = float(md.get("lambda_m", 3.0))
+        if props[2] <= 0.0:
+            raise NotImplementedError(f"{where}: Arruda-Boyce lambda_m = {props[2]} <= 0 (the kernel would use 3.0)")
         props[3] = float(md.get("K", 8.3333))
     else:
         raise NotImplementedError(
@@ -244,6 +255,87 @@ def _resolve(mat_obj: Any, dim: int, label: str = "material") -> Tuple[int, np.n
     return mid, pack_props(mat_obj, dim)
 
 
+# Constitutive definitions a Material can store, and which ids consume them. A stored definition the
+# chosen id does not consume would be silently dropped (the id is picked from the content, so the result
+# must not depend on keyword order): refuse it instead.
+
+
+_HYPER_IDS = {MAT_HYPERELASTIC_NEOHOOKEAN, MAT_HYPERELASTIC_ARRUDA_BOYCE, MAT_HYPERELASTIC_YEOH,
+              MAT_HYPERELASTIC_MOONEY_RIVLIN, MAT_HYPERELASTIC_OGDEN, MAT_HYPERELASTIC_POLYNOMIAL,
+              MAT_HYPERELASTIC_MARLOW}
+
+
+def _stored_definitions(m) -> dict:
+    ex = m.extra_params
+    out = {}
+    if ex.get("creep"):
+        out["*CREEP"] = None
+    if m.plastic or ex.get("tabular_plastic"):
+        out["*PLASTIC"] = None
+    if m.viscoelastic_prony:
+        out["*VISCOELASTIC"] = None
+    if m.hyperelastic:
+        out["*HYPERELASTIC"] = None
+    if ex.get("mullins"):
+        out["*MULLINS EFFECT"] = None
+    if "damage_init" in ex:
+        out["*DAMAGE INITIATION"] = None
+    if "damage_evol" in ex:
+        out["*DAMAGE EVOLUTION"] = None
+    if ex.get("johnson_cook"):
+        out["*PLASTIC, HARDENING=JOHNSON COOK"] = None
+    if "drucker_prager" in ex:
+        out["*DRUCKER PRAGER"] = None
+    if "concrete_dp" in ex:
+        out["*CONCRETE DAMAGED PLASTICITY"] = None
+    if ex.get("rate_dependent"):
+        out["*RATE DEPENDENT"] = None
+    if ex.get("trs"):
+        out["*TRS"] = None
+    return out
+
+
+def _consumed_by(mid: int) -> set:
+    if mid in _HYPER_IDS:
+        return {"*HYPERELASTIC"}
+    return {
+        MAT_HYPER_VISCOELASTIC: {"*HYPERELASTIC", "*VISCOELASTIC"},
+        MAT_VISCOELASTIC_PRONY: {"*VISCOELASTIC"},
+        MAT_J2_PLASTICITY: {"*PLASTIC"},
+        MAT_J2_PLASTICITY_NONLINEAR: {"*PLASTIC"},
+        MAT_J2_PLASTICITY_TABULAR: {"*PLASTIC"},
+        MAT_J2_DUCTILE_DAMAGE: {"*PLASTIC", "*DAMAGE INITIATION", "*DAMAGE EVOLUTION"},
+        MAT_DRUCKER_PRAGER: {"*DRUCKER PRAGER"},
+        MAT_CONCRETE_DP: {"*CONCRETE DAMAGED PLASTICITY"},
+    }.get(mid, set())
+
+
+def _refuse_unconsumed_definitions(m, mid: int, label: str) -> None:
+    from dispsolver.model.regions import describe
+
+    stored = _stored_definitions(m)
+    dropped = sorted(set(stored) - _consumed_by(mid))
+    where = None
+    if dropped:
+        where = describe(m, label) + (f" (material {m.name!r})" if getattr(m, "name", None) else "")
+        raise NotImplementedError(
+            f"{where}: it defines {', '.join(dropped)}, which {MATERIALS[mid].name} does not consume; "
+            f"running it would silently drop the definition (no combined constitutive model exists for it)")
+    if mid == MAT_HYPER_VISCOELASTIC:
+        base = (m.hyperelastic or {}).get("model", "").upper()
+        if not (base.startswith("NEO") or base.startswith("ARRUDA")):
+            where = describe(m, label) + (f" (material {m.name!r})" if getattr(m, "name", None) else "")
+            raise NotImplementedError(
+                f"{where}: *VISCOELASTIC on a {base or 'missing'} hyperelastic base is not implemented (the "
+                f"hyper-viscoelastic kernel carries Neo-Hooke and Arruda-Boyce bases; Mooney-Rivlin, Yeoh, "
+                f"Ogden, polynomial constants would be replaced by Neo-Hooke defaults)")
+    if mid == MAT_J2_DUCTILE_DAMAGE and m.plastic and len(m.plastic) > 2:
+        where = describe(m, label) + (f" (material {m.name!r})" if getattr(m, "name", None) else "")
+        raise NotImplementedError(
+            f"{where}: ductile damage keeps two *PLASTIC points (linear hardening), the material has "
+            f"{len(m.plastic)}")
+
+
 def resolve_material(mat_obj: Any, dim: int, label: str = "material") -> Tuple[int, np.ndarray]:
     """Return (mat_id, props[64]) for a Material object or property dict (see `_resolve`).
 
@@ -267,6 +359,8 @@ def resolve_material(mat_obj: Any, dim: int, label: str = "material") -> Tuple[i
             f"{where}: its {'; '.join(refused)} definition was refused by the reader; "
             f"nothing to compute it with -- running the rest would be a different model than the deck")
     mid, props = _resolve(mat_obj, dim, label)
+    if not isinstance(obj, dict):
+        _refuse_unconsumed_definitions(obj, mid, label)
     bad = np.flatnonzero(~np.isfinite(np.asarray(props, dtype=float)))
     if bad.size:
         where = describe(obj, label)

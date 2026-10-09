@@ -27,6 +27,7 @@ from dispsolver.material.catalog import (
     MAT_HYPERELASTIC_POLYNOMIAL,
     MAT_HYPERELASTIC_YEOH,
     MAT_J2_PLASTICITY,
+    MAT_J2_PLASTICITY_TABULAR,
     MAT_LINEAR_ELASTIC,
     MAT_VISCOELASTIC_PRONY,
     material_id,
@@ -100,7 +101,7 @@ def test_expansion_thermal():
 
 
 def test_plastic_isotropic():
-    """*PLASTIC isotropic hardening maps to MAT_J2_PLASTICITY."""
+    """*PLASTIC: one point is J2 (perfect plasticity), two or more points the tabular kernel."""
     deck = """
 *MATERIAL, NAME=ALU
 *ELASTIC
@@ -111,16 +112,20 @@ def test_plastic_isotropic():
 """
     reader, model = _read_snippet(deck)
     mat = model.materials["ALU"]
-    mid = material_id(mat)
-    assert mid == MAT_J2_PLASTICITY
+    # two or more points go to the tabular kernel (it holds the last yield stress constant; the
+    # linear-H J2 kernel would keep hardening without bound)
+    assert material_id(mat) == MAT_J2_PLASTICITY_TABULAR
     props = pack_props(mat, dim=3)
     assert props[0] == pytest.approx(70000.0)
     assert props[1] == pytest.approx(0.33)
-    assert props[2] == pytest.approx(200.0)  # initial yield stress
+    assert props[2] == 2.0                     # number of points
+    assert list(props[5:9]) == [200.0, 0.0, 250.0, 0.05]
+    _, m1 = _read_snippet(deck.replace("250.0, 0.05\n", ""))
+    assert material_id(m1.materials["ALU"]) == MAT_J2_PLASTICITY
 
 
 def test_plastic_johnson_cook():
-    """*PLASTIC, HARDENING=JOHNSON COOK parses parameters and reports gap."""
+    """*PLASTIC, HARDENING=JOHNSON COOK has no solver material: refused at parse, material refused."""
     deck = """
 *MATERIAL, NAME=JC_STEEL
 *ELASTIC
@@ -130,15 +135,13 @@ def test_plastic_johnson_cook():
 """
     reader, model = _read_snippet(deck)
     mat = model.materials["JC_STEEL"]
-    assert "johnson_cook" in mat.extra_params
-    jc = mat.extra_params["johnson_cook"]
-    assert jc["A"] == 300.0
-    assert jc["B"] == 400.0
-    assert any(d.code == "rate-effect-dropped" for d in reader.diagnostics)
+    assert "johnson_cook" not in mat.extra_params
+    assert any(d.level == "gap" and "JOHNSON COOK" in d.message for d in reader.diagnostics)
+    assert "JOHNSON COOK" in mat.extra_params["refused_definitions"][0]
 
 
 def test_creep_strain():
-    """*CREEP, LAW=TIME parses the time-hardening power-law parameters."""
+    """*CREEP is a gap: no solver material id consumes a creep law."""
     deck = """
 *MATERIAL, NAME=CREEP_STEEL
 *ELASTIC
@@ -148,10 +151,9 @@ def test_creep_strain():
 """
     reader, model = _read_snippet(deck)
     mat = model.materials["CREEP_STEEL"]
-    assert "creep" in mat.extra_params
-    assert mat.extra_params["creep"]["law"] == "TIME"
-    assert mat.extra_params["creep"]["A"] == pytest.approx(1.0e-10)
-    assert mat.extra_params["creep"]["n"] == pytest.approx(5.0)
+    assert "creep" not in mat.extra_params
+    assert any(d.level == "gap" and "creep" in d.message.lower() for d in reader.diagnostics)
+    assert "*CREEP" in mat.extra_params["refused_definitions"][0]
 
 
 def test_hyperelastic_neo_hookean():
@@ -229,8 +231,16 @@ def test_viscoelastic_prony():
     mid = material_id(mat)
     assert mid == MAT_VISCOELASTIC_PRONY
     props = pack_props(mat, dim=3)
-    assert props[0] == pytest.approx(100.0)
-    assert props[1] == pytest.approx(0.4)
+    # *ELASTIC default MODULI=LONG TERM: instantaneous shear = long-term / (1 - sum g); bulk unchanged
+    mu = props[0] / (2.0 * (1.0 + props[1]))
+    K = props[0] / (3.0 * (1.0 - 2.0 * props[1]))
+    assert mu == pytest.approx(100.0 / (2.0 * 1.4) / 0.7)
+    assert K == pytest.approx(100.0 / (3.0 * 0.2))
+    assert (props[2], props[3]) == (0.3, 1.5)
+    # MODULI=INSTANTANEOUS: the constants are the kernel's own
+    _, m2 = _read_snippet(deck.replace("*ELASTIC", "*ELASTIC, MODULI=INSTANTANEOUS"))
+    p2 = pack_props(m2.materials["VISCO_ELAST"], dim=3)
+    assert (p2[0], p2[1]) == (100.0, 0.4)
 
 
 def test_rate_dependent():
@@ -302,13 +312,21 @@ def test_drucker_prager():
     assert props[3] == pytest.approx(f * 10.0 / 0.02)      # H
     assert props[4] == pytest.approx(35.0)                 # beta
     assert props[5] == pytest.approx(20.0)                 # psi
-    assert not reader.diagnostics.of("error", "gap")
+    assert [d.code for d in reader.diagnostics.of("error", "gap")] == ["dp-hardening-linear-extrapolation"]
+
+
+def test_drucker_prager_suboption_order_is_free():
+    a, ma = _read_snippet(_dp_deck())
+    hard_first = ("\n*MATERIAL, NAME=SOIL\n*ELASTIC\n50000.0, 0.3\n" + _DP_HARD + "*DRUCKER PRAGER\n35.0, 1.0, 20.0\n")
+    b, mb = _read_snippet(hard_first)
+    assert ma.materials["SOIL"].extra_params["drucker_prager"] == mb.materials["SOIL"].extra_params["drucker_prager"]
 
 
 def test_drucker_prager_hardening_types():
     import math
     tb = math.tan(math.radians(30.0))
-    for typ, f in (("TENSION", 1.0 + tb / 3.0), ("SHEAR", math.sqrt(3.0))):
+    # TENSION: d = (1/K + tan(beta)/3) sigma_t; SHEAR: the data value IS the cohesion d (cached page)
+    for typ, f in (("TENSION", 1.0 + tb / 3.0), ("SHEAR", 1.0)):
         _, model = _read_snippet(_dp_deck("30.0, 0.0, 10.0",
                                           f"*DRUCKER PRAGER HARDENING, TYPE={typ}\n10.0, 0.0\n"))
         dp = model.materials["SOIL"].extra_params["drucker_prager"]
@@ -324,10 +342,18 @@ def test_drucker_prager_missing_items_and_hardening():
     # K != 1 is a gap (Material has no K)
     reader, _ = _read_snippet(_dp_deck("30.0, 0.8, 10.0"))
     assert reader.diagnostics.of("gap")
-    # no hardening -> refused, naming the material
-    reader, _ = _read_snippet(_dp_deck(hard=""))
+    # no hardening -> refused, naming the material and recorded on it
+    reader, m = _read_snippet(_dp_deck(hard=""))
     msgs = [d.message for d in reader.diagnostics.of("error")]
-    assert any("SOIL" in m and "HARDENING" in m for m in msgs)
+    assert any("HARDENING" in x for x in msgs)
+    assert any("HARDENING" in r for r in m.materials["SOIL"].extra_params["refused_definitions"])
+    # hardening without DRUCKER PRAGER, strain not increasing, more than two points: refused
+    for deck in ("\n*MATERIAL, NAME=SOIL\n*ELASTIC\n5e4, 0.3\n" + _DP_HARD,
+                 _dp_deck(hard="*DRUCKER PRAGER HARDENING\n20.0, 0.0\n30.0, 0.0\n"),
+                 _dp_deck(hard="*DRUCKER PRAGER HARDENING\n20.0, 0.0\n30.0, 0.02\n40.0, 0.04\n")):
+        reader, m = _read_snippet(deck)
+        assert m.materials["SOIL"].extra_params["refused_definitions"], deck
+        assert "drucker_prager" not in m.materials["SOIL"].extra_params
 
 
 def test_concrete_damaged_plasticity():
@@ -433,10 +459,10 @@ def _errors(deck):
 
 
 def test_elastic_positional_temperature_and_field():
-    # (E, nu, T): temperature table
+    # (E, nu, T): temperature-dependent moduli never reach the solver -> refused
     _, m, bad = _errors("*MATERIAL, NAME=A\n*ELASTIC\n200000., 0.3, 20.\n180000., 0.3, 100.\n")
-    assert not bad
-    assert m.materials["A"].extra_params["temp_elastic_table"] == [(200000., 0.3, 20.), (180000., 0.3, 100.)]
+    assert any(d.level == "gap" and "temperature" in d.message for d in bad)
+    assert m.materials["A"].extra_params["refused_definitions"]
     # DEPENDENCIES=1: data items are E, nu, T, FV1 -- the field variable is item 4, not item 3
     _, m, bad = _errors("*MATERIAL, NAME=B\n*ELASTIC, DEPENDENCIES=1\n200000., 0.3, , 0.\n160000., 0.3, , 1.\n")
     assert not bad
@@ -478,59 +504,47 @@ def test_plastic_layout_and_unsupported_hardening():
     # perfect plasticity: one line (yield, 0)
     _, m, bad = _errors("*MATERIAL, NAME=P\n*PLASTIC\n250., 0.\n")
     assert not bad and m.materials["P"].plastic == [(250., 0.)]
-    # plastic strain missing: no Guide default
-    _, _, bad = _errors("*MATERIAL, NAME=Q\n*PLASTIC\n250.\n")
-    assert not [d for d in bad if d.level == "error"]   # blank plastic strain == 0
-    # DEPENDENCIES=1: (yield, strain, T, FV1)
-    _, m, bad = _errors("*MATERIAL, NAME=F\n*PLASTIC, DEPENDENCIES=1\n250., 0., , 0.\n200., 0., , 1.\n")
-    assert not bad
-    assert m.materials["F"].extra_params["field_plastic_table"] == [(250., 0., 0.), (200., 0., 1.)]
+    # plastic strain blank == 0
+    _, m, bad = _errors("*MATERIAL, NAME=Q\n*PLASTIC\n250.\n")
+    assert not bad and m.materials["Q"].plastic == [(250., 0.)]
+    # the first plastic strain must be zero (Guide)
+    _, _, bad = _errors("*MATERIAL, NAME=R\n*PLASTIC\n250., 0.01\n300., 0.1\n")
+    assert any(d.level == "error" for d in bad)
+    # more than 10 points: the tabular kernel holds 10 (no silent truncation)
+    pts = "".join(f"{250. + i}, {0.01 * i}\n" for i in range(11))
+    _, _, bad = _errors("*MATERIAL, NAME=S\n*PLASTIC\n" + pts)
+    assert any(d.level == "gap" for d in bad)
+    # temperature / field dependent families would be flattened into one curve -> refused
+    _, _, bad = _errors("*MATERIAL, NAME=T\n*PLASTIC\n250., 0., 20.\n200., 0., 100.\n")
+    assert any(d.level == "gap" for d in bad)
+    _, _, bad = _errors("*MATERIAL, NAME=F\n*PLASTIC, DEPENDENCIES=1\n250., 0., , 0.\n200., 0., , 1.\n")
+    assert any(d.level == "gap" for d in bad)
     for h in ("KINEMATIC", "COMBINED"):
         _, _, bad = _errors(f"*MATERIAL, NAME=K\n*PLASTIC, HARDENING={h}\n250., 0.\n")
         assert any(d.level == "gap" for d in bad), h
 
 
 def test_plastic_johnson_cook_items():
-    # A, B, n, m, theta_melt, theta_transition
     _, m, bad = _errors("*MATERIAL, NAME=J\n*PLASTIC, HARDENING=JOHNSON COOK\n500., 400., 0.3, 1.0, 1500., 20.\n")
-    jc = m.materials["J"].extra_params["johnson_cook"]
-    assert (jc["A"], jc["B"], jc["n"], jc["m"], jc["T_melt"], jc["T_room"]) == (500., 400., 0.3, 1.0, 1500., 20.)
-    # m nonzero without the temperatures: input error (no Guide default)
-    _, _, bad = _errors("*MATERIAL, NAME=K\n*PLASTIC, HARDENING=JOHNSON COOK\n500., 400., 0.3, 1.0\n")
-    assert not [d for d in bad if d.level == "error"]
+    assert any(d.level == "gap" for d in bad) and "johnson_cook" not in m.materials["J"].extra_params
 
 
 # ─── Guide data-line layout audit: CREEP / HYPERELASTIC / VISCOELASTIC / RATE DEPENDENT ───
 
 def test_creep_laws():
-    _, m, bad = _errors("*MATERIAL, NAME=A\n*CREEP, LAW=TIME\n1e-10, 5., -0.5\n")
-    assert not bad
-    assert m.materials["A"].extra_params["creep"]["m"] == -0.5
-    # strain hardening with m != 0 is a different law than the time-hardening kernel
-    _, _, bad = _errors("*MATERIAL, NAME=B\n*CREEP, LAW=STRAIN\n1e-10, 5., -0.5\n")
-    assert any(d.level == "gap" for d in bad)
-    _, m, bad = _errors("*MATERIAL, NAME=C\n*CREEP, LAW=STRAIN\n1e-10, 5., 0.\n")
-    assert not bad
-    # m is a needed item without a Guide default
-    _, _, bad = _errors("*MATERIAL, NAME=D\n*CREEP\n1e-10, 5.\n")
-    assert not [d for d in bad if d.level == "error"]
-    # HYPERB: A, B, n (delta H, R are temperature dependence, not the time exponent)
-    _, m, bad = _errors("*MATERIAL, NAME=H\n*CREEP, LAW=HYPERB\n1e-10, 0.01, 3.\n")
-    c = m.materials["H"].extra_params["creep"]
-    assert not bad and (c["A"], c["B"], c["n"], c["m"]) == (1e-10, 0.01, 3., 0.)
-    _, _, bad = _errors("*MATERIAL, NAME=H\n*CREEP, LAW=HYPERB\n1e-10, 0.01, 3., 5e4\n")
-    assert any(d.level == "gap" for d in bad)
-    for law in ("USER", "POWER LAW", "DARVEAUX"):
-        _, _, bad = _errors(f"*MATERIAL, NAME=U\n*CREEP, LAW={law}\n1., 2., 3.\n")
+    # no solver material consumes a creep law: every LAW is a gap and the material is refused
+    for law in ("TIME", "STRAIN", "HYPERB", "USER", "POWER LAW", "DARVEAUX"):
+        _, m, bad = _errors(f"*MATERIAL, NAME=A\n*CREEP, LAW={law}\n1e-10, 0.01, 3.\n")
         assert any(d.level == "gap" for d in bad), law
+        assert "creep" not in m.materials["A"].extra_params
+        assert m.materials["A"].extra_params["refused_definitions"]
 
 
 def test_creep_anand_two_lines():
     deck = ("*MATERIAL, NAME=AN\n*CREEP, LAW=ANAND\n"
             "10., 1e4, 1e6, 7., 0.2, 1e3, 20., 0.01\n1.5\n")
     _, m, bad = _errors(deck)
-    c = m.materials["AN"].extra_params["creep"]
-    assert not bad and c["s0"] == 10. and c["nn"] == 0.01 and c["a"] == 1.5
+    assert any(d.level == "gap" for d in bad) and "creep" not in m.materials["AN"].extra_params
 
 
 def test_hyperelastic_default_is_polynomial_n1():
@@ -551,27 +565,36 @@ def test_hyperelastic_layouts():
     _, m, bad = _errors("*MATERIAL, NAME=R\n*HYPERELASTIC, REDUCED POLYNOMIAL, N=1\n0.4, 0.01\n")
     h = m.materials["R"].hyperelastic
     assert not bad and h["model"] == "NEO_HOOKEAN" and (h["c10"], h["d1"]) == (0.4, 0.01)
-    _, m, bad = _errors("*MATERIAL, NAME=O\n*HYPERELASTIC, OGDEN, N=2\n1., 2., 3., -2., 0.01, 0.02\n")
+    _, m, bad = _errors("*MATERIAL, NAME=O\n*HYPERELASTIC, OGDEN, N=2\n1., 2., 3., -2., 0.01, 0.\n")
     h = m.materials["O"].hyperelastic
-    assert not bad and h["mu_list"] == [1., 3.] and h["alpha_list"] == [2., -2.] and h["d_list"] == [0.01, 0.02]
-    # D omitted == 0 (incompressible; the Guide treats compressibility as given by nonzero Di);
+    assert not bad and h["mu_list"] == [1., 3.] and h["alpha_list"] == [2., -2.] and h["d_list"] == [0.01, 0.0]
+    # D omitted / all D_i zero == fully incompressible in Abaqus: no incompressible path exists -> refused
+    for deck in ("*HYPERELASTIC, NEO HOOKE\n0.4\n", "*HYPERELASTIC, YEOH\n0.5, -0.1, 0.02\n",
+                 "*HYPERELASTIC, ARRUDA-BOYCE\n0.4, 3.\n", "*HYPERELASTIC, OGDEN, N=1\n1., 2.\n"):
+        _, m, bad = _errors("*MATERIAL, NAME=E\n" + deck)
+        assert any(d.level == "gap" and "incompressible" in d.message for d in bad), deck
+        assert m.materials["E"].extra_params["refused_definitions"]
     # the coefficient itself has no default; TYPE is not a model selector; MARLOW needs test data
-    _, m, bad = _errors("*MATERIAL, NAME=E\n*HYPERELASTIC, NEO HOOKE\n0.4\n")
-    assert not bad and m.materials["E"].hyperelastic["d1"] == 0.0
     _, _, bad = _errors("*MATERIAL, NAME=E\n*HYPERELASTIC, NEO HOOKE\n, 0.01\n")
     assert not [d for d in bad if d.level == "error"]
+    # OGDEN: blank cells keep their place (the temperature must not land in D1); D2..DN != 0 refused
+    _, m, bad = _errors("*MATERIAL, NAME=G\n*HYPERELASTIC, OGDEN, N=1\n0.5, 2.0, , 20.\n")
+    assert any(d.level == "gap" for d in bad)                      # D1 blank == 0 (and a temperature)
+    _, m, bad = _errors("*MATERIAL, NAME=G\n*HYPERELASTIC, OGDEN, N=2\n1., 2., 3., -2., 0.01, 0.02\n")
+    assert any(d.level == "gap" and "D2" in d.message for d in bad)
     for hdr in ("*HYPERELASTIC, TYPE=NEO HOOKE", "*HYPERELASTIC, MARLOW"):
         _, _, bad = _errors(f"*MATERIAL, NAME=T\n{hdr}\n0.4, 0.01\n")
         assert any(d.level == "gap" for d in bad), hdr
 
 
 def test_viscoelastic_requires_time_and_three_items():
-    _, m, bad = _errors("*MATERIAL, NAME=V\n*VISCOELASTIC, TIME=PRONY\n0.2, 0.1, 3.3\n0.1, 0.05, 30.\n")
-    assert not bad and m.materials["V"].viscoelastic_prony == [(0.2, 0.1, 3.3), (0.1, 0.05, 30.)]
-    _, _, bad = _errors("*MATERIAL, NAME=V\n*VISCOELASTIC\n0.2, 0.1, 3.3\n")
+    _, m, bad = _errors("*MATERIAL, NAME=V\n*VISCOELASTIC, TIME=PRONY\n0.2, 0.0, 3.3\n0.1, 0.0, 30.\n")
+    assert not bad and m.materials["V"].viscoelastic_prony == [(0.2, 0.0, 3.3), (0.1, 0.0, 30.)]
+    # k_i != 0 (bulk relaxation) is never packed -> refused
+    _, _, bad = _errors("*MATERIAL, NAME=V\n*VISCOELASTIC, TIME=PRONY\n0.2, 0.1, 3.3\n")
+    assert any(d.level == "gap" and "bulk" in d.message for d in bad)
+    _, _, bad = _errors("*MATERIAL, NAME=V\n*VISCOELASTIC\n0.2, 0.0, 3.3\n")           # TIME required
     assert any(d.level == "error" for d in bad)
-    _, _, bad = _errors("*MATERIAL, NAME=V\n*VISCOELASTIC, TIME=PRONY\n0.2, 3.3\n")
-    assert not [d for d in bad if d.level == "error"]
     _, _, bad = _errors("*MATERIAL, NAME=V\n*VISCOELASTIC, TIME=RELAXATION TEST DATA\n")
     assert any(d.level == "gap" for d in bad)
 
@@ -617,12 +640,18 @@ def test_damage_initiation_johnson_cook_items():
 
 def test_damage_evolution_requirements():
     _, m, bad = _errors("*MATERIAL, NAME=A\n*DAMAGE EVOLUTION, TYPE=ENERGY\n12.5\n")
-    assert not bad and m.materials["A"].extra_params["damage_evol"]["Gf"] == 12.5
+    assert [d.code for d in bad] == ["damage-energy-regularization"]       # L fixed 1.0, u_f from sigma_y0
+    assert m.materials["A"].extra_params["damage_evol"]["Gf"] == 12.5
     assert m.materials["A"].extra_params["damage_evol"]["type"] == 0       # SOFTENING default LINEAR
     _, m, bad = _errors("*MATERIAL, NAME=B\n*DAMAGE EVOLUTION, TYPE=ENERGY\n,\n")   # empty cell: Gf == 0
     assert m.materials["B"].extra_params["damage_evol"]["Gf"] == 0.0
     _, _, bad = _errors("*MATERIAL, NAME=C\n*DAMAGE EVOLUTION\n5.\n")               # TYPE required
     assert any(d.level == "error" for d in bad)
+    # DEGRADATION=MAXIMUM is the default and is accepted; MULTIPLICATIVE is not
+    _, _, bad = _errors("*MATERIAL, NAME=D\n*DAMAGE EVOLUTION, TYPE=ENERGY, DEGRADATION=MAXIMUM\n5.\n")
+    assert [d.code for d in bad] == ["damage-energy-regularization"]
+    _, _, bad = _errors("*MATERIAL, NAME=D\n*DAMAGE EVOLUTION, TYPE=ENERGY, DEGRADATION=MULTIPLICATIVE\n5.\n")
+    assert any(d.code == "unsupported-value" for d in bad)
 
 
 def test_cdp_tables_are_strain_value_pairs_and_psi_required():
@@ -700,8 +729,6 @@ def test_blank_numeric_items_are_zero_across_keywords():
     assert not bad and m.materials["A"].elastic == (1.0e8, 0.0)
     _, m, bad = _errors("*MATERIAL, NAME=B\n*VISCOELASTIC, TIME=PRONY\n0.5,,10.\n")    # k
     assert not bad and m.materials["B"].viscoelastic_prony == [(0.5, 0.0, 10.)]
-    _, m, bad = _errors("*MATERIAL, NAME=C\n*CREEP, LAW=TIME\n1e-10, 5.\n")            # m
-    assert not bad and m.materials["C"].extra_params["creep"]["m"] == 0.0
     _, m, bad = _errors("*MATERIAL, NAME=D\n*DRUCKER PRAGER\n30.\n*DRUCKER PRAGER HARDENING\n10.\n")
     dp = m.materials["D"].extra_params["drucker_prager"]
     assert not [x for x in bad if x.level == "error"] and dp["psi"] == 0.0 and dp["H"] == 0.0
@@ -757,10 +784,153 @@ def test_material_with_a_refused_definition_is_refused_whatever_else_it_has():
 
 
 def test_non_finite_packed_props_are_refused():
+    import numpy as np
     from dispsolver.material.resolve import resolve_material
+    _, m, _ = _errors("*MATERIAL, NAME=N\n*ELASTIC\n1000., 0.3\n")
+    m.materials["N"].elastic = (float("nan"), 0.3)
+    with pytest.raises(NotImplementedError, match="not finite"):
+        resolve_material(m.materials["N"], 3, "material of pid 0")
+    # a multilinear Drucker-Prager hardening is refused by the reader before any NaN exists
     deck = ("*MATERIAL, NAME=D\n*ELASTIC\n3e5, 0.3\n*DRUCKER PRAGER\n40., 1., 20.\n"
             "*DRUCKER PRAGER HARDENING\n10., 0.\n12., 0.01\n14., 0.02\n")
     _, m, bad = _errors(deck)
     assert any(d.code == "dp-hardening-multilinear" for d in bad)
-    with pytest.raises(NotImplementedError, match="not finite"):
+    with pytest.raises(NotImplementedError, match="definition was refused"):
         resolve_material(m.materials["D"], 3, "material of pid 0")
+
+
+
+
+# ─── Reviewer round: CDP packing, applier refusals, MODULI, Prony, combined definitions ───
+
+_CDP_DECK = ("*MATERIAL, NAME=C\n*ELASTIC\n30000., 0.2\n*CONCRETE DAMAGED PLASTICITY\n36.\n"
+             "*CONCRETE COMPRESSION HARDENING\n15., 0.\n30., 0.001\n20., 0.004\n"
+             "*CONCRETE TENSION STIFFENING\n3., 0.\n0.3, 0.001\n"
+             "*CONCRETE COMPRESSION DAMAGE\n0., 0.\n0.5, 0.004\n"
+             "*CONCRETE TENSION DAMAGE\n0., 0.\n0.9, 0.001\n")
+
+
+def test_cdp_packs_every_slot_from_the_deck():
+    from dispsolver.material.resolve import resolve_material
+    _, m, bad = _errors(_CDP_DECK)
+    mid, p = resolve_material(m.materials["C"], 3, "material of pid 0")
+    assert mid == MAT_CONCRETE_DP
+    # [E, nu, beta, psi, nc, (ec, sig)*nc, nt, (et, sig)*nt, ndt, (et, dt)*ndt, ndc, (ec, dc)*ndc]
+    assert list(p[:4]) == [30000., 0.2, 20.0, 36.0]        # psi from the deck, beta = the documented backbone 20 deg
+    assert list(p[4:11]) == [3, 0., 15., 0.001, 30., 0.004, 20.]
+    assert list(p[11:16]) == [2, 0., 3., 0.001, 0.3]
+    assert list(p[16:21]) == [2, 0., 0., 0.001, 0.9]
+    assert list(p[21:26]) == [2, 0., 0., 0.004, 0.5]
+    assert p[26] == 0.0
+
+
+def test_cdp_applier_refusals_are_recorded_on_the_material():
+    # 7-point table: ConcreteDP rejects it
+    pts = "".join(f"{15. + i}, {0.001 * i}\n" for i in range(7))
+    deck = _CDP_DECK.replace("15., 0.\n30., 0.001\n20., 0.004\n", pts)
+    reader, m, bad = _errors(deck)
+    assert any("table rejected" in r for r in m.materials["C"].extra_params["refused_definitions"])
+    # compression hardening without tension stiffening
+    deck = ("*MATERIAL, NAME=C\n*ELASTIC\n30000., 0.2\n*CONCRETE DAMAGED PLASTICITY\n36.\n"
+            "*CONCRETE COMPRESSION HARDENING\n15., 0.\n")
+    _, m, bad = _errors(deck)
+    assert any("TENSION STIFFENING" in r for r in m.materials["C"].extra_params["refused_definitions"])
+    assert "concrete_dp" not in m.materials["C"].extra_params
+    # tables without *CONCRETE DAMAGED PLASTICITY
+    _, m, bad = _errors("*MATERIAL, NAME=C\n*ELASTIC\n30000., 0.2\n*CONCRETE TENSION STIFFENING\n3., 0.\n")
+    assert m.materials["C"].extra_params["refused_definitions"]
+
+
+def test_dp_refusals_are_recorded_and_order_free():
+    _, m, bad = _errors("*MATERIAL, NAME=S\n*ELASTIC\n5e4, 0.3\n*DRUCKER PRAGER\n30., 1., 10.\n"
+                        "*DRUCKER PRAGER HARDENING\n10., 0.\n12., 0.\n")
+    ex = m.materials["S"].extra_params
+    assert any("strain must increase" in r for r in ex["refused_definitions"])
+    assert [d.code for d in bad].count("dp-hardening-strain") == 1       # reported once, no second error
+    assert "drucker_prager" not in ex
+
+
+def test_moduli_long_term_scales_the_shear_constants():
+    from dispsolver.material.resolve import resolve_material
+    deck = ("*MATERIAL, NAME=H\n*HYPERELASTIC, ARRUDA-BOYCE{mod}\n0.4, 3., 0.1\n"
+            "*VISCOELASTIC, TIME=PRONY\n0.2, 0., 3.\n0.1, 0., 30.\n")
+    _, m, bad = _errors(deck.format(mod=""))
+    mid, p = resolve_material(m.materials["H"], 3, "material of pid 0")
+    assert mid == MAT_HYPER_VISCOELASTIC if "MAT_HYPER_VISCOELASTIC" in globals() else mid == 6
+    assert p[1] == pytest.approx(0.4 / (1.0 - 0.3)) and p[2] == 3.0       # mu scaled, lambda_m / K untouched
+    _, m, _ = _errors(deck.format(mod=", MODULI=INSTANTANEOUS"))
+    _, p2 = resolve_material(m.materials["H"], 3, "material of pid 0")
+    assert p2[1] == pytest.approx(0.4)
+    # explicit MODULI=LONG TERM is the default and accepted
+    _, m, bad = _errors(deck.format(mod=", MODULI=LONG TERM"))
+    assert not [d for d in bad if d.level in ("gap", "error")]
+
+
+def test_prony_capacity_and_bulk_relaxation_are_refused():
+    from dispsolver.material.resolve import resolve_material
+    two = "*MATERIAL, NAME=P\n*ELASTIC\n100., 0.4\n*VISCOELASTIC, TIME=PRONY\n0.2, 0., 1.\n0.1, 0., 10.\n"
+    _, m, bad = _errors(two)
+    with pytest.raises(NotImplementedError, match="2 Prony terms, the kernel packs 1"):
+        resolve_material(m.materials["P"], 3, "material of pid 0")
+    seven = ("*MATERIAL, NAME=Q\n*HYPERELASTIC, NEO HOOKE\n0.4, 0.1\n*VISCOELASTIC, TIME=PRONY\n"
+             + "".join(f"0.01, 0., {i + 1}.\n" for i in range(7)))
+    _, m, bad = _errors(seven)
+    with pytest.raises(NotImplementedError, match="7 Prony terms, the kernel packs 6"):
+        resolve_material(m.materials["Q"], 3, "material of pid 0")
+
+
+def test_combined_constitutive_definitions_are_refused_whatever_the_order():
+    from dispsolver.material.resolve import resolve_material
+    for order in (("*PLASTIC\n250., 0.\n", "*HYPERELASTIC, NEO HOOKE\n0.4, 0.1\n"),
+                  ("*HYPERELASTIC, NEO HOOKE\n0.4, 0.1\n", "*PLASTIC\n250., 0.\n")):
+        _, m, _ = _errors("*MATERIAL, NAME=X\n*ELASTIC\n1e3, 0.3\n" + "".join(order))
+        with pytest.raises(NotImplementedError, match="does not consume"):
+            resolve_material(m.materials["X"], 3, "material of pid 0")
+    # TRS / MULLINS next to a Prony series are stored but consumed by no id
+    _, m, _ = _errors("*MATERIAL, NAME=T\n*ELASTIC\n1e3, 0.3\n*VISCOELASTIC, TIME=PRONY\n0.2, 0., 1.\n"
+                      "*TRS\n20., 17.4, 51.6\n")
+    with pytest.raises(NotImplementedError, match=r"\*TRS"):
+        resolve_material(m.materials["T"], 3, "material of pid 0")
+
+
+def test_ductile_damage_with_a_long_plastic_table_is_refused():
+    from dispsolver.material.resolve import resolve_material
+    deck = ("*MATERIAL, NAME=D\n*ELASTIC\n7e4, 0.3\n*PLASTIC\n200., 0.\n250., 0.05\n280., 0.1\n"
+            "*DAMAGE INITIATION, CRITERION=DUCTILE\n0.3\n*DAMAGE EVOLUTION, TYPE=ENERGY\n10.\n")
+    _, m, _ = _errors(deck)
+    with pytest.raises(NotImplementedError, match="keeps two"):
+        resolve_material(m.materials["D"], 3, "material of pid 0")
+    # initiation without evolution (valid Abaqus: no softening) is a clear refusal, not a ValueError
+    _, m, _ = _errors("*MATERIAL, NAME=D\n*ELASTIC\n7e4, 0.3\n*PLASTIC\n200., 0.\n"
+                      "*DAMAGE INITIATION, CRITERION=DUCTILE\n0.3\n")
+    with pytest.raises(NotImplementedError, match="initiation alone"):
+        m.materials["D"].to_numba_props()
+
+
+def test_arruda_boyce_nonpositive_lambda_m_is_refused():
+    from dispsolver.material.resolve import resolve_material
+    _, m, _ = _errors("*MATERIAL, NAME=A\n*HYPERELASTIC, ARRUDA-BOYCE\n0.4, , 0.1\n")
+    with pytest.raises(NotImplementedError, match="lambda_m"):
+        resolve_material(m.materials["A"], 3, "material of pid 0")
+
+
+def test_section_orientation_on_an_anisotropic_material_is_refused():
+    from dispsolver.material.resolve import resolve_material
+    deck = ("*NODE\n1, 0, 0, 0\n*ELEMENT, TYPE=C3D8, ELSET=E\n1, 1, 1, 1, 1, 1, 1, 1, 1\n"
+            "*ORIENTATION, NAME=O\n1., 0., 0., 0., 1., 0.\n*MATERIAL, NAME=ORTHO\n"
+            "*ELASTIC, TYPE=ENGINEERING CONSTANTS\n10., 2., 2., .3, .3, .3, 1., 1.\n1.\n"
+            "*MATERIAL, NAME=ISO\n*ELASTIC\n10., .3\n"
+            "*SOLID SECTION, ELSET=E, MATERIAL=ORTHO, ORIENTATION=O\n")
+    reader, model = _read_snippet(deck)
+    assert any(d.code == "orientation-not-connected" and d.level == "gap" for d in reader.diagnostics)
+    assert model.materials["ORTHO"].extra_params["refused_definitions"]
+    deck_iso = deck.replace("MATERIAL=ORTHO", "MATERIAL=ISO")
+    reader, model = _read_snippet(deck_iso)
+    assert not any(d.code == "orientation-not-connected" for d in reader.diagnostics)
+    assert any(d.code == "orientation-ignored-isotropic" and d.level == "info" for d in reader.diagnostics)
+
+
+def test_blank_dload_dsload_magnitude_is_zero():
+    deck = ("*NODE\n1, 0, 0, 0\n*STEP\n*STATIC\n*DLOAD\nE, P1\n*END STEP\n")
+    reader, _ = _read_snippet(deck)
+    assert not [d for d in reader.diagnostics if d.level == "error" and "magnitude" in d.message]

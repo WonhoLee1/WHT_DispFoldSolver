@@ -89,7 +89,9 @@ def test_damage_and_jc_plastic_landings():
         model = read_inp(deck, dim=3)
     mat = model.materials["M2"]
     assert mat.mat_type == "DRUCKER_PRAGER"
-    assert mat.extra_params["johnson_cook"]["A"] == 500.0
+    # Johnson-Cook plasticity has no solver material: the block is refused, not landed
+    assert "johnson_cook" not in mat.extra_params
+    assert any("JOHNSON COOK" in r for r in mat.extra_params["refused_definitions"])
     assert mat.extra_params["damage_init"]["type"] == 0
     assert mat.extra_params["damage_evol"] == {"type": 1, "Gf": 10.0, "L": 1.0}
 

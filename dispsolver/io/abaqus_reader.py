@@ -109,6 +109,14 @@ class AbaqusInputReader:
             # (*VISCOELASTIC, FORMULATION=), so it is not proof the deck is wrong
             self.report("gap", f"{kind}-param", text, block)
 
+    def refuse_definition(self, material, text: str, loc=None, code: str = "unsupported-feature",
+                          level: str = "gap") -> None:
+        """A definition the reader could not land inside a material: record it on the Material
+        (extra_params['refused_definitions'], which makes resolve_material refuse the material) and
+        report it. Appliers use this for every refusal that is decided after parsing."""
+        material.extra_params.setdefault("refused_definitions", []).append(text)
+        self.diagnostics.add(level, code, text, loc)
+
     def physics_gaps(self) -> List[str]:
         """Everything that makes the solved model differ from the deck: errors
         (the deck is wrong or unreadable) and gaps (valid input this solver
@@ -400,13 +408,9 @@ class AbaqusInputReader:
         # this runs once, after the last block). An internal failure here is a bug: not swallowed.
         self.symbols = bind_model(self.model, self.diagnostics)
 
-        # a Drucker-Prager material needs its cohesion from *DRUCKER PRAGER HARDENING; the
-        # Keywords Guide gives no default, so running on one would build a different model
-        for mname, m in self.model.materials.items():
-            if getattr(m, "extra_params", {}).get("dp_hardening_missing"):
-                self.report("error", "dp-hardening-missing",
-                            f"*MATERIAL {mname}: *DRUCKER PRAGER without *DRUCKER PRAGER HARDENING "
-                            f"(cohesion is undefined; the Keywords Guide gives no default)")
+        # keywords whose order is free (DRUCKER PRAGER + HARDENING, CDP + tables) are combined here
+        from dispsolver.io.keywords.material import finalize_materials
+        finalize_materials(self)
 
         # *RIGID BODY, ANALYTICAL SURFACE= must name a surface the deck defined. A *SURFACE
         # of an unimplemented TYPE (CYLINDER ...) was refused and already reported as a gap

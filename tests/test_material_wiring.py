@@ -63,7 +63,7 @@ _CASES = {
     "HYPER_VISCOELASTIC": (lambda: _mat("HYPER_VISCOELASTIC", hyperelastic=dict(_NH), viscoelastic_prony=[(0.2, 0.0, 1.0)]), 6),
     "DRUCKER_PRAGER": (lambda: _mat("DRUCKER_PRAGER", elastic=(2e5, 0.3), extra={"drucker_prager": {"d0": 100.0, "beta": 20.0, "psi": 20.0}}), 14),
     "CONCRETE_DP": (lambda: _mat("CONCRETE_DP", elastic=(3e4, 0.2), extra={"concrete_dp": {
-        "compression": [(10.0, 0.0)], "tension": [(2.0, 0.0)], "dt_table": [(0.0, 0.0)], "dc_table": [(0.0, 0.0)]}}), 15),
+        "beta": 20.0, "psi": 15.0, "compression": [(10.0, 0.0)], "tension": [(2.0, 0.0)], "dt_table": [(0.0, 0.0)], "dc_table": [(0.0, 0.0)]}}), 15),
     "JOHNSON_COOK": (lambda: _mat("JOHNSON_COOK", elastic=(2e5, 0.3)), None),
     "BERGSTROM_BOYCE": (lambda: _mat("BERGSTROM_BOYCE", elastic=(2e5, 0.3)), None),
     "CREEP": (lambda: _mat("CREEP", elastic=(2e5, 0.3)), None),
@@ -306,9 +306,13 @@ def test_2d_solver_no_longer_turns_hyperelastic_into_linear_elastic():
 # (e) golden comparison against the pre-A5 chain
 # -----------------------------------------------------------------------------
 _GOLDEN = ROOT / "tests" / "fixtures" / "material_ids_9f5e6e9.json"
+_REFUSALS = ROOT / "tests" / "fixtures" / "material_refusals_expected.json"
+# per golden material: the exact refused_definitions the reader records today (reviewed once;
+# a new or different refusal for the material is not explained and fails the comparison)
+_EXPECTED_REFUSALS = json.loads(_REFUSALS.read_text(encoding="utf-8")) if _REFUSALS.exists() else {}
 
 
-def _explained_change(m, old, new):
+def _explained_change(m, old, new, key=None):
     """Reason code if the change from the pre-A5 (id, props) is one of the
     reasoned corrections / refusals, else None."""
     extra = m.extra_params
@@ -327,19 +331,48 @@ def _explained_change(m, old, new):
         return "hyper-viscoelastic with a base the kernel layout cannot carry (old: wrong slots)"
     # ---- B4 / Keywords Guide audit (agent B, 2026-10): each class names the audit fix that changed it
     refused = list(extra.get("refused_definitions") or [])
-    if err and "must be given together" in new["msg"] and any(r.startswith(("*DAMAGE", "*PLASTIC")) for r in refused):
-        return ("damage initiation or its plasticity refused by the reader, evolution kept: the material is "
-                "refused (Material.to_numba_props raises before resolve_material) (old: ran with the half definition)")
-    if err and "props are not finite" in new["msg"] and m.mat_type == "DRUCKER_PRAGER"             and extra.get("drucker_prager", {}).get("d0") != extra.get("drucker_prager", {}).get("d0"):
-        return "DRUCKER PRAGER HARDENING with more than two points: d0 is NaN, refused as non-finite (old: d0=100)"
-    if err and refused and "definition was refused" in new["msg"] and all(r in new["msg"] for r in refused):
-        return ("a definition the reader refused (gap): the material is refused too, the message lists it "
-                "(old: ran as another model -- elastic part only, or half a damage/plasticity definition)")
+    if err and refused:
+        # a definition the reader refused: the material is refused too. Only the refusal texts recorded in
+        # the fixture for this very material are accepted -- another or additional refusal fails the test
+        # (the error is resolve_material's, or the model's own check on a half damage definition)
+        expected = _EXPECTED_REFUSALS.get(key)
+        msg = new["msg"]
+        if expected is not None and refused == expected and (
+                "definition was refused" in msg or msg.startswith(("*DAMAGE INITIATION and", "Damage needs a Plastic"))):
+            return ("a definition the reader refused (gap): the material is refused too, the message lists it "
+                    "(old: ran as another model -- elastic part only, or half a damage/plasticity definition)")
+        return None
+    if err and "does not consume" in new["msg"]:
+        names = re.search(r"it defines (.*?), which", new["msg"]).group(1).split(", ")
+        stored = {"*MULLINS EFFECT": "mullins", "*RATE DEPENDENT": "rate_dependent", "*TRS": "trs",
+                  "*CREEP": "creep", "*VISCOELASTIC": None, "*PLASTIC": None, "*HYPERELASTIC": None}
+        if all(n in stored for n in names):
+            return ("combined constitutive definitions: *MULLINS EFFECT / *RATE DEPENDENT / *TRS (and the like) "
+                    "are stored but no id consumes them; the material is refused (old: silently dropped)")
+    if err and "Prony terms, the kernel packs" in new["msg"] and m.mat_type in ("VISCOELASTIC", "HYPER_VISCOELASTIC"):
+        return "more Prony terms than the kernel packs: refused (old: only the first term(s) packed)"
+    if err and "hyperelastic base is not implemented" in new["msg"] and m.mat_type == "HYPER_VISCOELASTIC":
+        return "hyper-viscoelastic on a Mooney-Rivlin / Ogden / polynomial base: refused (old: Neo-Hooke defaults)"
     if err:
         return None
     nid, op, nprops = new["id"], old["props"], new["props"]
     diff = [i for i in range(64) if not (op[i] == nprops[i])]
     hyp = (m.hyperelastic or {}).get("model", "").upper()
+    if old.get("id") == 2 and nid == 12 and m.mat_type == "TABULAR_PLASTIC" and m.plastic and len(m.plastic) >= 2:
+        return ("*PLASTIC with two or more points: the tabular kernel (holds the last yield stress constant); "
+                "old: linear-H J2 hardening without bound")
+    if m.viscoelastic_prony and str(extra.get("moduli")) == "LONG TERM" and nid == old.get("id") and nid in (3, 6):
+        g_sum = sum(t[0] for t in m.viscoelastic_prony)
+        f = 1.0 / (1.0 - g_sum)
+        if nid == 6 and diff == [1] and abs(nprops[1] - f * op[1]) <= 1e-12 * abs(nprops[1]):
+            return ("*ELASTIC/*HYPERELASTIC MODULI=LONG TERM (Guide default): instantaneous shear constant = "
+                    "long-term / (1 - sum g_i) in the hyper-viscoelastic kernel; bulk unchanged")
+        if nid == 3 and diff and set(diff) <= {0, 1}:
+            mu_o, K_o = op[0] / (2 * (1 + op[1])), op[0] / (3 * (1 - 2 * op[1]))
+            mu_n, K_n = nprops[0] / (2 * (1 + nprops[1])), nprops[0] / (3 * (1 - 2 * nprops[1]))
+            if abs(mu_n - f * mu_o) <= 1e-9 * mu_n and abs(K_n - K_o) <= 1e-9 * K_n:
+                return ("*ELASTIC MODULI=LONG TERM (Guide default): instantaneous shear = long-term / (1 - sum g_i) "
+                        "in the plain Prony kernel; bulk unchanged")
     if nid == old.get("id") == 0 and diff == [1] and op[1] == 0.3 and nprops[1] == 0.0 and m.elastic \
             and m.elastic[1] == 0.0:
         return "*ELASTIC with Poisson's ratio omitted: blank == 0 (old: invented nu=0.3)"
@@ -353,20 +386,15 @@ def _explained_change(m, old, new):
         di = extra.get("damage_init", {})
         if (di.get("Troom"), di.get("Tmelt")) == (nprops[14], nprops[15]):
             return "JOHNSON COOK damage: theta_transition / theta_melt from the data line (old: 20 / 1000)"
-    if old.get("id") == 0 and nid == 2 and m.mat_type == "J2_PLASTICITY" and m.plastic \
-            and nprops[2] == m.plastic[0][0] and all(e == 0.0 for _, e in m.plastic):
+    if old.get("id") == 0 and nid in (2, 12) and m.plastic and nprops[2] in (m.plastic[0][0], float(len(m.plastic))) \
+            and all(e == 0.0 for _, e in m.plastic):
         return "*PLASTIC data line with the plastic strain omitted: blank == 0 (old: line dropped, elastic only)"
     if old.get("id") == 1 and (nid, hyp) in ((8, "MOONEY_RIVLIN"), (10, "POLYNOMIAL")):
         return "*HYPERELASTIC without a form flag is POLYNOMIAL (N=1: Mooney-Rivlin, N=2: polynomial) (old: Neo-Hooke)"
     if old.get("id") == 10 and nid == 1 and hyp == "NEO_HOOKEAN":
         return "REDUCED POLYNOMIAL N=1 is Neo-Hooke (old: polynomial id 10, constants in the wrong slots)"
     if nid == old.get("id") == 5 and hyp == "YEOH" and op[3] == nprops[2] and set(diff) <= {2, 3, 4, 5}:
-        return "Yeoh: D1 no longer takes C30 (old slot mix-up; omitted D_i == 0)"
-    _short = {1: {0: 0.2, 1: 200.0, 2: 0.1, 3: 0.01}, 8: {0: 0.1, 1: 0.05, 2: 0.01}, 4: {2: 8.3333}}
-    if nid == old.get("id") and nid in _short and m.hyperelastic and diff \
-            and all(i in _short[nid] and op[i] == _short[nid][i] for i in diff):
-        return ("hyperelastic data line without D_i (Guide: omitted == 0): the old parser needed the full line "
-                "and left every constant at the catalog default")
+        return "Yeoh: D1 no longer takes C30 (old slot mix-up)"
     if m.mat_type == "VISCOELASTIC" and old.get("id") == 6 and new["id"] == 3 and m.viscoelastic_prony and not m.hyperelastic:
         return "plain Prony: catalog id 3 (old: Neo-Hooke id 6 with an invented mu=0.2, K=10)"
     if m.mat_type == "HYPER_VISCOELASTIC" and not m.viscoelastic_prony and new["id"] == material_id(m) != old.get("id"):
@@ -404,7 +432,7 @@ def test_deck_materials_match_the_pre_a5_chain_except_the_reasoned_list():
                     continue
                 if "error" not in old and "error" not in new and old == new:
                     continue
-                why = _explained_change(m, old, new)
+                why = _explained_change(m, old, new, key)
                 if why is None:
                     unexplained.append((key, old.get("id", old), new.get("id", new.get("error"))))
                 else:

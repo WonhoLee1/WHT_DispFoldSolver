@@ -153,6 +153,7 @@ class ElasticRecord(Record):
     type: str
     kind: str
     table: Tuple[Tuple[float, ...], ...]
+    moduli: str = "LONG TERM"
 
 
 @keyword("ELASTIC", support="FULL", contexts={KeywordContext.MATERIAL, KeywordContext.GLOBAL})
@@ -165,7 +166,8 @@ class Elastic(Keyword):
             "TRACTION", "BILAMINA", "LAMINA", "SHORT FIBER", "COUPLED TRACTION",
             "TRANSVERSELY ISOTROPIC", "SHEAR"
         ] = Param("ISOTROPIC", supported=("ISOTROPIC", "ENGINEERING CONSTANTS"))
-        moduli: Literal["LONG TERM", "INSTANTANEOUS"] = Param("LONG TERM", unsupported="MODULI not supported")
+        # Keywords Guide default LONG TERM; both are represented (see catalog: Prony packing)
+        moduli: Literal["LONG TERM", "INSTANTANEOUS"] = "LONG TERM"
         dependencies: int = 0
         cohesive_offset: Optional[str] = Param(None, unsupported="COHESIVE OFFSET not supported")
         compression_factor: Optional[float] = Param(None, unsupported="COMPRESSION FACTOR not supported")
@@ -186,10 +188,16 @@ class Elastic(Keyword):
             vals = [_z(v) for v in vals]
             if b[1] is not None:
                 raise Unsupported("*ELASTIC, TYPE=ENGINEERING CONSTANTS: temperature dependence not represented")
-            yield ElasticRecord(type=p.type, kind="const", table=(tuple(float(v) for v in vals),), loc=ctx.loc)
+            yield ElasticRecord(type=p.type, kind="const", table=(tuple(float(v) for v in vals),),
+                                moduli=p.moduli, loc=ctx.loc)
             return
         kind, table = _tabulate("ELASTIC", rows, 2, p.dependencies, ("Young's modulus E", "Poisson's ratio nu"))
-        yield ElasticRecord(type=p.type, kind=kind, table=table, loc=ctx.loc)
+        if kind == "temp":
+            # the deck's temperatures never reach the solver (2D never reads temp_elastic_table; 3D only
+            # through set_temperature, not from the deck): the first line would run at every temperature
+            raise Unsupported("*ELASTIC: temperature-dependent moduli are not represented "
+                              "(deck temperatures are not passed to the solver)")
+        yield ElasticRecord(type=p.type, kind=kind, table=table, moduli=p.moduli, loc=ctx.loc)
 
 
 @applies(ElasticRecord)
@@ -204,6 +212,7 @@ def _apply_elastic(reader: AbaqusInputReader, rec: ElasticRecord) -> None:
         mat.Elastic(field_table=rec.table, type=rec.type)
     else:
         mat.Elastic(table=rec.table, type=rec.type)
+    mat.extra_params["moduli"] = rec.moduli
 
 
 # ─── 3. *EXPANSION ───────────────────────────────────────────────────────────
@@ -256,12 +265,13 @@ class PlasticRecord(Record):
 
 @keyword("PLASTIC", support="FULL", contexts={KeywordContext.MATERIAL, KeywordContext.GLOBAL})
 class Plastic(Keyword):
-    """Metal plasticity: isotropic hardening table (yield stress, plastic strain) or Johnson-Cook."""
+    """Metal plasticity: isotropic hardening table (yield stress, plastic strain), up to 10 points."""
 
     class Params(Schema):
-        # kinematic hardening is not represented (the model hardens isotropically)
+        # kinematic hardening is not represented (the model hardens isotropically); Johnson-Cook
+        # plasticity has no solver material (material_id refuses it)
         hardening: Literal["ISOTROPIC", "KINEMATIC", "MULTILINEAR KINEMATIC", "COMBINED", "JOHNSON COOK", "USER"] = Param(
-            "ISOTROPIC", supported=("ISOTROPIC", "JOHNSON COOK"))
+            "ISOTROPIC", supported=("ISOTROPIC",))
         rate: Optional[str] = Param(None, unsupported="PLASTIC RATE not supported")
         dependencies: int = 0
         data_type: Optional[str] = Param(None, unsupported="PLASTIC DATA TYPE not supported")
@@ -274,37 +284,22 @@ class Plastic(Keyword):
     Row = FloatRow
 
     def to_records(self, p, rows, ctx) -> Iterable[Record]:
-        hard = p.hardening.replace(" ", "_")
-        if hard == "JOHNSON_COOK":
-            # one line: A B n m theta_melt theta_transition (m blank or 0: no temperature dependence)
-            if len(rows) != 1:
-                raise InputError("*PLASTIC, HARDENING=JOHNSON COOK takes exactly one data line")
-            v = _cells(rows[0], 6)
-            m = _z(v[3])
-            yield Note("gap", "rate-effect-dropped",
-                       "*PLASTIC HARDENING=JOHNSON_COOK: quasi-static isothermal landing (C=0, dispatcher carries no rate)",
-                       loc=ctx.loc)
-            yield PlasticRecord(hardening=hard, kind="const",
-                                table=((_z(v[0]), _z(v[1]), _z(v[2]), m, v[4], v[5]),), loc=ctx.loc)
-            return
         kind, table = _tabulate("PLASTIC", rows, 2, p.dependencies, ("yield stress", "plastic strain"), curve=True)
-        yield PlasticRecord(hardening=hard, kind=kind, table=table, loc=ctx.loc)
+        if kind != "const":
+            # the model flattens a temperature / field family into one curve (Material.Plastic)
+            raise Unsupported(f"*PLASTIC: {'temperature' if kind == 'temp' else 'field-variable'}-dependent "
+                              f"hardening is not represented (the tables would be merged into one curve)")
+        if table[0][1] != 0.0:
+            raise InputError("*PLASTIC: the first plastic strain must be zero (Keywords Guide)")
+        if len(table) > 10:
+            raise Unsupported(f"*PLASTIC: {len(table)} hardening points; the tabular kernel holds 10")
+        yield PlasticRecord(hardening="ISOTROPIC", kind=kind, table=table, loc=ctx.loc)
 
 
 @applies(PlasticRecord)
 def _apply_plastic(reader: AbaqusInputReader, rec: PlasticRecord) -> None:
     mat = reader.current_material
-    if mat is None:
-        return
-    if rec.hardening == "JOHNSON_COOK":
-        A, B, n, m, t_melt, t_trans = rec.table[0]
-        kw = {}
-        if m != 0.0:                       # temperature terms only matter for m != 0 (blank == 0)
-            kw = {"T_melt": _z(t_melt), "T_room": _z(t_trans)}
-        mat.JohnsonCook(A=A, B=B, n=n, m=m, **kw)
-    elif rec.kind == "field":
-        mat.Plastic(table=rec.table, hardening=rec.hardening, field_table=rec.table)
-    else:
+    if mat is not None:
         mat.Plastic(table=rec.table, hardening=rec.hardening)
 
 
@@ -329,6 +324,9 @@ class Creep(Keyword):
     Row = FloatRow
 
     def to_records(self, p, rows, ctx) -> Iterable[Record]:
+        # no solver material id consumes the stored creep law, so a material with *CREEP would run
+        # without it; refuse until an id does (Material.Creep and the kernels in material/creep_*.py exist)
+        raise Unsupported("*CREEP: no solver material consumes creep laws yet")
         if not rows:
             raise InputError("*CREEP: no data line")
         law = p.law
@@ -378,6 +376,7 @@ class HyperelasticRecord(Record):
     n: int
     table: Tuple[Tuple[float, ...], ...]
     coef: Tuple[Tuple[str, float], ...] = ()
+    moduli: str = "LONG TERM"
 
 
 def _coef_line(kw: str, rows, k_req: int, k_all: int, what: str) -> list:
@@ -395,6 +394,10 @@ def _coef_line(kw: str, rows, k_req: int, k_all: int, what: str) -> list:
     return [0.0 if c is None else float(c) for c in cells[:k_all]]
 
 
+def coef_d(coef: dict):
+    return (coef.get("d1", 0.0), coef.get("d2", 0.0), coef.get("d3", 0.0))
+
+
 @keyword("HYPERELASTIC", support="FULL", contexts={KeywordContext.MATERIAL, KeywordContext.GLOBAL})
 class Hyperelastic(Keyword):
     """Hyperelastic strain-energy potentials. POLYNOMIAL (N=1) is the Abaqus default form."""
@@ -403,7 +406,7 @@ class Hyperelastic(Keyword):
         # TYPE belongs to USER hyperelasticity only (Keywords Guide); the model is chosen by the flags
         type: Optional[str] = Param(None, unsupported="HYPERELASTIC TYPE applies only to USER hyperelasticity")
         n: int = 1
-        moduli: Literal["INSTANTANEOUS", "LONG TERM"] = Param("LONG TERM", unsupported="HYPERELASTIC MODULI not supported")
+        moduli: Literal["INSTANTANEOUS", "LONG TERM"] = "LONG TERM"
         properties: Optional[int] = Param(None, unsupported="HYPERELASTIC PROPERTIES not supported")
         test_data_input: bool = Param(False, unsupported="HYPERELASTIC TEST DATA INPUT not supported")
         arruda_boyce: bool = False
@@ -464,16 +467,33 @@ class Hyperelastic(Keyword):
         elif form == "arruda_boyce":
             v = _coef_line(kw, rows, 2, 3, "mu, lambda_m, D")
             model, table = "ARRUDA_BOYCE", (tuple(v),)
-        else:  # ogden
+        else:  # ogden: mu_i alpha_i (i=1..N), D_i (i=1..N), temperature; exactly eight values per line
             if not 1 <= n <= 6:
                 raise InputError(f"*HYPERELASTIC, OGDEN, N={n}: N must be 1..6")
-            vals = [float(x) for r in rows for x in r.items if x is not None]
-            if len(vals) > 3 * n:
+            need = 3 * n + 1
+            if len(rows) > -(-need // 8):
+                raise Unsupported("*HYPERELASTIC, OGDEN: several temperature sets are not represented")
+            flat: list = []
+            for r in rows:                                # blank cells keep their position
+                flat.extend(_cells(r, 8))
+            flat = flat + [None] * (need - len(flat)) if len(flat) < need else flat
+            if any(c is not None for c in flat[3 * n:]):
                 raise Unsupported("*HYPERELASTIC, OGDEN: temperature-dependent constants are not represented")
-            vals = vals + [0.0] * (3 * n - len(vals))          # omitted items are zero
+            vals = [_z(c) for c in flat[:3 * n]]
             mus, als, ds = vals[0:2 * n:2], vals[1:2 * n:2], vals[2 * n:]
+            if any(d != 0.0 for d in ds[1:]):
+                raise Unsupported("*HYPERELASTIC, OGDEN: D2..DN are not represented (the kernel packs D1 only)")
             model, table = "OGDEN", tuple((mus[i], als[i], ds[i]) for i in range(n))
-        yield HyperelasticRecord(model=model, n=n, table=table, coef=tuple(coef.items()), loc=ctx.loc)
+        # D_i omitted / zero means fully incompressible in Abaqus (hybrid elements); the model has no
+        # incompressible path (the catalog turned D=0 into K = 2e12 / 1e6 / no volumetric term)
+        dvals = {"NEO_HOOKEAN": lambda: [table[0][1]], "MOONEY_RIVLIN": lambda: [table[0][2]],
+                 "POLYNOMIAL": lambda: list(table[0][5:7]), "YEOH": lambda: list(coef_d(coef)),
+                 "ARRUDA_BOYCE": lambda: [table[0][2]], "OGDEN": lambda: [r[2] for r in table]}[model]()
+        if all(d == 0.0 for d in dvals):
+            raise Unsupported("*HYPERELASTIC: incompressible hyperelasticity (D=0) is not implemented "
+                              "(no hybrid / incompressible path consumes it)")
+        yield HyperelasticRecord(model=model, n=n, table=table, coef=tuple(coef.items()),
+                                 moduli=p.moduli, loc=ctx.loc)
 
 
 @applies(HyperelasticRecord)
@@ -481,6 +501,7 @@ def _apply_hyperelastic(reader: AbaqusInputReader, rec: HyperelasticRecord) -> N
     mat = reader.current_material
     if mat is not None:
         mat.Hyperelastic(model=rec.model, n=rec.n, table=rec.table, **dict(rec.coef))
+        mat.extra_params["moduli"] = rec.moduli
 
 
 # ─── 7. *VISCOELASTIC ────────────────────────────────────────────────────────
@@ -525,7 +546,11 @@ class Viscoelastic(Keyword):
         for r in rows:
             if len(r.items) > 3:
                 raise InputError("*VISCOELASTIC: at most g_i, k_i and tau_i per line")
-            table.append(tuple(_z(x) for x in _cells(r, 3)))
+            g_, k_, tau_ = (_z(x) for x in _cells(r, 3))
+            if k_ != 0.0:
+                raise Unsupported("*VISCOELASTIC: bulk relaxation (k_i != 0) is not represented "
+                                  "(the Prony kernels relax the deviatoric response only)")
+            table.append((g_, k_, tau_))
         yield ViscoelasticRecord(time=p.time, type=p.type, table=tuple(table), loc=ctx.loc)
 
 
@@ -676,7 +701,7 @@ class DamageEvolution(Keyword):
         # TYPE is required (Keywords Guide); SOFTENING defaults to LINEAR
         type: Literal["DISCONTINUOUS", "DISPLACEMENT", "ENERGY", "HYSTERESIS ENERGY"] = Param(supported=("ENERGY",))
         softening: Literal["LINEAR", "EXPONENTIAL", "TABULAR"] = Param("LINEAR", supported=("LINEAR", "EXPONENTIAL"))
-        degradation: Literal["MAXIMUM", "MULTIPLICATIVE"] = Param("MAXIMUM", unsupported="DAMAGE EVOLUTION DEGRADATION not supported")
+        degradation: Literal["MAXIMUM", "MULTIPLICATIVE"] = Param("MAXIMUM", supported=("MAXIMUM",))
         dependencies: int = Param(0, unsupported="DAMAGE EVOLUTION DEPENDENCIES not supported")
         mixed_mode_behavior: Optional[str] = Param(None, unsupported="MIXED MODE BEHAVIOR not supported")
         mode_mix_ratio: Optional[str] = Param(None, unsupported="MODE MIX RATIO not supported")
@@ -691,6 +716,10 @@ class DamageEvolution(Keyword):
         v = _cells(rows[0], 2) if rows else [None, None]      # an all-blank line: Gf == 0
         if v[1] is not None:
             raise Unsupported("*DAMAGE EVOLUTION: temperature-dependent fracture energy is not represented")
+        yield Note("gap", "damage-energy-regularization",
+                   "*DAMAGE EVOLUTION, TYPE=ENERGY: the characteristic length is fixed at L=1.0 and the failure "
+                   "displacement u_f comes from sigma_y0 (Abaqus: element characteristic length, stress at "
+                   "initiation), so the dissipated energy is not Gf per unit area", loc=ctx.loc)
         yield DamageEvolutionRecord(type=f"ENERGY_{p.softening}", Gf=_z(v[0]), loc=ctx.loc)
 
 
@@ -743,10 +772,9 @@ class DruckerPrager(Keyword):
 def _apply_drucker_prager(reader: AbaqusInputReader, rec: DruckerPragerRecord) -> None:
     mat = reader.current_material
     if mat is not None:
-        # cohesion d0 and hardening H come from *DRUCKER PRAGER HARDENING; the
-        # Material default (d0=100) is not a deck value, so mark it unset (NaN)
-        mat.DruckerPrager(beta=rec.beta, psi=rec.psi, d0=float("nan"), H=0.0)
-        mat.extra_params["dp_hardening_missing"] = True
+        # cohesion d0 / hardening H come from *DRUCKER PRAGER HARDENING, which may precede or follow
+        # this keyword: both are combined in finalize_materials() at the end of the deck
+        mat.extra_params["dp_input"] = {"beta": rec.beta, "psi": rec.psi, "loc": rec.loc}
 
 
 # ─── 12. *DRUCKER PRAGER HARDENING ───────────────────────────────────────────
@@ -785,43 +813,49 @@ class DruckerPragerHardening(Keyword):
 @applies(DruckerPragerHardeningRecord)
 def _apply_drucker_prager_hardening(reader: AbaqusInputReader, rec: DruckerPragerHardeningRecord) -> None:
     mat = reader.current_material
-    if mat is None or "drucker_prager" not in mat.extra_params:
-        reader.diagnostics.add("gap", "dp-hardening-without-drucker-prager",
-                               "*DRUCKER PRAGER HARDENING: no *DRUCKER PRAGER landed in this material "
-                               "(absent or refused above)", rec.loc)
+    if mat is not None:
+        mat.extra_params["dp_hardening"] = {"type": rec.type, "table": rec.table, "loc": rec.loc}
+
+
+def _finalize_dp(reader, mat) -> None:
+    ex = mat.extra_params
+    dpi, dph = ex.get("dp_input"), ex.get("dp_hardening")
+    if dpi is None and dph is None:
         return
-    dp = mat.extra_params["drucker_prager"]
+    if dph is None:
+        reader.refuse_definition(
+            mat, "*DRUCKER PRAGER without *DRUCKER PRAGER HARDENING (cohesion is undefined; the Keywords "
+                 "Guide gives no default)", dpi["loc"], "dp-hardening-missing", level="error")
+        return
+    if dpi is None:
+        reader.refuse_definition(
+            mat, "*DRUCKER PRAGER HARDENING without a *DRUCKER PRAGER in this material (absent or refused above)",
+            dph["loc"], "dp-hardening-without-drucker-prager")
+        return
     # linear model F = t - p tan(beta) - d: cohesion d from the test yield stress.
-    # The DRUCKER PRAGER HARDENING page states only d = (sqrt3/2) tau (1+1/K) for
-    # SHEAR; COMPRESSION / TENSION use the standard Abaqus Analysis Guide relations
-    # (Extended Drucker-Prager models), not on the cached pages:
-    #   COMPRESSION d = (1 - tan(beta)/3) sigma_c
-    #   TENSION     d = (1/K + tan(beta)/3) sigma_t
-    #   SHEAR       d = (sqrt(3)/2) (1 + 1/K) tau      (K = 1 here)
-    tb = math.tan(math.radians(dp["beta"]))
-    if rec.type == "COMPRESSION":
-        f = 1.0 - tb / 3.0
-    elif rec.type == "TENSION":
-        f = 1.0 + tb / 3.0
-    else:
-        f = math.sqrt(3.0)
-    d = [(f * s, e) for s, e in rec.table]
+    #   COMPRESSION d = (1 - tan(beta)/3) sigma_c       (Abaqus Analysis Guide, Extended Drucker-Prager;
+    #   TENSION     d = (1/K + tan(beta)/3) sigma_t      not on the cached pages; K = 1 here)
+    #   SHEAR       the data value IS the cohesion d = (sqrt3/2) tau (1+1/K) (cached DRUCKER PRAGER
+    #               HARDENING page), as a function of the equivalent plastic strain gamma/sqrt3
+    tb = math.tan(math.radians(dpi["beta"]))
+    f = {"COMPRESSION": 1.0 - tb / 3.0, "TENSION": 1.0 + tb / 3.0, "SHEAR": 1.0}[dph["type"]]
+    d = [(f * sy, e) for sy, e in dph["table"]]
     if len(d) > 2:
-        reader.diagnostics.add("gap", "dp-hardening-multilinear",
-                               "*DRUCKER PRAGER HARDENING: more than two points; the model has linear hardening only",
-                               rec.loc)
-        mat.extra_params.pop("dp_hardening_missing", None)     # already reported
+        reader.refuse_definition(
+            mat, "*DRUCKER PRAGER HARDENING with more than two points (the model has linear hardening only)",
+            dph["loc"], "dp-hardening-multilinear")
         return
-    dp["d0"] = d[0][0]
-    if len(d) == 1:
-        dp["H"] = 0.0
-    else:
-        if d[1][1] <= d[0][1]:
-            reader.diagnostics.add("error", "dp-hardening-strain",
-                                   "*DRUCKER PRAGER HARDENING: plastic strain must increase", rec.loc)
-            return
-        dp["H"] = (d[1][0] - d[0][0]) / (d[1][1] - d[0][1])
-    mat.extra_params.pop("dp_hardening_missing", None)
+    if len(d) == 2 and d[1][1] <= d[0][1]:
+        reader.refuse_definition(mat, "*DRUCKER PRAGER HARDENING: plastic strain must increase", dph["loc"],
+                                 "dp-hardening-strain", level="error")
+        return
+    h = 0.0 if len(d) == 1 else (d[1][0] - d[0][0]) / (d[1][1] - d[0][1])
+    mat.DruckerPrager(beta=dpi["beta"], psi=dpi["psi"], d0=d[0][0], H=h)
+    if len(d) == 2:
+        reader.diagnostics.add(
+            "gap", "dp-hardening-linear-extrapolation",
+            "*DRUCKER PRAGER HARDENING: the kernel hardens linearly beyond the last point; Abaqus holds the "
+            "last yield stress constant", dph["loc"])
 
 
 # ─── 13-17. CONCRETE DAMAGED PLASTICITY SUITE ────────────────────────────────
@@ -833,22 +867,51 @@ def _apply_drucker_prager_hardening(reader: AbaqusInputReader, rec: DruckerPrage
 _NO_DAMAGE = [(0.0, 0.0)]
 
 
-def _try_finalize_cdp(reader: AbaqusInputReader, mat) -> None:
+def _finalize_cdp(reader, mat) -> None:
     ep = mat.extra_params
-    if "cdp_params" not in ep or "cdp_compression" not in ep or "cdp_tension" not in ep:
+    keys = ("cdp_params", "cdp_compression", "cdp_tension", "cdp_dt", "cdp_dc")
+    if not any(k in ep for k in keys):
         return
-    p = ep["cdp_params"]
+    cp = ep.get("cdp_params")
+    loc = cp["loc"] if cp else None
+    if cp is None:
+        reader.refuse_definition(mat, "*CONCRETE ... tables without *CONCRETE DAMAGED PLASTICITY", loc)
+        return
+    if "cdp_compression" not in ep or "cdp_tension" not in ep:
+        reader.refuse_definition(
+            mat, "*CONCRETE DAMAGED PLASTICITY requires *CONCRETE COMPRESSION HARDENING and "
+                 "*CONCRETE TENSION STIFFENING", loc)
+        reader.unsupported_keyword("CONCRETE_DAMAGED_PLASTICITY without hardening tables")
+        return
     try:
-        mat.ConcreteDP(
-            beta=p["beta"],
-            psi=p["psi"],
-            compression=ep["cdp_compression"],
-            tension=ep["cdp_tension"],
-            dt_table=ep.get("cdp_dt", _NO_DAMAGE),
-            dc_table=ep.get("cdp_dc", _NO_DAMAGE),
-        )
+        mat.ConcreteDP(beta=cp["beta"], psi=cp["psi"], compression=ep["cdp_compression"],
+                       tension=ep["cdp_tension"], dt_table=ep.get("cdp_dt", _NO_DAMAGE),
+                       dc_table=ep.get("cdp_dc", _NO_DAMAGE))
     except ValueError as e:
+        reader.refuse_definition(mat, f"CONCRETE_DAMAGED_PLASTICITY table rejected ({e})", loc)
         reader.unsupported_keyword(f"CONCRETE_DAMAGED_PLASTICITY table rejected ({e})")
+
+
+def finalize_materials(reader) -> None:
+    """End of deck: combine the keywords whose order is free (DP + HARDENING, CDP + tables) and check
+    what only the whole material can show (a section orientation on an anisotropic material)."""
+    for mat in reader.model.materials.values():
+        _finalize_dp(reader, mat)
+        _finalize_cdp(reader, mat)
+    for sec in reader.model.sections.values():
+        ori = getattr(sec, "orientation_name", None)
+        if not ori:
+            continue
+        mat = reader.model.materials.get(getattr(sec, "material_name", None))
+        loc = getattr(sec, "source_location", None)
+        text = f"section {sec.name!r} orientation {ori!r}"
+        if mat is not None and "engineering_constants" in mat.extra_params:
+            reader.refuse_definition(
+                mat, f"{text} on an anisotropic material (no solver reads the section orientation)", loc,
+                "orientation-not-connected")
+        else:
+            reader.diagnostics.add("info", "orientation-ignored-isotropic",
+                                   f"{text}: isotropic material, the orientation changes nothing", loc)
 
 
 def _cdp_pairs(kw: str, rows, names: Tuple[str, str]) -> Tuple[Tuple[float, float], ...]:
@@ -907,8 +970,7 @@ def _apply_cdp(reader: AbaqusInputReader, rec: ConcreteDPRecord) -> None:
     mat = reader.current_material
     if mat is None:
         return
-    mat.extra_params["cdp_params"] = {"psi": rec.psi, "beta": rec.beta}
-    _try_finalize_cdp(reader, mat)
+    mat.extra_params["cdp_params"] = {"psi": rec.psi, "beta": rec.beta, "loc": rec.loc}
 
 
 @dataclass(frozen=True)
@@ -936,7 +998,6 @@ def _apply_cdp_compression(reader: AbaqusInputReader, rec: CDPCompressionRecord)
     if mat is None:
         return
     mat.extra_params["cdp_compression"] = list(rec.table)
-    _try_finalize_cdp(reader, mat)
 
 
 @dataclass(frozen=True)
@@ -966,7 +1027,6 @@ def _apply_cdp_tension(reader: AbaqusInputReader, rec: CDPTensionRecord) -> None
     if mat is None:
         return
     mat.extra_params["cdp_tension"] = list(rec.table)
-    _try_finalize_cdp(reader, mat)
 
 
 @dataclass(frozen=True)
@@ -995,7 +1055,6 @@ def _apply_cdp_dc(reader: AbaqusInputReader, rec: CDPCompressionDamageRecord) ->
     if mat is None:
         return
     mat.extra_params["cdp_dc"] = list(rec.table)
-    _try_finalize_cdp(reader, mat)
 
 
 @dataclass(frozen=True)
@@ -1026,7 +1085,6 @@ def _apply_cdp_dt(reader: AbaqusInputReader, rec: CDPTensionDamageRecord) -> Non
     if mat is None:
         return
     mat.extra_params["cdp_dt"] = list(rec.table)
-    _try_finalize_cdp(reader, mat)
 
 
 # ─── 18. *MULLINS EFFECT ─────────────────────────────────────────────────────

@@ -124,7 +124,7 @@ class Material:
             self.extra_params["tabular_plastic"] = self.plastic
         else:
             self.plastic = [(float(row[0]), float(row[1])) for row in table]
-            if hardening.upper() == "TABULAR" or len(self.plastic) > 2:
+            if hardening.upper() == "TABULAR" or len(self.plastic) >= 2:   # >= 2 points: the tabular kernel holds the last yield constant
                 self.mat_type = "TABULAR_PLASTIC"
                 self.extra_params["tabular_plastic"] = self.plastic
             elif hardening.upper() in ["KINEMATIC", "COMBINED"]:
@@ -591,7 +591,9 @@ class Material:
         if "damage_init" in self.extra_params or "damage_evol" in self.extra_params:
             from dispsolver.material3d.numba_materials import MAT_J2_DUCTILE_DAMAGE
             if "damage_init" not in self.extra_params or "damage_evol" not in self.extra_params:
-                raise ValueError("DamageInitiation and DamageEvolution must be given together")
+                raise NotImplementedError(
+                    "*DAMAGE INITIATION and *DAMAGE EVOLUTION must both be present: initiation alone (valid in "
+                    "Abaqus: no softening) and evolution without initiation are not implemented")
             tab = self.extra_params.get("tabular_plastic", self.plastic)
             if not tab:
                 raise ValueError("Damage needs a Plastic base (linear hardening used)")

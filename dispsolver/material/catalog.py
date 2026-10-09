@@ -203,6 +203,30 @@ def material_id(material: Any) -> int:
     raise ValueError(f"Unknown or unsupported material type: {mtype_raw!r}")
 
 
+def prony_check(prony, capacity: int, kernel: str) -> None:
+    """Refuse what the Prony kernels cannot carry: bulk relaxation (k_i != 0 is never packed) and more
+    terms than the kernel packs."""
+    if not prony:
+        return
+    if any(len(t) > 2 and float(t[1]) != 0.0 for t in prony):
+        raise NotImplementedError(f"{kernel}: bulk relaxation (k_i != 0) is not represented; the Prony kernels "
+                                  f"relax the deviatoric response only")
+    if len(prony) > capacity:
+        raise NotImplementedError(f"{kernel}: {len(prony)} Prony terms, the kernel packs {capacity}")
+
+
+def moduli_factor(extra: dict, prony) -> float:
+    """1 / (1 - sum g_i) when the deck's elastic constants are LONG TERM (Keywords Guide default of
+    *ELASTIC / *HYPERELASTIC MODULI), else 1. Only a deck-read Material carries extra['moduli']; a
+    Material built through the Python API keeps its constants as instantaneous (the kernels' meaning)."""
+    if not prony or str(extra.get("moduli", "INSTANTANEOUS")).upper() != "LONG TERM":
+        return 1.0
+    g_sum = sum(float(t[0]) for t in prony)
+    if g_sum >= 1.0:
+        raise NotImplementedError(f"sum of Prony g_i = {g_sum} >= 1: the long-term modulus would vanish")
+    return 1.0 / (1.0 - g_sum)
+
+
 def pack_props(material: Any, dim: int = 3) -> np.ndarray:
     """Pack constitutive parameters of `material` into a 64-element float64 vector.
 
@@ -287,6 +311,10 @@ def pack_props(material: Any, dim: int = 3) -> np.ndarray:
         mu = float(hyper.get("mu", extra.get("mu", 0.16785)))
         lambda_m = float(hyper.get("lambda_m", extra.get("lambda_m", 3.0)))
         K = float(hyper.get("K", extra.get("K", 8.3333)))
+        if lambda_m <= 0.0:
+            raise NotImplementedError(
+                f"Arruda-Boyce lambda_m = {lambda_m} <= 0 (the kernel would silently use 3.0): "
+                f"locking stretch must be positive")
         props[0] = mu
         props[1] = lambda_m
         props[2] = K
@@ -315,6 +343,8 @@ def pack_props(material: Any, dim: int = 3) -> np.ndarray:
         alpha_list = hyper.get("alpha_list", extra.get("alpha_list", [2.0]))
         d_list = hyper.get("d_list", extra.get("d_list", [0.01]))
         n_terms = min(len(mu_list), 6)
+        if any(float(d) != 0.0 for d in list(d_list)[1:]):
+            raise NotImplementedError("Ogden D2..DN != 0 are not represented (the kernel packs D1 only)")
         props[0] = float(n_terms)
         props[1] = float(d_list[0] if len(d_list) > 0 else 0.01)
         for p in range(n_terms):
@@ -377,7 +407,9 @@ def pack_props(material: Any, dim: int = 3) -> np.ndarray:
         table = extra.get("tabular_plastic", extra.get("tabular", getattr(material, "plastic", []))) or [(100.0, 0.0)]
         eps_fail = float(extra.get("eps_fail", 1e9))
         sigma_fail = float(extra.get("sigma_fail", 0.0))
-        n_pts = min(len(table), 10)
+        if len(table) > 10:
+            raise NotImplementedError(f"tabular plasticity holds 10 points, the material has {len(table)}")
+        n_pts = len(table)
         props[0] = E_val
         props[1] = nu_val
         props[2] = float(n_pts)
@@ -431,8 +463,14 @@ def pack_props(material: Any, dim: int = 3) -> np.ndarray:
         return props
 
     if mid == MAT_CONCRETE_DP:
-        tabs = extra.get("cdp_tables", {})
-        flat = [E_val, nu_val, float(extra.get("beta", 20.0)), float(extra.get("psi", 15.0))]
+        # Material.ConcreteDP stores extra['concrete_dp']; the flattened property dict carries
+        # cdp_tables + beta/psi at the top level. Either source, never a default.
+        cd = extra.get("concrete_dp") if isinstance(extra.get("concrete_dp"), dict) else None
+        if cd is not None:
+            tabs, beta_cd, psi_cd = cd, cd["beta"], cd["psi"]
+        else:
+            tabs, beta_cd, psi_cd = extra.get("cdp_tables", {}), extra.get("beta", 20.0), extra.get("psi", 15.0)
+        flat = [E_val, nu_val, float(beta_cd), float(psi_cd)]
         for key in ("compression", "tension", "dt_table", "dc_table"):
             rows = list(tabs.get(key, [(0.0, 0.0)]))[:6]
             flat.append(float(len(rows)))
@@ -445,8 +483,17 @@ def pack_props(material: Any, dim: int = 3) -> np.ndarray:
 
     if mid == MAT_VISCOELASTIC_PRONY:
         prony = getattr(material, "viscoelastic_prony", None) or extra.get("prony", [])
+        prony_check(prony, capacity=1, kernel="plain Prony (id 3)")
         g1 = float(prony[0][0]) if prony else float(extra.get("g1", 0.2))
         tau1 = float(prony[0][2] if len(prony[0]) > 2 else prony[0][1]) if prony else float(extra.get("tau1", 1.0))
+        # Abaqus *ELASTIC default MODULI=LONG TERM: the constants are long-term, instantaneous shear =
+        # long-term / (1 - sum g_i); the kernel wants the instantaneous ones (bulk is not relaxed)
+        f_mod = moduli_factor(extra, prony)
+        if f_mod != 1.0:
+            mu_inst = f_mod * E_val / (2.0 * (1.0 + nu_val))
+            K_inst = E_val / (3.0 * (1.0 - 2.0 * nu_val))
+            E_val = 9.0 * K_inst * mu_inst / (3.0 * K_inst + mu_inst)
+            nu_val = (3.0 * K_inst - 2.0 * mu_inst) / (2.0 * (3.0 * K_inst + mu_inst))
         props[0] = E_val
         props[1] = nu_val
         props[2] = g1
