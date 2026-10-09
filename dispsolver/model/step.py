@@ -67,6 +67,11 @@ class Step:
         self.dt_init = float(dt_init)
         self.dt_min = float(dt_min)
         self.dt_max = float(dt_max)
+        # Time integration the procedure requires, applied by the solver's solve(step):
+        # {"name": "quasistatic"} (*STATIC) or {"name": "hht-tf"|"hht-md", "alpha", "beta",
+        # "gamma", "initial_acceleration"} (*DYNAMIC). None (the Python API default): the
+        # solver keeps the time_integrator it was constructed with.
+        self.time_integration: Optional[Dict[str, Any]] = None
 
         self.parent_step: Optional[Step] = parent_step
         self.child_steps: List[Step] = []

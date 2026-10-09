@@ -4455,23 +4455,20 @@
   "gaps": [],
   "warnings": [],
   "diagnostics": {
-   "control-param-ignored": 1,
+   "control-param-ignored": 2,
    "extra-data-items": 4,
    "ignored-keyword": 1,
-   "unsupported-keyword": 2,
-   "unsupported-param": 1
+   "unsupported-keyword": 2
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "extra-data-items": "warning",
    "ignored-keyword": "info",
-   "unsupported-keyword": "gap",
-   "unsupported-param": "gap"
+   "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
-   "unsupported-keyword",
-   "unsupported-param"
+   "unsupported-keyword"
   ]
  },
  "verification/damp3deostab.inp": {
@@ -4735,21 +4732,18 @@
   "gaps": [],
   "warnings": [],
   "diagnostics": {
-   "control-param-ignored": 1,
+   "control-param-ignored": 2,
    "ignored-keyword": 1,
-   "unsupported-keyword": 2,
-   "unsupported-param": 1
+   "unsupported-keyword": 2
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
-   "unsupported-keyword": "gap",
-   "unsupported-param": "gap"
+   "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
-   "unsupported-keyword",
-   "unsupported-param"
+   "unsupported-keyword"
   ]
  },
  "verification/dampaxhyper.inp": {
@@ -4821,21 +4815,18 @@
   "gaps": [],
   "warnings": [],
   "diagnostics": {
-   "control-param-ignored": 1,
+   "control-param-ignored": 2,
    "ignored-keyword": 1,
-   "unsupported-keyword": 2,
-   "unsupported-param": 1
+   "unsupported-keyword": 2
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "ignored-keyword": "info",
-   "unsupported-keyword": "gap",
-   "unsupported-param": "gap"
+   "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
-   "unsupported-keyword",
-   "unsupported-param"
+   "unsupported-keyword"
   ]
  },
  "verification/dampbeam2d.inp": {
@@ -4916,23 +4907,20 @@
   "gaps": [],
   "warnings": [],
   "diagnostics": {
-   "control-param-ignored": 1,
+   "control-param-ignored": 2,
    "extra-data-items": 2,
    "rotation-dofs-ignored": 1,
-   "unsupported-keyword": 3,
-   "unsupported-param": 1
+   "unsupported-keyword": 3
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "extra-data-items": "warning",
    "rotation-dofs-ignored": "info",
-   "unsupported-keyword": "gap",
-   "unsupported-param": "gap"
+   "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
-   "unsupported-keyword",
-   "unsupported-param"
+   "unsupported-keyword"
   ]
  },
  "verification/dampbeam3d.inp": {
@@ -5013,23 +5001,20 @@
   "gaps": [],
   "warnings": [],
   "diagnostics": {
-   "control-param-ignored": 1,
+   "control-param-ignored": 2,
    "extra-data-items": 2,
    "rotation-dofs-ignored": 1,
-   "unsupported-keyword": 3,
-   "unsupported-param": 1
+   "unsupported-keyword": 3
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "extra-data-items": "warning",
    "rotation-dofs-ignored": "info",
-   "unsupported-keyword": "gap",
-   "unsupported-param": "gap"
+   "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
-   "unsupported-keyword",
-   "unsupported-param"
+   "unsupported-keyword"
   ]
  },
  "verification/dampmembrane.inp": {
@@ -5103,21 +5088,18 @@
   "gaps": [],
   "warnings": [],
   "diagnostics": {
-   "control-param-ignored": 1,
+   "control-param-ignored": 2,
    "extra-data-items": 2,
-   "unsupported-keyword": 3,
-   "unsupported-param": 1
+   "unsupported-keyword": 3
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "extra-data-items": "warning",
-   "unsupported-keyword": "gap",
-   "unsupported-param": "gap"
+   "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
-   "unsupported-keyword",
-   "unsupported-param"
+   "unsupported-keyword"
   ]
  },
  "verification/dampmembranehyper.inp": {
@@ -5191,21 +5173,18 @@
   "gaps": [],
   "warnings": [],
   "diagnostics": {
-   "control-param-ignored": 1,
+   "control-param-ignored": 2,
    "extra-data-items": 2,
-   "unsupported-keyword": 3,
-   "unsupported-param": 1
+   "unsupported-keyword": 3
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "extra-data-items": "warning",
-   "unsupported-keyword": "gap",
-   "unsupported-param": "gap"
+   "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
-   "unsupported-keyword",
-   "unsupported-param"
+   "unsupported-keyword"
   ]
  },
  "verification/damppe.inp": {
@@ -5281,23 +5260,20 @@
   "gaps": [],
   "warnings": [],
   "diagnostics": {
-   "control-param-ignored": 1,
+   "control-param-ignored": 2,
    "extra-data-items": 2,
    "ignored-keyword": 1,
-   "unsupported-keyword": 2,
-   "unsupported-param": 1
+   "unsupported-keyword": 2
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "extra-data-items": "warning",
    "ignored-keyword": "info",
-   "unsupported-keyword": "gap",
-   "unsupported-param": "gap"
+   "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
-   "unsupported-keyword",
-   "unsupported-param"
+   "unsupported-keyword"
   ]
  },
  "verification/damppehyper.inp": {
@@ -5373,23 +5349,20 @@
   "gaps": [],
   "warnings": [],
   "diagnostics": {
-   "control-param-ignored": 1,
+   "control-param-ignored": 2,
    "extra-data-items": 2,
    "ignored-keyword": 1,
-   "unsupported-keyword": 2,
-   "unsupported-param": 1
+   "unsupported-keyword": 2
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "extra-data-items": "warning",
    "ignored-keyword": "info",
-   "unsupported-keyword": "gap",
-   "unsupported-param": "gap"
+   "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
-   "unsupported-keyword",
-   "unsupported-param"
+   "unsupported-keyword"
   ]
  },
  "verification/dampps.inp": {
@@ -5469,25 +5442,22 @@
   "gaps": [],
   "warnings": [],
   "diagnostics": {
-   "control-param-ignored": 1,
+   "control-param-ignored": 2,
    "extra-data-items": 2,
    "ignored-keyword": 1,
    "orientation-ignored-isotropic": 1,
-   "unsupported-keyword": 2,
-   "unsupported-param": 1
+   "unsupported-keyword": 2
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "extra-data-items": "warning",
    "ignored-keyword": "info",
    "orientation-ignored-isotropic": "info",
-   "unsupported-keyword": "gap",
-   "unsupported-param": "gap"
+   "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
-   "unsupported-keyword",
-   "unsupported-param"
+   "unsupported-keyword"
   ]
  },
  "verification/damppshyper.inp": {
@@ -5561,21 +5531,18 @@
   "gaps": [],
   "warnings": [],
   "diagnostics": {
-   "control-param-ignored": 1,
+   "control-param-ignored": 2,
    "extra-data-items": 2,
-   "unsupported-keyword": 2,
-   "unsupported-param": 1
+   "unsupported-keyword": 2
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "extra-data-items": "warning",
-   "unsupported-keyword": "gap",
-   "unsupported-param": "gap"
+   "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
-   "unsupported-keyword",
-   "unsupported-param"
+   "unsupported-keyword"
   ]
  },
  "verification/dampshell.inp": {
@@ -5653,11 +5620,11 @@
   "gaps": [],
   "warnings": [],
   "diagnostics": {
-   "control-param-ignored": 1,
+   "control-param-ignored": 2,
    "extra-data-items": 4,
    "rotation-dofs-ignored": 1,
    "unsupported-keyword": 4,
-   "unsupported-param": 4
+   "unsupported-param": 3
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -5747,11 +5714,11 @@
   "gaps": [],
   "warnings": [],
   "diagnostics": {
-   "control-param-ignored": 1,
+   "control-param-ignored": 2,
    "extra-data-items": 2,
    "rotation-dofs-ignored": 1,
    "unsupported-keyword": 2,
-   "unsupported-param": 2
+   "unsupported-param": 1
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
@@ -5841,23 +5808,20 @@
   "gaps": [],
   "warnings": [],
   "diagnostics": {
-   "control-param-ignored": 1,
+   "control-param-ignored": 2,
    "extra-data-items": 1,
    "rotation-dofs-ignored": 1,
-   "unsupported-keyword": 2,
-   "unsupported-param": 1
+   "unsupported-keyword": 2
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "extra-data-items": "warning",
    "rotation-dofs-ignored": "info",
-   "unsupported-keyword": "gap",
-   "unsupported-param": "gap"
+   "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
-   "unsupported-keyword",
-   "unsupported-param"
+   "unsupported-keyword"
   ]
  },
  "verification/damptruss3d.inp": {
@@ -5937,25 +5901,22 @@
   "gaps": [],
   "warnings": [],
   "diagnostics": {
-   "control-param-ignored": 1,
+   "control-param-ignored": 2,
    "extra-data-items": 1,
    "ignored-keyword": 3,
    "rotation-dofs-ignored": 1,
-   "unsupported-keyword": 2,
-   "unsupported-param": 1
+   "unsupported-keyword": 2
   },
   "diagnostic_levels": {
    "control-param-ignored": "info",
    "extra-data-items": "warning",
    "ignored-keyword": "info",
    "rotation-dofs-ignored": "info",
-   "unsupported-keyword": "gap",
-   "unsupported-param": "gap"
+   "unsupported-keyword": "gap"
   },
   "error_codes": [],
   "gap_codes": [
-   "unsupported-keyword",
-   "unsupported-param"
+   "unsupported-keyword"
   ]
  },
  "verification/eb22pxe1.inp": {
@@ -20615,7 +20576,7 @@
  "verification/heplmu_yeoh_cgax4rh.inp": {
   "path": "verification/heplmu_yeoh_cgax4rh.inp",
   "parse_ok": false,
-  "error": "InpSyntaxError: heplmu_yeoh_cgax4rh.inp:32: *INCLUDE, INPUT=mullins_calibrate_testdata.inp: file not found (C:\\Users\\GOODMAN\\.claude\\jobs\\284d3b9f\\tmp\\wt_integ\\benchmark_inp\\verification\\mullins_calibrate_testdata.in",
+  "error": "InpSyntaxError: heplmu_yeoh_cgax4rh.inp:32: *INCLUDE, INPUT=mullins_calibrate_testdata.inp: file not found (D:\\PythonCodeStudy\\WHT_DispFoldSolver\\.claude\\worktrees\\agent-ab9945ca60d1bd5d7\\benchmark_inp\\verification\\m",
   "element_types": [],
   "nlgeom_steps": [],
   "gaps": [],
@@ -50477,7 +50438,7 @@
  "verification/x_heplmu_yeoh_cax4r.inp": {
   "path": "verification/x_heplmu_yeoh_cax4r.inp",
   "parse_ok": false,
-  "error": "InpSyntaxError: x_heplmu_yeoh_cax4r.inp:34: *INCLUDE, INPUT=mullins_calibrate_testdata.inp: file not found (C:\\Users\\GOODMAN\\.claude\\jobs\\284d3b9f\\tmp\\wt_integ\\benchmark_inp\\verification\\mullins_calibrate_testdata.in",
+  "error": "InpSyntaxError: x_heplmu_yeoh_cax4r.inp:34: *INCLUDE, INPUT=mullins_calibrate_testdata.inp: file not found (D:\\PythonCodeStudy\\WHT_DispFoldSolver\\.claude\\worktrees\\agent-ab9945ca60d1bd5d7\\benchmark_inp\\verification\\m",
   "element_types": [],
   "nlgeom_steps": [],
   "gaps": [],

@@ -159,6 +159,12 @@ class DynamicSolver2D:
         # unmapped material raises, it is never turned into linear elastic.
         from dispsolver.material.resolve import resolve_material
         resolved: Dict[Any, Any] = {}
+        # Mass density per element (was never filled: every 2D element had zero mass, so
+        # the HHT branch had no inertia). A material without a density takes the solver
+        # default; a deck *DYNAMIC step refuses that (implicit_dynamics.require_density).
+        from dispsolver.solver.implicit_dynamics import material_density, material_label
+        self._pids_without_density: Dict[Any, str] = {}
+        self.elem_density[:] = self.density
         for e, elem in enumerate(elements_list):
             pid = getattr(elem, "pid", 0)
             mat_obj = self.materials.get(pid, None) if isinstance(self.materials, dict) else None
@@ -167,6 +173,11 @@ class DynamicSolver2D:
                 pid = None
             if mat_obj is None:
                 continue  # no material for this pid: the E=4000/nu=0.3 defaults above stay
+            rho_e = material_density(mat_obj)
+            if rho_e > 0.0:
+                self.elem_density[e] = rho_e
+            else:
+                self._pids_without_density[pid] = material_label(mat_obj, pid)
             if pid not in resolved:
                 resolved[pid] = resolve_material(mat_obj, 2, f"material of pid {pid}" if pid is not None else "material")
             mid, props = resolved[pid]
@@ -635,9 +646,13 @@ class DynamicSolver2D:
         anderson_m: int = 4,
         anderson_beta: float = 1.0,
         augment_relaxation: float = 1.0,
+        f_ext_n: Optional[np.ndarray] = None,
     ) -> Tuple[bool, int]:
         """Solve a 2D incremental step using Newton-Raphson with robust Armijo line search
-        and optional Anderson Acceleration (AA-Newton)."""
+        and optional Anderson Acceleration (AA-Newton).
+
+        HHT/Newmark: `f_ext` is the load at t_{n+1}, `f_ext_n` the load at t_n (default:
+        the f_ext of the last converged dynamic increment, else f_ext itself)."""
         if not self.config_integrator.is_quasistatic and not self.config_integrator.is_emcs:
             u_n = self.u.copy()
             v_n = self.v.copy()
@@ -649,24 +664,15 @@ class DynamicSolver2D:
                     f_ext = self.f_ext_applied.copy()
                 else:
                     f_ext = np.zeros(self.num_dofs, dtype=np.float64)
+            if f_ext_n is None:
+                prev = getattr(self, "_hht_f_ext_prev", None)
+                f_ext_n = prev if prev is not None and prev.shape == f_ext.shape else f_ext
 
-            # Assemble element mass matrices M_global (2D)
-            M_elems_list = []
-            default_rho = self.density if getattr(self, "density", None) is not None else 7.85e-9
-            for g_key in sorted(self.elem_kernel_groups.keys()):
-                elem_indices = self.elem_kernel_groups[g_key]
-                sub_conn = self.elem_conn_groups[g_key]
-                n_sub = len(sub_conn)
-                n_nodes_e = sub_conn.shape[1] if n_sub > 0 else 4
-                n_dofs_e = n_nodes_e * 2
-                M_sub = np.zeros((n_sub, n_dofs_e, n_dofs_e), dtype=np.float64)
-                for local_idx, e_idx in enumerate(elem_indices):
-                    rho_e = self.elem_density[e_idx] if hasattr(self, "elem_density") else default_rho
-                    M_sub[local_idx] = np.eye(n_dofs_e, dtype=np.float64) * (rho_e * (1.0 / n_nodes_e))
-                M_elems_list.append(M_sub.ravel())
-
-            M_data = np.concatenate(M_elems_list) if M_elems_list else np.zeros(0, dtype=np.float64)
-            M_global = csc_matrix((M_data, (self.rows_topo, self.cols_topo)), shape=(self.num_dofs, self.num_dofs))
+            # Lumped mass, m_a = rho * int N_a dA (unit thickness, like the 2D kernels'
+            # internal force). It used to be rho / n_nodes per DOF with no element area.
+            from dispsolver.solver.implicit_dynamics import lumped_mass
+            from scipy.sparse import diags
+            M_global = diags(lumped_mass(self, 2), format="csc")
             self.M_global = M_global
 
             K_n, f_int_n = self.assemble_system(u_n, dt=dt, update_state=False)
@@ -692,8 +698,11 @@ class DynamicSolver2D:
 
                 f_int_hht = (1.0 + alpha_hht) * f_int_trial - alpha_hht * f_int_n
                 f_inertial = M_global @ a_trial
+                # HHT weights the external force like the internal one (Hilber, Hughes &
+                # Taylor 1977; Abaqus Theory Guide "Implicit dynamic analysis")
+                f_ext_hht = (1.0 + alpha_hht) * f_ext - alpha_hht * f_ext_n
 
-                residual = f_ext - f_inertial - f_int_hht
+                residual = f_ext_hht - f_inertial - f_int_hht
 
                 free_mask = np.ones(self.num_dofs, dtype=bool)
                 if self.fixed_dofs:
@@ -732,6 +741,7 @@ class DynamicSolver2D:
                 self.a[:] = coeff_m * (self.u - u_n) - (1.0 / (beta_hht * dt)) * v_n - (0.5 / beta_hht - 1.0) * a_n
                 self.v[:] = v_n + dt * ((1.0 - gamma_hht) * a_n + gamma_hht * self.a)
                 self.assemble_system(self.u, dt=dt, update_state=True)
+                self._hht_f_ext_prev = np.array(f_ext, dtype=np.float64, copy=True)
 
             return converged, n_iter
 
@@ -943,6 +953,12 @@ class DynamicSolver2D:
             self.nlgeom = want
             self._build_kernel_groups()
         self._nlgeom_engaged = bool(getattr(self, "_nlgeom_engaged", False) or self.nlgeom)
+        # The step's integrator (*STATIC / *DYNAMIC), applied like NLGEOM above; a step
+        # without one (Python API) keeps the integrator the solver was built with.
+        from dispsolver.solver import implicit_dynamics as _dyn
+        step_ti = _dyn.step_time_integration(self, step)
+        if step_ti is not None and _dyn.is_dynamic(self):
+            _dyn.require_density(self, step)
 
         total_time = getattr(step, "time_period", 1.0)
         dt = getattr(step, "dt_init", 0.02)
@@ -982,6 +998,12 @@ class DynamicSolver2D:
                             self.add_constraint(rc)
 
         plan = self._lower_step(step, sys, total_time)
+        dynamic = _dyn.is_dynamic(self)
+        if step_ti is not None and dynamic and step_ti.get("initial_acceleration", True):
+            # Abaqus computes the initial acceleration at the start of every *DYNAMIC
+            # step (INITIAL omitted); INITIAL=NO keeps the current one
+            self._apply_plan_bcs(plan, 0.0)
+            _dyn.initial_acceleration(self, plan.f_ext(0.0, self.u), dt)
 
         while t_curr < total_time - 1e-9:
             inc_count += 1
@@ -991,11 +1013,12 @@ class DynamicSolver2D:
             t_next = t_curr + dt
             self._apply_plan_bcs(plan, t_next)
             f_ext = plan.f_ext(t_next, self.u)
+            f_ext_n = plan.f_ext(t_curr, self.u) if dynamic else None
 
             u_prev = self.u.copy()
             sdvs_prev = self.elem_sdvs.copy()
 
-            converged, iters = self.solve_step(dt=dt, f_ext=f_ext, max_iters=50)
+            converged, iters = self.solve_step(dt=dt, f_ext=f_ext, max_iters=50, f_ext_n=f_ext_n)
             total_iters += iters
             if converged:
                 self.last_solve_stats["increments"] += 1

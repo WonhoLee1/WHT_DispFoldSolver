@@ -187,6 +187,10 @@ _CR_WRAPPED_KERNELS = _cr_wrapped_kernels(3)
 class DynamicSolver3D:
     """3D Implicit Non-Linear Solver with Above-Abaqus Speed & Convergence Engine."""
 
+    # the HHT branch carries Rayleigh damping (set_rayleigh_damping); the initial
+    # acceleration (implicit_dynamics.initial_acceleration) must subtract C v0 too
+    _rayleigh_in_hht = True
+
     def __init__(
         self,
         mesh: Mesh3D,
@@ -600,6 +604,9 @@ class DynamicSolver3D:
         from dispsolver.material.resolve import resolve_material
         cmat_flat = self.C_mat_default.ravel()
         resolved = {}
+        # pid -> material name for materials without a density; a deck *DYNAMIC step
+        # refuses them (implicit_dynamics.require_density) instead of using default_rho
+        self._pids_without_density = {}
         for e, elem in enumerate(elements_list):
             pid = getattr(elem, "pid", 0)
             mat_obj = self.materials.get(pid, None) if hasattr(self, "materials") and isinstance(self.materials, dict) else None
@@ -639,6 +646,9 @@ class DynamicSolver3D:
             # quasistatics with garbage velocities -- FD-verified 2026-09-20).
             if rho_val <= 0.0:
                 rho_val = default_rho
+                if mat_obj is not None:
+                    from dispsolver.solver.implicit_dynamics import material_label
+                    self._pids_without_density[pid] = material_label(mat_obj, pid)
             self.elem_density[e] = rho_val
 
             if mat_obj is not None:
@@ -1713,6 +1723,7 @@ class DynamicSolver3D:
         anderson_m: int = 4,
         anderson_beta: float = 1.0,
         auto_tune_contact: bool = False,
+        f_ext_n: Optional[np.ndarray] = None,
     ) -> Tuple[bool, int]:
 
         """Solve a 3D non-linear incremental step using Newton-Raphson with
@@ -1816,25 +1827,15 @@ class DynamicSolver3D:
                     f_ext = self.f_ext_applied.copy()
                 else:
                     f_ext = np.zeros(self.num_dofs, dtype=np.float64)
+            if f_ext_n is None:
+                prev = getattr(self, "_hht_f_ext_prev", None)
+                f_ext_n = prev if prev is not None and prev.shape == f_ext.shape else f_ext
 
-            # Assemble element mass matrices M_global
-            node_coords_all = self.mesh.nodes_array()
-            M_elems_list = []
-            default_rho = self.density if getattr(self, "density", None) is not None else 7.85e-9
-            for group_key in sorted(self.elem_kernel_groups.keys()):
-                elem_indices = self.elem_kernel_groups[group_key]
-                sub_conn = self.elem_conn_groups[group_key]
-                n_sub = len(sub_conn)
-                n_nodes_e = sub_conn.shape[1] if n_sub > 0 else 8
-                n_dofs_e = n_nodes_e * 3
-                M_sub = np.zeros((n_sub, n_dofs_e, n_dofs_e), dtype=np.float64)
-                for local_idx, e_idx in enumerate(elem_indices):
-                    rho_e = self.elem_density[e_idx] if hasattr(self, "elem_density") else default_rho
-                    M_sub[local_idx] = np.eye(n_dofs_e, dtype=np.float64) * (rho_e * (1.0 / n_nodes_e))
-                M_elems_list.append(M_sub.ravel())
-            
-            M_data = np.concatenate(M_elems_list) if M_elems_list else np.zeros(0, dtype=np.float64)
-            M_global = csc_matrix((M_data, (self.rows_topo, self.cols_topo)), shape=(self.num_dofs, self.num_dofs))
+            # Lumped mass, m_a = rho * int N_a dV. It used to be rho / n_nodes per DOF
+            # with no element volume (right only for a unit cube).
+            from dispsolver.solver.implicit_dynamics import lumped_mass
+            from scipy.sparse import diags
+            M_global = diags(lumped_mass(self, 3), format="csc")
             self.M_global = M_global
 
             # Store f_int at t_n for HHT-alpha weighting
@@ -1873,12 +1874,15 @@ class DynamicSolver3D:
                 # HHT-alpha internal force weighting
                 f_int_hht = (1.0 + alpha_hht) * f_int_trial - alpha_hht * f_int_n
                 f_inertial = M_global @ a_trial
+                # HHT weights the external force like the internal one (Hilber, Hughes &
+                # Taylor 1977; Abaqus Theory Guide "Implicit dynamic analysis")
+                f_ext_hht = (1.0 + alpha_hht) * f_ext - alpha_hht * f_ext_n
                 if ray_on:
                     f_damp_trial = ray_a * (M_global @ v_trial) + ray_b * (K_tan @ v_trial)
                     f_damp_hht = (1.0 + alpha_hht) * f_damp_trial - alpha_hht * f_damp_n
-                    residual = f_ext - f_inertial - f_int_hht - f_damp_hht
+                    residual = f_ext_hht - f_inertial - f_int_hht - f_damp_hht
                 else:
-                    residual = f_ext - f_inertial - f_int_hht
+                    residual = f_ext_hht - f_inertial - f_int_hht
 
                 free_mask = np.ones(self.num_dofs, dtype=bool)
                 if self.fixed_dofs:
@@ -1919,6 +1923,7 @@ class DynamicSolver3D:
                 self.v[:] = v_n + dt * ((1.0 - gamma_hht) * a_n + gamma_hht * self.a)
                 # Final state update for material SDVs
                 self.assemble_system(self.u, dt=dt, update_state=True)
+                self._hht_f_ext_prev = np.array(f_ext, dtype=np.float64, copy=True)
 
             return converged, n_iter
 
@@ -2480,6 +2485,13 @@ class DynamicSolver3D:
             self.nlgeom = want
             self._build_kernel_groups()
         self._nlgeom_engaged = bool(getattr(self, "_nlgeom_engaged", False) or self.nlgeom)
+        # The step's integrator (*STATIC / *DYNAMIC), applied like NLGEOM above; a step
+        # without one (Python API) keeps the integrator the solver was built with.
+        from dispsolver.solver import implicit_dynamics as _dyn
+        step_ti = _dyn.step_time_integration(self, step)
+        dynamic = _dyn.is_dynamic(self)
+        if step_ti is not None and dynamic:
+            _dyn.require_density(self, step)
 
         T_total = time_period if time_period is not None else getattr(step, "time_period", 1.0)
         dt_init = getattr(step, "dt_init", 0.02)
@@ -2538,6 +2550,16 @@ class DynamicSolver3D:
 
         max_step_iters = getattr(step, "max_iters", 80 if len(self.constraints) > 0 else 50)
         plan = self._lower_step(step, sys, T_total)
+        if dynamic and hooks:
+            # the iteration-hook Newton loop is the static one; running it would drop the
+            # inertia and integrator the step asks for
+            raise NotImplementedError(f"step {step.name!r}: iteration hooks are not implemented with the "
+                                      f"implicit dynamic ({self.time_integrator}) integrator")
+        if step_ti is not None and dynamic and step_ti.get("initial_acceleration", True):
+            # Abaqus computes the initial acceleration at the start of every *DYNAMIC
+            # step (INITIAL omitted); INITIAL=NO keeps the current one
+            self._apply_plan_bcs(plan, 0.0)
+            _dyn.initial_acceleration(self, plan.f_ext(0.0, self.u), dt_init)
 
         # One record per increment ATTEMPT, Abaqus .sta style: `inc` counts
         # converged increments (a cutback retries the same inc with att+1).
@@ -2561,15 +2583,21 @@ class DynamicSolver3D:
             self._apply_plan_bcs(plan, t_next)
             f_ext = plan.f_ext(t_next, self.u)
 
-            converged, iters = self._solve_step_with_hooks(
-                dt=dt,
-                t_next=t_next,
-                sys=sys,
-                sensor_mgr=sensor_mgr,
-                hooks=hooks,
-                f_ext=f_ext,
-                max_iters=max_step_iters
-            )
+            if dynamic:
+                # the HHT / Newmark branch of solve_step; _solve_step_with_hooks is the
+                # static Newton loop and used to run every step quasi-statically
+                converged, iters = self.solve_step(dt=dt, f_ext=f_ext, max_iters=max_step_iters,
+                                                   f_ext_n=plan.f_ext(t, self.u))
+            else:
+                converged, iters = self._solve_step_with_hooks(
+                    dt=dt,
+                    t_next=t_next,
+                    sys=sys,
+                    sensor_mgr=sensor_mgr,
+                    hooks=hooks,
+                    f_ext=f_ext,
+                    max_iters=max_step_iters
+                )
 
             total_iters += iters
             if converged:

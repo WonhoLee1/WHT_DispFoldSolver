@@ -95,6 +95,14 @@ class ProcedureRecord(Record):
     time_period: Optional[float]
     dt_min: Optional[float]
     dt_max: Optional[float]
+    # *DYNAMIC only: the deck's integrator request, resolved against the
+    # Keywords Guide defaults by _resolve_time_integration (None = omitted)
+    application: Optional[str] = None
+    time_integrator: Optional[str] = None
+    alpha: Optional[float] = None
+    beta: Optional[float] = None
+    gamma: Optional[float] = None
+    initial_acceleration: bool = True
 
 
 class _IncrementRow(RowSchema):
@@ -104,7 +112,7 @@ class _IncrementRow(RowSchema):
     dt_max: Optional[float] = None
 
 
-def _procedure(proc: str, rows, ctx):
+def _procedure(proc: str, rows, ctx, p=None):
     if len(rows) > 1:
         raise InputError(f"*{proc} at {ctx.loc}: one data line expected, got {len(rows)}")
     r = rows[0] if rows else _IncrementRow()
@@ -117,6 +125,19 @@ def _procedure(proc: str, rows, ctx):
             if not v:
                 raise InputError(f"*DYNAMIC at {ctx.loc}: {label} omitted; the Abaqus Keywords Guide "
                                  f"documents no default for it")
+    if proc == "DYNAMIC" and p is not None:
+        # Keywords Guide *DYNAMIC: "-1/2 <= alpha <= 0", "beta > 0", "gamma >= 1/2"
+        if p.alpha is not None and not (-0.5 <= p.alpha <= 0.0):
+            raise InputError(f"*DYNAMIC at {ctx.loc}: ALPHA={p.alpha} outside -1/2 <= alpha <= 0")
+        if p.beta is not None and not p.beta > 0.0:
+            raise InputError(f"*DYNAMIC at {ctx.loc}: BETA={p.beta} must be > 0")
+        if p.gamma is not None and not p.gamma >= 0.5:
+            raise InputError(f"*DYNAMIC at {ctx.loc}: GAMMA={p.gamma} must be >= 1/2")
+        yield ProcedureRecord(ctx.step, proc, r.dt_init, r.time_period, r.dt_min, r.dt_max,
+                              application=p.application, time_integrator=p.time_integrator,
+                              alpha=p.alpha, beta=p.beta, gamma=p.gamma,
+                              initial_acceleration=p.initial != "NO", loc=ctx.loc)
+        return
     yield ProcedureRecord(ctx.step, proc, r.dt_init, r.time_period, r.dt_min, r.dt_max, loc=ctx.loc)
 
 
@@ -138,13 +159,30 @@ class Dynamic(Keyword):
     """Implicit dynamic procedure (Abaqus/Standard)."""
 
     class Params(Schema):
+        # The integrator (Analysis Guide "Implicit dynamic analysis", Table 1). Only the
+        # HHT operators are implemented; the backward Euler operator of APPLICATION=
+        # QUASI-STATIC / TIME INTEGRATOR=BWE is a gap (the block is refused).
+        application: Optional[Literal["TRANSIENT FIDELITY", "MODERATE DISSIPATION", "QUASI-STATIC"]] = Param(
+            None, supported=("TRANSIENT FIDELITY", "MODERATE DISSIPATION"))
+        time_integrator: Optional[Literal["BWE", "HHT-TF", "HHT-MD"]] = Param(
+            None, supported=("HHT-TF", "HHT-MD"))
+        alpha: Optional[float] = None
+        beta: Optional[float] = None
+        gamma: Optional[float] = None
+        initial: Optional[Literal["NO"]] = None
+        # solution technique only: increment size control, half-increment residual
+        # tolerance and the impact (velocity-jump) treatment of the increment
         direct: bool = Param(False, control=True)
         haftol: Optional[float] = Param(None, control=True)
+        nohaf: bool = Param(False, control=True)
+        halfinc_scale_factor: Optional[float] = Param(None, control=True)
+        impact: Optional[Literal["AVERAGE TIME", "CURRENT TIME", "NO"]] = Param(None, control=True)
+        incrementation: Optional[Literal["CONSERVATIVE", "AGGRESSIVE"]] = Param(None, control=True)
 
     Row = _IncrementRow
 
     def to_records(self, p, rows, ctx):
-        return _procedure("DYNAMIC", rows, ctx)
+        return _procedure("DYNAMIC", rows, ctx, p)
 
 
 def _has_contact(reader: AbaqusInputReader) -> bool:
@@ -152,14 +190,50 @@ def _has_contact(reader: AbaqusInputReader) -> bool:
     return bool(reader.model.interactions) or any(s.interactions for s in reader.model.steps.values())
 
 
-def _dynamic_dt_max_default(reader: AbaqusInputReader, time_period: float) -> float:
+def _dynamic_application(reader: AbaqusInputReader, step) -> str:
+    """APPLICATION as written, else its Keywords Guide default: TRANSIENT FIDELITY "for
+    problems without contact in the model", MODERATE DISSIPATION "for problems with
+    contact in the model"."""
+    req = getattr(step, "_dynamic_request", None) or {}
+    if req.get("application"):
+        return req["application"]
+    return "MODERATE DISSIPATION" if _has_contact(reader) else "TRANSIENT FIDELITY"
+
+
+def _dynamic_dt_max_default(reader: AbaqusInputReader, step, time_period: float) -> float:
     # *DYNAMIC, maximum increment: "If this value is zero, the default depends on the
     # APPLICATION setting. If APPLICATION = TRANSIENT FIDELITY, the maximum time increment
     # allowed is the time period of the step divided by 100. If APPLICATION = MODERATE
-    # DISSIPATION, it is the time period of the step divided by 10." and APPLICATION itself
-    # defaults to TRANSIENT FIDELITY "for problems without contact in the model" and
-    # MODERATE DISSIPATION "for problems with contact in the model".
-    return time_period / (10.0 if _has_contact(reader) else 100.0)
+    # DISSIPATION, it is the time period of the step divided by 10."
+    app = _dynamic_application(reader, step)
+    return time_period / (10.0 if app == "MODERATE DISSIPATION" else 100.0)
+
+
+# Analysis Guide "Implicit dynamic analysis", Table 1: the alpha of each HHT operator.
+# beta and gamma follow from alpha (Keywords Guide *DYNAMIC: beta = (1-alpha)^2/4,
+# gamma = 1/2 - alpha), which reproduces the table's 0.275625/0.55 and 0.5/0.91421.
+_HHT_ALPHA = {"HHT TF": -0.05, "HHT MD": -0.41421}
+_APPLICATION_INTEGRATOR = {"TRANSIENT FIDELITY": "HHT TF", "MODERATE DISSIPATION": "HHT MD"}
+
+
+def _resolve_time_integration(reader: AbaqusInputReader, step) -> None:
+    """The step's integrator: TIME INTEGRATOR as written, else the one APPLICATION
+    selects; ALPHA as written, else the operator's; BETA / GAMMA as written, else
+    computed from alpha. Stored as step.time_integration, which the solvers apply."""
+    req = step._dynamic_request
+    app = _dynamic_application(reader, step)
+    integ = req.get("time_integrator") or _APPLICATION_INTEGRATOR[app]
+    alpha = req["alpha"] if req.get("alpha") is not None else _HHT_ALPHA[integ]
+    beta = req["beta"] if req.get("beta") is not None else (1.0 - alpha) ** 2 / 4.0
+    gamma = req["gamma"] if req.get("gamma") is not None else 0.5 - alpha
+    step.time_integration = {
+        "name": integ.lower().replace(" ", "-"),          # hht-tf / hht-md
+        "application": app,
+        "alpha": float(alpha), "beta": float(beta), "gamma": float(gamma),
+        # INITIAL=NO: "initial accelerations are zero (first dynamic step) or carried
+        # over from the previous dynamic step"; omitted: computed at the step start
+        "initial_acceleration": bool(req.get("initial_acceleration", True)),
+    }
 
 
 @applies(ProcedureRecord)
@@ -180,10 +254,19 @@ def _apply_procedure(reader: AbaqusInputReader, rec: ProcedureRecord):
     # initial time increment or 10^-5 times the total time period is assumed."
     dt_min = float(rec.dt_min) if rec.dt_min else min(dt_init, 1e-5 * time_period)
     step._dt_max_by_application = False
+    if rec.procedure == "DYNAMIC":
+        step._dynamic_request = {
+            "application": rec.application, "time_integrator": rec.time_integrator,
+            "alpha": rec.alpha, "beta": rec.beta, "gamma": rec.gamma,
+            "initial_acceleration": rec.initial_acceleration,
+        }
+        _resolve_time_integration(reader, step)   # re-decided at *END STEP when APPLICATION is defaulted
+    else:
+        step.time_integration = {"name": "quasistatic"}
     if rec.dt_max:
         dt_max = float(rec.dt_max)
     elif rec.procedure == "DYNAMIC":
-        dt_max = _dynamic_dt_max_default(reader, time_period)
+        dt_max = _dynamic_dt_max_default(reader, step, time_period)
         step._dt_max_by_application = True        # re-decided at *END STEP, once contact is known
     else:
         # *STATIC: "If this value is not specified, no upper limit is imposed." The step itself
@@ -212,7 +295,9 @@ def _apply_end_step(reader: AbaqusInputReader, rec: EndStepRecord):
     step = reader.current_step
     if step is not None and getattr(step, "_dt_max_by_application", False):
         # contact is part of "the model" however late in the step it was defined
-        step.dt_max = _dynamic_dt_max_default(reader, step.time_period)
+        step.dt_max = _dynamic_dt_max_default(reader, step, step.time_period)
+    if step is not None and getattr(step, "_dynamic_request", None) is not None:
+        _resolve_time_integration(reader, step)   # the defaulted APPLICATION depends on contact
     reader.context = KeywordContext.GLOBAL
 
 

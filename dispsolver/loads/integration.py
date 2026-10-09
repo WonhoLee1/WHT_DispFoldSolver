@@ -474,6 +474,70 @@ def body_force_weights(X: np.ndarray, elem_type: str) -> np.ndarray:
     raise NotImplementedError(f"body_force_weights is not implemented for {elem_type}")
 
 
+def _quadratic_points(X: np.ndarray, cat: str):
+    """(N, dV) at quadrature points exact for N_a*N_b on the reference element, for the
+    quadratic categories whose row-sum mass is not positive."""
+    if cat in ("C3D20", "CPE8", "CAX8"):
+        n_dim = 3 if cat == "C3D20" else 2
+        shape = _shape_c3d20 if cat == "C3D20" else _shape_cpe8
+        import itertools
+        for idx in itertools.product(range(3), repeat=n_dim):
+            pt = [_GP_1D_3PT[i] for i in idx]
+            wt = float(np.prod([_WT_1D_3PT[i] for i in idx]))
+            N, dN = shape(*pt)
+            dV = abs(float(np.linalg.det(X.T @ dN))) * wt
+            if cat == "CAX8":
+                dV *= 2.0 * math.pi * float(np.dot(N, X[:, 0]))
+            yield N, dV
+        return
+    if cat == "CPE6":
+        for q in range(6):
+            N, dN = _shape_cpe6(_TRI6_ALPHAS[q])
+            yield N, abs(float(np.linalg.det(X.T @ dN))) * _TRI6_WEIGHTS[q] * 0.5
+        return
+    if cat == "C3D10":
+        # collapsed-cube (Duffy) rule, 4 Gauss points per direction: exact to degree 7
+        # in each cube coordinate, enough for N_a*N_b (degree 4) times the collapse Jacobian
+        g, w = np.polynomial.legendre.leggauss(4)
+        g, w = 0.5 * (g + 1.0), 0.5 * w
+        for i in range(4):
+            for j in range(4):
+                for k in range(4):
+                    a, b, c = g[i], g[j], g[k]
+                    r = a
+                    s = b * (1.0 - a)
+                    t = c * (1.0 - a) * (1.0 - b)
+                    jac = (1.0 - a) ** 2 * (1.0 - b)
+                    N, dN = _shape_c3d10(np.array([1.0 - r - s - t, r, s, t]))
+                    yield N, abs(float(np.linalg.det(X.T @ dN))) * jac * w[i] * w[j] * w[k]
+        return
+    raise NotImplementedError(f"no lumped mass rule for element category {cat}")
+
+
+def lumped_mass_weights(X: np.ndarray, elem_type: str) -> np.ndarray:
+    """Diagonal (lumped) mass per unit density, m_a / rho, for each node of one element.
+
+    Row-sum lumping, m_a = rho * int N_a dV (= body_force_weights), wherever every row sum
+    is positive -- all first-order elements, where it is the usual equal-share lumping.
+    For the quadratic elements whose row sums are zero or negative at the corners (C3D10,
+    C3D20, CPE6, CPE8, CAX8) row-sum lumping is not a mass matrix, so the diagonal of the
+    consistent mass is scaled to the element mass instead (Hinton, Rock & Zienkiewicz 1976):
+    m_a = rho * V * int N_a^2 dV / sum_b int N_b^2 dV. Either way sum_a m_a = rho * V, the
+    element's volume (area x unit thickness for plane elements, ring volume for CAX*) --
+    the same measure the 2D/3D kernels integrate the internal force over."""
+    X = np.asarray(X, dtype=np.float64)
+    w = body_force_weights(X, elem_type)
+    if np.all(w > 1e-8 * abs(w.sum())):           # CPE6 corners integrate to round-off zero
+        return w
+    cat = _classify_element(elem_type, X.shape[0])
+    diag = np.zeros(X.shape[0], dtype=np.float64)
+    vol = 0.0
+    for N, dV in _quadratic_points(X, cat):
+        diag += N * N * dV
+        vol += dV
+    return diag * (vol / diag.sum())
+
+
 # -----------------------------------------------------------------------------
 # Face Definitions & Pressure Integration
 # -----------------------------------------------------------------------------

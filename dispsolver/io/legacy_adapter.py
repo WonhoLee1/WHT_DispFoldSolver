@@ -557,7 +557,15 @@ def model_to_builder_result(model: Model) -> ModelBuilderResult:
             solver_cfg["t_total"] = getattr(target_step, "time_period", 1.0)
             solver_cfg["dt_min"] = getattr(target_step, "dt_min", 1e-10)
             solver_cfg["dt_max"] = getattr(target_step, "dt_max", solver_cfg["t_total"])
-            solver_cfg["alpha"] = getattr(target_step, "alpha", 0.0)
+            # *DYNAMIC's resolved HHT operator (io/keywords/steps.py); Step has no
+            # 'alpha' attribute, so this used to be 0.0 (Newmark) whatever the deck said
+            ti = getattr(target_step, "time_integration", None) or {}
+            if "alpha" in ti:
+                solver_cfg["alpha"] = float(ti["alpha"])
+                solver_cfg["beta"] = float(ti["beta"])
+                solver_cfg["gamma"] = float(ti["gamma"])
+                solver_cfg["time_integrator"] = ti.get("name")
+                solver_cfg["initial_acceleration"] = bool(ti.get("initial_acceleration", True))
 
     if mesh.elements:
         first_elem = next(iter(mesh.elements.values()))

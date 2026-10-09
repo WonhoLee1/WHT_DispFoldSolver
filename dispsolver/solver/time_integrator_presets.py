@@ -136,6 +136,11 @@ PRESETS: Dict[str, Dict[str, Any]] = {
     
     # 5. Generalized-alpha 적분기
     "optistruct_galpha": {**{"is_quasistatic": False, "is_emcs": False}, **_calc_generalized_alpha(0.8)},
+
+    # 6. Abaqus/Standard *DYNAMIC operators (Analysis Guide "Implicit dynamic analysis", Table 1)
+    "hht-tf": {"is_quasistatic": False, "is_emcs": False, "alpha_hht": -0.05, "beta": 0.275625, "gamma": 0.55},
+    "hht-md": {"is_quasistatic": False, "is_emcs": False, "alpha_hht": -0.41421,
+               "beta": (1.0 + 0.41421) ** 2 / 4.0, "gamma": 0.5 + 0.41421},
 }
 
 
@@ -210,21 +215,26 @@ def resolve_time_integrator(
             cur_alpha_f = g["alpha_f"]
             cur_rho_inf = val
         except ValueError:
-            pass
+            raise ValueError(f"time_integrator {time_integrator!r}: {parts[1]!r} is not a rho_inf value") from None
     elif raw_name.startswith("moderate-") or raw_name.startswith("mod-"):
         parts = raw_name.split("-", 1)
         try:
             val = float(parts[1])
-            val = -abs(val) if val != 0.0 else 0.0
-            cur_alpha_hht = val
-            cur_beta = (1.0 - val) ** 2 / 4.0
-            cur_gamma = 0.5 - val
         except ValueError:
-            pass
+            raise ValueError(f"time_integrator {time_integrator!r}: {parts[1]!r} is not an alpha value") from None
+        val = -abs(val) if val != 0.0 else 0.0
+        cur_alpha_hht = val
+        cur_beta = (1.0 - val) ** 2 / 4.0
+        cur_gamma = 0.5 - val
     elif raw_name == "hht":
         cur_alpha_hht = -0.05
         cur_beta = (1.0 - cur_alpha_hht) ** 2 / 4.0
         cur_gamma = 0.5 - cur_alpha_hht
+    else:
+        # An unknown name used to fall through to the Newmark defaults (beta 1/4,
+        # gamma 1/2) -- a different integrator than the one asked for, silently.
+        raise ValueError(f"unknown time_integrator {time_integrator!r}; known: {', '.join(sorted(PRESETS))}, "
+                         f"hht, moderate-<alpha>, mod-<alpha>, generalized-<rho_inf>, galpha-<rho_inf>")
 
     # 2. 개별 수치 상수 매뉴얼 오버라이드
     if static_mode is not None:
