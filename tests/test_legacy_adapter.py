@@ -56,7 +56,7 @@ def test_ex12_deck_legacy_adapter_consistency():
     assert len(res.penalty_constraints) == 2
     for tc in res.penalty_constraints:
         assert tc.k_tie == 1e6
-        assert len(tc.pairs) == 61
+        assert len(tc.pairs) == 72  # tie over the whole plate |x|>=7.5 (was 61 with the untied strip to 12), 2026-10-09
 
     assert len(res.rbe2_constraints) == 2
     masters = {c.master_id for c in res.rbe2_constraints}

@@ -105,6 +105,17 @@ class ElementSpec:
     has_internal_dofs: bool    # EAS alpha / hybrid pressure -> static condensation
     numba: bool                # a Numba lowering exists and is reachable
     note: str = ""
+    # Solver element_type when it differs from `name` (one element probed
+    # under several section controls), and *SECTION CONTROLS, HOURGLASS=.
+    element_type: str = ""
+    hourglass: Optional[str] = None
+
+    @property
+    def etype(self) -> str:
+        return self.element_type or self.name
+
+    def solver_kwargs(self) -> dict:
+        return {} if self.hourglass is None else {"hourglass": self.hourglass}
 
 
 REGISTRY = (
@@ -116,7 +127,13 @@ REGISTRY = (
     ElementSpec("Q4_COROTATIONAL_EAS", "j2", True, False, "T8 wrapper around Q4_EAS"),
     ElementSpec("Q4_SRI", "j2", False, False, "shear-selective reduced integration"),
     ElementSpec("Q4_COROTATIONAL_SRI", "j2", False, True,
-                "PRODUCTION: PET + GLASS layers"),
+                "former PET + GLASS element (until 2026-10-10)"),
+    ElementSpec("CPE4R", "j2", False, False,
+                "PRODUCTION: PET + GLASS layers; 1-point + ENHANCED hourglass",
+                hourglass="ENHANCED"),
+    ElementSpec("CPE4R_STIFFNESS", "j2", False, False,
+                "CPE4R + Abaqus/Standard default HOURGLASS=STIFFNESS (0.005 G)",
+                element_type="CPE4R", hourglass="STIFFNESS"),
     # --- finite-strain viscoelastic family ----------------------------
     ElementSpec("Q4_VISCO_SIMO", "visco", False, True, "full integration + F-bar"),
     ElementSpec("CPE4I", "visco", True, True, "PRODUCTION: PSA layers"),
@@ -255,9 +272,10 @@ class Probe:
         solver = DynamicSolver(
             mesh, {0: mat}, rho=1.0,
             material_params=({0: params} if params is not None else None),
-            element_type={0: spec.name},
+            element_type={0: spec.etype},
             nlgeom=nlgeom, elem_jit=elem_jit,
             section_thickness=thickness, mode="quasistatic", verbose=False,
+            **spec.solver_kwargs(),
         )
         solver.sta_status = False
         if elem_jit == "numba":

@@ -66,7 +66,7 @@ class AdaptiveDtController:
             # If converged in few iterations, grow dt. Never decay dt on successful convergence!
             if n_iter <= self.target_iters:
                 ratio = self.target_iters / max(n_iter, 1)
-                growth = min(ratio, 1.25)
+                growth = min(ratio, 1.50)
             else:
                 growth = 1.0
             self.dt *= growth

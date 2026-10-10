@@ -21,8 +21,15 @@ from dispsolver.postprocess.model_review import (
     print_model_review_from_builder_result,
 )
 
+# Abaqus Python API object imports
+from dispsolver.model.model import Model
+from dispsolver.model.step import Step
+from dispsolver.model.control import SolutionControl
+from dispsolver.model.interaction import ContactControl, ContactProperty, ContactStd
+
 sys.path.insert(0, os.path.dirname(__file__))
-from dispsolver.fold_model_config import FoldModelConfig, DEFAULT_CONFIG, make_teardrop_config
+from dispsolver.fold_model_config import FoldModelConfig, DEFAULT_CONFIG, make_teardrop_config, smoothstep_amp
+from gen_ex12_inp import generate as generate_ex12_inp
 
 
 def _laminate_layer_materials(mesh, material_names, max_node_id=100000):
@@ -51,31 +58,68 @@ def _laminate_layer_materials(mesh, material_names, max_node_id=100000):
             layers[j] = material_names.get(elem.pid, f"pid{elem.pid}")
     return [m or "?" for m in layers]
 
-def run_abaqus_inp_folding(inp_path: str = None, before_png_name: str = "ex12_before_folding_shape.png",
-                            after_png_name: str = "ex12_final_folding_shape.png",
-                            result_name: str = "ex12_result.pkl",
-                            max_steps: int = None,
-                            elem_jit: str = "jax",
-                            threads: int = None,
-                            config: FoldModelConfig = None,
-                            preset: str = "ADAPTIVE"):
+
+def build_abaqus_model_hierarchy(config: FoldModelConfig, result, preset: str = "ADAPTIVE") -> Model:
+    """Build Abaqus Python API Model container hierarchy for ex12."""
+    model = Model(name="Ex12_FoldingModel", dim=2)
+
+    # 1. Step declaration
+    drv = config.drive
+    step = model.Step(
+        name="Step-1_Folding",
+        procedure="STATIC",
+        time_period=drv.t_total,
+        dt_init=drv.dt_init,
+        dt_min=drv.dt_min,
+        dt_max=drv.dt_max,
+        nlgeom=config.solver.nlgeom,
+    )
+
+    # 2. SolutionControl configuration
+    sol_ctrl = model.SolutionControl(
+        name="AdaptiveSolutionControl",
+        preset=preset,
+    )
+    step.solution_control = sol_ctrl
+
+    # 3. Contact Property & Controls
+    if getattr(config.solver, "plate_contact", False):
+        c_prop = model.ContactProperty(name="IntProp-PlateContact", normal_behavior="HARD")
+        c_ctrl = model.ContactControl(name="PlateContactControl", penetrationTolerance=0.01)
+
+    return model
+
+
+def run_abaqus_inp_folding(inp_path: str = None,
+                           before_png_name: str = "ex12_before_folding_shape.png",
+                           after_png_name: str = "ex12_final_folding_shape.png",
+                           result_name: str = "ex12_result.pkl",
+                           max_steps: int = None,
+                           elem_jit: str = "numba",
+                           threads: int = None,
+                           config: FoldModelConfig = None,
+                           preset: str = "ADAPTIVE"):
     """Run the folding solve from a given .inp deck."""
     if config is None:
         config = make_teardrop_config()
     print("=" * 100)
-    print(" EX12: 90-Degree Display Folding Directly from Abaqus .inp File")
+    print(" EX12: 90-Degree Display Folding Directly from Abaqus .inp File (Canonical)")
     print("=" * 100)
 
     if inp_path is None:
         inp_path = os.path.join(os.path.dirname(__file__), "ex12_rigid_plate_display_fold.inp")
     if not os.path.exists(inp_path):
-        raise FileNotFoundError(f"Input file not found at {inp_path}. Run gen_ex12_inp.py first.")
+        print(f"Generating input deck at {inp_path}...")
+        content = generate_ex12_inp(config)
+        with open(inp_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        print(f"Generated: {inp_path}")
 
     t_pre_start = time.time()
     print(f"Reading Abaqus input deck: {inp_path}")
     result = read_abaqus_input(inp_path)
     t_pre = time.time() - t_pre_start
-    print(f"Parsed result: {result}")
+    print(f"Parsed input deck: {result}")
 
     res_dict = run_folding_from_result(result, before_png_name, after_png_name,
                                         case_name=os.path.basename(inp_path),
@@ -92,7 +136,7 @@ def run_folding_from_result(result, before_png_name: str = "ex12_before_folding_
                              case_name: str = "in-memory",
                              result_name: str = "ex12_result.pkl",
                              max_steps: int = None,
-                             elem_jit: str = "jax",
+                             elem_jit: str = "numba",
                              threads: int = None,
                              config: FoldModelConfig = None,
                              preset: str = "ADAPTIVE"):
@@ -117,6 +161,13 @@ def run_folding_from_result(result, before_png_name: str = "ex12_before_folding_
         os.environ["OPENBLAS_NUM_THREADS"] = n_str
     mesh = result.mesh
     nid_to_idx = mesh.node_id_to_index()
+
+    # ------------------------------------------------------------------
+    # Abaqus Model Architecture Setup
+    # ------------------------------------------------------------------
+    abq_model = build_abaqus_model_hierarchy(config, result, preset=preset)
+    print(f"[ABAQUS API] Model '{abq_model.name}' initialized with Step '{list(abq_model.steps.keys())[-1]}'")
+    print(f"[ABAQUS API] SolutionControl Preset: {preset}")
 
     # ------------------------------------------------------------------
     # 0. Diagnostics setup (AGENTS.md sec 4.9: convergence success alone
@@ -202,13 +253,56 @@ def run_folding_from_result(result, before_png_name: str = "ex12_before_folding_
     element_type = {}
     for pid, name in (getattr(result, "material_names", {}) or {}).items():
         if name.startswith("PET"):
-            element_type[pid] = st.pet_element_type
+            element_type[pid] = getattr(st, "pet_element_type", "CPE4R")
         elif name.startswith("PSA"):
-            element_type[pid] = st.psa_element_type
+            element_type[pid] = getattr(st, "psa_element_type", "CPE4H")
         elif name.startswith("GLASS"):
-            element_type[pid] = getattr(st, "glass_element_type", "Q4_COROTATIONAL_SRI")
+            element_type[pid] = getattr(st, "glass_element_type", "CPE4R")
         elif "STEEL" in name.upper() or "PLATE" in name.upper():
-            element_type[pid] = "Q4_COROTATIONAL"
+            element_type[pid] = "CPE4"
+
+    # ------------------------------------------------------------------
+    # 1b. Display <-> rigid plate contact (plate_contact): the display bottom
+    #     surface against each plate's top face, which rotates with the plate.
+    # ------------------------------------------------------------------
+    _plate_contacts = []   # (rbe2 index, RotatingRigidSegmentContact2D)
+    if getattr(st, "plate_contact", False):
+        from dispsolver.constraint.rigid_segment_contact2d import RotatingRigidSegmentContact2D
+        _disp = [(nid, n.x, n.y) for nid, n in mesh.nodes.items() if nid < 100000]
+        _low = {}
+        for nid, x, y in _disp:                      # bottom surface: lowest display node per column
+            key = round(x, 9)
+            if key not in _low or y < _low[key][1]:
+                _low[key] = (nid, y)
+        _coords_all = mesh.nodes_array()          # same (sorted-id) ordering as the solver
+        _nid_idx = nid_to_idx
+        # tie slaves are already held to the plate (and in penalty mode follow its solved angle,
+        # not the target the contact face uses), so contact is only for the untied display bottom
+        _tied = {int(p[0]) for tc in (result.penalty_constraints or []) for p in getattr(tc, "pairs", [])}
+        _low = {k: v for k, v in _low.items() if v[0] not in _tied}
+        for idx_c, rbe_con in enumerate(result.rbe2_constraints):
+            m = mesh.nodes[rbe_con.master_id]
+            sx = np.array([mesh.nodes[s].x for s in rbe_con.slave_ids])
+            sy = np.array([mesh.nodes[s].y for s in rbe_con.slave_ids])
+            y_top = float(sy.max())
+            side = np.sign(sx.mean())
+            slaves = [nid for key, (nid, y) in _low.items() if np.sign(key) == side]
+            c = RotatingRigidSegmentContact2D(
+                # tangent points outward (away from the hinge) so the hinge-side edge is s_min on
+                # both plates -- the end the fillet rounds
+                slaves, _nid_idx, _coords_all, pivot=(m.x, y_top), tangent=(side, 0.0), normal=(0.0, 1.0),
+                s_range=tuple(sorted(side * (np.array([sx.min(), sx.max()]) - m.x))),
+                penalty_stiffness=st.plate_contact_k, name=f"PLATE_CONTACT_{idx_c}",
+                stiffness_gap_tol=getattr(st, "plate_contact_gap_tol", 0.0),
+                softening_gap=getattr(st, "plate_contact_softening", 0.0),
+                fillet_radius=getattr(st, "plate_contact_fillet", 0.0))
+            _plate_contacts.append((idx_c, c))
+            print(f"[CONTACT] plate {idx_c}: {len(c.slave_node_ids)} display-bottom nodes vs rigid face "
+                  f"x in [{sx.min():+.2f}, {sx.max():+.2f}] at y={y_top:+.3f}, pivot x={m.x:+.3f}, "
+                  f"k={st.plate_contact_k:g}")
+
+    _contact_theta_committed = {idx_c: 0.0 for idx_c, _ in _plate_contacts}
+    _contact_theta_new = dict(_contact_theta_committed)
 
     solver = DynamicSolver.from_config(
         mesh=mesh,
@@ -223,7 +317,8 @@ def run_folding_from_result(result, before_png_name: str = "ex12_before_folding_
         # prescribed exactly from the rigid plate's theta each step (see the
         # per-step block below), so no penalty constraint is registered.
         penalty_constraints=([] if _tie_method == "kinematic"
-                             else result.penalty_constraints),
+                             else list(result.penalty_constraints))
+                            + [c for _, c in _plate_contacts],
         elem_jit=elem_jit,
         verbose=True,
         solution_controls=preset,
@@ -315,15 +410,9 @@ def run_folding_from_result(result, before_png_name: str = "ex12_before_folding_
             break
         dt = dt_ctrl.dt
 
-        # Kinematic dt modulation: cap rotation increment per step <= 0.20 deg
-        # to prevent element inversion in the 30 um adhesive layer during maximum rotation speed
-        s_cur = solver.time / t_total
-        d_amp_dt = 30.0 * (s_cur ** 2) * ((1.0 - s_cur) ** 2) / t_total
-        omega_deg_s = 90.0 * d_amp_dt
-        if omega_deg_s > 1e-3:
-            max_dtheta_deg = 0.20
-            dt_omega = max_dtheta_deg / omega_deg_s
-            dt = min(dt, dt_omega)
+        # No rotation-rate cap on dt: a 0.20 deg/step cap (bfaedd3) lowered the reachable angle
+        # from 39.6 to 17.5 deg/side on this model (measured 2026-10-09, same config and deck);
+        # the adaptive controller alone drives dt.
         dt = max(dt, dt_ctrl.dt_min)
 
         if solver.time + dt > t_total:
@@ -341,6 +430,7 @@ def run_folding_from_result(result, before_png_name: str = "ex12_before_folding_
                 theta_target = prescribed_rotations[m_id]
                 targets[idx] = theta_target * amp_val
         solver.theta_targets = targets
+        _contact_theta_new = {idx_c: float(targets.get(idx_c, 0.0)) for idx_c, _ in _plate_contacts}
 
         if _kin_tie:
             # rigid-plate displacement of every master node at this theta:
@@ -375,11 +465,19 @@ def run_folding_from_result(result, before_png_name: str = "ex12_before_folding_
 
         # Snapshot before the attempt so a failed step can be rolled back
         checkpoint = solver.save_state()
+        # contact faces follow the prescribed plate angle; nodes already resting on a face are
+        # carried with it as the Newton starting point (after the checkpoint, so a cutback
+        # restores the committed state and re-predicts from the committed angle)
+        for idx_c, c in _plate_contacts:
+            c.carry_contacting_nodes(solver.u, _contact_theta_committed[idx_c], _contact_theta_new[idx_c])
+            c.set_rotation(_contact_theta_new[idx_c])
 
         # Solve step
         conv_code = solver.solve_step(dt)
 
         if conv_code >= 0:
+            for idx_c, _c in _plate_contacts:
+                _contact_theta_committed[idx_c] = _contact_theta_new[idx_c]
             # Step converged
             solver.time = t_next
             step += 1
@@ -457,6 +555,11 @@ def run_folding_from_result(result, before_png_name: str = "ex12_before_folding_
             )
             if _gap_bits:
                 print(f"            [DIAGNOSTIC] Real tie gap (not just active-pair count): " + " | ".join(_gap_bits))
+            if _plate_contacts:
+                _cs = [c.stats(solver.u) for _, c in _plate_contacts]
+                print("            [CONTACT] plate faces: " + " | ".join(
+                    f"{c.name}: active={s['n_active']} max_pen={s['max_penetration']:.2e}mm"
+                    for (_, c), s in zip(_plate_contacts, _cs)))
             if step % 10 == 0 or step == 1:
                 _curv = check_smooth_curvature(solver.u, solver.coords, nid_to_idx, _hinge_node_ids)
                 print(

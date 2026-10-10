@@ -291,7 +291,17 @@ class SolverTuningConfig:
     # Element formulation per material name -- keyed the same way as
     # LayerSpec.material_name. Anything not PET/PSA/GLASS (i.e. the rigid
     # plate's STEEL) is left to DynamicSolver's "Q4" default.
-    pet_element_type: str = "Q4_COROTATIONAL_SRI"  # incompatible modes avoided (large-deformation robustness); 1.22-1.23x at every AR
+    # PET/GLASS on Abaqus CPE4R (J2), PSA on CPE4H -- user decision 2026-10-10.
+    # Was Q4_COROTATIONAL_SRI (PET/GLASS) / CPE4I (PSA); SRI's bending stiffness
+    # swings 1.2x -> 20-316x with element orientation (AGENTS.md 4.1 C6 table).
+    pet_element_type: str = "CPE4R"
+    # *SECTION CONTROLS, HOURGLASS= for the CPE4R pids. ENHANCED is set here on
+    # purpose: the Abaqus/Standard default for an elastic-plastic material is
+    # STIFFNESS (DynamicSolver uses that when this is None), whose 0.005G hourglass
+    # stiffness makes one-row-per-layer bending mesh dependent. ENHANCED reproduces
+    # CPE4I's elastic bending stiffness exactly (element/cpe4r_jax.py).
+    hourglass: Optional[str] = "ENHANCED"
+    hourglass_scale: float = 1.0   # Abaqus data-line ss; STIFFNESS only
     # How the plate<->display surface tie is enforced.
     #   "penalty"   : SurfaceTieConstraint spring (gap = F/k_tie; the finite
     #                 stiffness cannot hold once the laminate bending reaction
@@ -302,9 +312,28 @@ class SolverTuningConfig:
     #                 RBE2 condensation, so the tied display DOFs are a closed-
     #                 form function of theta and are prescribed directly. Zero
     #                 gap by construction, no penalty parameter.
-    tie_method: str = "kinematic"  # Abaqus-standard MPC elimination (0 gap by construction, no penalty stiffness)
-    psa_element_type: str = "Q4_VISCO_SIMO"   # Simo-Taylor F-bar visco (robust under extreme >700% shear slip; avoids EAS local solve stalling)
-    glass_element_type: str = "Q4_COROTATIONAL_SRI"
+    # Measured 2026-10-09 (dev_log/ex12_fold_wall_root_cause_20261009.md): on the deck with the
+    # untied, contact-free strip every kinematic variant died at 1-4 deg because the display fell
+    # through the plate there; with the tie over the whole plate and residual-checked convergence,
+    # kinematic + CPE4I reaches 49.5 deg/side (penalty 39.0 deg before the convergence fix).
+    tie_method: str = "kinematic"
+    # Frictionless contact of the display bottom against each rigid plate top
+    # (constraint/rigid_segment_contact2d.py). Needed wherever the display rests on
+    # a plate without being tied -- the [hinge_half_gap, tie_attach_start) strip --
+    # otherwise the display passes through the plate (measured 2026-10-09).
+    plate_contact: bool = False
+    plate_contact_k: float = 1.0e4   # penalty stiffness [N/mm per node, unit thickness]
+    # open gap [mm] within which the contact TANGENT (not the force) still carries the penalty;
+    # see RotatingRigidSegmentContact2D.stiffness_gap_tol. 0 = plain active-set tangent.
+    plate_contact_gap_tol: float = 0.0
+    # > 0: C1 softened pressure-overclosure over this clearance [mm] (contact pressure rises from 0
+    # at g0 to k*g0/2 at touch, then linear); avoids open/closed chattering against the compliant display
+    plate_contact_softening: float = 0.0
+    # > 0: round the plate's inner (hinge-side) edge with this radius [mm] for contact, as Abaqus'
+    # FILLET RADIUS on an analytical rigid surface; a sharp edge chatters contact on/off
+    plate_contact_fillet: float = 0.0
+    psa_element_type: str = "CPE4H"   # see pet_element_type; CPE4H locks in bending at one row, see the node-id-overflow assert in gen_ex12_inp.py
+    glass_element_type: str = "CPE4R"
     # PARDISO linear solver options:
     # "auto" (default: detects SPD vs Indefinite vs Nonsymmetric based on constraints),
     # "spd" (mtype=2, Cholesky LL^T, fastest, requires strictly SPD and upper triangle),
@@ -339,6 +368,8 @@ class SolverTuningConfig:
             "max_displacement_corr": self.max_displacement_corr,
             "distortion_control": self.distortion_control,
             "distortion_j_crit": self.distortion_j_crit,
+            "hourglass": self.hourglass,
+            "hourglass_scale": self.hourglass_scale,
         }
 
     def to_abaqus_config(self) -> AbaqusSolverConfig:
@@ -659,7 +690,17 @@ def make_teardrop_config(n_layer_pairs: int = 3, dt_max: float = 0.01) -> FoldMo
     cfg.geometry.hinge_half_gap = 7.5
     cfg.geometry.hinge_pivot_x = 1.4
     cfg.geometry.hinge_pivot_y = 0.0
-    cfg.geometry.tie_attach_start = 12.0  # leave [hinge_half_gap, 12.0) untied/free
+    # Tie over the whole plate. A [hinge_half_gap, 12.0) untied strip (96f8adb) had no contact,
+    # so the display passed through the rigid plate there (1.35 mm deep at 41 deg, 2026-10-09);
+    # bring the strip back only together with solver.plate_contact once that is validated.
+    cfg.geometry.tie_attach_start = None
+    # Display <-> plate contact on (user requirement 2026-10-10): softened onset over 1 um of
+    # overclosure and a 0.25 mm fillet on the plate's hinge-side edge (Abaqus FILLET RADIUS),
+    # which avoids open/closed chattering against the compliant display. With the tie over the
+    # whole plate the contact guards the display bottom outside the tie (free span / loop).
+    cfg.solver.plate_contact = True
+    cfg.solver.plate_contact_softening = 0.001
+    cfg.solver.plate_contact_fillet = 0.25
     cfg.geometry.n_layer_pairs = n_layer_pairs
     cfg.geometry.layer_pattern = [LayerSpec("PSA", 0.03, 1), LayerSpec("PET", 0.05, 3)]
     cfg.geometry.layer_void_regions = {1: [(-7.5, 0.0), (0.0, 7.5)]}
@@ -670,11 +711,13 @@ def make_teardrop_config(n_layer_pairs: int = 3, dt_max: float = 0.01) -> FoldMo
     cfg.drive.dt_min = 1e-5
     cfg.solver.integration_mode = "moderate-4"
     cfg.solver.ul_mode = True
-    cfg.solver.tie_method = "kinematic"
-    cfg.solver.psa_element_type = "Q4_VISCO_SIMO"
     cfg.solver.max_displacement_corr = None
     cfg.solver.distortion_control = True
     cfg.solver.distortion_j_crit = 0.20
+    cfg.solver.pet_element_type = "CPE4R"
+    cfg.solver.glass_element_type = "CPE4R"
+    cfg.solver.psa_element_type = "CPE4H"
+    cfg.solver.hourglass = "ENHANCED"
     return cfg
 
 

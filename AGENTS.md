@@ -73,6 +73,16 @@ rotation, check for:**
    — verify the display is actually *coupled* to that plate motion, not
    just that the plates themselves reached the target angle).
 
+> **Status 2026-10-09 — the "Achieved" result below does NOT hold for today's model.** It was
+> measured on the 2026-07-25 model (PSA 10x stiffer, no GLASS layer, no teardrop geometry) and
+> under a convergence test that accepted increments on the displacement ratio alone (§4.20).
+> **Current (2026-10-11)**: today's ex12 (14 layers + GLASS, PSA mu=0.0156 MPa) reaches
+> **90°/side, 0 cutbacks, ~2m45s** with PET+GLASS on `CPE4R` (ENHANCED hourglass) and PSA on
+> `CPE4H`, residual-checked convergence, tie over the whole plate, plate contact on (§4.21).
+> One open quality item: the bottom-PSA element at the plate's inner corner ends with a CORNER
+> Jacobian J/J0 = -0.18 (Gauss-point J stays positive, so `_check_mesh_quality` reports 0
+> inverted). Do not cite the paragraph below as current.
+
 **Achieved (2026-07-25, end of session)**: `examples/ex12_abaqus_inp_plate_fold.py`
 reaches **full 90°/side (180° combined), t=1.0, 101 steps, zero cutbacks,
 1 Newton iteration per step, ~85s wall time** — all three criteria above
@@ -325,7 +335,11 @@ pytest tests/test_3d_c3d8r.py tests/test_3d_c3d4_anp.py tests/test_3d_c3d10m.py 
 - **Always run with `python -u`** (unbuffered) or add `flush=True` to any
   debug prints when redirecting to a file — block-buffered stdout makes a
   perfectly healthy long-running solve look hung for minutes (see §4.6).
-- A "no cutbacks, 1-2 Newton iterations per step" result is **not
+- **Superseded 2026-10-09 (§4.20)**: until then "1-2 Newton iterations per step" was produced
+  by a convergence test that accepted on |du|/|u_total| alone -- every ex12 increment
+  "converged" in exactly 2 iterations whatever the residual. With residual-checked acceptance
+  expect ~3+ iterations; a uniform 1-2 is now a red flag. Original note, kept for history:
+  A "no cutbacks, 1-2 Newton iterations per step" result is **not
   inherently suspicious** here: in the driven-BC examples, the majority of
   DOFs are directly prescribed (e.g. 1344/2208 in `ex03_corotational_v4.py`)
   and only the free hinge-zone DOFs need Newton iteration, so fast
@@ -1425,6 +1439,45 @@ right numbers), each invisible without the other:
    the signature.
 
 ---
+
+### 4.20 [CRITICAL, fixed 2026-10-09] Displacement-only convergence acceptance -- "1-2 iterations per step" was false convergence
+
+`_solve_step_impl` accepted an iteration on `rel_change = |du| / |u_TOTAL| < tol` alone (5-way
+OR). The denominator is the accumulated total displacement, so the test weakens as the analysis
+proceeds; every ex12 increment "converged" in exactly 2 iterations whatever the residual, and the
+fold walls were increments accepted with the residual RISING (20.6 -> 33.4 N). Removed: an
+iteration is accepted only by the residual-based branches (Abaqus R&C std/alt, tiny relative
+residual) or the absolute-correction floor. Validated A/B: `verification.run_all` bit-identical
+(13/14), ex03 to 90 deg with 0 cutbacks (54 -> 132 NR iterations, same wall time), legacy-solver
+pytest fail set unchanged, ex12 38.1 -> 49.5 deg. Regression test:
+`tests/test_no_displacement_only_convergence.py` (a rigid pre-translation used to change Cook's
+membrane tip deflection by 0.5%). Same session: the RBE2-condensation path ASSUMED a symmetric
+tangent (Cholesky on the upper triangle; F-bar PSA Newton direction wrong by up to 15%) -- now
+`is_numerically_symmetric(K_full)`, entry-wise scaled (`tests/test_condensed_symmetry_check.py`);
+and that path densified the 12k x 12k condensed matrix every iteration (~70% of ex12 wall time) --
+now sparse, identical to 5e-11. Details: `dev_log/ex12_fold_wall_root_cause_20261009.md`.
+
+### 4.21 ex12 model fixes and elements (2026-10-09/11)
+
+- **An untied strip needs contact.** `tie_attach_start=12.0` (96f8adb) left |x| in [7.5, 12) on
+  each plate with neither tie nor contact; the display passed through the rigid plate (1.35 mm
+  deep at 41 deg). The teardrop config now ties the whole plate (`tie_attach_start=None`).
+- **Plate contact** (`constraint/rigid_segment_contact2d.py`, `solver.plate_contact`, on by
+  default in `make_teardrop_config`): frictionless penalty contact against the rotating plate
+  face. A hard law chatters open/closed against the compliant display and a "tangent without
+  force" gap tolerance stalls; use the C1 softened onset (`plate_contact_softening`, zero pressure
+  and slope at touch -- a softened law with pressure AT touch preloads the initially touching
+  display) and an edge fillet (`plate_contact_fillet`, Abaqus FILLET RADIUS) so the normal is
+  continuous at the plate's hinge-side corner. The untied strip WITH contact still fails at
+  ~1-2 deg (edge-node residual blow-up) -- open.
+- **Elements.** `CPE4R` (`element/cpe4r_jax.py`): uniform-strain 1-point J2 + Abaqus hourglass
+  control. ENHANCED = exact hourglass part of the linear-elastic Q1E4 (CPE4I) stiffness with
+  elastic moduli, co-rotated: C6 bending ratio 1.0000 at every angle and AR 7.5/15/30 (STIFFNESS:
+  1.20/4.75/18.9). Unset `hourglass` resolves to STIFFNESS (the Keywords Guide Standard default);
+  ex12 sets ENHANCED. The 2026-07-30 reduced-integration failure was the STIFFNESS form (bending
+  excites the hourglass pattern). PET on the orientation-dependent `Q4_COROTATIONAL_SRI` locked
+  20-80x near 45 deg and masked the plate-corner problem.
+- **Removed:** ex12's 0.20 deg/step rotation-rate dt cap (bfaedd3) -- it cost 39.6 -> 17.5 deg.
 
 ## 5. Where things live
 

@@ -369,8 +369,8 @@ def _patch_solver(spec: ElementSpec, elem_jit="jax"):
     mat, params = make_material(spec.material)
     s = DynamicSolver(mesh, {0: mat}, rho=1.0,
                       material_params=({0: params} if params is not None else None),
-                      element_type={0: spec.name}, nlgeom=True, elem_jit=elem_jit,
-                      mode="quasistatic", verbose=False)
+                      element_type={0: spec.etype}, nlgeom=True, elem_jit=elem_jit,
+                      mode="quasistatic", verbose=False, **spec.solver_kwargs())
     s.sta_status = False
     coords = np.array([[mesh.get_node(n).x, mesh.get_node(n).y]
                        for n in s.sorted_nids])
