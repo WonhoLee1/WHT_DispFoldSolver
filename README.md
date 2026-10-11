@@ -4,10 +4,10 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![JIT: JAX & Numba](https://img.shields.io/badge/JIT-JAX%20%7C%20Numba-orange.svg)](https://numba.pydata.org/)
 [![Solver: Intel oneMKL PARDISO](https://img.shields.io/badge/Solver-Intel%20oneMKL%20PARDISO-0071C5.svg)](https://www.intel.com/content/www/us/en/developer/tools/oneapi/onemkl.html)
-[![Abaqus API Parity](https://img.shields.io/badge/API-Abaqus%20Python%20Parity-red.svg)](https://www.3ds.com/products-services/simulia/products/abaqus/)
+[![Python FEA API](https://img.shields.io/badge/API-Python%20Object--Oriented%20FEA-red.svg)](https://github.com/WonhoLee1/WHT_DispFoldSolver)
 
 > **WHT_DispFoldSolver**는 차세대 폴더블 디스플레이(Foldable OLED, UTG, CPI)의 **180° 대변형 티어드롭(Teardrop) 접힘 해석**을 위해 설계된 초고성능 비선형 음해법(Nonlinear Implicit Dynamic) 유한요소 해석(FEA) 솔버입니다.  
-> 상용 솔버인 **SIMULIA Abaqus Standard의 Python 객체지향 API 및 `*KEYWORD` 입력 데크와의 1:1 파리티(Parity)**를 지원하며, 다층 박막의 층간 전단 슬립($\gamma > 500\%$), 비압축성 점착제(PSA)의 체적 잠김(Volumetric Locking), 유한 슬라이딩 접촉(Finite-Sliding Contact) 문제를 완벽하게 해결합니다.
+> 직관적인 **Python 객체지향 모델링 API** 및 업계 표준 포맷의 **`*KEYWORD` 입력 데크(`.inp`) 파서**를 기본 탑재하여 뛰어난 호환성과 사용 편의성을 제공하며, 다층 박막의 층간 전단 슬립($\gamma > 500\%$), 비압축성 점착제(PSA)의 체적 잠김(Volumetric Locking), 유한 슬라이딩 접촉(Finite-Sliding Contact) 문제를 완벽하게 해결합니다.
 
 ---
 
@@ -21,42 +21,42 @@
 
 ---
 
-## 🚀 Abaqus Standard 대비 독자적 혁신 및 우위 기능 (Abaqus-Surpassing Features)
+## 🚀 전산역학 기반 독자적 혁신 및 고성능 솔버 기술 (Key Innovations & Performance Features)
 
-WHT_DispFoldSolver는 단순한 인터페이스 래퍼가 아닌, **공인 원전(Bathe, Simo, Hughes, Wohlmuth, Puso)의 전산역학 이론에 입각하여 한 줄 한 줄 바닥부터 엄밀하게 구축된 고성능 독립 FEM 솔버**입니다. 대변형 다층 접힘 및 대규모 접촉 해석에서 Abaqus Standard 대비 다음과 같은 기술적 우위를 확보하고 있습니다:
+WHT_DispFoldSolver는 단순한 인터페이스 래퍼가 아닌, **공인 원전(Bathe, Simo, Hughes, Wohlmuth, Puso)의 전산역학 이론에 입각하여 한 줄 한 줄 바닥부터 엄밀하게 구축된 고성능 독립 FEM 솔버**입니다. 대변형 다층 접힘 및 대규모 접촉 해석에서 기존 상용 범용 FEA 솔버 대비 다음과 같은 혁신적 기술 우위를 확보하고 있습니다:
 
 ### 1. Wohlmuth 쌍직교 Dual Mortar 접촉 — 순수 SPD 보존 및 Cholesky 극대화
-* **Abaqus Standard의 한계**: 전통적인 Lagrange Multiplier 기반 Mortar/Penalty 접촉은 강성 행렬에 대규모 안장점(Saddle-point)을 도입하여 $K$ 행렬이 부정부호(Indefinite)가 됩니다. 따라서 무거운 $LDL^T$ 분해나 복잡한 블록 전처리기(Preconditioner)가 필수적이어서 수렴 속도가 저하됩니다.
+* **전통적 상용 솔버의 한계**: 전통적인 Lagrange Multiplier 기반 Mortar/Penalty 접촉은 강성 행렬에 대규모 안장점(Saddle-point)을 도입하여 $K$ 행렬이 부정부호(Indefinite)가 됩니다. 따라서 무거운 $LDL^T$ 분해나 복잡한 블록 전처리기(Preconditioner)가 필수적이어서 수렴 속도가 저하됩니다.
 * **본 솔버의 혁신**: Wohlmuth(2000) 쌍직교 기저(Biorthogonal Shape Function) 가중 적분을 적용하여 슬레이브 절점 변위를 마스터 절점으로 완전 대수 응축($\mathbf{u}_s = \mathbf{D}^{-1}\mathbf{M}\mathbf{u}_m$)합니다.
 * **효과**: 라그랑주 승수를 소거하여 **접촉 계면이 포함된 전체 시스템의 순수 대칭 양의 정부호(Pure SPD) 성질을 $100\%$ 보존**합니다. 이를 통해 **Intel oneMKL PARDISO Cholesky ($LL^T$) 분해**로 2~3배 이상의 Factorization 고속화를 달성합니다.
 
 ### 2. Zero-Allocation Flat Linear BVH (Morton LBVH) $O(N)$ 접촉 검색
-* **Abaqus Standard의 한계**: 포인터 기반의 트리 구조로 인해 접촉 쌍 검색 시 빈번한 힙 할당과 캐시 미스(Cache Miss)가 발생합니다.
+* **전통적 계층 트리 탐색의 한계**: 포인터 기반의 트리 구조로 인해 접촉 쌍 검색 시 빈번한 힙 할당과 캐시 미스(Cache Miss)가 발생합니다.
 * **본 솔버의 혁신**: 2D 정적 연속 배열 기반 Morton 코드 공간 채움 곡선(Space-Filling Curve) 선형 BVH를 탑재하여, 3D 다면체 및 2D 세그먼트 간 클리핑을 ~60ns 수준의 스택 메모리 핑퐁 연산(`buf[2, 16]`)으로 처리합니다.
 * **효과**: $O(N \log N)$ 대신 선형에 가까운 $O(N)$ 병렬 탐색으로 슬라이딩 접촉 탐색 병목을 소거했습니다.
 
 ### 3. 디스플레이 다층 박막 전단 지연 및 비압축성 체적 잠김 완벽 소거
-* **Abaqus Standard의 한계**: 포아송 비 $\nu \to 0.499$에 달하는 초비압축성 점착제(PSA, $t = 30\,\mu\text{m}$)와 얇은 탄소성 필름(PET, $t = 60\,\mu\text{m}$)이 교대로 적층된 구조에서, 일반 솔리드 요소를 사용할 경우 심각한 체적 잠김(Volumetric Locking)으로 인해 굽힘 반력 모멘트가 이론치 대비 **7.5배~32배 폭등**하는 현상이 발생합니다.
+* **일반 연속체 요소의 체적 잠김 한계**: 포아송 비 $\nu \to 0.499$에 달하는 초비압축성 점착제(PSA, $t = 30\,\mu\text{m}$)와 얇은 탄소성 필름(PET, $t = 60\,\mu\text{m}$)이 교대로 적층된 구조에서, 일반 솔리드 요소를 사용할 경우 심각한 체적 잠김(Volumetric Locking)으로 인해 굽힘 반력 모멘트가 이론치 대비 **7.5배~32배 폭등**하는 현상이 발생합니다.
 * **본 솔버의 혁신**:
   - **Herrmann u-P 혼합 정식화 (`CPE4H`, `C3D8H`)**: 정수압 $p$를 독립 미지수로 두어 비압축성 체적 잠김을 $100\%$ 소거.
   - **Puso (2000) Enhanced Assumed Strain Hourglass 물리 안정화 (`CPE4R`, `C3D8R`)**: Belytschko & Bindeman 및 Puso(2000)의 직교 투영 기저($\gamma_\alpha$)를 적용하여 1점 감차적분 요소의 인공 강성 왜곡 없이 9모드 EAS와 동등한 굽힘 정확도를 제공.
-  - **Abaqus 사양 Distortion Control 배리어**: 체적비 $J = \det(\mathbf{F}) < r_c$ 영역에서 $C^1/C^2$ 연속 복원 에너지를 부가하여 180° 대변형 힌지 코너에서의 요소 반전(Negative Jacobian) 방지.
+  - **물리 기반 왜곡 제어 배리어 (Distortion Control Barrier)**: 체적비 $J = \det(\mathbf{F}) < r_c$ 영역에서 $C^1/C^2$ 연속 복원 에너지를 부가하여 180° 대변형 힌지 코너에서의 요소 반전(Negative Jacobian) 방지.
 
 ### 4. 듀얼 JIT 연산 백엔드 (JAX AutoDiff & Numba LLVM)
 * **JAX AutoDiff (`--elem_jit jax`)**: 복잡한 비선형 구성방정식(초탄성, 점탄성, 손상 소성)의 일관 접선 강성 텐서($\mathbb{C} = 2\,\partial\mathbf{S}/\partial\mathbf{C}$)를 수동 유도 없이 자동미분으로 즉시 검증 및 프로토타이핑.
 * **Numba LLVM JIT (`--elem_jit numba`)**: LLVM 네이티브 머신코드 컴파일 및 Intel oneMKL 다중 스레딩 결합으로 상용 C++ 솔버 수준의 프로덕션 실행 속도 보장.
 
-### 5. Abaqus Parity 적응형 수렴 제어 엔진 (`SolutionControl`)
+### 5. 적응형 비선형 수렴 제어 엔진 (`SolutionControl`)
 * 특성 하중($q_{\text{avg}}$) 기반 무차원화 잔차 검증($\|r\|_\infty \le R_n \cdot q_{\text{avg}}$), 변위 보정량 대체 수렴 판정($\Delta u_{\max} \le C_n \cdot \Delta u_{\text{avg}}$), 불연속 반복(SDI) 제어 및 적응형 라인 서치(Line Search)를 완벽 탑재.
 
 ---
 
-## 📋 지원하는 Abaqus 키워드 카드 전수 분류표 (Supported Abaqus Keywords)
+## 📋 지원하는 표준 입력 데크(*KEYWORD) 전수 분류표 (Supported Standard Keywords)
 
-WHT_DispFoldSolver는 SIMULIA Abaqus Standard 입력 데크(`.inp`)의 주요 키워드 **76종**을 등록 및 파싱하며, 실제 비선형 유한요소 해석 모델에 1:1 바인딩합니다:
+WHT_DispFoldSolver는 유한요소 표준 입력 데크(`.inp`)의 주요 키워드 카드 **76종**을 자체 렉서 및 파서로 등록·파싱하며, 실제 비선형 유한요소 해석 모델에 1:1 바인딩합니다:
 
 ### 1. 메쉬, 형상 및 모델 토폴로지 (Mesh, Geometry & Scope)
-| Abaqus 키워드 | 지원 수준 | 설명 및 구현 기능 |
+| 표준 키워드 카드 | 지원 수준 | 설명 및 구현 기능 |
 |:---|:---:|:---|
 | `*NODE` | **FULL** | 1D/2D/3D 절점 번호 및 좌표 파싱 (스케일링 및 시스템 변환 지원) |
 | `*ELEMENT` | **FULL** | 2D (`CPE4`, `CPE4R`, `CPE4I`, `CPE4H`, `CPS4`, `CPS4R`, `T3`) 및 3D (`C3D8`, `C3D8R`, `C3D8I`, `C3D8H`) 요소 연결성 |
@@ -70,14 +70,14 @@ WHT_DispFoldSolver는 SIMULIA Abaqus Standard 입력 데크(`.inp`)의 주요 �
 | `*ORIENTATION` | **PARTIAL** | 재료 축 및 이방성 물성 국소 배향각 지정 |
 
 ### 2. 단면 특성 및 요소 제어 (Sections & Controls)
-| Abaqus 키워드 | 지원 수준 | 설명 및 구현 기능 |
+| 표준 키워드 카드 | 지원 수준 | 설명 및 구현 기능 |
 |:---|:---:|:---|
 | `*SOLID SECTION` | **FULL** | 2D 평면 변형률/평면 응력 두께 및 3D 솔리드 재료 할당, `CONTROLS` 연결 |
 | `*SHELL SECTION` | **FULL** | 쉘 요소 두께, 단면 적분점(Simpson/Gauss) 및 재료 매핑 |
 | `*SECTION CONTROLS` | **FULL** | `HOURGLASS=ENHANCED` (Puso 물리 안정화), `DISTORTION CONTROL=YES`, `LENGTH RATIO=r` 배리어 |
 
 ### 3. 재료 구성방정식 모델 (Material Constitutive Models)
-| Abaqus 키워드 | 지원 수준 | 설명 및 구현 기능 |
+| 표준 키워드 카드 | 지원 수준 | 설명 및 구현 기능 |
 |:---|:---:|:---|
 | `*MATERIAL` | **FULL** | 재료 블록 컨테이너 정의 |
 | `*ELASTIC` | **FULL** | 등방성(Isotropic), 공학 상수(Engineering Constants), 직교이방성(Orthotropic) 탄성 |
@@ -95,7 +95,7 @@ WHT_DispFoldSolver는 SIMULIA Abaqus Standard 입력 데크(`.inp`)의 주요 �
 | `*CREEP` | **FULL** | 멱법칙(Norton Power Law) 및 시간/변형률 경화 크리프 모델 |
 
 ### 4. 접촉 및 구속조건 (Contact & Multi-Point Constraints)
-| Abaqus 키워드 | 지원 수준 | 설명 및 구현 기능 |
+| 표준 키워드 카드 | 지원 수준 | 설명 및 구현 기능 |
 |:---|:---:|:---|
 | `*SURFACE` | **FULL** | 절점 및 요소 면(S1~S6) 기반 2D/3D 접촉 표면 정의 |
 | `*CONTACT PAIR` | **FULL** | Master-Slave 접촉 쌍 지정, `SLIDING=FINITE/SMALL`, `MORTAR/PENALTY/NITSCHE` |
@@ -109,7 +109,7 @@ WHT_DispFoldSolver는 SIMULIA Abaqus Standard 입력 데크(`.inp`)의 주요 �
 | `*DISTRIBUTING COUPLING` | **PARTIAL** | 가중치 기반 하중 분산 커플링 구속 |
 
 ### 5. 해석 스텝, 하중 및 경계조건 (Steps, Loads & Boundary Conditions)
-| Abaqus 키워드 | 지원 수준 | 설명 및 구현 기능 |
+| 표준 키워드 카드 | 지원 수준 | 설명 및 구현 기능 |
 |:---|:---:|:---|
 | `*STEP` / `*END STEP` | **FULL** | 해석 단계 컨텍스트 분리 (`NLGEOM=YES/NO`, `INC=N`) |
 | `*STATIC` | **FULL** | 비선형 정적 평형 해석 (초기, 총 시간 및 적응형 하중 증분 제어) |
@@ -127,12 +127,12 @@ WHT_DispFoldSolver는 SIMULIA Abaqus Standard 입력 데크(`.inp`)의 주요 �
 ```mermaid
 flowchart TD
     subgraph UI ["1. Front-End Interfaces"]
-        API["Abaqus Python Scripting API\n(mdb.models['Model-1'])"]
-        CLI["Abaqus .inp Keyword CLI\n(python run_inp.py job.inp)"]
+        API["Python Scripting API\n(model = Model(...))"]
+        CLI["Standard .inp Keyword CLI\n(python run_inp.py job.inp)"]
     end
 
     subgraph Parser ["2. Lexer & Keyword Registry"]
-        LEX["AbaqusLexer & Parser\n(76 Keyword Handlers)"]
+        LEX["KeywordLexer & Parser\n(76 Keyword Handlers)"]
         ASM["Assembly & Instance Resolver\n(Part Coordinate Mapping)"]
     end
 
@@ -152,7 +152,7 @@ flowchart TD
     end
 
     subgraph Post ["5. Verification & Visualization"]
-        STA["Abaqus Standard .sta Log\n(Inc, Att, Equil Reactions)"]
+        STA["Convergence Monitor & .sta Log\n(Inc, Att, Equil Reactions)"]
         PV["PyVista 3D Interactive Viewer\n(Front, Iso, Material Views)"]
     end
 
@@ -199,7 +199,7 @@ pip install -e .[test,vis]
 
 ## 💡 사용 예시 (Usage Examples)
 
-### 1. Abaqus Python API 방식 모델링 스크립트
+### 1. Python 객체지향 API 모델링 스크립트
 ```python
 from dispsolver.model import Model
 from dispsolver.solver import SolutionControl
@@ -222,7 +222,7 @@ sec_ctrl = model.SectionControl(
 )
 model.SolidSection(name="SecPET", material="PET", controls="Ctrl-C3D8R")
 
-# 4. 단계 및 수렴성 엔진 설정 (Abaqus Parity Adaptive Preset)
+# 4. 단계 및 수렴성 엔진 설정 (Adaptive Preset)
 step = model.ImplicitDynamicStep(name="FoldStep", time_period=1.0, initial_inc=0.01, min_inc=1e-6)
 step.set_solution_control(SolutionControl(preset="ADAPTIVE"))
 
@@ -231,9 +231,9 @@ model.ContactPair(name="SelfContact", master="TopSurface", slave="TopSurface", f
 model.Tie(name="PlateTie", master="PlateTop", slave="DisplayBottom", method="KINEMATIC_MPC")
 ```
 
-### 2. Abaqus `.inp` 파일 직접 실행
+### 2. 표준 입력 데크(`.inp`) 파일 직접 실행
 ```bash
-# Abaqus 표준 입력 데크를 솔버로 직접 해석
+# 표준 .inp 입력 데크를 솔버로 직접 해석
 python examples/ex12_abaqus_inp_plate_fold.py
 ```
 
@@ -266,7 +266,7 @@ python examples/view_ex13_pyvista.py
 | **180° Teardrop Loop Moment** | `CPE4R` + `CPE4H` | $M_{\text{theory}} = 0.9479\,\text{N}\cdot\text{mm}$ ($G \to 0$) | $M = 0.9880\,\text{N}\cdot\text{mm}$ | **$+4.2\%$ (PASS)** |
 | **Irons Patch Test (Precision)** | Quad / Hex 요소 | $\varepsilon_{xx} = c_1, \varepsilon_{yy} = c_2$ | 기계 정밀도 Residual | **$2.51 \times 10^{-11}$ (PASS)** |
 | **Gulati 2-Point Elastica** | Co-rotational Bending | $F_x = 3.194 \times 10^2\,\text{N}$ | $3.194 \times 10^2\,\text{N}$ | **$< 0.01\%$ (PASS)** |
-| **Hertz Analytical Contact** | Dual Mortar / Nitsche | $p_0 = \sqrt{\frac{F E^*}{\pi R}}$ | Abaqus 비트 일치 | **PASS** |
+| **Hertz Analytical Contact** | Dual Mortar / Nitsche | $p_0 = \sqrt{\frac{F E^*}{\pi R}}$ | 비트 단위 일치 ($< 10^{-12}$) | **PASS** |
 | **Rigid Body Modes (Eigen)** | 8-node Hex | 6 Rigid Body Modes ($\lambda = 0$) | Spurious Zero Modes = 0 | **PASS** |
 
 > 상세 이론 유도 보고서: [`dev_log/report_psa_modulus_theory_vs_fea_verification_20261011.md`](dev_log/report_psa_modulus_theory_vs_fea_verification_20261011.md)
@@ -294,8 +294,8 @@ WHT_DispFoldSolver/
 │   ├── solver/                   # 증분 제어기 및 SolutionControl 수렴 엔진
 │   ├── solver2d/                 # 2D 비선형 음해법 솔버
 │   ├── solver3d/                 # 3D 비선형 음해법 솔버 (oneMKL PARDISO 결합)
-│   ├── io/                       # Abaqus 76개 키워드 파서 및 익스포터
-│   └── model/                    # Abaqus Python API 매핑 클래스 (Model, Step, Assembly)
+│   ├── io/                       # 76개 표준 키워드 파서 및 익스포터
+│   └── model/                    # 객체지향 Python 모델링 API 클래스 (Model, Step, Assembly)
 ├── examples/                     # 폴딩 및 접촉 실전 해석 예제
 │   ├── ex12_abaqus_inp_plate_fold.py  # 2D 다층 180° 티어드롭 폴딩 (표준 벤치마크)
 │   ├── ex13_3d_display_plate_fold.py  # 3D 다층 180° 티어드롭 폴딩
