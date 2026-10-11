@@ -1,7 +1,6 @@
 # WHT_DispFoldSolver
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![JIT: JAX & Numba](https://img.shields.io/badge/JIT-JAX%20%7C%20Numba-orange.svg)](https://numba.pydata.org/)
 [![Solver: Intel oneMKL PARDISO](https://img.shields.io/badge/Solver-Intel%20oneMKL%20PARDISO-0071C5.svg)](https://www.intel.com/content/www/us/en/developer/tools/oneapi/onemkl.html)
 [![Python FEA API](https://img.shields.io/badge/API-Python%20Object--Oriented%20FEA-red.svg)](https://github.com/WonhoLee1/WHT_DispFoldSolver)
@@ -350,12 +349,5 @@ WHT_DispFoldSolver/
 │   └── report_psa_modulus_theory_vs_fea_verification_20261011.md
 ├── LESSONS_LEARNED.md            # 전산역학 엔지니어링 교훈 및 안티패턴 방지 단일 소스
 ├── AGENTS.md                     # LLM 에이전트 표준 작업 지침서
-├── pyproject.toml                # 프로젝트 패키지 메타데이터 및 빌드 설정
-└── LICENSE                       # MIT License
+└── pyproject.toml                # 프로젝트 패키지 메타데이터 및 빌드 설정
 ```
-
----
-
-## 📜 라이선스 (License)
-
-본 프로젝트는 [MIT License](LICENSE) 하에 자유롭게 수정, 연구 및 상용 배포가 가능합니다.
