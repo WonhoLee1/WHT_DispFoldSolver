@@ -122,55 +122,83 @@ WHT_DispFoldSolver는 유한요소 표준 입력 데크(`.inp`)의 주요 키워
 
 ---
 
-## 🏛️ 시스템 아키텍처 (System Architecture)
+## 🏛️ 상세 시스템 아키텍처 (Comprehensive System Architecture)
+
+WHT_DispFoldSolver는 프론트엔드 모델링부터 비선형 재료 구성방정식 평가, 공간 이산화, 고성능 병렬 수치해석, 사후 처리에 이르는 **전산역학 엔드-투-엔드 파이프라인**을 모듈화된 객체지향 아키텍처로 구현하고 있습니다:
 
 ```mermaid
 flowchart TD
-    subgraph UI ["1. Front-End Interfaces"]
-        API["Python Scripting API\n(model = Model(...))"]
+    subgraph UI ["1. Front-End Modeling & Input Layer"]
+        API["Python Object-Oriented FEA API\n(dispsolver.model.Model, Part, Assembly, Step)"]
         CLI["Standard .inp Keyword CLI\n(python run_inp.py job.inp)"]
     end
 
-    subgraph Parser ["2. Lexer & Keyword Registry"]
-        LEX["KeywordLexer & Parser\n(76 Keyword Handlers)"]
-        ASM["Assembly & Instance Resolver\n(Part Coordinate Mapping)"]
+    subgraph Parser ["2. Lexer, Parser & Model Resolution (dispsolver/io, model)"]
+        LEX["KeywordLexer & Registry\n(76 Standard Keyword Handlers)"]
+        RESOLVE["Model & Assembly Resolver\n(Instance Placement, Transforms & Boundary Sets)"]
     end
 
-    subgraph Discretization ["3. Advanced Spatial Discretization"]
-        E_UP["CPE4H / C3D8H\n(Herrmann u-P Mixed Solids)"]
-        E_EAS["CPE4I / C3D8I\n(9-mode EAS Incompatible)"]
-        E_RD["CPE4R / C3D8R\n(Puso Hourglass & Distortion Ctrl)"]
-        TIE_MPC["Kinematic MPC Tie\n(Slave DOF Elimination)"]
-        CTC_LBVH["Dual Mortar Contact\n(Flat Morton LBVH Search)"]
+    subgraph MaterialEngine ["3. Constitutive Material Engine (dispsolver/material, material3d)"]
+        ELAS["Linear Elasticity & Thermal Expansion\n(Isotropic, Orthotropic, Engineering Constants)"]
+        PLAS["Elastoplasticity\n(J2 Flow, Hardening, Hill48 Anisotropic)"]
+        HYPER["Hyperelasticity\n(Arruda-Boyce, Mooney-Rivlin, Ogden, Neo-Hookean)"]
+        VISCO["Viscoelasticity & Creep\n(Simo Finite-Strain Prony Series, Norton Power Law)"]
+        DMG["Damage & Mullins Effect\n(Damage Initiation, Softening, Concrete Damage)"]
+        UMAT3D["High-Speed 3D Numba UMATs\n(numba_materials.py & JAX AutoDiff Tangent)"]
     end
 
-    subgraph Solver ["4. High-Performance Implicit Solver"]
-        NR["Newton-Raphson Engine\n(Line Search & Adaptive dt)"]
-        CTRL["SolutionControl Engine\n(Active Tolerance & SDI)"]
-        MKL["Intel oneMKL PARDISO\n(Pure SPD Cholesky LL^T)"]
-        JIT["Dual JIT Compilers\n(Numba LLVM / JAX AutoDiff)"]
+    subgraph Discretization ["4. Spatial Discretization & Contact (dispsolver/element*, constraint*)"]
+        E2D["2D Continuum Elements (element2d)\nCPE4H (u-P Mixed) / CPE4I (EAS) / CPE4R (Puso Hourglass)"]
+        E3D["3D Solid Elements (element3d)\nC3D8H (u-P Mixed) / C3D8I (EAS) / C3D8R (Puso Hourglass)"]
+        BARRIER["Distortion Control Barrier\n(Negative Jacobian Prevention, Length Ratio rc)"]
+        TIE["Kinematic MPC Tie Elimination (constraint)\n(Slave DOF Elimination, Zero Penalty Stiffness)"]
+        CONTACT["Dual Mortar Contact Mechanics (constraint3d, contact)\n(Wohlmuth Biorthogonal Condensation, Flat Morton LBVH)"]
     end
 
-    subgraph Post ["5. Verification & Visualization"]
-        STA["Convergence Monitor & .sta Log\n(Inc, Att, Equil Reactions)"]
-        PV["PyVista 3D Interactive Viewer\n(Front, Iso, Material Views)"]
+    subgraph SolverEngine ["5. Nonlinear Implicit Solver Engine (dispsolver/solver*, parallel)"]
+        TIME["Time Integration\n(Static / Implicit Dynamic Newmark-beta, HHT-alpha)"]
+        NR["Full Newton-Raphson Engine\n(Line Search & Adaptive Inc Controller)"]
+        CTRL["SolutionControl Engine\n(Active Tolerance q_avg & SDI State Engine)"]
+        MKL["Intel oneMKL PARDISO\n(Pure SPD Cholesky LL^T Direct Solver)"]
+        JIT["Dual Compilation Pipelines\n(Numba LLVM JIT & JAX AutoDiff)"]
     end
 
-    API --> ASM
+    subgraph PostProcessing ["6. Verification, Monitoring & Visualization (output, postprocess)"]
+        STA["Real-Time Monitor & .sta Log\n(Reactions, Moments, Energy Balance & Residuals)"]
+        PV["PyVista 3D Interactive Graphics (view_ex13_pyvista)\n(Front, Iso, Layer Views, Ortho/Perspective)"]
+        EXPORT["VTK / HDF5 / MeshIO Exporters\n(Stress, Strain, Displacement Field Output)"]
+    end
+
+    API --> RESOLVE
     CLI --> LEX
-    LEX --> ASM
-    ASM --> TIE_MPC
-    ASM --> CTC_LBVH
-    TIE_MPC --> NR
-    CTC_LBVH --> NR
-    E_UP --> NR
-    E_EAS --> NR
-    E_RD --> NR
+    LEX --> RESOLVE
+    RESOLVE --> MaterialEngine
+    RESOLVE --> Discretization
+    
+    ELAS --> UMAT3D
+    PLAS --> UMAT3D
+    HYPER --> UMAT3D
+    VISCO --> UMAT3D
+    DMG --> UMAT3D
+
+    UMAT3D --> E2D
+    UMAT3D --> E3D
+    BARRIER --> E2D
+    BARRIER --> E3D
+
+    E2D --> NR
+    E3D --> NR
+    TIE --> NR
+    CONTACT --> NR
+
+    TIME --> NR
     NR <--> CTRL
     NR <--> MKL
     NR <--> JIT
+    
     NR --> STA
-    NR --> PV
+    NR --> EXPORT
+    EXPORT --> PV
 ```
 
 ---
@@ -208,7 +236,7 @@ from dispsolver.solver import SolutionControl
 model = Model(name="DisplayFolding")
 part = model.Part(name="Display", dimensionality="3D", type="DEFORMABLE_BODY")
 
-# 2. 재료 및 단면 정의 (PET / PSA / Glass)
+# 2. 재료 및 단면 정의 (PET 탄소성 / PSA 초탄성 / Glass)
 mat_pet = model.Material(name="PET")
 mat_pet.Elastic(table=((4000.0, 0.30),))
 mat_pet.Plastic(table=((80.0, 0.0), (120.0, 0.05)))
@@ -287,18 +315,34 @@ pytest tests/test_distortion_control_barrier.py tests/test_hourglass_3d_puso.py 
 ```text
 WHT_DispFoldSolver/
 ├── dispsolver/                   # 핵심 비선형 유한요소 솔버 패키지
-│   ├── element/                  # JAX 기반 2D 연속체/점탄성 요소
-│   ├── element2d/                # Numba 2D 요소 (CPE4, CPE4R, CPE4I, CPE4H)
-│   ├── element3d/                # Numba 3D 솔리드 요소 (C3D8, C3D8R, C3D8H)
-│   ├── constraint/               # 접촉 및 Tie 제약조건 (Dual Mortar, Nitsche, Penalty)
-│   ├── solver/                   # 증분 제어기 및 SolutionControl 수렴 엔진
-│   ├── solver2d/                 # 2D 비선형 음해법 솔버
-│   ├── solver3d/                 # 3D 비선형 음해법 솔버 (oneMKL PARDISO 결합)
-│   ├── io/                       # 76개 표준 키워드 파서 및 익스포터
-│   └── model/                    # 객체지향 Python 모델링 API 클래스 (Model, Step, Assembly)
+│   ├── material/                 # 비선형 재료 구성방정식 라이브러리
+│   │   ├── base.py               # 재료 응답 인터페이스 및 상태변수(SDV) 관리
+│   │   ├── plastic.py            # J2 소성, von Mises 항복 및 등방/이동 경화
+│   │   ├── plasticity_hill.py    # Hill48 이방성 소성 정식화
+│   │   ├── arruda_boyce.py       # Arruda-Boyce 초탄성 (8-chain 고무 모델)
+│   │   ├── mooney_rivlin.py      # Mooney-Rivlin / Neo-Hookean / Ogden 초탄성
+│   │   ├── viscoelastic.py       # Simo 대변형 유한 변형률 점탄성 (Prony 급수)
+│   │   ├── creep_numba.py        # 크리프 구성방정식 (Norton Power Law)
+│   │   └── mullins_damage.py     # Mullins 연화 손상 및 인장/압축 파괴 모델
+│   ├── material3d/               # 고속 3D Numba UMAT 라이브러리
+│   │   └── numba_materials.py    # Numba JIT 컴파일된 고성능 3D 재료 적분 커널
+│   ├── element/                  # JAX 기반 2D 연속체 및 점탄성 요소
+│   ├── element2d/                # Numba 2D 요소 (CPE4, CPE4R, CPE4I, CPE4H, CPS4R)
+│   ├── element3d/                # Numba 3D 솔리드 요소 (C3D8, C3D8R, C3D8I, C3D8H)
+│   ├── constraint/               # 2D 접촉 및 Kinematic MPC Tie 제약조건
+│   ├── constraint3d/             # 3D Wohlmuth Dual Mortar 및 Nitsche 접촉 정식화
+│   ├── contact/                  # 2D/3D Flat Linear Morton LBVH 공간 가속 트리
+│   ├── solver/                   # 증분 제어기(dt_controller) 및 SolutionControl 수렴 엔진
+│   ├── solver2d/                 # 2D 비선형 음해법 솔버 (DynamicSolver2D)
+│   ├── solver3d/                 # 3D 비선형 음해법 솔버 (DynamicSolver3D, oneMKL PARDISO 결합)
+│   ├── mesh/ & mesh2d/ & mesh3d/ # 절점/요소 생성기 및 메쉬 토폴로지 유틸리티
+│   ├── io/                       # 76개 표준 키워드 렉서, 파서 및 입력 진단기
+│   ├── model/                    # 객체지향 Python 모델링 API 클래스 (Model, Step, Assembly)
+│   ├── parallel/                 # 멀티스레드 병렬화 및 oneMKL 스레드 풀 바인딩
+│   └── postprocess/ & export/    # 결과 필드 추출, 실시간 로그 및 VTK/HDF5 익스포터
 ├── examples/                     # 폴딩 및 접촉 실전 해석 예제
 │   ├── ex12_abaqus_inp_plate_fold.py  # 2D 다층 180° 티어드롭 폴딩 (표준 벤치마크)
-│   ├── ex13_3d_display_plate_fold.py  # 3D 다층 180° 티어드롭 폴딩
+│   ├── ex13_3d_display_plate_fold.py  # 3D 다층 180° 티어드롭 폴딩 (14개 레이어)
 │   └── view_ex13_pyvista.py           # PyVista 3D 고해상도 대화형 뷰어
 ├── tests/                        # 회귀 방지 통합 테스트 스위트 (All Green)
 ├── dev_log/                      # 이론 수식 전개, 설계 계획서 및 실측 보고서
