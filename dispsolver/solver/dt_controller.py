@@ -28,10 +28,13 @@ class AdaptiveDtController:
         dt_min: float = 1e-6,
         dt_max: float = 0.1,
         target_iters: int = 20,
+        **kwargs,
     ):
         self.dt = dt_init
         self.dt_min = dt_min
         self.dt_max = dt_max
+        if "target_iter" in kwargs:
+            target_iters = kwargs.pop("target_iter")
         self.target_iters = target_iters
 
     def update(self, n_iter: int, converged: bool, conv_rate: float = 1.0) -> float:
@@ -83,3 +86,7 @@ class AdaptiveDtController:
         prev_dt = self.dt
         self.update(1, False, conv_rate=conv_rate)
         return self.dt > self.dt_min
+
+    def notify_convergence(self, iters: int = 1, converged: bool = True, conv_rate: float = 1.0) -> float:
+        """Compatibility alias for update(), supporting both success and cutback notifications."""
+        return self.update(n_iter=iters, converged=converged, conv_rate=conv_rate)

@@ -227,7 +227,48 @@ if HAS_NUMBA:
                     val += B0[k, i] * CB[k, j]
                 K_elem[i, j] = V0 * val
 
-        # 6. Flanagan & Belytschko Hourglass Control
+        # 6. Universal Distortion Control (*SECTION CONTROLS, DISTORTION CONTROL=YES)
+        use_distortion = False
+        r_c = 0.10
+        if elem_controls.shape[0] > 1:
+            use_distortion = (elem_controls[0] > 0.5)
+            if elem_controls[1] > 0.0:
+                r_c = elem_controls[1]
+
+        if use_distortion and detF0 < r_c:
+            bulk_k = (C_mat[0, 0] + C_mat[1, 1] + C_mat[2, 2]) / 3.0
+            J_safe = max(detF0, 1e-12)
+            p_dist = bulk_k * r_c * (r_c - J_safe) / (J_safe ** 3)
+            # invC = inv(F0^T F0)
+            C_ten = np.zeros((3, 3), dtype=np.float64)
+            for i in range(3):
+                for j in range(3):
+                    val = 0.0
+                    for k in range(3):
+                        val += F0[k, i] * F0[k, j]
+                    C_ten[i, j] = val
+            invC, _ = _inv3x3_det(C_ten)
+            invC_v = np.array([invC[0, 0], invC[1, 1], invC[2, 2],
+                               invC[1, 2], invC[0, 2], invC[0, 1]], dtype=np.float64)
+            S_dist = -p_dist * J_safe * invC_v
+            for j in range(24):
+                val = 0.0
+                for i in range(6):
+                    val += B0[i, j] * S_dist[i]
+                f_int[j] += V0 * val
+
+            c_p = bulk_k * r_c * (2.0 * r_c - J_safe) / (J_safe * J_safe)
+            tr_B = np.zeros(24, dtype=np.float64)
+            for j in range(24):
+                val = 0.0
+                for i in range(6):
+                    val += B0[i, j] * invC_v[i]
+                tr_B[j] = val
+            for i in range(24):
+                for j in range(24):
+                    K_elem[i, j] += V0 * c_p * tr_B[i] * tr_B[j]
+
+        # 7. Hourglass Control (ENHANCED / STIFFNESS)
         # Extract shear modulus G from props or C_mat
         if mat_type == MAT_CUSTOM_ELASTIC and props.shape[0] >= 36:
             G = props[3 * 6 + 3]
@@ -238,38 +279,63 @@ if HAS_NUMBA:
         else:
             G = C_mat[3, 3]
 
-        alpha_hg = 0.05
-        if elem_controls.shape[0] > 5 and elem_controls[5] > 0.0:
-            alpha_hg = elem_controls[5]
+        hg_mode = 0.0  # 0: ENHANCED (Puso 2000), 1: STIFFNESS (Flanagan-Belytschko)
+        if elem_controls.shape[0] > 5:
+            hg_mode = elem_controls[5]
 
-        # kappa_hg = 0.5 * alpha_hg * G * V0^(1/3)
         Le = V0 ** (1.0 / 3.0)
-        kappa_hg = 0.5 * alpha_hg * G * Le
 
-        # Hourglass modal displacements q (4, 3) across the 3 directions
-        for alpha in range(4):
-            g = gamma[alpha]  # (8,)
-            qx = 0.0
-            qy = 0.0
-            qz = 0.0
-            for a in range(8):
-                qx += g[a] * u_elem[3 * a]
-                qy += g[a] * u_elem[3 * a + 1]
-                qz += g[a] * u_elem[3 * a + 2]
+        if hg_mode == 1.0:
+            # STIFFNESS Mode: Flanagan & Belytschko (1981)
+            alpha_hg = 0.05
+            if elem_controls.shape[0] > 6 and elem_controls[6] > 0.0:
+                alpha_hg = elem_controls[6]
+            kappa_hg = 0.5 * alpha_hg * G * Le
+            for alpha in range(4):
+                g = gamma[alpha]  # (8,)
+                qx = 0.0; qy = 0.0; qz = 0.0
+                for a in range(8):
+                    qx += g[a] * u_elem[3 * a]
+                    qy += g[a] * u_elem[3 * a + 1]
+                    qz += g[a] * u_elem[3 * a + 2]
+                for a in range(8):
+                    ga = g[a]
+                    f_int[3 * a]     += kappa_hg * qx * ga
+                    f_int[3 * a + 1] += kappa_hg * qy * ga
+                    f_int[3 * a + 2] += kappa_hg * qz * ga
+                    for b in range(8):
+                        k_val = kappa_hg * ga * g[b]
+                        K_elem[3 * a,     3 * b]     += k_val
+                        K_elem[3 * a + 1, 3 * b + 1] += k_val
+                        K_elem[3 * a + 2, 3 * b + 2] += k_val
+        else:
+            # ENHANCED Mode: Puso (2000) 9-mode EAS physical stabilization
+            # H_alpha = (G * Le / 12.0)
+            H_scale = (G * Le / 12.0)
+            for alpha in range(4):
+                g = gamma[alpha]  # (8,)
+                qx = 0.0; qy = 0.0; qz = 0.0
+                for a in range(8):
+                    qx += g[a] * u_elem[3 * a]
+                    qy += g[a] * u_elem[3 * a + 1]
+                    qz += g[a] * u_elem[3 * a + 2]
+                for a in range(8):
+                    ga = g[a]
+                    f_int[3 * a]     += H_scale * qx * ga
+                    f_int[3 * a + 1] += H_scale * qy * ga
+                    f_int[3 * a + 2] += H_scale * qz * ga
+                    for b in range(8):
+                        k_val = H_scale * ga * g[b]
+                        K_elem[3 * a,     3 * b]     += k_val
+                        K_elem[3 * a + 1, 3 * b + 1] += k_val
+                        K_elem[3 * a + 2, 3 * b + 2] += k_val
 
-            # Add to internal force: f_hg = kappa_hg * q_i * g_a
-            for a in range(8):
-                ga = g[a]
-                f_int[3 * a]     += kappa_hg * qx * ga
-                f_int[3 * a + 1] += kappa_hg * qy * ga
-                f_int[3 * a + 2] += kappa_hg * qz * ga
-
-                # Add to tangent stiffness: K_hg = kappa_hg * (g_a * g_b) * delta_ij
-                for b in range(8):
-                    k_val = kappa_hg * ga * g[b]
-                    K_elem[3 * a,     3 * b]     += k_val
-                    K_elem[3 * a + 1, 3 * b + 1] += k_val
-                    K_elem[3 * a + 2, 3 * b + 2] += k_val
+        # Enforce exact symmetry of tangent stiffness
+        for i in range(24):
+            for j in range(i + 1, 24):
+                avg = 0.5 * (K_elem[i, j] + K_elem[j, i])
+                K_elem[i, j] = avg
+                K_elem[j, i] = avg
 
         return K_elem, f_int, 0
 

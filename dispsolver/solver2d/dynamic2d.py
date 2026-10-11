@@ -190,9 +190,16 @@ class DynamicSolver2D:
 
         # SectionControls array: (n_elems, 8)
         self.elem_controls = np.zeros((n_elems, 8), dtype=np.float64)
-        self.elem_controls[:, 0] = 0.05  # Hourglass factor default
-        self.elem_controls[:, 3] = 1.0   # Distortion control default ON
-        self.elem_controls[:, 4] = 0.02  # min_det default
+        self.elem_controls[:, 0] = 1.0   # distortion_control default ON
+        self.elem_controls[:, 1] = 0.1   # length_ratio default 0.1
+        self.elem_controls[:, 2] = 0.0   # viscous_damping default 0.0
+        self.elem_controls[:, 3] = 1.0   # anti_inversion_barrier default ON
+        self.elem_controls[:, 4] = 0.02  # min_det_f default 0.02
+        self.elem_controls[:, 5] = 0.0   # hourglass_control default ENHANCED
+        self.elem_controls[:, 6] = 1.0   # hourglass_scale default 1.0
+
+        if hasattr(self.mesh, "elem_controls") and self.mesh.elem_controls is not None:
+            self.elem_controls[:] = self.mesh.elem_controls
 
         self._build_kernel_groups()
 
@@ -300,6 +307,26 @@ class DynamicSolver2D:
             self.csr_data = None
             self.topo_to_csr_map = None
 
+
+    def set_section_controls(
+        self,
+        elem_indices: Union[int, slice, List[int], np.ndarray],
+        controls: Any
+    ):
+        """Set Abaqus-compatible SectionControls for specific 2D solid elements.
+
+        Parameters:
+            elem_indices: int, slice, list of ints, or numpy array of element indices (0-based).
+            controls: SectionControls instance or (8,) numpy float array.
+        """
+        if hasattr(controls, "to_control_array"):
+            ctrl_arr = controls.to_control_array()
+        elif isinstance(controls, np.ndarray):
+            ctrl_arr = controls
+        else:
+            raise ValueError(f"Unsupported controls type: {type(controls)}")
+
+        self.elem_controls[elem_indices] = ctrl_arr
 
     def add_constraint(self, constraint: Any):
         """Add a constraint or surface tie object to the 2D solver."""

@@ -89,6 +89,10 @@ class FlattenedSolverSystem:
     node_transforms: Optional[np.ndarray] = None
     has_transforms: bool = False
 
+    # 9. SectionControls per PID and per Element (*SECTION CONTROLS in Abaqus)
+    controls_by_pid: Dict[int, Any] = field(default_factory=dict)
+    elem_controls: Optional[np.ndarray] = None
+
     # bare part-level set names defined by several instances: kind -> {bare: [qualified...]}
     ambiguous_names: Dict[str, Dict[str, List[str]]] = field(default_factory=dict)
 
@@ -109,6 +113,8 @@ class FlattenedSolverSystem:
             ordered_conn = [inv_nid[idx] for idx in valid_conn]
             mesh.add_element(gid, ordered_conn, self.elem_types[e_idx], pid=int(self.elem_pids[e_idx]))
             
+        if self.elem_controls is not None:
+            mesh.elem_controls = self.elem_controls
         return mesh
 
     def to_mesh2d(self):
@@ -127,6 +133,8 @@ class FlattenedSolverSystem:
             ordered_conn = [inv_nid[idx] for idx in valid_conn]
             mesh.add_element(gid, ordered_conn, self.elem_types[e_idx], pid=int(self.elem_pids[e_idx]))
             
+        if self.elem_controls is not None:
+            mesh.elem_controls = self.elem_controls
         return mesh
 
     def to_legacy_mesh2d(self):
@@ -147,6 +155,8 @@ class FlattenedSolverSystem:
             ordered_conn = [inv_nid[idx] for idx in valid_conn]
             mesh.elements[gid] = Element(gid, ordered_conn, self.elem_types[e_idx], pid=int(self.elem_pids[e_idx]))
             
+        if self.elem_controls is not None:
+            mesh.elem_controls = self.elem_controls
         return mesh
 
 
@@ -249,6 +259,7 @@ class Assembly:
         section_to_pid: Dict[str, int] = {}
         materials_by_pid: Dict[int, Any] = {}
         material_names_by_pid: Dict[int, str] = {}
+        controls_by_pid: Dict[int, Any] = {}
         current_pid = 0
 
         # 1. Flatten Instances
@@ -333,6 +344,11 @@ class Assembly:
                     sec_obj = model.sections.get(sec_name)
                     mat_name = sec_obj.material_name if sec_obj else "DEFAULT"
                     mat_obj = model.materials.get(mat_name)
+                    ctrl_spec = getattr(sec_obj, "controls", None) if sec_obj is not None else None
+                    if isinstance(ctrl_spec, str) and hasattr(model, "section_controls") and ctrl_spec in model.section_controls:
+                        controls_by_pid[assigned_pid] = model.section_controls[ctrl_spec]
+                    elif hasattr(ctrl_spec, "to_control_array"):
+                        controls_by_pid[assigned_pid] = ctrl_spec
                     ori_name = getattr(sec_obj, "orientation_name", None) if sec_obj is not None else None
                     if ori_name and ori_name not in model.orientations:
                         # Checked here (where the section is consumed), not in
@@ -537,6 +553,20 @@ class Assembly:
         if hasattr(model, "initial_step"):
             compiled_predefined_fields = list(model.initial_step.predefined_fields.values())
 
+        # 8. Build Element-level SectionControls array (*SECTION CONTROLS in Abaqus)
+        n_elems_total = len(all_elem_pids)
+        elem_controls = np.zeros((n_elems_total, 8), dtype=np.float64)
+        elem_controls[:, 0] = 1.0   # distortion_control default ON
+        elem_controls[:, 1] = 0.1   # length_ratio default 0.1
+        elem_controls[:, 2] = 0.0   # viscous_damping default 0.0
+        elem_controls[:, 3] = 1.0   # anti_inversion_barrier default ON
+        elem_controls[:, 4] = 0.02  # min_det_f default 0.02
+        elem_controls[:, 5] = 0.0   # hourglass_control default ENHANCED
+        elem_controls[:, 6] = 1.0   # hourglass_scale default 1.0
+        for e_idx, pid in enumerate(all_elem_pids):
+            if pid in controls_by_pid:
+                elem_controls[e_idx] = controls_by_pid[pid].to_control_array()
+
         sys = FlattenedSolverSystem(
             coords=global_coords,
             elem_conn_0based=elem_conn_0based,
@@ -554,7 +584,9 @@ class Assembly:
             cols_topo=cols_topo,
             num_dofs=num_dofs,
             constraints=compiled_constraints,
-            predefined_fields=compiled_predefined_fields
+            predefined_fields=compiled_predefined_fields,
+            controls_by_pid=controls_by_pid,
+            elem_controls=elem_controls
         )
 
         from dispsolver.model.nodal_transform import build_nodal_transforms

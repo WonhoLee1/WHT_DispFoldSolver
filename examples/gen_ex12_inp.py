@@ -99,12 +99,10 @@ def generate(config: FoldModelConfig = None):
 
     _w("**")
 
-    # 3. Elements -- one ELSET per PHYSICAL LAYER (spanning that layer's
-    # n_rows element rows) so each layer carries its own *SOLID SECTION/
-    # pid below, independent of how many rows it has or whether its
-    # material name repeats across other layers.
+    # 3. Elements -- Standard Abaqus element dispatch per physical layer
     display_elsets = []
     elset_material = []
+    elset_types = []
     for layer_idx, (_r0, _r1, mat_name) in enumerate(grid.layer_row_spans):
         layer_cells = grid.cells_of_layer(layer_idx)
         if not layer_cells:
@@ -115,7 +113,18 @@ def generate(config: FoldModelConfig = None):
         elset_name = f"DISP_LAYER{layer_idx + 1:02d}"
         display_elsets.append(elset_name)
         elset_material.append(mat_name)
-        _w(f"*ELEMENT, TYPE=CPE4, ELSET={elset_name}")
+
+        if mat_name.startswith("PET"):
+            elem_type_str = getattr(config.solver, "pet_element_type", "CPE4R")
+        elif mat_name.startswith("PSA"):
+            elem_type_str = getattr(config.solver, "psa_element_type", "CPE4H")
+        elif mat_name.startswith("GLASS"):
+            elem_type_str = getattr(config.solver, "glass_element_type", "CPE4R")
+        else:
+            elem_type_str = "CPE4"
+        elset_types.append(elem_type_str)
+
+        _w(f"*ELEMENT, TYPE={elem_type_str}, ELSET={elset_name}")
         for cell in layer_cells:
             n1, n2, n3, n4 = cell.conn
             _w(f"{cell.eid}, {n1}, {n2}, {n3}, {n4}")
@@ -133,11 +142,22 @@ def generate(config: FoldModelConfig = None):
         for line in emit_abaqus_material_block(mdef):
             _w(line)
 
+    # Section Controls (if hourglass or distortion control is configured)
+    ctrl_name = None
+    if getattr(config.solver, "hourglass", None) or getattr(config.solver, "distortion_control", False):
+        ctrl_name = "SEC_CTRL_CPE4R"
+        hg_str = f", HOURGLASS={config.solver.hourglass}" if getattr(config.solver, "hourglass", None) else ""
+        dc_str = ", DISTORTION CONTROL=YES" if getattr(config.solver, "distortion_control", False) else ""
+        lr_val = getattr(config.solver, "distortion_j_crit", 0.10)
+        lr_str = f", LENGTH RATIO={lr_val:.2f}"
+        _w(f"*SECTION CONTROLS, NAME={ctrl_name}{hg_str}{dc_str}{lr_str}")
+
     # Sections -- one per physical layer (elset_material repeats e.g.
     # "PET" seven times across the 7 pairs, referencing the ONE PET
     # *MATERIAL block above).
-    for elset_name, mat_name in zip(display_elsets, elset_material):
-        _w(f"*SOLID SECTION, ELSET={elset_name}, MATERIAL={mat_name}")
+    for elset_name, mat_name, etype in zip(display_elsets, elset_material, elset_types):
+        ctrl_clause = f", CONTROLS={ctrl_name}" if (ctrl_name and "R" in etype) else ""
+        _w(f"*SOLID SECTION, ELSET={elset_name}, MATERIAL={mat_name}{ctrl_clause}")
         _w("1.0,")
     _w("*SOLID SECTION, ELSET=PLATE_LEFT, MATERIAL=STEEL")
     _w("1.0,")

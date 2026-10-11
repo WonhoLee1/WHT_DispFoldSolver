@@ -139,9 +139,10 @@ class Model:
         return m
 
     def HomogeneousSolidSection(self, name: str, material: str, thickness: float = 1.0,
-                                orientation: Optional[str] = None) -> SolidSection:
+                                orientation: Optional[str] = None,
+                                controls: Optional[Union[str, SectionControls]] = None) -> SolidSection:
         """Create and register a SolidSection in this Model (Abaqus parity)."""
-        sec = SolidSection(name=str(name), material_name=str(material), thickness=float(thickness))
+        sec = SolidSection(name=str(name), material_name=str(material), thickness=float(thickness), controls=controls)
         if orientation is not None:
             sec.orientation_name = str(orientation)
             ori = self.orientations.get(str(orientation))

@@ -261,6 +261,25 @@ Element JIT Strategy: Use `--elem_jit jax` for R&D/prototyping (AutoDiff), and s
   - 입력 파일 원문의 가스켓은 선형 탄성($E=1000\,\text{MPa}$)임에도 "초탄성 EPDM 고무(Mooney-Rivlin)"라고 확인 없이 환각 작성함.
 - **교훈**: 전역 기본값 변경은 영향도를 전수 평가하기 전까지 엄격히 금지하며, 구현되지 않은 수학적 이론을 주석으로 달아 포장하지 않는다. 입력 데크의 물성 키워드는 반드시 직접 `view_file`로 확인하고 보고서에 인용해야 함.
 
+---
 
+# 🔬 [필독/절대엄수] 수치역학(FEA/전산역학) 전문 Pro 서브에이전트 운용 및 2차 독립 검증 프로토콜
 
+> **제정 배경**: 비선형 유한요소 기구학, 텐서 미분, 일관 접선 강성 및 왜곡 제어 구현 시, 단일 메인 에이전트의 컨텍스트 피로 및 자가 확증 편향으로 인한 구현 눈속임(임의의 스케일링 상수 `5000*kappa` 삽입, 물리적 기구학 생략)을 원천 차단하기 위함.
 
+## 1. 수치역학 Pro 에이전트 의무 발동 조건 (Mandatory Trigger Criteria)
+다음 작업 수행 시 메인 에이전트는 단독으로 수식을 어림짐작하여 작성해서는 안 되며, **반드시 `Model="pro"`, 역할 `FEA Solid Mechanics Architect` (또는 `FEA Continuum Mechanics Researcher`) 서브에이전트를 호출**하여 정밀 수식 유도를 수행해야 한다:
+1. **신규 유한요소 정식화**: 1점 감차적분 아워글래스(Enhanced/Stiffness), EAS 비적합 모드, F-bar 체적 투영, Herrmann u-P 혼합 정식화, Co-rotational 대변형 외피.
+2. **비선형 구성방정식(Constitutive Models)**: 초탄성(Hyperelastic), 대변형 탄소성(Multiplicative J2 Plasticity), 점탄성(Viscoelastic Prony series), 상태변수 반환 매핑(Return Mapping).
+3. **텐서 대수 및 일관 접선 강성(Consistent Tangent)**: $d\mathbf{S}/d\mathbf{E}$, $d\mathbf{R}/d\mathbf{u}$ 극분해 회전 미분, 음의 야코비안 방어 에너지 배리어 4차 텐서 $\mathbb{C}_{\text{dist}}$.
+4. **수치 불안정성 및 발산 원인 규명**: 요소 인버전($\det(F) \le 0$), 셰이킹/채터링, 스퓨리어스 영에너지 모드 분기 분석.
+
+## 2. 서브에이전트 운용 3대 원칙
+1. **Fresh Context 격리**: 메인 세션의 이전 잡음 없이 깨끗한 컨텍스트에서 오직 공인 원전(Bathe, Simo, Belytschko, Puso, Flanagan 등)의 기구학 및 변분식에만 100% 집중.
+2. **Anti-Mocking Protocol 절대 준수**: 임의의 하드코딩 계수, 난수, 미구현 주석을 엄단하고, 원전 논문 수식을 완전 전개하여 닫힌 형식(closed-form) 또는 AutoDiff 에너지 형태로 도출.
+3. **독립 보고서 작성**: 유도된 수식 및 파이썬/Numba/JAX pseudo-code를 `./dev_log/`에 영구 기록하고 요약 보고.
+
+## 3. 메인 에이전트의 2차 독립 검증 의무 (Mandatory 2nd-Pass Verification)
+- 메인 에이전트는 서브에이전트의 "유도 완료/테스트 통과" 보고를 그대로 신뢰하여 자가 승인(Self-Approval)하지 않는다.
+- 반드시 산출물 파일을 직접 열어(`view_file`) 라인 단위로 인스펙션(더미 상수 여부, 차원 일치성 확인)한 후 메인 코드베이스에 반영한다.
+- 벤치마크 테스트(고윳값 랭크 검증, RBM $K \mathbf{u} = \mathbf{0}$, 패치 테스트 $10^{-12}$, 대칭성 검증)를 메인 프로세스에서 직접 독립 실행하여 최종 완료를 선언한다.

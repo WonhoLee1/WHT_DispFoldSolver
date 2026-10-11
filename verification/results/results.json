@@ -1,6 +1,6 @@
 {
-  "timestamp": "2026-10-05T01:31:07.253209",
-  "runtime_seconds": 146.8771939277649,
+  "timestamp": "2026-10-10T23:00:03.003018",
+  "runtime_seconds": 95.52490448951721,
   "n_benchmarks": 14,
   "n_passed": 13,
   "results": [
@@ -110,14 +110,14 @@
         "jax_q4_eas": {
           "value": 0.0010989010990203974,
           "error_pct": 1.085613933818341e-08,
-          "symmetry_error": 1.1368683772161603e-13,
+          "symmetry_error": 2.842170943040401e-14,
           "min_eigenvalue": -4.1845398922539756e-13,
           "label": "strain energy U (N\u00b7mm)",
           "passed": true
         },
         "jax_q4_corotational_eas": {
-          "value": 0.0010989010990203982,
-          "error_pct": 1.0856218268101566e-08,
+          "value": 0.0010989010990203984,
+          "error_pct": 1.0856238000581105e-08,
           "symmetry_error": 1.4210854715202004e-13,
           "min_eigenvalue": -5.725321852550827e-13,
           "label": "strain energy U (N\u00b7mm)",
@@ -165,11 +165,11 @@
       "unit": "%",
       "backends": {
         "jax": {
-          "value": 2.5133917055221748e-11,
-          "error_pct": 2.5133917055221748e-11,
+          "value": 2.5124375487130994e-11,
+          "error_pct": 2.5124375487130994e-11,
           "n_iter": 1,
-          "ux_error": 1.0766127572781059e-16,
-          "uy_error": 2.2711325008140104e-16,
+          "ux_error": 1.0755285551056204e-16,
+          "uy_error": 2.2705903997277677e-16,
           "label": "internal node displacement error (%)",
           "passed": true
         },
@@ -194,15 +194,15 @@
       "unit": "mm",
       "backends": {
         "jax": {
-          "value": 0.00024669654544801187,
-          "error_pct": 4.843410730136802,
+          "value": 0.0002466965454481495,
+          "error_pct": 4.843410730195298,
           "n_iter": 1,
           "label": "center deflection |uy| (mm)",
           "passed": true
         },
         "numpy_sequential": {
-          "value": 0.0002466965454479875,
-          "error_pct": 4.843410730126435,
+          "value": 0.00024669654544795793,
+          "error_pct": 4.843410730113879,
           "n_iter": 1,
           "label": "center deflection |uy| (mm)",
           "passed": true
@@ -219,15 +219,15 @@
       "unit": "mm",
       "backends": {
         "jax": {
-          "value": 0.00032852933592875154,
-          "error_pct": 3.7310923720255955,
+          "value": 0.0003285293359288016,
+          "error_pct": 3.731092372041394,
           "n_iter": 1,
           "label": "center deflection |uy| (mm)",
           "passed": true
         },
         "numpy_sequential": {
-          "value": 0.0003285293359290052,
-          "error_pct": 3.7310923721056835,
+          "value": 0.0003285293359290098,
+          "error_pct": 3.7310923721071387,
           "n_iter": 1,
           "label": "center deflection |uy| (mm)",
           "passed": true
@@ -244,16 +244,16 @@
       "unit": "MPa",
       "backends": {
         "jax": {
-          "value": 319.4261806857725,
-          "error_pct": 30.171603579219024,
-          "n_iter": 26,
+          "value": 319.42410976718804,
+          "error_pct": 30.172056293907474,
+          "n_iter": 33,
           "label": "peak bending stress \u03c3_max (MPa)",
           "passed": false
         },
         "numba": {
-          "value": 319.4261806857725,
-          "error_pct": 30.171603579219024,
-          "n_iter": 26,
+          "value": 319.42410976718804,
+          "error_pct": 30.172056293907474,
+          "n_iter": 33,
           "label": "peak bending stress \u03c3_max (MPa)",
           "passed": false
         }
@@ -286,15 +286,15 @@
       "unit": "mm",
       "backends": {
         "jax": {
-          "value": 0.0038419847841899306,
-          "error_pct": 4.652015259041488,
+          "value": 0.0038419847841898403,
+          "error_pct": 4.652015259039031,
           "n_iter": 1,
           "label": "tip deflection |uy| (mm)",
           "passed": true
         },
         "numpy_sequential": {
-          "value": 0.0038419847841898534,
-          "error_pct": 4.652015259039385,
+          "value": 0.003841984784189925,
+          "error_pct": 4.652015259041335,
           "n_iter": 1,
           "label": "tip deflection |uy| (mm)",
           "passed": true
@@ -311,8 +311,8 @@
       "unit": "MPa",
       "backends": {
         "jax": {
-          "value": 1.0990170378062005,
-          "error_pct": 0.010550440364239353,
+          "value": 1.099017037806201,
+          "error_pct": 0.010550440364279767,
           "n_iter": 1,
           "eps_xx_measured": 0.001,
           "eps_xx_error_pct": 0.0,
@@ -340,8 +340,8 @@
       "unit": "MPa",
       "backends": {
         "jax": {
-          "value": -1.098784922869447,
-          "error_pct": 0.010572018880325327,
+          "value": -1.0987849228694477,
+          "error_pct": 0.010572018880264709,
           "n_iter": 1,
           "eps_xx_measured": -0.001,
           "eps_xx_error_pct": 0.0,
@@ -378,11 +378,11 @@
           "passed": true
         },
         "numpy_sequential": {
-          "value": -0.9615384615384616,
-          "error_pct": 0.0,
+          "value": -0.9615384615384612,
+          "error_pct": 3.4638958368304884e-14,
           "n_iter": 1,
           "sigma_yy": -0.9615384615384613,
-          "hydrostatic_deviation_pct": 2.3092638912203256e-14,
+          "hydrostatic_deviation_pct": 1.1546319456101628e-14,
           "label": "\u03c3_xx (MPa)",
           "passed": true
         }
@@ -410,8 +410,8 @@
           "value": 0.9615384615384616,
           "error_pct": 0.0,
           "n_iter": 1,
-          "sigma_yy": 0.9615384615384616,
-          "hydrostatic_deviation_pct": 0.0,
+          "sigma_yy": 0.9615384615384613,
+          "hydrostatic_deviation_pct": 2.3092638912203256e-14,
           "label": "\u03c3_xx (MPa)",
           "passed": true
         }
@@ -427,11 +427,11 @@
       "unit": "",
       "backends": {
         "order_fit": {
-          "value": 3.437804214500811,
-          "error_pct": 37.51216858003245,
+          "value": 3.437804214629428,
+          "error_pct": 37.512168585177115,
           "passed": true,
-          "fitted_order": 3.437804214500811,
-          "r_squared": 0.9992221965534743,
+          "fitted_order": 3.437804214629428,
+          "r_squared": 0.999222196552112,
           "expected_order": 2.5,
           "order_tol": 2.5,
           "r2_min": 0.95,
@@ -445,30 +445,30 @@
       "refinement_levels": [
         [
           0.25,
-          0.04591483231849861
+          0.04591483231849604
         ],
         [
           0.16666666666666666,
-          0.012027471267194887
+          0.012027471267163971
         ],
         [
           0.125,
-          0.004209574251389873
+          0.004209574250989259
         ]
       ],
       "fit": {
-        "order": 3.437804214500811,
-        "log_C": 1.7007723133657195,
-        "r_squared": 0.9992221965534743,
+        "order": 3.437804214629428,
+        "log_C": 1.7007723135585235,
+        "r_squared": 0.999222196552112,
         "h_values": [
           0.25,
           0.16666666666666666,
           0.125
         ],
         "error_values": [
-          0.04591483231849861,
-          0.012027471267194887,
-          0.004209574251389873
+          0.04591483231849604,
+          0.012027471267163971,
+          0.004209574250989259
         ]
       }
     },
@@ -480,11 +480,11 @@
       "unit": "",
       "backends": {
         "order_fit": {
-          "value": 2.7423764718069323,
-          "error_pct": 1.569498955812302,
+          "value": 2.742802321637224,
+          "error_pct": 1.585271171749036,
           "passed": true,
-          "fitted_order": 2.7423764718069323,
-          "r_squared": 0.9918479205849605,
+          "fitted_order": 2.742802321637224,
+          "r_squared": 0.9918642081260822,
           "expected_order": 2.7,
           "order_tol": 0.5,
           "r2_min": 0.95,
@@ -494,29 +494,29 @@
         }
       },
       "passed": true,
-      "details": "ny= 4 nx= 40: tip_err=1.96e-02 iters=40\nny= 8 nx= 80: tip_err=3.79e-03 iters=40\nny=12 nx=120: tip_err=1.17e-03 iters=40\nny=16 nx=160: tip_err=4.15e-04 iters=40",
+      "details": "ny= 4 nx= 40: tip_err=1.97e-02 iters=40\nny= 8 nx= 80: tip_err=3.79e-03 iters=40\nny=12 nx=120: tip_err=1.17e-03 iters=40\nny=16 nx=160: tip_err=4.15e-04 iters=40",
       "refinement_levels": [
         [
           0.25,
-          0.01964914862202665
+          0.019660570499899745
         ],
         [
           0.125,
-          0.003791860606230197
+          0.003791860606233973
         ],
         [
           0.08333333333333333,
-          0.0011714195450184142
+          0.0011714195449947936
         ],
         [
           0.0625,
-          0.0004151640401216713
+          0.0004151640400918672
         ]
       ],
       "fit": {
-        "order": 2.7423764718069323,
-        "log_C": -0.02965283385985301,
-        "r_squared": 0.9918479205849605,
+        "order": 2.742802321637224,
+        "log_C": -0.028578856655375063,
+        "r_squared": 0.9918642081260822,
         "h_values": [
           0.25,
           0.125,
@@ -524,10 +524,10 @@
           0.0625
         ],
         "error_values": [
-          0.01964914862202665,
-          0.003791860606230197,
-          0.0011714195450184142,
-          0.0004151640401216713
+          0.019660570499899745,
+          0.003791860606233973,
+          0.0011714195449947936,
+          0.0004151640400918672
         ]
       }
     },
@@ -539,11 +539,11 @@
       "unit": "",
       "backends": {
         "order_fit": {
-          "value": 2.3938503636193667,
-          "error_pct": 0.25623484919305256,
+          "value": 2.3938856287638637,
+          "error_pct": 0.2547654681723429,
           "passed": true,
-          "fitted_order": 2.3938503636193667,
-          "r_squared": 0.9973172053834561,
+          "fitted_order": 2.3938856287638637,
+          "r_squared": 0.9973079747924765,
           "expected_order": 2.4,
           "order_tol": 0.5,
           "r2_min": 0.85,
@@ -553,34 +553,34 @@
         }
       },
       "passed": true,
-      "details": "n_steps= 2: tip_err(vs ref=16)=6.67e-03 iters=8\nn_steps= 4: tip_err(vs ref=16)=1.47e-03 iters=12\nn_steps= 8: tip_err(vs ref=16)=2.41e-04 iters=19",
+      "details": "n_steps= 2: tip_err(vs ref=16)=6.67e-03 iters=8\nn_steps= 4: tip_err(vs ref=16)=1.47e-03 iters=14\nn_steps= 8: tip_err(vs ref=16)=2.41e-04 iters=19",
       "refinement_levels": [
         [
           0.5,
-          0.006668081205622517
+          0.006666537673472165
         ],
         [
           0.25,
-          0.0014727054914999448
+          0.0014727101320529152
         ],
         [
           0.125,
-          0.000241412276248178
+          0.000241344594852022
         ]
       ],
       "fit": {
-        "order": 2.3938503636193667,
-        "log_C": -3.3014459499977487,
-        "r_squared": 0.9973172053834561,
+        "order": 2.3938856287638637,
+        "log_C": -3.3015666460740265,
+        "r_squared": 0.9973079747924765,
         "h_values": [
           0.5,
           0.25,
           0.125
         ],
         "error_values": [
-          0.006668081205622517,
-          0.0014727054914999448,
-          0.000241412276248178
+          0.006666537673472165,
+          0.0014727101320529152,
+          0.000241344594852022
         ]
       }
     }

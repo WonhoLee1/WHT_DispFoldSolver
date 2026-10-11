@@ -208,6 +208,7 @@ class DynamicSolver3D:
         alpha_m_damp: float = 0.0,
         beta_k_damp: float = 0.0,
         beta_k: float = 0.0,
+        solution_controls: Optional[Any] = None,
     ):
         self.mesh = mesh
         self.nlgeom = nlgeom
@@ -215,6 +216,18 @@ class DynamicSolver3D:
         self.alpha_m_damp = float(alpha_m_damp)
         self.beta_k_damp = float(beta_k if beta_k != 0.0 else beta_k_damp)
         self.beta_k = self.beta_k_damp
+
+        # Solution Controls and Active Tolerance Engine (Abaqus API Parity)
+        from dispsolver.model.control import SolutionControl
+        if solution_controls is not None:
+            if isinstance(solution_controls, SolutionControl):
+                self.solution_controls = solution_controls
+            elif isinstance(solution_controls, str):
+                self.solution_controls = SolutionControl(preset=solution_controls)
+            else:
+                self.solution_controls = SolutionControl()
+        else:
+            self.solution_controls = SolutionControl(preset="STANDARD")
 
         from dispsolver.solver.time_integrator_presets import resolve_time_integrator
         self.config_integrator = resolve_time_integrator(
@@ -1611,21 +1624,45 @@ class DynamicSolver3D:
         inertia = self._dyn_ctx.inertia_norm if self._dyn_ctx is not None else 0.0
         return max(f_ext_free, reaction, inertia)
 
-    def _residual_ok(self, r_norm: float, q: float) -> bool:
-        tol = self._RESID_TOL_CONTACT if len(self.constraints) > 0 else self._RESID_TOL
+    def _residual_ok(self, r_norm: float, q: float, iter_count: int = 1) -> bool:
+        if hasattr(self, "solution_controls") and self.solution_controls is not None:
+            R_n_eff, C_n_eff, R_p_eff, C_a_eff = self.solution_controls.get_effective_tolerances(
+                cutback_count=getattr(self, "cutback_count", 0),
+                iter_count=iter_count,
+                is_stalling=(iter_count >= 6)
+            )
+            tol = R_n_eff
+        else:
+            tol = self._RESID_TOL_CONTACT if len(self.constraints) > 0 else self._RESID_TOL
         return r_norm <= tol * q or r_norm <= self._r_zero
 
     def _converged_by_residual(self, iter_count: int, is_sdi: bool, bc_err: float,
                                r_norm: float, q: float) -> bool:
-        return iter_count > 1 and not is_sdi and bc_err < 1e-5 and self._residual_ok(r_norm, q)
+        return iter_count > 1 and not is_sdi and bc_err < 1e-5 and self._residual_ok(r_norm, q, iter_count=iter_count)
 
     def _converged_by_correction(self, iter_count: int, is_sdi: bool, bc_err_next: float,
                                  du_free_max: float, du_inc_max: float,
                                  r_norm: float, q: float) -> bool:
         if not (iter_count > 1 and not is_sdi and bc_err_next < 1e-5):
             return False
-        corr_ok = du_free_max <= self._CORR_TOL * du_inc_max or du_free_max <= self._r_zero
-        return corr_ok and (r_norm <= self._CORR_RESID_TOL * q or r_norm <= self._r_zero)
+        if hasattr(self, "solution_controls") and self.solution_controls is not None:
+            R_n_eff, C_n_eff, R_p_eff, C_a_eff = self.solution_controls.get_effective_tolerances(
+                cutback_count=getattr(self, "cutback_count", 0),
+                iter_count=iter_count,
+                is_stalling=(iter_count >= 6)
+            )
+            # Abaqus Alternative Convergence Check (saves tail iterations)
+            alt_ok = (du_free_max <= C_a_eff * du_inc_max or du_free_max <= self._r_zero) and (r_norm <= R_p_eff * q or r_norm <= self._r_zero)
+            if alt_ok:
+                return True
+            c_tol = C_n_eff
+            r_tol = R_p_eff
+        else:
+            c_tol = self._CORR_TOL
+            r_tol = self._CORR_RESID_TOL
+
+        corr_ok = du_free_max <= c_tol * du_inc_max or du_free_max <= self._r_zero
+        return corr_ok and (r_norm <= r_tol * q or r_norm <= self._r_zero)
 
     def _converged_on_exhaustion(self, is_sdi: bool, bc_err: float, r_norm: float, q: float) -> bool:
         """Same criterion as the residual branch: running out of iterations is
@@ -1849,6 +1886,9 @@ class DynamicSolver3D:
     ) -> Tuple[bool, int]:
         """The Newton loop of solve_step (see its docstring): static, or on the HHT
         effective system while self._dyn_ctx is set."""
+        if hasattr(self, "solution_controls") and self.solution_controls is not None:
+            self.solution_controls.tolerance_engine.is_active = self.solution_controls.adaptive_convergence
+
         if f_ext is None:
 
 

@@ -1,0 +1,40 @@
+당신은 최고 수준의 전산 고체역학 및 비선형 유한요소 수치역학 전문가(FEA Computational Solid Mechanics Specialist)입니다.
+Anti-Mocking Protocol에 입각하여 임의의 상수나 난수 없이 공인 고체역학 원전(Bathe, Belytschko, Timoshenko 등)에 기반하여 다음 과제를 독립적으로 풀고 엄밀한 수치역학 분석 보고서를 작성해 주십시오.
+
+[과제: 다층 디스플레이 180도 티어드롭 폴딩 모델의 하중 및 힌지 구동 모멘트 이론 정합성 검증]
+
+1. 모델 구성 파라미터 (단위: mm, N, MPa, 폭 b = 1.0 mm, 평면 변형률):
+   - 14개 적층판 구조 (하부 y=0부터 상부까지):
+     * 7개 PSA: 각각 두께 t = 0.03 mm, E = 0.05 MPa, nu = 0.499, G0 = 16.779 kPa (Arruda-Boyce 초탄성)
+     * 6개 PET: 각각 두께 t = 0.06 mm, E = 4000 MPa, nu = 0.30, sigma_y0 = 80 MPa, H = 400 MPa (J2 소성)
+     * 1개 GLASS (최상층 14층): 두께 t = 0.06 mm, E = 70000 MPa, nu = 0.22 (선형 탄성)
+   - 기하 및 구동 조건:
+     * 전체 디스플레이 반길이 = 40.0 mm
+     * 자유 힌지 스팬 = 2 * 7.5 mm = 15.0 mm (L_half = 7.5 mm)
+     * 하부 1층(PSA)은 힌지 구간 [-7.5, 7.5]에서 테이프 보이드(Void, 무요소) 처리됨 (힌지 구간 활성 층 = 13개)
+     * 강체 플레이트 회전 피벗: x_pivot = +-1.4 mm, y_pivot = 0.0 mm (90도 접힘 시 넥 갭 2.8 mm)
+     * 구동 회전각: 좌우 각 +-90도 (총 180도 접힘)
+
+2. 독립 수치역학 계산 요구사항:
+   (1) 평면 변형률 환산 계수 E' = E / (1 - nu^2)를 적용하여:
+       - Free Slip 굽힘 강성 D_slip = sum(E'_i * b * t_i^3 / 12) 산출.
+       - Monolithic 완전 접착 굽힘 강성 D_mono = sum(E'_i * (I_self + A_i * (y_i - y_NA)^2)) 및 중립축 y_NA 산출.
+       - D_mono / D_slip 비율 및 물리적 의미 (체적 잠김 또는 PSA 슬립 부재 시 발생하는 모멘트 폭등 분석).
+   (2) 대변형 티어드롭 엘라스티카(Elastica BVP) 지배방정식:
+       D_slip * d^2(theta)/ds^2 + Fx * sin(theta) = 0
+       경계조건: s=0(Apex)에서 theta=0, x=0, y=0 / s=L_half(7.5mm)에서 theta=pi/2(90도), x=1.4mm
+       엄밀한 이론 정해 산출:
+       * 수평 인장 반력 Fx_theory
+       * 정점 휨모멘트 M_apex_theory
+       * 정점 곡률반경 R_apex_theory
+       * 루프 수직 높이 Delta_Y_theory
+       * 강체 피벗 구동 모멘트 M_pivot_theory = M_apex + Fx * Delta_Y
+   (3) FEM 시뮬레이션 실측치와의 1:1 대조 및 평가:
+       - FEM 실측값:
+         * M_pivot = 2.5265 N*mm
+         * Fx = 0.2881 N
+         * R_apex = 1.9059 mm
+         * Delta_Y = 6.3154 mm
+       - 오차율 및 물리적 타당성 평가 (특히 FEM의 Fx가 이론치보다 약 +0.06 N 큰 것이 PSA 초탄성 전단 저항에 기인함을 역학적으로 분석).
+   (4) 국소 굽힘 변형률 epsilon = (t/2)/R_apex 및 PET 층의 최대 굽힘 응력 sigma_PET 계산 -> 항복 강도(80 MPa) 도달 여부 판정.
+   (5) 최종 결론: 본 FEM 해석 결과가 체적 잠김(Locking)이나 인공 왜곡 없이 물리적 참값(True Mechanics)에 부합하는지 권위 있는 총평 제시.

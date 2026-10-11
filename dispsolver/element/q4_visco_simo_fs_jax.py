@@ -170,13 +170,15 @@ def _simo_pk2(base, Fbar2, h_prev_flat, kappa, bparams, g_i, tau_i, g_inf, dt, d
     vol_factor = 0.5 * kappa * (J_safe - 1.0 / J_safe)
     S_vol = vol_factor * Cinv
 
-    # Optional Distortion Control (Abaqus-grade *SECTION CONTROLS, DISTORTION CONTROL=YES)
-    distortion = jnp.where(
-        distortion_j_crit > 0.0,
-        jnp.maximum(0.0, (distortion_j_crit - J) / jnp.maximum(distortion_j_crit, 1e-12)),
-        0.0
-    )
-    S_distort = (5000.0 * kappa) * (distortion ** 3) * Cinv
+    # Universal Distortion Control (Abaqus *SECTION CONTROLS, DISTORTION CONTROL=YES, LENGTH RATIO=r_c)
+    # Rigorous C^1/C^2 energetic potential: Psi_dist = 0.5 * kappa * ((r_c - J) / J)^2 (J < r_c)
+    # p_dist = - dPsi/dJ = kappa * r_c * (r_c - J) / J^3
+    # S_dist = - p_dist * J * C^{-1}
+    r_c = distortion_j_crit
+    J_dist = jnp.maximum(J, 1e-6)
+    in_dist = (r_c > 0.0) & (J < r_c)
+    p_dist = jnp.where(in_dist, kappa * r_c * (r_c - J_dist) / (J_dist ** 3), 0.0)
+    S_distort = - p_dist * J_dist * Cinv
     S_vol = S_vol + S_distort
 
     # Isochoric PK2 (Flory split, Holzapfel Eq. 6.88-6.91):

@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional, Tuple
 
 from dispsolver.io.keyword_registry import KeywordContext
-from dispsolver.io.schema import (InputError, Keyword, Record, RowSchema, Schema, Unsupported, applies,
+from dispsolver.io.schema import (InputError, Keyword, Param, Record, RowSchema, Schema, Unsupported, applies,
                                   keyword)
 
 if TYPE_CHECKING:
@@ -54,6 +54,7 @@ class SectionRecord(Record):
     material: str
     orientation: Optional[str]
     thickness: float
+    controls: Optional[str] = None
 
 
 @keyword("SOLID SECTION", support="FULL")
@@ -68,6 +69,7 @@ class SolidSection(Keyword):
         material: Optional[str] = None
         orientation: Optional[str] = None
         composite: bool = False
+        controls: Optional[str] = None
 
     Row = _Cells
 
@@ -85,7 +87,7 @@ class SolidSection(Keyword):
                 except ValueError:
                     raise InputError(f"*SOLID SECTION, ELSET={p.elset} at {ctx.loc}: thickness "
                                      f"{cells[0][0]!r} is not a number (distributions are not supported)") from None
-            yield SectionRecord("SOLID", p.elset, p.material, p.orientation, thickness, loc=ctx.loc)
+            yield SectionRecord("SOLID", p.elset, p.material, p.orientation, thickness, controls=p.controls, loc=ctx.loc)
             return
         # composite: per layer "thickness, integration points, material[, orientation[, ply]]"
         layers = []
@@ -155,7 +157,61 @@ def _apply_section(reader: AbaqusInputReader, rec: SectionRecord):
     sec_name = f"SEC_{rec.kind}_{part.name}_{rec.elset}"
     if rec.kind == "SOLID":
         reader.model.HomogeneousSolidSection(name=sec_name, material=rec.material,
-                                             thickness=rec.thickness, orientation=rec.orientation)
+                                             thickness=rec.thickness, orientation=rec.orientation,
+                                             controls=rec.controls)
     else:
         reader.model.ShellSection(name=sec_name, material=rec.material, thickness=rec.thickness)
     part.SectionAssignment(region=rec.elset, sectionName=sec_name)
+
+
+@dataclass(frozen=True)
+class SectionControlsRecord(Record):
+    name: str
+    distortion_control: bool = True
+    length_ratio: float = 0.1
+    hourglass_control: str = "ENHANCED"
+    viscous_damping: float = 0.0
+
+
+@keyword("SECTION CONTROLS", support="FULL")
+class SectionControlsKeyword(Keyword):
+    """Controls for continuum solid elements (*SECTION CONTROLS in Abaqus)."""
+
+    refuse_on_gap = False
+
+    class Params(Schema):
+        name: str
+        distortion_control: Optional[str] = None
+        length_ratio: Optional[float] = None
+        hourglass: Optional[str] = None
+        viscous_damping: float = Param(0.0, undocumented="in-house parameter for viscous damping")
+
+    Row = _Cells
+
+    def to_records(self, p, rows, ctx):
+        dist_on = True
+        if p.distortion_control is not None:
+            dist_str = str(p.distortion_control).strip().upper()
+            dist_on = dist_str in ("YES", "Y", "TRUE", "ON", "1")
+        lr = float(p.length_ratio) if p.length_ratio is not None else 0.1
+        hg = str(p.hourglass).strip().upper() if p.hourglass is not None else "ENHANCED"
+        yield SectionControlsRecord(
+            name=p.name,
+            distortion_control=dist_on,
+            length_ratio=lr,
+            hourglass_control=hg,
+            viscous_damping=float(p.viscous_damping),
+            loc=ctx.loc,
+        )
+
+
+@applies(SectionControlsRecord)
+def _apply_section_controls(reader: AbaqusInputReader, rec: SectionControlsRecord):
+    reader.model.SectionControls(
+        name=rec.name,
+        distortion_control=rec.distortion_control,
+        length_ratio=rec.length_ratio,
+        hourglass_control=rec.hourglass_control,
+        viscous_damping=rec.viscous_damping,
+    )
+

@@ -230,13 +230,27 @@ def plot_and_save_deformed_shape_png(
         )
     else:
         fig.tight_layout()
-    fig.savefig(save_path, dpi=dpi, bbox_inches='tight')
-    print(f"[PNG] Deformed shape saved: {save_path}")
+    # Safe savefig with retry to handle Windows file-locking by image viewers
+    saved = False
+    for attempt in range(3):
+        try:
+            fig.savefig(save_path, dpi=dpi, bbox_inches='tight')
+            saved = True
+            break
+        except (OSError, PermissionError) as e:
+            time.sleep(0.1 * (attempt + 1))
+    if saved:
+        print(f"[PNG] Deformed shape saved: {save_path}")
+    else:
+        print(f"[PNG WARN] Could not save {save_path} due to file lock")
 
     if artifact_dir:
         art_path = os.path.join(artifact_dir, os.path.basename(save_path))
-        fig.savefig(art_path, dpi=dpi, bbox_inches='tight')
-        print(f"[PNG] Copy saved to artifact: {art_path}")
+        try:
+            fig.savefig(art_path, dpi=dpi, bbox_inches='tight')
+            print(f"[PNG] Copy saved to artifact: {art_path}")
+        except Exception:
+            pass
 
     plt.close(fig)
     return save_path

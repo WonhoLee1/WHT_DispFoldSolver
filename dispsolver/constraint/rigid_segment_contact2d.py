@@ -89,6 +89,49 @@ class RotatingRigidSegmentContact2D:
         """Plate angle (radians, counter-clockwise positive) for the coming increment."""
         self.theta = float(theta)
 
+    def carry_contacting_nodes(self, u: np.ndarray, theta_old: float, theta_new: float) -> int:
+        """Carry contacting slave nodes with the rotating rigid plate as Newton predictor.
+
+        Nodes in contact at theta_old are rotated about the plate pivot by d_theta = theta_new - theta_old,
+        updating their displacements in `u` in-place. Returns the count of carried nodes.
+        """
+        d_theta = float(theta_new - theta_old)
+        if abs(d_theta) < 1e-12:
+            return 0
+
+        # Temporarily evaluate contact geometry at committed theta_old
+        saved_theta = self.theta
+        self.theta = float(theta_old)
+        try:
+            if self.softening_gap > 0.0 or self.fillet_radius > 0.0:
+                g, _, _, on = self._geometry(u)
+                contacting = on & (g < 0.0)
+            else:
+                g, active = self._gaps(u)
+                contacting = active & (g < 0.0)
+        finally:
+            self.theta = saved_theta
+
+        if not np.any(contacting):
+            return 0
+
+        # Rigid rotation about pivot: r_new = R(d_theta) * r_old
+        # u_new = u_old + (R(d_theta) - I) * (X + u_old - pivot)
+        c, s = np.cos(d_theta), np.sin(d_theta)
+        R_minus_I = np.array([[c - 1.0, -s],
+                              [s, c - 1.0]], dtype=np.float64)
+
+        for j in np.flatnonzero(contacting):
+            i = int(self._idx[j])
+            xi = self._X[j, 0] + u[2 * i] - self.pivot[0]
+            yi = self._X[j, 1] + u[2 * i + 1] - self.pivot[1]
+            du_x = R_minus_I[0, 0] * xi + R_minus_I[0, 1] * yi
+            du_y = R_minus_I[1, 0] * xi + R_minus_I[1, 1] * yi
+            u[2 * i] += du_x
+            u[2 * i + 1] += du_y
+
+        return int(np.count_nonzero(contacting))
+
     def _rot(self, ang: float) -> np.ndarray:
         c, s = np.cos(ang), np.sin(ang)
         return np.array([[c, -s], [s, c]])

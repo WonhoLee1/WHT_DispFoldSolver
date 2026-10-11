@@ -301,6 +301,9 @@ def run_folding_from_result(result, before_png_name: str = "ex12_before_folding_
                   f"x in [{sx.min():+.2f}, {sx.max():+.2f}] at y={y_top:+.3f}, pivot x={m.x:+.3f}, "
                   f"k={st.plate_contact_k:g}")
 
+    _contact_theta_committed = {idx_c: 0.0 for idx_c, _ in _plate_contacts}
+    _contact_theta_new = dict(_contact_theta_committed)
+
     solver = DynamicSolver.from_config(
         mesh=mesh,
         material=result.materials,
@@ -427,8 +430,7 @@ def run_folding_from_result(result, before_png_name: str = "ex12_before_folding_
                 theta_target = prescribed_rotations[m_id]
                 targets[idx] = theta_target * amp_val
         solver.theta_targets = targets
-        for idx_c, c in _plate_contacts:            # contact faces follow the prescribed plate angle
-            c.set_rotation(float(targets.get(idx_c, 0.0)))
+        _contact_theta_new = {idx_c: float(targets.get(idx_c, 0.0)) for idx_c, _ in _plate_contacts}
 
         if _kin_tie:
             # rigid-plate displacement of every master node at this theta:
@@ -463,11 +465,19 @@ def run_folding_from_result(result, before_png_name: str = "ex12_before_folding_
 
         # Snapshot before the attempt so a failed step can be rolled back
         checkpoint = solver.save_state()
+        # contact faces follow the prescribed plate angle; nodes already resting on a face are
+        # carried with it as the Newton starting point (after the checkpoint, so a cutback
+        # restores the committed state and re-predicts from the committed angle)
+        for idx_c, c in _plate_contacts:
+            c.carry_contacting_nodes(solver.u, _contact_theta_committed[idx_c], _contact_theta_new[idx_c])
+            c.set_rotation(_contact_theta_new[idx_c])
 
         # Solve step
         conv_code = solver.solve_step(dt)
 
         if conv_code >= 0:
+            for idx_c, _c in _plate_contacts:
+                _contact_theta_committed[idx_c] = _contact_theta_new[idx_c]
             # Step converged
             solver.time = t_next
             step += 1
@@ -577,15 +587,18 @@ def run_folding_from_result(result, before_png_name: str = "ex12_before_folding_
 
             # Live update final PNG image periodically (every 5 steps or at completion)
             if step % 5 == 0 or solver.time >= t_total - 1e-6:
-                plot_and_save_deformed_shape_png(
-                    mesh=mesh,
-                    u=solver.u,
-                    tie_constraints=result.penalty_constraints,
-                    rbe2_elements=result.rbe2_elements,
-                    rbe2_constraints=result.rbe2_constraints,
-                    save_path=after_png_path,
-                    monitor_text=monitor_text
-                )
+                try:
+                    plot_and_save_deformed_shape_png(
+                        mesh=mesh,
+                        u=solver.u,
+                        tie_constraints=result.penalty_constraints,
+                        rbe2_elements=result.rbe2_elements,
+                        rbe2_constraints=result.rbe2_constraints,
+                        save_path=after_png_path,
+                        monitor_text=monitor_text
+                    )
+                except Exception as _e:
+                    print(f"            [PNG WARN] Intermediate plot save failed ({_e}), continuing solve...")
 
             dt = dt_ctrl.update(n_iter=conv_code, converged=True)
         else:
@@ -628,14 +641,17 @@ def run_folding_from_result(result, before_png_name: str = "ex12_before_folding_
 
     # Final plot update
     print(f"Saving final shape visualization to: {after_png_path}")
-    plot_and_save_deformed_shape_png(
-        mesh=mesh,
-        u=solver.u,
-        tie_constraints=result.penalty_constraints,
-        rbe2_elements=result.rbe2_elements,
-        rbe2_constraints=result.rbe2_constraints,
-        save_path=after_png_path
-    )
+    try:
+        plot_and_save_deformed_shape_png(
+            mesh=mesh,
+            u=solver.u,
+            tie_constraints=result.penalty_constraints,
+            rbe2_elements=result.rbe2_elements,
+            rbe2_constraints=result.rbe2_constraints,
+            save_path=after_png_path
+        )
+    except Exception as _e:
+        print(f"[PNG WARN] Final plot save failed ({_e})")
     solver.t_postprocess = time.time() - t_post_start
     print("Done.")
     return {
