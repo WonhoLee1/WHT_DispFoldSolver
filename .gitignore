@@ -21,6 +21,7 @@ htmlcov/
 
 # Output files
 output/
+output_*/
 # ...but not the source package of the same name (it was silently never committed)
 !dispsolver/output/
 *.vtkhdf
@@ -31,10 +32,16 @@ output/
 # Debug / scratch
 _dbg_*.py
 _old_*.py
+scratch_diag_*.py
+summary.json
+tests_failed_quick.log
 
 # OMC internal
 .omc/
 .omo/
+
+# External tooling
+external/
 
 # OS
 .DS_Store
@@ -59,12 +66,18 @@ examples/dbg*.pkl
 examples/dbg*.npz
 examples/dbg*.png
 examples/dbg*.jpg
+examples/_scratch_*
+examples/_diag_*
+examples/examples/
 examples/results/*.pkl
 scratch/*.npz
 scratch/*.pkl
 scratch/*.log
 scratch/*.png
 scratch/*.jpg
+
+# CTC benchmark test logs (ephemeral runs)
+tests/logs/test_bmk_ctc_*_20*.log
 
 Kratos/
 example_disp_fold/results/
