@@ -105,14 +105,14 @@ def recover_3d_fields(
             )
 
     # 2. Reaction Force 'RF'
-    if "RF" in requested_vars and hasattr(solver, "f_int"):
+    if "RF" in requested_vars and hasattr(solver, "f_int") and getattr(solver, "f_int") is not None:
         # At equilibrium, RF = F_int - F_ext on constrained nodes
         rf_arr = np.zeros((n_nodes, 3), dtype=np.float64)
         if hasattr(solver, "fixed_dofs"):
             for dof_idx in solver.fixed_dofs:
                 n_idx = dof_idx // 3
                 c_idx = dof_idx % 3
-                if n_idx < n_nodes and hasattr(solver, "f_int"):
+                if n_idx < n_nodes and solver.f_int is not None:
                     rf_arr[n_idx, c_idx] = solver.f_int[dof_idx]
         node_labels = np.array(list(mesh.nodes.keys()), dtype=np.int32)
         res["RF"] = FieldOutput(
@@ -125,8 +125,15 @@ def recover_3d_fields(
             component_labels=("RF1", "RF2", "RF3")
         )
 
-    # 3. Element Tensors: Stress 'S', Strain 'LE', 'E', 'PEEQ'
-    need_stress = "S" in requested_vars
+    # 3. Element Tensors & Invariants: Stress 'S', 'MISES', 'MAXP', 'MIDP', 'MINP', 'PRESS', 'LE', 'E', 'PEEQ'
+    need_s = "S" in requested_vars
+    need_mises = "MISES" in requested_vars
+    need_maxp = "MAXP" in requested_vars
+    need_midp = "MIDP" in requested_vars
+    need_minp = "MINP" in requested_vars
+    need_press = "PRESS" in requested_vars
+    need_stress = need_s or need_mises or need_maxp or need_midp or need_minp or need_press
+
     need_le = "LE" in requested_vars
     need_e = "E" in requested_vars
     need_peeq = "PEEQ" in requested_vars
@@ -137,6 +144,7 @@ def recover_3d_fields(
         e_data = np.zeros((n_elems, 6), dtype=np.float64)
         peeq_data = np.zeros(n_elems, dtype=np.float64)
         elem_labels = np.array([el.id for el in elements_list], dtype=np.int32)
+        node_labels = np.array(list(mesh.nodes.keys()), dtype=np.int32)
 
         elem_mat_types = getattr(solver, "elem_mat_types", np.zeros(n_elems, dtype=np.int32))
         elem_props = getattr(solver, "elem_props", np.zeros((n_elems, 10), dtype=np.float64))
@@ -172,12 +180,53 @@ def recover_3d_fields(
                 if len(states) > 0 and hasattr(states[0], "plastic_strain"):
                     peeq_data[e_idx] = float(np.linalg.norm(states[0].plastic_strain))
 
+        # Compute derived stress invariants if needed
+        if need_mises:
+            s11, s22, s33 = s_data[:, 0], s_data[:, 1], s_data[:, 2]
+            s12, s13, s23 = s_data[:, 3], s_data[:, 4], s_data[:, 5]
+            mises_sq = 0.5 * ((s11 - s22)**2 + (s22 - s33)**2 + (s33 - s11)**2) + 3.0 * (s12**2 + s13**2 + s23**2)
+            mises_data = np.sqrt(np.maximum(mises_sq, 0.0))
+
+        if need_maxp or need_midp or need_minp:
+            maxp_data = np.zeros(n_elems, dtype=np.float64)
+            midp_data = np.zeros(n_elems, dtype=np.float64)
+            minp_data = np.zeros(n_elems, dtype=np.float64)
+            for i in range(n_elems):
+                s = s_data[i]
+                tensor = np.array([
+                    [s[0], s[3], s[4]],
+                    [s[3], s[1], s[5]],
+                    [s[4], s[5], s[2]]
+                ], dtype=np.float64)
+                eigvals = np.linalg.eigvalsh(tensor)
+                maxp_data[i] = eigvals[2]
+                midp_data[i] = eigvals[1]
+                minp_data[i] = eigvals[0]
+
+        if need_press:
+            press_data = -(s_data[:, 0] + s_data[:, 1] + s_data[:, 2]) / 3.0
+
         # Check if nodal averaging requested
         if position == FieldPosition.NODES:
             # Extrapolate/Average to nodes
-            if need_stress:
+            if need_s:
                 nodal_s = _average_element_to_nodes(s_data, elements_list, n_nodes, nid_to_idx)
                 res["S"] = FieldOutput("S", "Cauchy stress (Nodal)", FieldType.TENSOR_3D_FULL, FieldPosition.NODES, nodal_s, node_labels)
+            if need_mises:
+                nodal_mises = _average_element_to_nodes(mises_data[:, None], elements_list, n_nodes, nid_to_idx)
+                res["MISES"] = FieldOutput("MISES", "Von Mises equivalent stress (Nodal)", FieldType.SCALAR, FieldPosition.NODES, nodal_mises.flatten(), node_labels, component_labels=("MISES",))
+            if need_maxp:
+                nodal_maxp = _average_element_to_nodes(maxp_data[:, None], elements_list, n_nodes, nid_to_idx)
+                res["MAXP"] = FieldOutput("MAXP", "Maximum principal stress (Nodal)", FieldType.SCALAR, FieldPosition.NODES, nodal_maxp.flatten(), node_labels, component_labels=("MAXP",))
+            if need_midp:
+                nodal_midp = _average_element_to_nodes(midp_data[:, None], elements_list, n_nodes, nid_to_idx)
+                res["MIDP"] = FieldOutput("MIDP", "Intermediate principal stress (Nodal)", FieldType.SCALAR, FieldPosition.NODES, nodal_midp.flatten(), node_labels, component_labels=("MIDP",))
+            if need_minp:
+                nodal_minp = _average_element_to_nodes(minp_data[:, None], elements_list, n_nodes, nid_to_idx)
+                res["MINP"] = FieldOutput("MINP", "Minimum principal stress (Nodal)", FieldType.SCALAR, FieldPosition.NODES, nodal_minp.flatten(), node_labels, component_labels=("MINP",))
+            if need_press:
+                nodal_press = _average_element_to_nodes(press_data[:, None], elements_list, n_nodes, nid_to_idx)
+                res["PRESS"] = FieldOutput("PRESS", "Hydrostatic pressure (Nodal)", FieldType.SCALAR, FieldPosition.NODES, nodal_press.flatten(), node_labels, component_labels=("PRESS",))
             if need_le:
                 nodal_le = _average_element_to_nodes(le_data, elements_list, n_nodes, nid_to_idx)
                 res["LE"] = FieldOutput("LE", "Logarithmic strain (Nodal)", FieldType.TENSOR_3D_FULL, FieldPosition.NODES, nodal_le, node_labels)
@@ -189,14 +238,114 @@ def recover_3d_fields(
                 res["PEEQ"] = FieldOutput("PEEQ", "Equivalent plastic strain (Nodal)", FieldType.SCALAR, FieldPosition.NODES, nodal_peeq.flatten(), node_labels)
         else:
             # Centroid / Element output
-            if need_stress:
+            if need_s:
                 res["S"] = FieldOutput("S", "Cauchy stress", FieldType.TENSOR_3D_FULL, FieldPosition.CENTROID, s_data, elem_labels)
+            if need_mises:
+                res["MISES"] = FieldOutput("MISES", "Von Mises equivalent stress", FieldType.SCALAR, FieldPosition.CENTROID, mises_data, elem_labels, component_labels=("MISES",))
+            if need_maxp:
+                res["MAXP"] = FieldOutput("MAXP", "Maximum principal stress", FieldType.SCALAR, FieldPosition.CENTROID, maxp_data, elem_labels, component_labels=("MAXP",))
+            if need_midp:
+                res["MIDP"] = FieldOutput("MIDP", "Intermediate principal stress", FieldType.SCALAR, FieldPosition.CENTROID, midp_data, elem_labels, component_labels=("MIDP",))
+            if need_minp:
+                res["MINP"] = FieldOutput("MINP", "Minimum principal stress", FieldType.SCALAR, FieldPosition.CENTROID, minp_data, elem_labels, component_labels=("MINP",))
+            if need_press:
+                res["PRESS"] = FieldOutput("PRESS", "Hydrostatic pressure", FieldType.SCALAR, FieldPosition.CENTROID, press_data, elem_labels, component_labels=("PRESS",))
             if need_le:
                 res["LE"] = FieldOutput("LE", "Logarithmic strain", FieldType.TENSOR_3D_FULL, FieldPosition.CENTROID, le_data, elem_labels)
             if need_e:
                 res["E"] = FieldOutput("E", "Strain", FieldType.TENSOR_3D_FULL, FieldPosition.CENTROID, e_data, elem_labels)
             if need_peeq:
                 res["PEEQ"] = FieldOutput("PEEQ", "Equivalent plastic strain", FieldType.SCALAR, FieldPosition.CENTROID, peeq_data, elem_labels)
+
+    # 4. Contact Variables: CPRESS, COPEN, CSHEAR, CSTATUS, CSLIP
+    need_cpress = "CPRESS" in requested_vars
+    need_copen = "COPEN" in requested_vars
+    need_cshear = "CSHEAR" in requested_vars
+    need_cstatus = "CSTATUS" in requested_vars
+    need_cslip = "CSLIP" in requested_vars
+
+    if need_cpress or need_copen or need_cshear or need_cstatus or need_cslip:
+        node_labels = np.array(list(mesh.nodes.keys()), dtype=np.int32)
+        cpress_data = np.zeros(n_nodes, dtype=np.float64)
+        copen_data = np.zeros(n_nodes, dtype=np.float64)
+        cstatus_data = np.zeros(n_nodes, dtype=np.float64)
+        cshear_data = np.zeros((n_nodes, 2), dtype=np.float64)
+        cslip_data = np.zeros((n_nodes, 2), dtype=np.float64)
+
+        if hasattr(solver, "constraints") and solver.constraints:
+            for c in solver.constraints:
+                # 1. SurfaceContactConstraint3D (Node-to-Rigid-Plane)
+                if hasattr(c, "slave_node_ids") and hasattr(c, "normal") and hasattr(c, "point") and hasattr(c, "_normal_pressure"):
+                    for s_nid in c.slave_node_ids:
+                        s_idx = c.nid_to_idx.get(s_nid, None)
+                        if s_idx is None or s_idx >= n_nodes:
+                            continue
+                        xs, p_i = c._normal_pressure(u, s_nid)
+                        gap_offset = c._gap_offset.get(s_nid, 0.0) if hasattr(c, "_gap_offset") else 0.0
+                        gap = float(np.dot(xs - c.point, c.normal)) - gap_offset
+                        copen_data[s_idx] = gap
+                        cpress_data[s_idx] = p_i
+                        if p_i <= 0.0:
+                            cstatus_data[s_idx] = 0.0
+                        else:
+                            is_slip = False
+                            if hasattr(c, "_friction_force_and_tangent") and getattr(c, "mu", 0.0) > 0.0:
+                                f_t_3d, Ktt, is_slip, s1, s2, s_mag = c._friction_force_and_tangent(s_nid, xs, p_i)
+                                t1 = getattr(c, "t1", np.array([1.0, 0.0, 0.0]))
+                                t2 = getattr(c, "t2", np.array([0.0, 1.0, 0.0]))
+                                cshear_data[s_idx, 0] = float(np.dot(f_t_3d, t1))
+                                cshear_data[s_idx, 1] = float(np.dot(f_t_3d, t2))
+                                cslip_data[s_idx, 0] = s1
+                                cslip_data[s_idx, 1] = s2
+                            cstatus_data[s_idx] = 2.0 if is_slip else 1.0
+
+                # 2. DeformableSurfaceContactConstraint3D (Node-to-Segment deformable)
+                elif hasattr(c, "_pairs") and hasattr(c, "_normal_pressure") and hasattr(c, "_current_gap_and_normal"):
+                    for pair in c._pairs:
+                        s_nid = pair[0]
+                        m_face = pair[1]
+                        xi, eta, sign = pair[2], pair[3], pair[4]
+                        s_idx = c.nid_to_idx.get(s_nid, None)
+                        if s_idx is None or s_idx >= n_nodes:
+                            continue
+                        xs, p_i = c._normal_pressure(u, s_nid, m_face, xi, eta, sign)
+                        gap, n, N_shape, _, _ = c._current_gap_and_normal(u, s_nid, m_face, xi, eta, sign)
+                        copen_data[s_idx] = gap
+                        cpress_data[s_idx] = p_i
+                        if p_i <= 0.0:
+                            cstatus_data[s_idx] = 0.0
+                        else:
+                            is_slip = False
+                            if getattr(c, "mu", 0.0) > 0.0:
+                                m_idx = [c.nid_to_idx[nid] for nid in m_face]
+                                q = [c.coords[i] + u[3 * i : 3 * i + 3] for i in m_idx]
+                                f_t_3d, Ktt, is_slip, s1, s2, s_mag, t1, t2 = c._friction_force_and_tangent(s_nid, xs, q, n, p_i)
+                                cshear_data[s_idx, 0] = float(np.dot(f_t_3d, t1))
+                                cshear_data[s_idx, 1] = float(np.dot(f_t_3d, t2))
+                                cslip_data[s_idx, 0] = s1
+                                cslip_data[s_idx, 1] = s2
+                            cstatus_data[s_idx] = 2.0 if is_slip else 1.0
+
+                # 3. Generic fallback
+                elif hasattr(c, "get_active_set"):
+                    active = c.get_active_set(u)
+                    for s_nid in active:
+                        idx = nid_to_idx.get(s_nid, None)
+                        if idx is not None and idx < n_nodes:
+                            if cstatus_data[idx] == 0.0:
+                                cstatus_data[idx] = 1.0
+
+        if need_cpress:
+            res["CPRESS"] = FieldOutput("CPRESS", "Contact pressure", FieldType.SCALAR, FieldPosition.NODES, cpress_data, node_labels, component_labels=("CPRESS",))
+        if need_copen:
+            res["COPEN"] = FieldOutput("COPEN", "Contact opening", FieldType.SCALAR, FieldPosition.NODES, copen_data, node_labels, component_labels=("COPEN",))
+        if need_cstatus:
+            res["CSTATUS"] = FieldOutput("CSTATUS", "Contact status (0=Open, 1=Stick, 2=Slip)", FieldType.SCALAR, FieldPosition.NODES, cstatus_data, node_labels, component_labels=("CSTATUS",))
+        if need_cshear:
+            res["CSHEAR"] = FieldOutput("CSHEAR", "Frictional shear stress", FieldType.VECTOR, FieldPosition.NODES, cshear_data, node_labels, component_labels=("CSHEAR1", "CSHEAR2"))
+        if need_cslip:
+            res["CSLIP"] = FieldOutput("CSLIP", "Contact slip", FieldType.VECTOR, FieldPosition.NODES, cslip_data, node_labels, component_labels=("CSLIP1", "CSLIP2"))
+
 
     return res
 

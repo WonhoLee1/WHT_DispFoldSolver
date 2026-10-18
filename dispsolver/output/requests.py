@@ -58,6 +58,24 @@ class FieldOutputRequest:
         self.modes = self.modes.upper()
         if self.time_points is not None:
             self.time_points = sorted(list(self.time_points))
+        
+        # Normalize variable names and expand aliases / PRESELECT
+        normalized: List[str] = []
+        alias_map = {
+            "VONMISES": "MISES",
+            "VON_MISES": "MISES",
+            "MAX_PRINCIPAL": "MAXP",
+            "MIN_PRINCIPAL": "MINP",
+            "MID_PRINCIPAL": "MIDP",
+            "PRESSURE": "PRESS",
+        }
+        for v in self.variables:
+            v_up = str(v).upper()
+            if v_up == "PRESELECT":
+                normalized.extend(["U", "RF", "S", "LE", "PEEQ", "CPRESS", "COPEN", "CSTATUS", "CSHEAR"])
+            else:
+                normalized.append(alias_map.get(v_up, v_up))
+        self.variables = list(dict.fromkeys(normalized))
 
 
 @dataclass
@@ -94,6 +112,17 @@ class HistoryOutputRequest:
     time_points: Optional[List[float]] = None
     region: Optional[str] = None
     section_name: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        normalized: List[str] = []
+        for v in self.variables:
+            v_up = str(v).upper()
+            if v_up == "PRESELECT":
+                normalized.extend(["ALLIE", "ALLSE", "ALLPD", "ALLVD", "ALLKE", "ALLWK", "ALLAE", "ALLSD", "ALLFD", "ETOTAL"])
+            else:
+                normalized.append(v_up)
+        self.variables = list(dict.fromkeys(normalized))
+
 
 
 class OutputTimingController:

@@ -79,8 +79,15 @@ def recover_2d_fields(
             component_labels=("RF1", "RF2")
         )
 
-    # 3. Element Tensors: Stress 'S', Strain 'LE', 'E', 'PEEQ'
-    need_stress = "S" in requested_vars
+    # 3. Element Tensors & Invariants: Stress 'S', 'MISES', 'MAXP', 'MIDP', 'MINP', 'PRESS', 'LE', 'E', 'PEEQ'
+    need_s = "S" in requested_vars
+    need_mises = "MISES" in requested_vars
+    need_maxp = "MAXP" in requested_vars
+    need_midp = "MIDP" in requested_vars
+    need_minp = "MINP" in requested_vars
+    need_press = "PRESS" in requested_vars
+    need_stress = need_s or need_mises or need_maxp or need_midp or need_minp or need_press
+
     need_le = "LE" in requested_vars
     need_e = "E" in requested_vars
     need_peeq = "PEEQ" in requested_vars
@@ -135,10 +142,46 @@ def recover_2d_fields(
                 if len(states) > 0 and hasattr(states[0], "plastic_strain"):
                     peeq_data[e_idx] = float(np.linalg.norm(states[0].plastic_strain))
 
+        # Compute derived stress invariants if needed
+        if need_mises:
+            mises_sq = 0.5 * ((s_data[:, 0] - s_data[:, 1])**2 + (s_data[:, 1] - s_data[:, 2])**2 + (s_data[:, 2] - s_data[:, 0])**2) + 3.0 * s_data[:, 3]**2
+            mises_data = np.sqrt(np.maximum(mises_sq, 0.0))
+
+        if need_maxp or need_midp or need_minp:
+            maxp_data = np.zeros(n_elems, dtype=np.float64)
+            midp_data = np.zeros(n_elems, dtype=np.float64)
+            minp_data = np.zeros(n_elems, dtype=np.float64)
+            for i in range(n_elems):
+                s11, s22, s33, s12 = s_data[i]
+                r = np.sqrt(0.25 * (s11 - s22)**2 + s12**2)
+                c = 0.5 * (s11 + s22)
+                vals = sorted([float(c + r), float(c - r), float(s33)], reverse=True)
+                maxp_data[i] = vals[0]
+                midp_data[i] = vals[1]
+                minp_data[i] = vals[2]
+
+        if need_press:
+            press_data = -(s_data[:, 0] + s_data[:, 1] + s_data[:, 2]) / 3.0
+
         if position == FieldPosition.NODES:
-            if need_stress:
+            if need_s:
                 nodal_s = _average_2d_to_nodes(s_data, elements_list, n_nodes, nid_to_idx)
                 res["S"] = FieldOutput("S", "Cauchy stress (Nodal)", FieldType.TENSOR_2D_PLANAR, FieldPosition.NODES, nodal_s, node_labels)
+            if need_mises:
+                nodal_mises = _average_2d_to_nodes(mises_data[:, None], elements_list, n_nodes, nid_to_idx)
+                res["MISES"] = FieldOutput("MISES", "Von Mises equivalent stress (Nodal)", FieldType.SCALAR, FieldPosition.NODES, nodal_mises.flatten(), node_labels, component_labels=("MISES",))
+            if need_maxp:
+                nodal_maxp = _average_2d_to_nodes(maxp_data[:, None], elements_list, n_nodes, nid_to_idx)
+                res["MAXP"] = FieldOutput("MAXP", "Maximum principal stress (Nodal)", FieldType.SCALAR, FieldPosition.NODES, nodal_maxp.flatten(), node_labels, component_labels=("MAXP",))
+            if need_midp:
+                nodal_midp = _average_2d_to_nodes(midp_data[:, None], elements_list, n_nodes, nid_to_idx)
+                res["MIDP"] = FieldOutput("MIDP", "Intermediate principal stress (Nodal)", FieldType.SCALAR, FieldPosition.NODES, nodal_midp.flatten(), node_labels, component_labels=("MIDP",))
+            if need_minp:
+                nodal_minp = _average_2d_to_nodes(minp_data[:, None], elements_list, n_nodes, nid_to_idx)
+                res["MINP"] = FieldOutput("MINP", "Minimum principal stress (Nodal)", FieldType.SCALAR, FieldPosition.NODES, nodal_minp.flatten(), node_labels, component_labels=("MINP",))
+            if need_press:
+                nodal_press = _average_2d_to_nodes(press_data[:, None], elements_list, n_nodes, nid_to_idx)
+                res["PRESS"] = FieldOutput("PRESS", "Hydrostatic pressure (Nodal)", FieldType.SCALAR, FieldPosition.NODES, nodal_press.flatten(), node_labels, component_labels=("PRESS",))
             if need_le:
                 nodal_le = _average_2d_to_nodes(le_data, elements_list, n_nodes, nid_to_idx)
                 res["LE"] = FieldOutput("LE", "Logarithmic strain (Nodal)", FieldType.TENSOR_2D_PLANAR, FieldPosition.NODES, nodal_le, node_labels)
@@ -149,14 +192,82 @@ def recover_2d_fields(
                 nodal_peeq = _average_2d_to_nodes(peeq_data[:, None], elements_list, n_nodes, nid_to_idx)
                 res["PEEQ"] = FieldOutput("PEEQ", "Equivalent plastic strain (Nodal)", FieldType.SCALAR, FieldPosition.NODES, nodal_peeq.flatten(), node_labels)
         else:
-            if need_stress:
+            if need_s:
                 res["S"] = FieldOutput("S", "Cauchy stress", FieldType.TENSOR_2D_PLANAR, FieldPosition.CENTROID, s_data, elem_labels)
+            if need_mises:
+                res["MISES"] = FieldOutput("MISES", "Von Mises equivalent stress", FieldType.SCALAR, FieldPosition.CENTROID, mises_data, elem_labels, component_labels=("MISES",))
+            if need_maxp:
+                res["MAXP"] = FieldOutput("MAXP", "Maximum principal stress", FieldType.SCALAR, FieldPosition.CENTROID, maxp_data, elem_labels, component_labels=("MAXP",))
+            if need_midp:
+                res["MIDP"] = FieldOutput("MIDP", "Intermediate principal stress", FieldType.SCALAR, FieldPosition.CENTROID, midp_data, elem_labels, component_labels=("MIDP",))
+            if need_minp:
+                res["MINP"] = FieldOutput("MINP", "Minimum principal stress", FieldType.SCALAR, FieldPosition.CENTROID, minp_data, elem_labels, component_labels=("MINP",))
+            if need_press:
+                res["PRESS"] = FieldOutput("PRESS", "Hydrostatic pressure", FieldType.SCALAR, FieldPosition.CENTROID, press_data, elem_labels, component_labels=("PRESS",))
             if need_le:
                 res["LE"] = FieldOutput("LE", "Logarithmic strain", FieldType.TENSOR_2D_PLANAR, FieldPosition.CENTROID, le_data, elem_labels)
             if need_e:
                 res["E"] = FieldOutput("E", "Strain", FieldType.TENSOR_2D_PLANAR, FieldPosition.CENTROID, e_data, elem_labels)
             if need_peeq:
                 res["PEEQ"] = FieldOutput("PEEQ", "Equivalent plastic strain", FieldType.SCALAR, FieldPosition.CENTROID, peeq_data, elem_labels)
+
+    # 4. Contact Variables: CPRESS, COPEN, CSHEAR, CSTATUS, CSLIP
+    need_cpress = "CPRESS" in requested_vars
+    need_copen = "COPEN" in requested_vars
+    need_cshear = "CSHEAR" in requested_vars
+    need_cstatus = "CSTATUS" in requested_vars
+    need_cslip = "CSLIP" in requested_vars
+
+    if need_cpress or need_copen or need_cshear or need_cstatus or need_cslip:
+        cpress_data = np.zeros(n_nodes, dtype=np.float64)
+        copen_data = np.zeros(n_nodes, dtype=np.float64)
+        cstatus_data = np.zeros(n_nodes, dtype=np.float64)
+        cshear_data = np.zeros((n_nodes, 1), dtype=np.float64)
+        cslip_data = np.zeros((n_nodes, 1), dtype=np.float64)
+
+        if hasattr(solver, "constraints") and solver.constraints:
+            for c in solver.constraints:
+                if hasattr(c, "slave_node_ids") and hasattr(c, "normal") and hasattr(c, "ref_coords"):
+                    curr_pt = c._get_current_plane_point(u) if hasattr(c, "_get_current_plane_point") else getattr(c, "point", np.zeros(2))
+                    normal = c.normal
+                    for nid in c.slave_node_ids:
+                        idx = c.nid_to_idx.get(nid, None)
+                        if idx is None or idx >= n_nodes:
+                            continue
+                        X0 = c.ref_coords.get(nid, None)
+                        if X0 is None:
+                            continue
+                        u_node = u_arr[idx]
+                        curr_pos = X0 + u_node
+                        offset = c.initial_offsets.get(nid, 0.0) if hasattr(c, "initial_offsets") else 0.0
+                        gap = float(np.dot(curr_pos - curr_pt, normal)) + offset
+                        copen_data[idx] = gap
+                        if gap < 0.0:
+                            pen = -gap
+                            k_pen = getattr(c, "penalty_stiffness", 1e8)
+                            p_i = k_pen * pen
+                            cpress_data[idx] = p_i
+                            cstatus_data[idx] = 1.0  # Stick / closed
+                        else:
+                            cstatus_data[idx] = 0.0  # Open
+                elif hasattr(c, "get_active_set"):
+                    active = c.get_active_set(u)
+                    for nid in active:
+                        idx = nid_to_idx.get(nid, None)
+                        if idx is not None and idx < n_nodes:
+                            cstatus_data[idx] = 1.0
+
+        if need_cpress:
+            res["CPRESS"] = FieldOutput("CPRESS", "Contact pressure", FieldType.SCALAR, FieldPosition.NODES, cpress_data, node_labels, component_labels=("CPRESS",))
+        if need_copen:
+            res["COPEN"] = FieldOutput("COPEN", "Contact opening", FieldType.SCALAR, FieldPosition.NODES, copen_data, node_labels, component_labels=("COPEN",))
+        if need_cstatus:
+            res["CSTATUS"] = FieldOutput("CSTATUS", "Contact status (0=Open, 1=Stick, 2=Slip)", FieldType.SCALAR, FieldPosition.NODES, cstatus_data, node_labels, component_labels=("CSTATUS",))
+        if need_cshear:
+            res["CSHEAR"] = FieldOutput("CSHEAR", "Frictional shear stress", FieldType.SCALAR, FieldPosition.NODES, cshear_data.flatten(), node_labels, component_labels=("CSHEAR1",))
+        if need_cslip:
+            res["CSLIP"] = FieldOutput("CSLIP", "Contact slip", FieldType.SCALAR, FieldPosition.NODES, cslip_data.flatten(), node_labels, component_labels=("CSLIP1",))
+
 
     return res
 

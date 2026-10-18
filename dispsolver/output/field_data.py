@@ -35,6 +35,9 @@ class FieldValue:
     data: np.ndarray = field(default_factory=lambda: np.zeros(0, dtype=np.float64))
     mises: Optional[float] = None
     pressure: Optional[float] = None
+    max_principal: Optional[float] = None
+    mid_principal: Optional[float] = None
+    min_principal: Optional[float] = None
     magnitude: Optional[float] = None
 
 
@@ -101,11 +104,18 @@ class FieldOutput:
 
             mises_val = None
             press_val = None
+            max_p_val = None
+            mid_p_val = None
+            min_p_val = None
             mag_val = None
 
             if is_stress and len(d) >= 3:
                 mises_val = float(self._compute_single_mises(d))
                 press_val = float(-np.mean(d[:3]))
+                p_max, p_mid, p_min = self._compute_single_principal(d)
+                max_p_val = float(p_max)
+                mid_p_val = float(p_mid)
+                min_p_val = float(p_min)
             elif is_vec:
                 mag_val = float(np.linalg.norm(d))
 
@@ -116,6 +126,9 @@ class FieldOutput:
                 data=d,
                 mises=mises_val,
                 pressure=press_val,
+                max_principal=max_p_val,
+                mid_principal=mid_p_val,
+                min_principal=min_p_val,
                 magnitude=mag_val
             )
             values_list.append(val)
@@ -132,13 +145,22 @@ class FieldOutput:
         return np.linalg.norm(self.data, axis=1)
 
     def get_component(self, comp_name: str) -> np.ndarray:
-        """Extract a single component 1D array by component name (e.g. 'U1', 'S11', 'MISES')."""
+        """Extract a single component 1D array by component name (e.g. 'U1', 'S11', 'MISES', 'MAXP')."""
         comp_upper = comp_name.upper()
         if comp_upper == "MISES" and self.name == "S":
             return self.get_mises()
+        if comp_upper in ["MAXP", "MAX_PRINCIPAL"] and self.name == "S":
+            p_max, _, _ = self.get_principal()
+            return p_max
+        if comp_upper in ["MIDP", "MID_PRINCIPAL"] and self.name == "S":
+            _, p_mid, _ = self.get_principal()
+            return p_mid
+        if comp_upper in ["MINP", "MIN_PRINCIPAL"] and self.name == "S":
+            _, _, p_min = self.get_principal()
+            return p_min
         if comp_upper in ["PRESS", "PRESSURE"] and self.name == "S":
             return self.get_pressure()
-        if comp_upper in ["MAG", "MAGNITUDE"]:
+        if comp_upper in ["MAG", "MAGNITUDE"] or (comp_upper == self.name and self.type == FieldType.VECTOR):
             return self.get_magnitude()
 
         if comp_upper in self.component_labels:
@@ -180,25 +202,23 @@ class FieldOutput:
             raise ValueError(f"Unsupported stress tensor shape: {d.shape}")
 
     def get_principal(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Compute (Max, Mid, Min) principal stresses for each row."""
-        if self.name != "S" or self.data.shape[1] < 6:
-            raise NotImplementedError("Principal stress calculation requires 3D Voigt stress.")
+        """Compute (Max, Mid, Min) principal stresses for each row.
+        
+        Supports 3D full Voigt (>=6), 2D plane strain (4 components [S11, S22, S33, S12]),
+        and 2D plane stress (3 components [S11, S22, S12]).
+        """
+        if self.name != "S":
+            raise NotImplementedError("Principal stress calculation requires stress tensor 'S'.")
         n = len(self.data)
         p_max = np.zeros(n, dtype=np.float64)
         p_mid = np.zeros(n, dtype=np.float64)
         p_min = np.zeros(n, dtype=np.float64)
 
         for i in range(n):
-            s = self.data[i]
-            tensor = np.array([
-                [s[0], s[3], s[4]],
-                [s[3], s[1], s[5]],
-                [s[4], s[5], s[2]]
-            ])
-            eigvals = np.linalg.eigvalsh(tensor)
-            p_min[i] = eigvals[0]
-            p_mid[i] = eigvals[1]
-            p_max[i] = eigvals[2]
+            p1, p2, p3 = self._compute_single_principal(self.data[i])
+            p_max[i] = p1
+            p_mid[i] = p2
+            p_min[i] = p3
 
         return p_max, p_mid, p_min
 
@@ -242,3 +262,33 @@ class FieldOutput:
             m_sq = s[0]**2 - s[0] * s[1] + s[1]**2 + 3.0 * s[2]**2
             return float(np.sqrt(max(m_sq, 0.0)))
         return 0.0
+
+    @staticmethod
+    def _compute_single_principal(s: np.ndarray) -> Tuple[float, float, float]:
+        """Compute (p_max, p_mid, p_min) in descending order for a single stress state."""
+        if len(s) >= 6:
+            tensor = np.array([
+                [s[0], s[3], s[4]],
+                [s[3], s[1], s[5]],
+                [s[4], s[5], s[2]]
+            ], dtype=np.float64)
+            eigvals = np.linalg.eigvalsh(tensor)
+            return float(eigvals[2]), float(eigvals[1]), float(eigvals[0])
+        elif len(s) == 4:
+            s11, s22, s33, s12 = s[0], s[1], s[2], s[3]
+            r = np.sqrt(0.25 * (s11 - s22)**2 + s12**2)
+            c = 0.5 * (s11 + s22)
+            p_in1 = c + r
+            p_in2 = c - r
+            vals = sorted([float(p_in1), float(p_in2), float(s33)], reverse=True)
+            return vals[0], vals[1], vals[2]
+        elif len(s) == 3:
+            s11, s22, s12 = s[0], s[1], s[2]
+            r = np.sqrt(0.25 * (s11 - s22)**2 + s12**2)
+            c = 0.5 * (s11 + s22)
+            p_in1 = c + r
+            p_in2 = c - r
+            vals = sorted([float(p_in1), float(p_in2), 0.0], reverse=True)
+            return vals[0], vals[1], vals[2]
+        return 0.0, 0.0, 0.0
+

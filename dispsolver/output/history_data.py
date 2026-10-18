@@ -129,6 +129,9 @@ class EnergyTracker:
         self.allvd: float = 0.0   # Viscous dissipation
         self.allke: float = 0.0   # Kinetic energy
         self.allwk: float = 0.0   # External work
+        self.allae: float = 0.0   # Artificial strain energy (hourglass / numerical damping)
+        self.allsd: float = 0.0   # Stabilization dissipation energy
+        self.allfd: float = 0.0   # Frictional dissipation energy
 
     def update_step(
         self,
@@ -160,7 +163,35 @@ class EnergyTracker:
         else:
             self.allwk = self.allie  # in equilibrium W_ext = W_int
 
+        # Query solver/elements for artificial strain energy (ALLAE) if exposed
+        if hasattr(solver, "energy_allae"):
+            self.allae = float(solver.energy_allae)
+        elif hasattr(solver, "allae"):
+            self.allae = float(solver.allae)
+
+        # Query solver for stabilization dissipation energy (ALLSD) if exposed
+        if hasattr(solver, "energy_allsd"):
+            self.allsd = float(solver.energy_allsd)
+        elif hasattr(solver, "allsd"):
+            self.allsd = float(solver.allsd)
+
+        # Query solver/constraints for frictional dissipation energy (ALLFD) if exposed
+        if hasattr(solver, "energy_allfd"):
+            self.allfd = float(solver.energy_allfd)
+        elif hasattr(solver, "allfd"):
+            self.allfd = float(solver.allfd)
+        elif hasattr(solver, "constraints"):
+            fd_total = 0.0
+            for c in solver.constraints:
+                if hasattr(c, "frictional_dissipation"):
+                    fd_total += float(c.frictional_dissipation)
+                elif hasattr(c, "energy_allfd"):
+                    fd_total += float(c.energy_allfd)
+            if fd_total > 0.0:
+                self.allfd = fd_total
+
     @property
     def etotal(self) -> float:
         """Energy balance error: ALLIE + ALLKE - ALLWK."""
         return (self.allie + self.allke) - self.allwk
+

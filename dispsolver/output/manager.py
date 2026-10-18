@@ -324,6 +324,9 @@ class OutputManager:
                 "ALLVD": self.energy_tracker.allvd,
                 "ALLKE": self.energy_tracker.allke,
                 "ALLWK": self.energy_tracker.allwk,
+                "ALLAE": self.energy_tracker.allae,
+                "ALLSD": self.energy_tracker.allsd,
+                "ALLFD": self.energy_tracker.allfd,
                 "ETOTAL": self.energy_tracker.etotal,
             }
             if var_upper in energy_map:

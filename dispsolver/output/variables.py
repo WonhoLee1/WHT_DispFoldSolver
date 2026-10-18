@@ -101,13 +101,39 @@ class FieldVar:
     PENER: str = "PENER"
     """소성 소산 에너지 밀도 (Plastic Dissipation Energy Density). 스칼라 (mJ/mm³)."""
 
-    # ---------- 접촉 변수 ----------
+    # ---------- 응력 파생 불변량 변수 (Stress Invariants) ----------
+
+    MISES: str = "MISES"
+    """Von Mises 등가 응력 (Von Mises Equivalent Stress). 스칼라 (MPa)."""
+
+    MAXP: str = "MAXP"
+    """최대 주응력 (Maximum Principal Stress, sigma_1). 스칼라 (MPa)."""
+
+    MIDP: str = "MIDP"
+    """중간 주응력 (Intermediate Principal Stress, sigma_2). 스칼라 (MPa)."""
+
+    MINP: str = "MINP"
+    """최소 주응력 (Minimum Principal Stress, sigma_3). 스칼라 (MPa)."""
+
+    PRESS: str = "PRESS"
+    """등가 정수압 (Equivalent Hydrostatic Pressure, -1/3 tr(sigma)). 스칼라 (MPa)."""
+
+    # ---------- 접촉 변수 (Contact Variables) ----------
 
     CPRESS: str = "CPRESS"
     """접촉면 압력 (Contact Pressure). 스칼라 (MPa)."""
 
     CSLIP: str = "CSLIP"
-    """접촉면 미끄럼 (Contact Slip). 성분: CSLIP1, CSLIP2."""
+    """접촉면 미끄럼 변위 (Contact Slip). 성분: CSLIP1, CSLIP2."""
+
+    CSHEAR: str = "CSHEAR"
+    """접촉면 마찰 전단 응력/트랙션 (Contact Frictional Shear Stress). 성분: CSHEAR1, CSHEAR2."""
+
+    COPEN: str = "COPEN"
+    """접촉면 간극/개구량 (Contact Opening / Clearance). 스칼라 (mm)."""
+
+    CSTATUS: str = "CSTATUS"
+    """접촉 상태 플래그 (Contact Status). 스칼라: 0=Open, 1=Stick, 2=Slip."""
 
 
 # ---------------------------------------------------------------------------
@@ -146,6 +172,15 @@ class HistoryVar:
 
     ALLWK: str = "ALLWK"
     """외력이 하는 일 (External Work). ∫f_ext · du."""
+
+    ALLAE: str = "ALLAE"
+    """인공 변형 에너지 (Artificial Strain Energy). 아워글래스 / 수치 감쇠 / 왜곡 제어 에너지."""
+
+    ALLSD: str = "ALLSD"
+    """정적/접촉 수치 안정화 소산 에너지 (Stabilization Dissipation)."""
+
+    ALLFD: str = "ALLFD"
+    """마찰 소산 에너지 (Frictional Dissipation Energy)."""
 
     ETOTAL: str = "ETOTAL"
     """에너지 평형 잔차 (ALLIE + ALLKE - ALLWK). 0에 가까울수록 에너지 보존."""
@@ -209,8 +244,16 @@ FIELD_VARIABLE_COMPONENTS: Dict[str, Tuple[str, ...]] = {
     FieldVar.PEEQ:   ("PEEQ",),
     FieldVar.SENER:  ("SENER",),
     FieldVar.PENER:  ("PENER",),
+    FieldVar.MISES:  ("MISES",),
+    FieldVar.MAXP:   ("MAXP",),
+    FieldVar.MIDP:   ("MIDP",),
+    FieldVar.MINP:   ("MINP",),
+    FieldVar.PRESS:  ("PRESS",),
     FieldVar.CPRESS: ("CPRESS",),
     FieldVar.CSLIP:  ("CSLIP1", "CSLIP2"),
+    FieldVar.CSHEAR: ("CSHEAR1", "CSHEAR2"),
+    FieldVar.COPEN:  ("COPEN",),
+    FieldVar.CSTATUS:("CSTATUS",),
 }
 
 HISTORY_ENERGY_VARIABLES: Set[str] = {
@@ -220,6 +263,9 @@ HISTORY_ENERGY_VARIABLES: Set[str] = {
     HistoryVar.ALLVD,
     HistoryVar.ALLKE,
     HistoryVar.ALLWK,
+    HistoryVar.ALLAE,
+    HistoryVar.ALLSD,
+    HistoryVar.ALLFD,
     HistoryVar.ETOTAL,
 }
 
