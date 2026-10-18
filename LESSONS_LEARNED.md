@@ -489,3 +489,19 @@ deck06 DUAL_MORTAR는 세 결함이 겹쳐 수렴하지 못했다(하나만 고�
 - **설계 교훈**:
   - 비선형 과도 해석 진행 중 VTKHDF v2.2의 `Transient` 스트리밍 그룹에 변위($U$), 응력($S$), 대수변형률($LE$), 등가소성변형률($PEEQ$)을 실시간 기록함.
   - 또한 `PreProcessing/Sets/NodeSets` 및 `PreProcessing/Sets/ElementSets`에 파트/세트 정보를 계층화하고, `CellData`에 `Part_ID`, `Layer_ID`, `Material_Type`을 정수 태깅함으로써 ParaView에서 추가 필터 없이 Threshold 및 Clip을 통해 특정 층(PET, PSA, Glass)을 즉각 분리 가시화할 수 있는 고효율 단일 DB 구조를 완성함.
+
+### 15.4 2D/3D 접촉 대향 법선 필터(Opposing Normal Filter)와 대변형 폴딩 시 동적 세그먼트 리클리핑
+- **수치역학적 발견 및 버그 원인**:
+  - 초기 평평한 상태(Flat state, $u=0$)에서 디스플레이 상면의 좌측 절반($X < 0$)과 우측 절반($X > 0$)은 동일 평면 상에 나란히 배치되어 있어 상호 투영 구간이 존재하지 않음.
+  - 소변형 가정 기반의 정적 페어링(`_build_pairs` 1회 호출) 방식으로는 180° 폴딩 시 대향면이 접근해도 접촉 쌍이 0개로 유지되어 자기 접촉(Self-Contact)이 감지되지 않는 치명적 결함 발생.
+  - 또한 연속된 단일 표면 분할 시 인접 세그먼트 간의 인위적 접촉(Spurious self-penetration)을 차단해야 함.
+- **방어 대책 및 구현 표준**:
+  - 대변형 유한 슬라이딩(`finite_sliding=True`) 시, 현재 변형된 좌표 $\mathbf{x} = \mathbf{X} + \mathbf{u}$를 기반으로 세그먼트를 동적 재클리핑함.
+  - 공유 절점 배제 조건(`s in (m1, m2)`) 및 대향 법선 검사($\mathbf{n}_s \cdot \mathbf{n}_m \le -0.3$)를 강제하여, 두 표면이 180° 회전하여 실제로 마주보는 상태에서만 접촉 세그먼트와 Wohlmuth 쌍직교 가중 적분점(Quadrature points)이 생성되도록 수치적 무결성을 완성함.
+
+### 15.5 PySide6 `QThread` 기반 CAE 실시간 해석 스트리밍(`--live`) 및 동적 차트 스케일링
+- **설계 교훈**:
+  - 솔버의 주 계산 루프가 GUI 메인 스레드를 블로킹하지 않도록 `SolverWorker(QtCore.QThread)`로 분리 실행함.
+  - 스텝별 수렴 완료 시점마다 `step_converged` 시그널(`step, t, theta, u, iters, M_L, M_R`)을 발행하여 3D 뷰포트의 `pv_mesh.points`를 제로-알로케이션으로 인플레이스 갱신하고 슬라이더 범위를 실시간 확장함.
+  - Matplotlib 캔버스는 전체 Figure 재생성 대신 `line.set_data()` 및 `ax.relim()`, `canvas.draw_idle()` 비동기 렌더링을 적용하여 연산 병목 없이 60fps에 준하는 매끄러운 라이브 스트리밍을 구현함.
+

@@ -131,3 +131,42 @@ def test_dispfold_3d_solver_e2e_smoke():
         assert summary["preset"] == "compact_4"
         assert summary["num_steps"] == 2
         assert summary["cutbacks"] == 0
+
+
+def test_dispfold_crease_zero_gap_dual_mortar_e2e():
+    """Verify Mission B: Crease Zero-Gap folding with Wohlmuth Dual Mortar self-contact."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        out_dir = run_dispfold_simulation(
+            dim="2D",
+            preset="crease_zero_gap",
+            theta_max_deg=30.0,
+            enable_predictor=True,
+            tie_method="MPC",
+            contact_mode="AUTO",
+            sol_preset="ADAPTIVE",
+            max_steps=2,
+            launch_gui=False,
+            results_base_dir=tmpdir,
+        )
+
+        assert os.path.isdir(out_dir)
+
+        # Verify run.log includes Dual Mortar contact wiring
+        log_path = os.path.join(out_dir, "run.log")
+        assert os.path.isfile(log_path)
+        with open(log_path, "r", encoding="utf-8") as f:
+            log_content = f.read()
+        assert "Wohlmuth Dual Mortar Self-Contact wired into 2D solver" in log_content
+        assert "[OK] Simulation completed" in log_content
+
+        # Verify all 7 artifacts
+        for fname in ["run.log", "model.inp", "model_and_results.vtkhdf", "summary_plots.png", "folding_animation.gif", "result_summary.json", "report.html"]:
+            assert os.path.isfile(os.path.join(out_dir, fname)), f"Missing artifact {fname}"
+
+        with open(os.path.join(out_dir, "result_summary.json"), "r", encoding="utf-8") as f:
+            summary = json.load(f)
+        assert summary["dim"] == "2D"
+        assert summary["preset"] == "crease_zero_gap"
+        assert summary["contact_mode"] == "DUAL_MORTAR"
+        assert summary["num_steps"] == 2
+

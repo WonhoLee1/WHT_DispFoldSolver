@@ -197,6 +197,11 @@ class GmshMeshGenerator:
         disp_bot_l_nids = [node_id_grid[0][j] for j in range(len(xs)) if xs[j] <= -hinge_gap + 1e-5]
         disp_bot_r_nids = [node_id_grid[0][j] for j in range(len(xs)) if xs[j] >= hinge_gap - 1e-5]
 
+        # Top surface segments for self-contact
+        top_row = node_id_grid[-1]
+        disp_top_l_segs = [(top_row[j], top_row[j+1]) for j in range(len(xs) - 1) if 0.5 * (xs[j] + xs[j+1]) <= 0.0]
+        disp_top_r_segs = [(top_row[j], top_row[j+1]) for j in range(len(xs) - 1) if 0.5 * (xs[j] + xs[j+1]) >= 0.0]
+
         gmsh.finalize()
 
         meta = {
@@ -210,6 +215,8 @@ class GmshMeshGenerator:
             "disp_bottom_right_nids": disp_bot_r_nids,
             "plate_l_top_edges": plate_l_top_edges,
             "plate_r_top_edges": plate_r_top_edges,
+            "disp_top_left_segments": disp_top_l_segs,
+            "disp_top_right_segments": disp_top_r_segs,
             "layer_elem_sets": layer_elem_sets,
             "layer_pids": layer_pids,
             "thick_disp": self.config.total_thickness,
@@ -388,6 +395,23 @@ class GmshMeshGenerator:
                 elif xs[i] >= hinge_gap - 1e-5:
                     disp_bot_r_nids.append(int(disp_grid[i, 0, k]))
 
+        # Display top surface Quad4 faces for 3D self-contact (j = -1)
+        # CCW winding ensures outward normal points +Y: (p(k+1, i), p(k+1, i+1), p(k, i+1), p(k, i))
+        disp_top_l_faces = []
+        disp_top_r_faces = []
+        for k in range(nz):
+            for i in range(nx_total):
+                f = (
+                    int(disp_grid[i, -1, k + 1]),
+                    int(disp_grid[i + 1, -1, k + 1]),
+                    int(disp_grid[i + 1, -1, k]),
+                    int(disp_grid[i, -1, k])
+                )
+                if 0.5 * (xs[i] + xs[i + 1]) <= 0.0:
+                    disp_top_l_faces.append(f)
+                else:
+                    disp_top_r_faces.append(f)
+
         gmsh.finalize()
 
         meta = {
@@ -402,6 +426,8 @@ class GmshMeshGenerator:
             "disp_bottom_right_nids": disp_bot_r_nids,
             "plate_l_top_faces": plate_l_top_faces,
             "plate_r_top_faces": plate_r_top_faces,
+            "disp_top_left_faces": disp_top_l_faces,
+            "disp_top_right_faces": disp_top_r_faces,
             "layer_elem_sets": layer_elem_sets,
             "layer_pids": layer_pids,
             "thick_disp": self.config.total_thickness,

@@ -262,7 +262,8 @@ class DispFoldQtViewer(QtWidgets.QMainWindow):
         thetas_deg = np.array(self.thetas)
         M_avg = 0.5 * (np.abs(self.M_L) + np.abs(self.M_R))
 
-        self.ax_moment.plot(thetas_deg, M_avg, color="#38bdf8", lw=2.0, label="FEM M_drive")
+        lines = self.ax_moment.plot(thetas_deg, M_avg, color="#38bdf8", lw=2.0, label="FEM M_drive")
+        self.line_fem_moment = lines[0]
         # Theoretical bounds reference lines
         # M_elastica ~ D * theta_rad / L_eff
         L_eff = 2.0 * self.config.geometry.hinge_half_gap
@@ -351,6 +352,82 @@ class DispFoldQtViewer(QtWidgets.QMainWindow):
             self.mesh_actor.GetProperty().SetOpacity(opacity)
             self.interactor.render()
 
+    def append_live_step(
+        self,
+        step_idx: int,
+        t: float,
+        th: float,
+        u_vec: np.ndarray,
+        iters: int,
+        M_L: float,
+        M_R: float,
+    ) -> None:
+        """Appends a newly converged solver increment in real-time streaming mode."""
+        self.times.append(float(t))
+        self.thetas.append(float(th))
+        self.u_steps.append(np.asarray(u_vec).copy())
+        self.iters.append(int(iters))
+        self.M_L.append(float(M_L))
+        self.M_R.append(float(M_R))
+        self.n_steps = len(self.times)
+
+        # Update slider range
+        self.slider.blockSignals(True)
+        self.slider.setRange(0, max(0, self.n_steps - 1))
+        self.slider.setValue(self.n_steps - 1)
+        self.slider.blockSignals(False)
+
+        # Update 3D viewport to latest step
+        self._update_time_step(self.n_steps - 1)
+
+        # Redraw analytical dashboard lines
+        thetas_deg = np.array(self.thetas)
+        M_avg = 0.5 * (np.abs(self.M_L) + np.abs(self.M_R))
+        if hasattr(self, "line_fem_moment"):
+            self.line_fem_moment.set_data(thetas_deg, M_avg)
+            self.ax_moment.relim()
+            self.ax_moment.autoscale_view(True, True, True)
+
+        self.ax_iters.cla()
+        self.ax_iters.set_facecolor("#0f172a")
+        self.ax_iters.tick_params(colors="#cbd5e1", labelsize=8)
+        for spine in self.ax_iters.spines.values():
+            spine.set_color("#334155")
+        self.ax_iters.grid(True, linestyle="--", alpha=0.3, color="#475569")
+        step_indices = np.arange(1, len(self.iters) + 1)
+        self.ax_iters.bar(step_indices, self.iters, color="#10b981", alpha=0.7, width=0.8)
+        self.ax_iters.axhline(10.0, color="#ef4444", linestyle="--", lw=1.0, label="Target 10 iters")
+        self.ax_iters.set_xlabel("해석 스텝 (Step)", color="#e2e8f0", fontsize=9)
+        self.ax_iters.set_ylabel("뉴턴 반복수", color="#e2e8f0", fontsize=9)
+        self.ax_iters.set_title("스텝별 뉴턴-랩슨 수렴 이력", color="#94a3b8", fontsize=9, pad=4)
+
+        self.canvas.draw_idle()
+
+
+class SolverWorker(QtCore.QThread):
+    """Background QThread worker executing the non-linear folding solver."""
+    step_converged = QtCore.Signal(int, float, float, np.ndarray, int, float, float)
+    simulation_finished = QtCore.Signal(str)
+
+    def __init__(
+        self,
+        run_fn: Any,
+        kwargs: Dict[str, Any],
+        parent: Optional[QtCore.QObject] = None,
+    ) -> None:
+        super().__init__(parent)
+        self.run_fn = run_fn
+        self.kwargs = dict(kwargs)
+
+    def run(self) -> None:
+        def on_step(step_idx, t, th, u_vec, iters, M_L, M_R):
+            self.step_converged.emit(step_idx, t, th, u_vec, iters, M_L, M_R)
+
+        self.kwargs["step_callback"] = on_step
+        self.kwargs["launch_gui"] = False
+        out_dir = self.run_fn(**self.kwargs)
+        self.simulation_finished.emit(str(out_dir))
+
 
 def launch_qt_viewer(
     mesh: Any,
@@ -372,3 +449,43 @@ def launch_qt_viewer(
 
     if own_app:
         app.exec()
+
+
+def launch_qt_viewer_live(
+    run_fn: Any,
+    kwargs: Dict[str, Any],
+    mesh: Any,
+    meta: Dict[str, Any],
+    config: Any,
+) -> None:
+    """Launches CAE viewer in live interactive streaming mode while solver executes."""
+    app = QtWidgets.QApplication.instance()
+    own_app = False
+    if app is None:
+        app = QtWidgets.QApplication(sys.argv)
+        own_app = True
+
+    dim = config.simulation_case.dim.upper()
+    ndof_node = 2 if dim == "2D" else 3
+    u0 = np.zeros(len(mesh.nodes) * ndof_node, dtype=np.float64)
+    init_history = {
+        "history_time": [0.0],
+        "history_theta": [0.0],
+        "history_iters": [0],
+        "history_M_L": [0.0],
+        "history_M_R": [0.0],
+        "history_u": [u0],
+    }
+
+    viewer = DispFoldQtViewer(mesh, meta, config, init_history)
+    viewer.show()
+
+    worker = SolverWorker(run_fn, kwargs, parent=viewer)
+    worker.step_converged.connect(viewer.append_live_step)
+    worker.start()
+
+    viewer._worker = worker
+
+    if own_app:
+        app.exec()
+

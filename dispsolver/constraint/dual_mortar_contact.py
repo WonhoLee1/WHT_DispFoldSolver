@@ -95,6 +95,8 @@ class DualMortarContactConstraint2D:
         formulation: str = "dual_mortar",
         mortar_type: str = "DUAL",
         gamma: Optional[float] = None,
+        finite_sliding: bool = False,
+        opposing_normal_threshold: float = -0.3,
         name: str = "DUAL_MORTAR_CONTACT_2D",
     ):
         self.slave_segments = list(slave_segments)
@@ -109,6 +111,8 @@ class DualMortarContactConstraint2D:
             raise ValueError(f"Unknown formulation '{formulation}'. Choose 'dual_mortar' or 'nitsche'.")
         self.mortar_type = str(mortar_type).upper()
         self.gamma = float(gamma) if gamma is not None else self.k_contact
+        self.finite_sliding = bool(finite_sliding)
+        self.opposing_normal_threshold = float(opposing_normal_threshold)
         self.name = name
 
         # Global diagonal condensation factor per slave node D_global[nid]
@@ -143,7 +147,12 @@ class DualMortarContactConstraint2D:
             self.D_global[s1] = self.D_global.get(s1, 0.0) + D_half
             self.D_global[s2] = self.D_global.get(s2, 0.0) + D_half
 
-    def _build_pairs(self) -> None:
+    def reproject_deformed(self, u: np.ndarray) -> None:
+        """Dynamic re-clipping on deformed configuration under finite sliding."""
+        if self.finite_sliding:
+            self._build_pairs(u)
+
+    def _build_pairs(self, u: Optional[np.ndarray] = None) -> None:
         """Pair slave segments with master segments using 1D exact clipping.
 
         Handles non-matching meshes with arbitrary element densities by
@@ -151,22 +160,41 @@ class DualMortarContactConstraint2D:
         that project onto individual master segments.
         """
         self.segments = []
+        coords = self.coords
 
         for s_idx, (s1, s2) in enumerate(self.slave_segments):
             idx_s1 = self.nid_to_idx[s1]
             idx_s2 = self.nid_to_idx[s2]
-            xs1 = self.coords[idx_s1, :2]
-            xs2 = self.coords[idx_s2, :2]
-            L_s = float(np.linalg.norm(xs2 - xs1))
+            if u is not None:
+                xs1 = coords[idx_s1, :2] + u[2 * idx_s1 : 2 * idx_s1 + 2]
+                xs2 = coords[idx_s2, :2] + u[2 * idx_s2 : 2 * idx_s2 + 2]
+            else:
+                xs1 = coords[idx_s1, :2]
+                xs2 = coords[idx_s2, :2]
+
+            dx_s = xs2 - xs1
+            L_s = float(np.linalg.norm(dx_s))
             if L_s < 1e-14:
                 continue
             xs_mid = 0.5 * (xs1 + xs2)
+            t_s_unit = dx_s / L_s
+            n_s_raw = np.array([-t_s_unit[1], t_s_unit[0]], dtype=np.float64)
 
             for m1, m2 in self.master_segments:
+                if self.finite_sliding:
+                    # Topological exclusion of shared nodes in self-contact
+                    if s1 in (m1, m2) or s2 in (m1, m2):
+                        continue
+
                 idx_m1 = self.nid_to_idx[m1]
                 idx_m2 = self.nid_to_idx[m2]
-                xm1 = self.coords[idx_m1, :2]
-                xm2 = self.coords[idx_m2, :2]
+                if u is not None:
+                    xm1 = coords[idx_m1, :2] + u[2 * idx_m1 : 2 * idx_m1 + 2]
+                    xm2 = coords[idx_m2, :2] + u[2 * idx_m2 : 2 * idx_m2 + 2]
+                else:
+                    xm1 = coords[idx_m1, :2]
+                    xm2 = coords[idx_m2, :2]
+
                 dx_m = xm2 - xm1
                 L_m = float(np.linalg.norm(dx_m))
                 if L_m < 1e-14:
@@ -175,15 +203,23 @@ class DualMortarContactConstraint2D:
                 # Master unit normal: perpendicular to tangent
                 n_m_raw = np.array([-t_m_unit[1], t_m_unit[0]], dtype=np.float64)
 
-                # Orient normal to point outward toward slave segment
-                xm_mid = 0.5 * (xm1 + xm2)
-                diff_mid = xs_mid - xm_mid
-                if np.dot(diff_mid, n_m_raw) < -1e-12:
-                    n_m = -n_m_raw
-                else:
+                if self.finite_sliding:
+                    # Opposing normal filter (must face each other)
+                    if np.dot(n_s_raw, n_m_raw) > self.opposing_normal_threshold:
+                        continue
                     n_m = n_m_raw
+                else:
+                    # Orient normal to point outward toward slave segment
+                    xm_mid = 0.5 * (xm1 + xm2)
+                    diff_mid = xs_mid - xm_mid
+                    if np.dot(diff_mid, n_m_raw) < -1e-12:
+                        n_m = -n_m_raw
+                    else:
+                        n_m = n_m_raw
 
                 # Check separation distance in normal direction
+                xm_mid = 0.5 * (xm1 + xm2)
+                diff_mid = xs_mid - xm_mid
                 dist_norm = abs(float(np.dot(diff_mid, n_m)))
                 if dist_norm > self.position_tolerance:
                     continue
@@ -237,6 +273,13 @@ class DualMortarContactConstraint2D:
                     "master_seg": (m1, m2),
                     "quad_points": quad_points,
                 })
+
+        # Re-index segments touching node
+        self._segments_touching_node = {}
+        for seg in self.segments:
+            s_nodes = self.slave_segments[seg["slave_seg_idx"]]
+            for nid in s_nodes:
+                self._segments_touching_node.setdefault(nid, []).append(seg)
 
     def _eval_mortar_shape_functions(self, xi: float) -> Tuple[float, float]:
         """Evaluate multiplier test functions psi_1, psi_2 at xi in [-1, 1].
@@ -302,6 +345,8 @@ class DualMortarContactConstraint2D:
 
     def get_active_set(self, u: np.ndarray) -> frozenset:
         """Return the set of active slave node IDs."""
+        if self.finite_sliding:
+            self._build_pairs(u)
         if self.formulation == "dual_mortar":
             g_tilde = self._compute_g_tilde(u)
             p = self._node_pressures(g_tilde)
@@ -344,6 +389,9 @@ class DualMortarContactConstraint2D:
         stats : Dict[str, float]
             Contact iteration statistics.
         """
+        if self.finite_sliding:
+            self._build_pairs(u)
+
         n_dof = len(u)
         f_contact = np.zeros(n_dof, dtype=np.float64)
         rows: List[int] = []

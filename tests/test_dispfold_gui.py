@@ -130,3 +130,54 @@ def test_dispfold_gui_3d_instantiation(qt_app):
         assert viewer.curr_step == 1
     finally:
         viewer.close()
+
+
+def test_dispfold_gui_live_streaming(qt_app):
+    """Verify Mission C: Live solver streaming updates viewer step, slider, and charts."""
+    from example_disp_fold.viewer_qt_app import SolverWorker
+
+    config = DisplayStackConfig(preset="compact_4", dim="2D")
+    generator = GmshMeshGenerator(config)
+    mesh, meta = generator.build_2d()
+
+    n_nodes = len(mesh.nodes)
+    init_history = {
+        "history_time": [0.0],
+        "history_theta": [0.0],
+        "history_M_L": [0.0],
+        "history_M_R": [0.0],
+        "history_iters": [0],
+        "history_u": [np.zeros(n_nodes * 2)],
+    }
+
+    viewer = DispFoldQtViewer(mesh, meta, config, init_history)
+
+    try:
+        assert viewer.n_steps == 1
+        assert viewer.slider.maximum() == 0
+
+        # Simulate arrival of live converged increment
+        u_step1 = np.ones(n_nodes * 2) * 0.05
+        viewer.append_live_step(
+            step_idx=1,
+            t=0.1,
+            th=5.0,
+            u_vec=u_step1,
+            iters=3,
+            M_L=0.04,
+            M_R=-0.04,
+        )
+
+        assert viewer.n_steps == 2
+        assert viewer.slider.maximum() == 1
+        assert viewer.slider.value() == 1
+        assert viewer.thetas[-1] == 5.0
+        assert viewer.iters[-1] == 3
+        assert viewer.curr_step == 1
+
+        # Verify SolverWorker instantiation
+        worker = SolverWorker(run_fn=lambda **kw: "dummy", kwargs={"dim": "2D"}, parent=viewer)
+        assert worker is not None
+    finally:
+        viewer.close()
+

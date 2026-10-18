@@ -192,12 +192,11 @@ class UnifiedFoldModelConfig:
             self.geometry.hinge_half_gap = 5.0
 
         elif preset == "crease_zero_gap":
-            # Tight crease fold with full face-to-face contact
+            # Tight crease fold with full face-to-face contact (4-layer compact stack)
+            self.load_preset("compact_4")
             self.geometry.hinge_half_gap = 3.0
             self.geometry.hinge_pivot_x = 0.0
             self.geometry.hinge_pivot_y = 0.0
-            self.load_preset("compact_4")
-            self.geometry.hinge_pivot_x = 0.0
             self.simulation_case.contact_mode = "DUAL_MORTAR"
 
         else:

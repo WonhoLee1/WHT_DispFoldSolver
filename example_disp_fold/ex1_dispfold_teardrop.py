@@ -76,6 +76,7 @@ def run_dispfold_simulation(
     max_steps: Optional[int] = None,
     launch_gui: bool = False,
     results_base_dir: Optional[str] = None,
+    step_callback: Optional[Any] = None,
 ) -> str:
     """Executes complete folding simulation with automated results archiving."""
     # 1. Setup timestamped results folder
@@ -149,6 +150,36 @@ def run_dispfold_simulation(
             solver = DynamicSolver2D(mesh, materials=materials, nlgeom=True)
         else:
             solver = DynamicSolver3D(mesh, materials=materials, nlgeom=True, solution_controls=sol_preset)
+
+        # Wire Wohlmuth Dual Mortar Self-Contact if requested by preset or geometry guard
+        if config.requires_self_contact():
+            if dim == "2D":
+                from dispsolver.constraint.dual_mortar_contact import DualMortarContactConstraint2D
+                contact_c = DualMortarContactConstraint2D(
+                    slave_segments=meta["disp_top_right_segments"],
+                    master_segments=meta["disp_top_left_segments"],
+                    nid_to_idx=mesh.node_id_to_index(),
+                    coords=mesh.nodes_array(),
+                    penalty_stiffness=1.0e6,
+                    position_tolerance=2.0,
+                    finite_sliding=True,
+                    name="SELF_CONTACT_DUAL_MORTAR_2D",
+                )
+                solver.add_constraint(contact_c)
+                print(f"[OK] Wohlmuth Dual Mortar Self-Contact wired into 2D solver: {len(meta['disp_top_right_segments'])} slave, {len(meta['disp_top_left_segments'])} master segments.")
+            else:
+                from dispsolver.constraint3d.finite_sliding_mortar3d import FiniteSlidingDualMortar3D
+                contact_c = FiniteSlidingDualMortar3D(
+                    slave_faces=meta["disp_top_right_faces"],
+                    master_faces=meta["disp_top_left_faces"],
+                    nid_to_idx=mesh.node_id_to_index(),
+                    coords=mesh.nodes_array(),
+                    penalty_stiffness=1.0e6,
+                    position_tolerance=2.0,
+                    name="SELF_CONTACT_DUAL_MORTAR_3D",
+                )
+                solver.add_constraint(contact_c)
+                print(f"[OK] Wohlmuth Finite-Sliding Dual Mortar Self-Contact wired into 3D solver: {len(meta['disp_top_right_faces'])} slave, {len(meta['disp_top_left_faces'])} master faces.")
 
         print(f"[*] Solver ready: {solver.num_dofs} active DOFs. SolutionControl = {sol_preset}.")
 
@@ -310,6 +341,10 @@ def run_dispfold_simulation(
             # Stream step to VTKHDF
             vdb.add_step(t, u_converged)
 
+            # Live callback notification (PySide6 / streaming)
+            if step_callback is not None:
+                step_callback(step, t, deg_disp, u_converged.copy(), iters, M_L, M_R)
+
         vdb.close()
         wall_time = time.perf_counter() - t_start
 
@@ -333,6 +368,7 @@ def run_dispfold_simulation(
         summary_data = {
             "dim": dim,
             "preset": preset,
+            "contact_mode": resolved_contact,
             "final_theta": float(history_theta[-1]),
             "final_M_L": float(history_M_L[-1]),
             "final_M_R": float(history_M_R[-1]),
@@ -392,8 +428,11 @@ def _generate_summary_plot(
     except ImportError:
         pass
 
+    import logging
+    logging.getLogger("matplotlib.font_manager").setLevel(logging.ERROR)
+
     plt.rcParams["font.size"] = 9
-    plt.rcParams["font.family"] = ["Noto Sans KR", "Malgun Gothic", "sans-serif"]
+    plt.rcParams["font.family"] = ["Malgun Gothic", "Noto Sans KR", "sans-serif"]
 
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(7.0, 6.0), dpi=150)
 
@@ -443,6 +482,8 @@ def _generate_folding_gif(
     history_u: List[np.ndarray],
 ) -> None:
     """Renders 2D/3D deformed shapes across time steps into an animated GIF."""
+    import logging
+    logging.getLogger("matplotlib.font_manager").setLevel(logging.ERROR)
     import matplotlib.pyplot as plt
     from matplotlib.patches import Polygon
     from matplotlib.collections import PatchCollection
@@ -547,17 +588,37 @@ if __name__ == "__main__":
     parser.add_argument("--sol_preset", type=str, default="ADAPTIVE", choices=["ADAPTIVE", "STANDARD", "RELAXED"], help="SolutionControl preset")
     parser.add_argument("--max_steps", type=int, default=None, help="Optional step limit for smoke testing")
     parser.add_argument("--view", action="store_true", help="Launch integrated PySide6 CAE viewer upon completion")
+    parser.add_argument("--live", action="store_true", help="Launch live PySide6 streaming viewer while solver executes")
 
     args = parser.parse_args()
 
-    run_dispfold_simulation(
-        dim=args.dim,
-        preset=args.preset,
-        theta_max_deg=args.theta_max,
-        enable_predictor=args.enable_predictor,
-        tie_method=args.tie_method,
-        contact_mode=args.contact_mode,
-        sol_preset=args.sol_preset,
-        max_steps=args.max_steps,
-        launch_gui=args.view,
-    )
+    if args.live:
+        from example_disp_fold.viewer_qt_app import launch_qt_viewer_live
+        from example_disp_fold.model_spec import UnifiedFoldModelConfig
+        from example_disp_fold.gmsh_mesh_generator import GmshMeshGenerator
+
+        cfg = UnifiedFoldModelConfig(preset=args.preset, dim=args.dim)
+        mesh, meta = GmshMeshGenerator(cfg).build()
+        run_kwargs = {
+            "dim": args.dim,
+            "preset": args.preset,
+            "theta_max_deg": args.theta_max,
+            "enable_predictor": args.enable_predictor,
+            "tie_method": args.tie_method,
+            "contact_mode": args.contact_mode,
+            "sol_preset": args.sol_preset,
+            "max_steps": args.max_steps,
+        }
+        launch_qt_viewer_live(run_dispfold_simulation, run_kwargs, mesh, meta, cfg)
+    else:
+        run_dispfold_simulation(
+            dim=args.dim,
+            preset=args.preset,
+            theta_max_deg=args.theta_max,
+            enable_predictor=args.enable_predictor,
+            tie_method=args.tie_method,
+            contact_mode=args.contact_mode,
+            sol_preset=args.sol_preset,
+            max_steps=args.max_steps,
+            launch_gui=args.view,
+        )
