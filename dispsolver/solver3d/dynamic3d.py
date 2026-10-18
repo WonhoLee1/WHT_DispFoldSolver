@@ -180,6 +180,8 @@ def _volume_shape_integrals(X: np.ndarray, what: str = "body load") -> np.ndarra
 # Small-strain kernels co-rotated under NLGEOM (element3d/cr_generic_3d); the
 # list lives in model/element_catalog.KERNELS.
 from dispsolver.model.element_catalog import cr_wrapped_kernels as _cr_wrapped_kernels
+from dispsolver.model.element_catalog import KERNELS as _KERNEL_TABLE
+_KERNELS_3D = _KERNEL_TABLE[3]
 _CR_WRAPPED_KERNELS = _cr_wrapped_kernels(3)
 
 
@@ -190,6 +192,7 @@ class DynamicSolver3D:
     # implicit_dynamics.HHTIncrement while an HHT / Newmark increment runs: assemble_system
     # then returns the dynamic effective system to the (single) Newton loop
     _dyn_ctx = None
+    _stab_ctx = None
 
     def __init__(
         self,
@@ -331,6 +334,9 @@ class DynamicSolver3D:
         self.f_int = None
         self.last_accept = None
         self._contact_tuner = None
+        self._stabilization = None
+        self.energy_allsd: float = 0.0
+        self.allsd: float = 0.0
         self.current_temperature: float = 20.0
         self.ref_temperature: float = 20.0
         self.current_field: float = 0.0
@@ -1051,11 +1057,15 @@ class DynamicSolver3D:
 
     def assemble_system(self, u_vec: np.ndarray, dt: float = 1.0, return_error: bool = False, update_state: bool = False):
         """K and f_int of the system the Newton loop solves: the physical ones, or during an
-        HHT / Newmark increment the dynamic effective ones (implicit_dynamics.HHTIncrement).
+        HHT / Newmark increment the dynamic effective ones (implicit_dynamics.HHTIncrement),
+        or during a stabilized static increment the viscous stabilization ones.
         self.f_int is always the physical internal force."""
         res = self._assemble_physical(u_vec, dt=dt, return_error=return_error, update_state=update_state)
-        ctx = self._dyn_ctx
-        return res if ctx is None else ctx.transform(res, u_vec)
+        if self._dyn_ctx is not None:
+            return self._dyn_ctx.transform(res, u_vec)
+        if getattr(self, "_stab_ctx", None) is not None:
+            return self._stab_ctx.transform(res, u_vec)
+        return res
 
     def _assemble_physical(self, u_vec: np.ndarray, dt: float = 1.0, return_error: bool = False, update_state: bool = False):
         """Assemble global 3D stiffness matrix K_global and internal force vector f_int."""
@@ -1230,6 +1240,14 @@ class DynamicSolver3D:
                         err = 0
                     else:
                         raise ValueError(f"Unknown element kernel index: {k}")
+
+                    if _KERNELS_3D[k].initial_stress == "added":
+                        # kernels without a stress input: add int B^T s0 dV (element3d/initial_stress3d)
+                        from dispsolver.element3d.initial_stress3d import initial_stress_force
+                        f_sub = np.asarray(f_sub, dtype=np.float64) + initial_stress_force(
+                            np.ascontiguousarray(node_coords_all, dtype=np.float64),
+                            np.ascontiguousarray(sub_conn, dtype=np.int64),
+                            np.ascontiguousarray(sub_stress_init, dtype=np.float64))
 
                     if cr_R is not None:
                         from dispsolver.element3d.cr_generic_3d import corotational_to_global
@@ -2472,6 +2490,9 @@ class DynamicSolver3D:
         dynamic = _dyn.is_dynamic(self)
         if step_ti is not None and dynamic:
             _dyn.require_density(self, step)
+
+        from dispsolver.solver.stabilization import apply_step_stabilization
+        apply_step_stabilization(self, step)
 
         T_total = time_period if time_period is not None else getattr(step, "time_period", 1.0)
         dt_init = getattr(step, "dt_init", 0.02)

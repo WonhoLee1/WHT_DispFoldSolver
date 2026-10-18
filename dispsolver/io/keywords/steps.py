@@ -103,6 +103,10 @@ class ProcedureRecord(Record):
     beta: Optional[float] = None
     gamma: Optional[float] = None
     initial_acceleration: bool = True
+    # *STATIC only:
+    stabilize: bool = False
+    stabilize_factor: Optional[float] = None
+    allsdvtol: Optional[float] = None
 
 
 class _IncrementRow(RowSchema):
@@ -138,6 +142,30 @@ def _procedure(proc: str, rows, ctx, p=None):
                               alpha=p.alpha, beta=p.beta, gamma=p.gamma,
                               initial_acceleration=p.initial != "NO", loc=ctx.loc)
         return
+    if proc == "STATIC" and p is not None:
+        stab_enabled = False
+        stab_factor = None
+        allsdvtol = p.allsdtol if p.allsdtol is not None else p.allsdvtol
+        if p.stabilize is not None:
+            stab_enabled = True
+            raw_s = str(p.stabilize).strip().upper()
+            if raw_s in ("YES", "ON", "TRUE"):
+                stab_factor = p.factor if p.factor is not None else 2e-4
+            else:
+                try:
+                    stab_factor = float(raw_s)
+                except ValueError:
+                    raise InputError(f"*STATIC at {ctx.loc}: invalid value for STABILIZE: {p.stabilize}")
+                if p.factor is not None:
+                    stab_factor = float(p.factor)
+        elif p.factor is not None:
+            stab_enabled = True
+            stab_factor = float(p.factor)
+
+        yield ProcedureRecord(ctx.step, proc, r.dt_init, r.time_period, r.dt_min, r.dt_max,
+                              stabilize=stab_enabled, stabilize_factor=stab_factor,
+                              allsdvtol=allsdvtol, loc=ctx.loc)
+        return
     yield ProcedureRecord(ctx.step, proc, r.dt_init, r.time_period, r.dt_min, r.dt_max, loc=ctx.loc)
 
 
@@ -147,11 +175,15 @@ class Static(Keyword):
 
     class Params(Schema):
         direct: bool = Param(False, control=True)   # fixed increments: a solution technique
+        stabilize: Optional[str] = None
+        factor: Optional[float] = None
+        allsdtol: Optional[float] = None
+        allsdvtol: Optional[float] = Param(None, undocumented="common alias for ALLSDTOL")
 
     Row = _IncrementRow
 
     def to_records(self, p, rows, ctx):
-        return _procedure("STATIC", rows, ctx)
+        return _procedure("STATIC", rows, ctx, p)
 
 
 @keyword("DYNAMIC", support="FULL")
@@ -263,6 +295,14 @@ def _apply_procedure(reader: AbaqusInputReader, rec: ProcedureRecord):
         _resolve_time_integration(reader, step)   # re-decided at *END STEP when APPLICATION is defaulted
     else:
         step.time_integration = {"name": "quasistatic"}
+        if getattr(rec, "stabilize", False):
+            step.stabilize = {
+                "enabled": True,
+                "factor": rec.stabilize_factor if rec.stabilize_factor is not None else 2e-4,
+                "allsdvtol": rec.allsdvtol if rec.allsdvtol is not None else 0.05,
+            }
+        else:
+            step.stabilize = None
     if rec.dt_max:
         dt_max = float(rec.dt_max)
     elif rec.procedure == "DYNAMIC":

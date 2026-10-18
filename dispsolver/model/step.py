@@ -58,7 +58,10 @@ class Step:
         nlgeom: bool = True,
         dt_init: float = 0.02,
         dt_min: float = 1e-5,
-        dt_max: float = 0.05
+        dt_max: float = 0.05,
+        stabilize: Optional[Union[bool, float, dict]] = None,
+        factor: Optional[float] = None,
+        allsdvtol: Optional[float] = None
     ):
         self.name = str(name)
         self.procedure = str(procedure).upper()
@@ -72,6 +75,11 @@ class Step:
         # "gamma", "initial_acceleration"} (*DYNAMIC). None (the Python API default): the
         # solver keeps the time_integrator it was constructed with.
         self.time_integration: Optional[Dict[str, Any]] = None
+
+        # Viscous stabilization (*STATIC, STABILIZE)
+        self.stabilize: Optional[Dict[str, Any]] = None
+        if stabilize is not None:
+            self._set_stabilize(stabilize, factor=factor, allsdvtol=allsdvtol)
 
         self.parent_step: Optional[Step] = parent_step
         self.child_steps: List[Step] = []
@@ -101,8 +109,34 @@ class Step:
         if parent_step is not None:
             self.propagate_from_parent(parent_step)
 
+    def _set_stabilize(self, val: Any, factor: Optional[float] = None, allsdvtol: Optional[float] = None) -> None:
+        """Internal helper to configure viscous stabilization settings dictionary."""
+        if isinstance(val, dict):
+            self.stabilize = {
+                "enabled": bool(val.get("enabled", True)),
+                "factor": float(val.get("factor", 0.0002)),
+                "allsdvtol": float(val.get("allsdvtol", 0.05)),
+            }
+        elif isinstance(val, bool):
+            if val:
+                self.stabilize = {
+                    "enabled": True,
+                    "factor": float(factor) if factor is not None else 0.0002,
+                    "allsdvtol": float(allsdvtol) if allsdvtol is not None else 0.05,
+                }
+            else:
+                self.stabilize = None
+        elif isinstance(val, (int, float)):
+            self.stabilize = {
+                "enabled": True,
+                "factor": float(val),
+                "allsdvtol": float(allsdvtol) if allsdvtol is not None else 0.05,
+            }
+
     def setValues(self, **kwargs) -> None:
         """Set step parameters and solution controls with Abaqus API parity."""
+        if "stabilize" in kwargs:
+            self._set_stabilize(kwargs.pop("stabilize"), factor=kwargs.pop("factor", None), allsdvtol=kwargs.pop("allsdvtol", None))
         if "solutionControls" in kwargs:
             val = kwargs.pop("solutionControls")
             if isinstance(val, SolutionControl):

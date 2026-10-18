@@ -245,6 +245,18 @@ def run_increment(solver: Any, dim: int, newton: Callable, dt: float, f_ext: Opt
     `f_ext_n` (load at t_n) defaults to the f_ext of the last accepted dynamic increment,
     else to f_ext itself."""
     if not is_dynamic(solver) or getattr(solver, "_dyn_ctx", None) is not None:
+        stab = getattr(solver, "_stabilization", getattr(solver, "stabilization", None))
+        if stab is not None and getattr(stab, "enabled", False) and getattr(solver, "_stab_ctx", None) is None:
+            from dispsolver.solver.stabilization import StaticStabilizationIncrement
+            ctx = StaticStabilizationIncrement(solver, dim, dt, stab)
+            solver._stab_ctx = ctx
+            try:
+                converged, iters = newton(dt=dt, f_ext=f_ext, **kw)
+            finally:
+                solver._stab_ctx = None
+            if converged:
+                ctx.commit()
+            return converged, iters
         return newton(dt=dt, f_ext=f_ext, **kw)
     if f_ext is None:
         applied = getattr(solver, "f_ext_applied", None)

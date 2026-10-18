@@ -27,6 +27,7 @@ class StateCheckpoint:
     v: np.ndarray
     a: np.ndarray
     elem_sdvs: Optional[np.ndarray] = None
+    energy_allsd: float = 0.0
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def restore_to_solver(self, solver: Any) -> None:
@@ -36,6 +37,11 @@ class StateCheckpoint:
         solver.a = self.a.copy()
         if self.elem_sdvs is not None and hasattr(solver, "elem_sdvs"):
             solver.elem_sdvs = self.elem_sdvs.copy()
+        if hasattr(solver, "energy_allsd"):
+            solver.energy_allsd = float(self.energy_allsd)
+            solver.allsd = solver.energy_allsd
+            if hasattr(solver, "_stabilization") and solver._stabilization is not None:
+                solver._stabilization.accumulated_stab_energy = float(self.energy_allsd)
 
     @property
     def time_accumulated(self) -> float:
@@ -75,13 +81,15 @@ class MultiStepExecutor:
             raise RuntimeError("Solver is not initialized.")
         
         sdvs = getattr(self.solver, "elem_sdvs", None)
+        allsd = float(getattr(self.solver, "energy_allsd", 0.0))
         ckpt = StateCheckpoint(
             step_name=str(step_name),
             t_accum=float(t_accum),
             u=self.solver.u.copy(),
             v=self.solver.v.copy(),
             a=self.solver.a.copy(),
-            elem_sdvs=sdvs.copy() if sdvs is not None else None
+            elem_sdvs=sdvs.copy() if sdvs is not None else None,
+            energy_allsd=allsd
         )
         self.checkpoints[step_name] = ckpt
         return ckpt

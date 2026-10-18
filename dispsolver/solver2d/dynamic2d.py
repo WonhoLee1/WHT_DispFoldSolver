@@ -37,6 +37,8 @@ from dispsolver.solver3d.assembly_utils import (
 from dispsolver.model.element_catalog import cr_wrapped_kernels as _cr_wrapped_kernels
 from dispsolver.material.catalog import is_linear_elastic
 _CR_WRAPPED_KERNELS_2D = _cr_wrapped_kernels(2)
+from dispsolver.model.element_catalog import KERNELS as _KERNEL_TABLE
+_KERNELS_2D = _KERNEL_TABLE[2]
 
 class DynamicSolver2D:
     """Production 2D Non-Linear Newton-Raphson Finite Element Solver."""
@@ -44,6 +46,7 @@ class DynamicSolver2D:
     # implicit_dynamics.HHTIncrement while an HHT / Newmark increment runs: assemble_system
     # then returns the dynamic effective system to the (single) Newton loop
     _dyn_ctx = None
+    _stab_ctx = None
 
     def __init__(
         self,
@@ -109,6 +112,10 @@ class DynamicSolver2D:
         self.last_accept = None
         self.rows_topo: Optional[np.ndarray] = None
         self.cols_topo: Optional[np.ndarray] = None
+
+        self._stabilization = None
+        self.energy_allsd: float = 0.0
+        self.allsd: float = 0.0
 
         self.current_temperature: float = 20.0
         self.ref_temperature: float = 20.0
@@ -204,6 +211,8 @@ class DynamicSolver2D:
         self._build_kernel_groups()
 
         self.elem_sdvs = np.zeros((n_elems, 9, 7), dtype=np.float64)
+        # *INITIAL CONDITIONS, TYPE=STRESS: element value, Abaqus plane-strain order xx yy zz xy
+        self.elem_stress_init = np.zeros((n_elems, 4), dtype=np.float64)
 
     def _build_kernel_groups(self) -> None:
         """Assign every element its kernel from its type and the CURRENT
@@ -426,11 +435,15 @@ class DynamicSolver2D:
 
     def assemble_system(self, u_vec: np.ndarray, dt: float = 1.0, return_error: bool = False, update_state: bool = False):
         """K and f_int of the system the Newton loop solves: the physical ones, or during an
-        HHT / Newmark increment the dynamic effective ones (implicit_dynamics.HHTIncrement).
+        HHT / Newmark increment the dynamic effective ones (implicit_dynamics.HHTIncrement),
+        or during a stabilized static increment the viscous stabilization ones.
         self.f_int is always the physical internal force."""
         res = self._assemble_physical(u_vec, dt=dt, return_error=return_error, update_state=update_state)
-        ctx = self._dyn_ctx
-        return res if ctx is None else ctx.transform(res, u_vec)
+        if self._dyn_ctx is not None:
+            return self._dyn_ctx.transform(res, u_vec)
+        if getattr(self, "_stab_ctx", None) is not None:
+            return self._stab_ctx.transform(res, u_vec)
+        return res
 
     def _assemble_physical(self, u_vec: np.ndarray, dt: float = 1.0, return_error: bool = False, update_state: bool = False):
         """Assemble global 2D stiffness matrix K_global and internal force vector f_int."""
@@ -531,6 +544,14 @@ class DynamicSolver2D:
 
             if err:
                 has_error = True
+
+            if _KERNELS_2D[k].initial_stress == "added":
+                # no 2D kernel takes the field: add int B^T s0 dA (element2d/initial_stress2d)
+                from dispsolver.element2d.initial_stress2d import initial_stress_force_2d
+                f_sub = np.asarray(f_sub, dtype=np.float64) + initial_stress_force_2d(
+                    np.ascontiguousarray(node_coords_all[:, :2], dtype=np.float64),
+                    np.ascontiguousarray(sub_conn, dtype=np.int64),
+                    np.ascontiguousarray(self.elem_stress_init[elem_indices], dtype=np.float64))
 
             if cr_cs is not None:
                 from dispsolver.element2d.cr_generic_2d import corotational_to_global_2d
@@ -928,6 +949,9 @@ class DynamicSolver2D:
         step_ti = _dyn.step_time_integration(self, step)
         if step_ti is not None and _dyn.is_dynamic(self):
             _dyn.require_density(self, step)
+
+        from dispsolver.solver.stabilization import apply_step_stabilization
+        apply_step_stabilization(self, step)
 
         total_time = getattr(step, "time_period", 1.0)
         dt = getattr(step, "dt_init", 0.02)
