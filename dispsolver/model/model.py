@@ -1103,19 +1103,20 @@ class Model:
                             solver.add_constraint(rc)
 
         # 3. Predefined fields: initial stress goes to the per-element Gauss-point array the kernels read
-        # Kernels verified (tests/test_initial_stress.py) to put the field into f_int; 1 = C3D8 under
-        # NLGEOM (C3D8_CR), 2 = C3D8H, 16/17 = C3D8/C3D8H without NLGEOM. A kernel not listed
-        # here is refused rather than assumed.
-        stress_kernels = {1, 2, 16, 17}
+        # element_catalog.KERNELS says which kernels apply the field ("native" or "added"); a kernel that
+        # does not is refused rather than assumed.
+        from dispsolver.model.element_catalog import KERNELS
         for pf in sys.predefined_fields:
             if pf.field_type.upper() != "STRESS":
                 continue
             for idx in self._get_elset_indices(sys, pf.region):
                 kern = solver._row_kernel.get(int(idx))
-                if kern not in stress_kernels:
+                if not KERNELS[3][kern].initial_stress:
+                    supported = sorted(k for k, i in KERNELS[3].items() if i.initial_stress)
                     raise NotImplementedError(
                         f"initial stress (*INITIAL CONDITIONS, TYPE=STRESS, region {pf.region!r}): element row {idx} "
-                        f"runs kernel {kern}, which does not apply it; supported kernels {sorted(stress_kernels)}")
+                        f"runs kernel {kern} ({KERNELS[3][kern].name}), which does not apply it; "
+                        f"kernels that do: {supported}")
                 s_vec = np.zeros(6, dtype=np.float64)
                 if callable(pf.values):
                     # evaluated once at the element centroid, not per quadrature point
@@ -1129,6 +1130,8 @@ class Model:
                     s_vec[:vals.size] = vals       # omitted components are zero (Keywords Guide)
                 else:
                     s_vec[:3] = float(pf.values)   # scalar -> hydrostatic
+                # Abaqus orders the shears S12 S13 S23, the 3D kernels xy yz xz: swap the last two
+                s_vec[4], s_vec[5] = s_vec[5], s_vec[4]
                 solver.elem_stress_init[idx, :, :] = s_vec
 
         return solver, sys
@@ -1190,12 +1193,34 @@ class Model:
                             )
                             solver.add_constraint(rc)
 
-        # Predefined fields: no 2D kernel reads an initial stress, so refuse instead of solving another model
+        # Predefined fields: initial stress (plane strain, Abaqus order S11 S22 S33 S12), added by the assembly
+        from dispsolver.model.element_catalog import KERNELS
+        row_kernel = {}
+        for g_key, rows in solver.elem_kernel_groups.items():
+            for r in rows:
+                row_kernel[int(r)] = g_key[0] if isinstance(g_key, tuple) else g_key
         for pf in sys.predefined_fields:
-            if pf.field_type.upper() == "STRESS":
-                raise NotImplementedError(
-                    f"2D solver does not support initial stress (*INITIAL CONDITIONS, TYPE=STRESS, region {pf.region!r}); "
-                    "use the 3D solver or remove the field")
-
+            if pf.field_type.upper() != "STRESS":
+                continue
+            for idx in self._get_elset_indices(sys, pf.region):
+                kern = row_kernel[int(idx)]
+                if not KERNELS[2][kern].initial_stress:
+                    raise NotImplementedError(
+                        f"initial stress (*INITIAL CONDITIONS, TYPE=STRESS, region {pf.region!r}): element {idx} runs "
+                        f"2D kernel {kern} ({KERNELS[2][kern].name}), which does not apply it")
+                s_vec = np.zeros(4, dtype=np.float64)
+                if callable(pf.values):
+                    # evaluated once at the element centroid, not per quadrature point
+                    cx, cy = np.mean(sys.coords[sys.elem_conn_0based[idx]][:, :2], axis=0)
+                    s_vec[:] = pf.values(cx, cy)
+                elif isinstance(pf.values, (list, np.ndarray, tuple)):
+                    vals = np.asarray(pf.values, dtype=np.float64)
+                    if vals.size > 4:
+                        raise ValueError(f"initial stress for {pf.region!r}: {vals.size} values, "
+                                         "at most 4 (S11 S22 S33 S12)")
+                    s_vec[:vals.size] = vals       # omitted components are zero (Keywords Guide)
+                else:
+                    s_vec[:3] = float(pf.values)   # scalar -> hydrostatic
+                solver.elem_stress_init[idx, :] = s_vec
         return solver, sys
 
