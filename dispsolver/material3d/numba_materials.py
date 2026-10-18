@@ -36,7 +36,7 @@ MAT_CONCRETE_DP = 15
 MAT_ORTHOTROPIC_CYLINDRICAL = 17
 MAT_CUSTOM_ELASTIC = 99
 
-@njit(fastmath=True)
+@njit(fastmath=True, cache=True)
 def get_default_sdv_count(mat_type: int) -> int:
     """Return the number of state-dependent variables (SDVs) needed per integration point."""
     if mat_type == MAT_LINEAR_ELASTIC:
@@ -79,7 +79,7 @@ def get_default_sdv_count(mat_type: int) -> int:
     return 0
 
 
-@njit(fastmath=True)
+@njit(fastmath=True, cache=True)
 def _inv_and_det_c(C: np.ndarray):
     """Compute determinant, inverse, and trace of 3x3 symmetric tensor C."""
     c00 = C[0, 0]; c01 = C[0, 1]; c02 = C[0, 2]
@@ -110,7 +110,7 @@ def _inv_and_det_c(C: np.ndarray):
     return J, detC, Cinv, trC
 
 
-@njit(fastmath=True)
+@njit(fastmath=True, cache=True)
 def _neohookean_pk2_voigt(E_voigt: np.ndarray, mu: float, K: float) -> np.ndarray:
     """PK2 stress for genuine compressible Neo-Hookean:
         W(C) = (mu/2)*(J^(-2/3)*tr(C) - 3) + (K/2)*(J-1)^2
@@ -144,7 +144,7 @@ def _neohookean_pk2_voigt(E_voigt: np.ndarray, mu: float, K: float) -> np.ndarra
     return S_voigt
 
 
-@njit(fastmath=True)
+@njit(fastmath=True, cache=True)
 def _arruda_boyce_pk2_voigt(E_voigt: np.ndarray, mu: float, lambda_m: float, K: float) -> np.ndarray:
     """PK2 stress for genuine Arruda-Boyce (8-chain) model:
         W_dev = mu * sum_{k=1}^5 [ C_k / lambda_m^{2(k-1)} * (I_bar_1^k - 3^k) ]
@@ -216,7 +216,7 @@ def _arruda_boyce_pk2_voigt(E_voigt: np.ndarray, mu: float, lambda_m: float, K: 
     return S_voigt
 
 
-@njit(fastmath=True)
+@njit(fastmath=True, cache=True)
 def _yeoh_pk2_voigt(
     E_voigt: np.ndarray,
     c10: float, c20: float, c30: float,
@@ -281,7 +281,7 @@ def _yeoh_pk2_voigt(
     return S_voigt
 
 
-@njit(fastmath=True)
+@njit(fastmath=True, cache=True)
 def _mooney_rivlin_pk2_voigt(
     E_voigt: np.ndarray,
     c10: float, c01: float, d1: float
@@ -342,7 +342,7 @@ def _mooney_rivlin_pk2_voigt(
     return S_voigt
 
 
-@njit(fastmath=True)
+@njit(fastmath=True, cache=True)
 def _polynomial_pk2_voigt(
     E_voigt: np.ndarray,
     c10: float, c01: float, c20: float, c11: float, c02: float,
@@ -408,7 +408,7 @@ def _polynomial_pk2_voigt(
     return S_voigt
 
 
-@njit(fastmath=True)
+@njit(fastmath=True, cache=True)
 def _eig3x3_jacobi_numba(A: np.ndarray):
     """Fully-unrolled Cyclic Jacobi eigensolver for 3x3 symmetric matrix.
     Achieves machine precision (1e-15) in 5 sweeps without trigonometric singularities.
@@ -445,7 +445,7 @@ def _eig3x3_jacobi_numba(A: np.ndarray):
     return np.array([D[0, 0], D[1, 1], D[2, 2]], dtype=np.float64), V
 
 
-@njit(fastmath=True)
+@njit(fastmath=True, cache=True)
 def _ogden_pk2_voigt(
     E_voigt: np.ndarray,
     n_terms: int,
@@ -523,7 +523,7 @@ def _ogden_pk2_voigt(
     return S_voigt
 
 
-@njit(fastmath=True)
+@njit(fastmath=True, cache=True)
 def _interp_tabular_hardening(eqps: float, n_pts: int, table_sy: np.ndarray, table_ep: np.ndarray):
     """Piecewise linear interpolation with O(log N) binary search for tabular hardening.
     Returns current yield stress sigma_y and local hardening modulus H = d(sigma_y)/d(eqps).
@@ -551,7 +551,7 @@ def _interp_tabular_hardening(eqps: float, n_pts: int, table_sy: np.ndarray, tab
 
 
 
-@njit(fastmath=True)
+@njit(fastmath=True, cache=True)
 def material_dispatch_3d(
     mat_type: int,
     props: np.ndarray,
@@ -2065,7 +2065,7 @@ def material_dispatch_3d(
     return S_voigt, C_mat, sdv_new, error_flag
 
 
-@njit(fastmath=True)
+@njit(fastmath=True, cache=True)
 def material_dispatch_2d(
     mat_type: int,
     props: np.ndarray,
