@@ -491,9 +491,13 @@ def model_to_builder_result(model: Model) -> ModelBuilderResult:
         smooth = getattr(amp_obj, "smooth", False)
         time_type = getattr(amp_obj, "time_type", "STEP")
         data = getattr(amp_obj, "data", [])
-        result.amplitudes[amp_name] = Amplitude(
-            name=amp_name, smooth=smooth, time_type=time_type, data=data
-        )
+        method = "smooth" if smooth else "linear"
+        if data and len(data) >= 2:
+            times = [float(p[0]) for p in data]
+            values = [float(p[1]) for p in data]
+            result.amplitudes[amp_name] = Amplitude(times=times, values=values, method=method)
+        else:
+            result.amplitudes[amp_name] = Amplitude(times=[0.0, 1.0], values=[0.0, 1.0], method=method)
 
     # 5. Boundary conditions from Steps
     for sname, step in model.steps.items():

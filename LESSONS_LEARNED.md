@@ -465,3 +465,27 @@ deck06 DUAL_MORTAR는 세 결함이 겹쳐 수렴하지 못했다(하나만 고�
 
 
 
+
+---
+
+## 15. 2026-10-18 Unified 2D/3D Display Folding Framework (`example_disp_fold`) 개발 및 검증 교훈
+
+### 15.1 2D 연속체 평면변형률 해석 시 요소 타입 호환성 (`QUAD4` $\to$ `CPE4`)
+- **결함 현상**:
+  - Gmsh 메쉬 생성기(`gmsh_mesh_generator.py`)에서 서포트 플레이트를 사각 메쉬로 생성할 때 일반 범용 명칭인 `elem_type="QUAD4"`를 부여함.
+  - 2D 연속체 솔버(`DynamicSolver2D._build_kernel_groups()`)는 Abaqus 표준 평면변형률 요소 체계(`CPE4`, `CPE4I`, `CPE4R`, `CPE4H`)를 기반으로 커널을 디스패치하므로, `NotImplementedError: element type QUAD4 is not implemented in the 2D solver` 예외가 발생하며 초기 단계에서 시뮬레이션이 즉각 중단됨.
+- **방어 대책**:
+  - 메쉬 생성 단계부터 Abaqus 표준 키워드와 솔버 2D 커널이 1:1로 일치하는 `CPE4` (또는 비호환 모드 `CPE4I`, 감차적분 `CPE4R`, 혼합정식화 `CPE4H`)를 명시적으로 부여하도록 표준화함.
+
+### 15.2 Windows 환경 PySide6 + PyVistaQt 헤드리스 테스트 시 `QT_QPA_PLATFORM=offscreen` 크래시 방어 및 `pv.OFF_SCREEN = True` 표준화
+- **결함 현상**:
+  - CI/CD 및 단위 테스트 환경에서 GUI 창 팝업을 차단하기 위해 `os.environ["QT_QPA_PLATFORM"] = "offscreen"`을 설정할 경우, Windows 환경에서 Qt가 native WGL 윈도우 핸들을 생성하지 않음.
+  - 이 상태에서 VTK의 `QVTKRenderWindowInteractor.initialize()`가 Windows native OpenGL 디바이스 컨텍스트를 획득하지 못해 메모리 액세스 위반(`Windows fatal exception: access violation`)과 함께 프로세스가 강제 크래시됨.
+- **방어 대책**:
+  - Windows 플랫폼에서는 `QT_QPA_PLATFORM=offscreen` 대신 VTK 그래픽 파이프라인 레벨에서 `pyvista.OFF_SCREEN = True`를 설정함.
+  - `QApplication`은 native 윈도우 환경을 유지하되 창을 `.show()`하지 않고 백그라운드에서 인스턴스화 및 시그널/슬롯을 검증함으로써 크래시 없이 100% 안전한 헤드리스 테스트를 달성함.
+
+### 15.3 Kitware VTKHDF v2.2 전처리/후처리 단일 파일 데이터베이스 구조 설계 및 ParaView 셀 필터링 표준화
+- **설계 교훈**:
+  - 비선형 과도 해석 진행 중 VTKHDF v2.2의 `Transient` 스트리밍 그룹에 변위($U$), 응력($S$), 대수변형률($LE$), 등가소성변형률($PEEQ$)을 실시간 기록함.
+  - 또한 `PreProcessing/Sets/NodeSets` 및 `PreProcessing/Sets/ElementSets`에 파트/세트 정보를 계층화하고, `CellData`에 `Part_ID`, `Layer_ID`, `Material_Type`을 정수 태깅함으로써 ParaView에서 추가 필터 없이 Threshold 및 Clip을 통해 특정 층(PET, PSA, Glass)을 즉각 분리 가시화할 수 있는 고효율 단일 DB 구조를 완성함.
