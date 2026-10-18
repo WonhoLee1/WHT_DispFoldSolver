@@ -14,7 +14,7 @@ a real folding mesh in this repo (see that file's module docstring):
    J=1).
 2. Hourglass-insensitivity under any affine field: for a homogeneous
    (non-rotation) deformation gradient, the total force must be
-   INDEPENDENT of the hourglass stabilization coefficient `alpha_hg` --
+   INDEPENDENT of the hourglass stabilization coefficient (`hg_scale`) --
    the orthogonalized hourglass generalized coordinate is exactly zero
    for any affine nodal field by construction, so scaling the
    stabilization strength by 6 orders of magnitude must not move the
@@ -70,10 +70,12 @@ def _affine_u(coords, F0):
     return u
 
 
-def _call(coords, u_elem, alpha_hg=None):
+def _call(coords, u_elem, hg_scale=None):
+    # hg_scale given -> HOURGLASS=STIFFNESS with that ss; else the default (ENHANCED)
     kwargs = {}
-    if alpha_hg is not None:
-        kwargs["alpha_hg"] = alpha_hg
+    if hg_scale is not None:
+        kwargs["hourglass"] = "STIFFNESS"
+        kwargs["hg_scale"] = hg_scale
     return compute_single_reduced_hybrid_jax(
         _BASE, coords, u_elem, _state_zeros(), _KAPPA, _BPARAMS,
         _G_I, _TAU_I, _G_INF, _DT, 1.0, _F_N_ID, 0.0,
@@ -127,8 +129,8 @@ def test_rigid_rotation_zero_force_off_center():
 ])
 def test_hourglass_insensitive_to_affine_field(F0):
     u_elem = _affine_u(_UNIT_SQUARE, F0)
-    f_lo, K_lo, _, _ = _call(_UNIT_SQUARE, u_elem, alpha_hg=0.0)
-    f_hi, K_hi, _, _ = _call(_UNIT_SQUARE, u_elem, alpha_hg=50.0)  # 1000x default
+    f_lo, K_lo, _, _ = _call(_UNIT_SQUARE, u_elem, hg_scale=0.0)
+    f_hi, K_hi, _, _ = _call(_UNIT_SQUARE, u_elem, hg_scale=1000.0)
 
     f_lo = np.asarray(f_lo)
     f_hi = np.asarray(f_hi)
@@ -136,7 +138,7 @@ def test_hourglass_insensitive_to_affine_field(F0):
     assert np.max(np.abs(f_hi - f_lo)) / scale < 1e-8, (
         "hourglass stabilization changed the force under a purely affine "
         "field -- the orthogonalized hourglass coordinate should be "
-        "exactly zero here regardless of alpha_hg"
+        "exactly zero here regardless of the hourglass scale"
     )
 
 

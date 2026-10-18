@@ -368,7 +368,8 @@ _VISCO_EAS_TYPES = ("CPE4I", "Q4_VISCO_EAS")
 # condensed alongside the enhanced modes. CPE4H = hybrid only,
 # CPE4IH = hybrid + incompatible modes.
 _VISCO_HYBRID_TYPES = ("CPE4H", "CPE4IH")
-# CPE4RH: 1-point reduced integration + Flanagan-Belytschko hourglass +
+# CPE4RH: 1-point reduced integration + Abaqus HOURGLASS=ENHANCED|STIFFNESS
+# (2026-10-10; was an in-house Flanagan-Belytschko coefficient) +
 # hybrid pressure. Built 2026-09-08 for Abaqus element-name completeness
 # (the user's real-world PSA element choice) -- `q4_visco_hybrid_reduced_jax.py`
 # / `q4_visco_hybrid_reduced_numba.py`, verified by patch test
@@ -428,8 +429,13 @@ _ELEMENT_LARGE_DEF = {
     "CPE4H": dict(supports_ul=True, frame_invariant=True,
                   note="hybrid pressure is an element-constant scalar; invariant"),
     "CPE4IH": dict(supports_ul=True, frame_invariant=True, note="CPE4I + CPE4H"),
-    "CPE4RH": dict(supports_ul=True, frame_invariant=True,
-                   note="hourglass vector is orthogonalised against rigid+constant-strain"),
+    # TL since 2026-10-10: the hourglass energy is a function of the TOTAL
+    # hourglass displacement on the original configuration. Under UL it was
+    # rebuilt from the incremental displacement every step, so accumulated
+    # hourglass resistance reset to zero at each converged increment (see
+    # q4_visco_hybrid_reduced_jax.py). The material part is UL==TL exact.
+    "CPE4RH": dict(supports_ul=False, frame_invariant=True,
+                   note="TL uniform strain + closed-form p; hourglass in the centroid co-rotated frame"),
     # NOTE "CPE4" is absent on purpose until its dispatch branch exists.
     # It used to be declared here -- supports_ul=True, frame_invariant=True,
     # "full integration + F-bar" -- while `grep '"CPE4"'` found exactly that
@@ -915,14 +921,17 @@ class DynamicSolver:
         hourglass_scale: float = 1.0,
     ):
         configure_jax_cache()
-        # *SECTION CONTROLS, HOURGLASS= for the CPE4R pids. Unset takes the
-        # Keywords Guide default for Abaqus/Standard: STIFFNESS, except for
-        # hyperelastic/hyperfoam materials (ENHANCED) -- and CPE4R here only
-        # serves J2Plasticity. `hourglass_scale` is the data-line `ss`
-        # (default 1.0; STIFFNESS only). See element/cpe4r_jax.py.
+        # *SECTION CONTROLS, HOURGLASS= for the reduced-integration pids
+        # (CPE4R, CPE4RH). Unset takes the Keywords Guide default for
+        # Abaqus/Standard, which depends on the material: STIFFNESS, except
+        # for hyperelastic/hyperfoam materials, where it is ENHANCED. Here
+        # that means CPE4R (J2Plasticity only) -> STIFFNESS and CPE4RH
+        # (visco-hyperelastic PSA) -> ENHANCED; resolved per pid by
+        # `_hourglass_for`. `hourglass_scale` is the data-line `ss` (default
+        # 1.0; STIFFNESS only). See element/cpe4r_jax.py.
         from ..element.cpe4r_jax import HOURGLASS_MODES as _HG_MODES
-        self.hourglass = "STIFFNESS" if hourglass is None else str(hourglass).strip().upper()
-        if self.hourglass not in _HG_MODES:
+        self.hourglass = None if hourglass is None else str(hourglass).strip().upper()
+        if self.hourglass is not None and self.hourglass not in _HG_MODES:
             raise ValueError(f"hourglass={hourglass!r}; expected one of {_HG_MODES}")
         self.hourglass_scale = float(hourglass_scale)
         # --- NLGEOM (Abaqus-standard geometric-nonlinearity switch) -------
@@ -1410,7 +1419,7 @@ class DynamicSolver:
                         elif elem_t == "CPE4R":
                             # the hourglass mode is part of the compiled kernel
                             mat_key = (elem_t, float(mat.lam), float(mat.mu), float(mat.sigma_y0),
-                                       float(mat.H), self.hourglass, float(self.hourglass_scale))
+                                       float(mat.H), self._hourglass_for(pid), float(self.hourglass_scale))
                         else:
                             mat_key = (elem_t, float(mat.lam), float(mat.mu), float(mat.sigma_y0), float(mat.H))
                         if mat_key not in _coro_vmap_cache:
@@ -1454,7 +1463,7 @@ class DynamicSolver:
                                 _single_coro.__name__ = "sri_wrapper"
                             elif elem_t == "CPE4R":
                                 from ..element.cpe4r_jax import compute_cpe4r_j2_contributions_jax
-                                _single_coro = lambda coords, u_e, s, _lam=lam, _mu=mu, _sy0=sigma_y0, _H=H, _hg=self.hourglass, _ss=float(self.hourglass_scale): compute_cpe4r_j2_contributions_jax(
+                                _single_coro = lambda coords, u_e, s, _lam=lam, _mu=mu, _sy0=sigma_y0, _H=H, _hg=self._hourglass_for(pid), _ss=float(self.hourglass_scale): compute_cpe4r_j2_contributions_jax(
                                     coords, u_e, s, _lam, _mu, _sy0, _H, _hg, _ss,
                                 )
                             elif elem_t in ("Q4_COROTATIONAL_HYBRID", "Q4_HYBRID"):
@@ -1558,7 +1567,9 @@ class DynamicSolver:
                                   tuple(float(g) for g in vmat.g_i),
                                   tuple(float(t) for t in vmat.tau_i),
                                   float(vmat.g_inf),
-                                  distortion_j_crit_val, _is_eas, _is_hyb, _is_reduced, _et)
+                                  distortion_j_crit_val, _is_eas, _is_hyb, _is_reduced, _et,
+                                  (self._hourglass_for(pid), float(self.hourglass_scale))
+                                  if _is_reduced else None)
                         if mat_key not in _visco_simo_vmap_cache:
                             _base_name = base_name
                             _kappa = float(kappa)
@@ -1609,12 +1620,20 @@ class DynamicSolver:
                                 # EAS branches' 7-arg/5-return one.
                                 from ..element.q4_visco_hybrid_reduced_jax import (
                                     compute_single_reduced_hybrid_jax as _kern_rh)
-                                _fn = _partial(_kern_rh, base=_base_name, distortion_j_crit=_dist_j)
+                                # `base` is the kernel's FIRST positional parameter, so
+                                # it must be passed positionally here: a
+                                # partial(base=...) followed by positional coords bound
+                                # the traced coords to the static `base` slot -- the
+                                # "unhashable BatchTracer" that kept CPE4RH off this path
+                                # (formerly KNOWN_BROKEN_BATCH in the contract harness).
                                 _single_reduced = (
-                                    lambda coords, u_e, s, dt, t, fn_, _fn=_fn, _kappa=_kappa,
-                                    _bparams=_bparams, _g_i=_g_i, _tau_i=_tau_i, _g_inf=_g_inf:
-                                    _fn(coords, u_e, s, _kappa, _bparams, _g_i, _tau_i, _g_inf, dt, t,
-                                        F_n=fn_)
+                                    lambda coords, u_e, s, dt, t, fn_, _b=_base_name, _kappa=_kappa,
+                                    _bparams=_bparams, _g_i=_g_i, _tau_i=_tau_i, _g_inf=_g_inf,
+                                    _dj=_dist_j, _hg=self._hourglass_for(pid),
+                                    _ss=float(self.hourglass_scale):
+                                    _kern_rh(_b, coords, u_e, s, _kappa, _bparams, _g_i, _tau_i,
+                                             _g_inf, dt, t, F_n=fn_, distortion_j_crit=_dj,
+                                             hourglass=_hg, hg_scale=_ss)
                                 )
                                 _visco_simo_vmap_cache[mat_key] = jax.jit(jax.vmap(
                                     _single_reduced, in_axes=(0, 0, 0, None, 0, 0),
@@ -3659,6 +3678,14 @@ class DynamicSolver:
         if 'state' in state_dict and self.state is not None:
             self.state = state_dict['state'].copy()
 
+    def _hourglass_for(self, pid: int) -> str:
+        """HOURGLASS= for this pid: the explicit setting, else the Abaqus/
+        Standard default for its material (ENHANCED for CPE4RH's hyperelastic
+        base, STIFFNESS otherwise -- Keywords Guide, *SECTION CONTROLS)."""
+        if self.hourglass is not None:
+            return self.hourglass
+        return "ENHANCED" if self._pid_element_type(pid) in _VISCO_REDUCED_TYPES else "STIFFNESS"
+
     def _pid_element_type(self, pid: int) -> str:
         """Element type for a material group (per-pid override or global)."""
         if self.element_type_by_pid is None:
@@ -4082,83 +4109,12 @@ class DynamicSolver:
                     except ImportError:
                         pass
 
-                # CPE4RH has its own Numba kernel (1-point reduced
-                # integration + Flanagan-Belytschko hourglass + closed-form
-                # hybrid pressure, UL-capable). Validated by patch test
-                # (tests/test_cpe4rh_patch.py, JAX side) and, by an ad-hoc
-                # 2026-09-08 probe, against the JAX kernel directly (force
-                # ~1e-16, tangent ~7e-7).
-                #
-                # That pair is NOT corroborated by the contract suite: CPE4RH
-                # cannot reach this batch path at all (jax.jit static-argname
-                # hashing fails under vmap -- see
-                # tests/element_contract/harness.py::KNOWN_BROKEN_BATCH), so
-                # C10 never runs on it. Treat the two numbers as unverified.
-                # The same style of ad-hoc claim on the CPE4I and SRI branches
-                # below/above was off by 2-5 orders of magnitude when C10
-                # finally measured it (2026-09-12). No per-element internal-variable
-                # array (unlike CPE4I's alpha): the pressure is closed-form,
-                # so this returns/stores state and F_n only, like CPE4H's
-                # up-batch kernel.
-                if (getattr(self, "enable_new_numba_elements", False)
-                        and self.elem_jit == "numba"
-                        and self._pid_element_type(pid) == "CPE4RH"):
-                    try:
-                        from ..element.q4_visco_hybrid_reduced_numba import (
-                            assemble_reduced_hybrid_batch_numba)
-                        base_name, bparams, kappa = vmat.simo_fs_args(mat_adapter.params)
-                        _bc = {"neohookean": 0, "yeoh": 1, "arruda": 2}.get(base_name)
-                        if _bc is not None:
-                            Ng_ = len(elem_indices)
-                            if self._use_ul_for(pid):
-                                u_ref_b = self._ul_u_ref[self.dof_indices[elem_indices]]
-                                coords_n = self.elem_coords[elem_indices] + u_ref_b.reshape(Ng_, 4, 2)
-                                _xr = coords_n[:, :, 0]; _yr = coords_n[:, :, 1]
-                                _a = np.array([-1., 1., 1., -1.]) * 0.25
-                                _b = np.array([-1., -1., 1., 1.]) * 0.25
-                                _det = (_xr @ _a) * (_yr @ _b) - (_yr @ _a) * (_xr @ _b)
-                                good = _det > 1e-4
-                                coords_n = np.where(good[:, None, None], coords_n,
-                                                    self.elem_coords[elem_indices])
-                                u_n = np.where(good[:, None],
-                                               u[self.dof_indices[elem_indices]] - u_ref_b,
-                                               u[self.dof_indices[elem_indices]])
-                                Fn_n = np.where(good[:, None, None, None],
-                                                self._ul_F_n[elem_indices],
-                                                np.tile(np.eye(2), (Ng_, 4, 1, 1)))
-                            else:
-                                coords_n = self.elem_coords[elem_indices]
-                                u_n = u[self.dof_indices[elem_indices]]
-                                Fn_n = np.tile(np.eye(2), (Ng_, 4, 1, 1))
-                            state_n = (self.state[elem_indices, :, :n_vars]
-                                       if self.state is not None
-                                       else np.zeros((Ng_, 4, n_vars)))
-                            f_es, K_es, se_all, Fn_new = assemble_reduced_hybrid_batch_numba(
-                                _bc, np.ascontiguousarray(coords_n),
-                                np.ascontiguousarray(u_n), np.ascontiguousarray(state_n),
-                                float(kappa), np.asarray(bparams, dtype=np.float64),
-                                np.asarray(vmat.g_i, dtype=np.float64),
-                                np.asarray(vmat.tau_i, dtype=np.float64),
-                                float(vmat.g_inf), dt_h,
-                                self._elem_thickness[elem_indices],
-                                np.ascontiguousarray(Fn_n))
-                            np.add.at(f_int, self.dof_indices[elem_indices].flatten(), f_es.flatten())
-                            if state_new is not None:
-                                state_new[elem_indices, :, :n_vars] = se_all
-                            # F5 fix (dev_log/plan_abaqus_element_consolidation_20260908.md,
-                            # opus review): do NOT write _ul_F_n here -- this ran on EVERY
-                            # Newton iteration, not just on convergence, compounding F_inc
-                            # onto an already-updated F_n within a single step (iteration 2
-                            # got F_inc @ (F_inc @ F_n_conv), iteration 3 cubed it). The
-                            # commit-time resync (~line 2614-2632, inside `if self.ul_mode:`)
-                            # already recomputes _ul_F_n for ALL elements from the converged
-                            # u_total once per step -- that is the sole authoritative write.
-                            all_K_rows.append(self._pid_K_rows[pid])
-                            all_K_cols.append(self._pid_K_cols[pid])
-                            all_K_vals.append(K_es.reshape(-1))
-                            continue
-                    except ImportError:
-                        pass
+                # CPE4RH is NOT dispatched to q4_visco_hybrid_reduced_numba.py
+                # (2026-10-10): that kernel still carries the in-house
+                # 0.05*(kappa+2*mu) Flanagan-Belytschko hourglass and the UL
+                # incremental-hourglass reset, not Abaqus ENHANCED/STIFFNESS.
+                # CPE4RH runs the JAX vmap path below for every elem_jit until
+                # the Numba kernel is ported.
 
                 # The other Numba kernel is the full-integration F-bar
                 # formulation only -- it has no incompatible modes, pressure
@@ -5112,7 +5068,8 @@ class DynamicSolver:
                         base_name, coords, u_elem, state_elem,
                         float(kappa), bparams, vmat.g_i, vmat.tau_i, float(vmat.g_inf),
                         dt if dt is not None else 1.0, self._elem_thickness[e],
-                        None, _dj,
+                        None, _dj, hourglass=self._hourglass_for(pid),
+                        hg_scale=float(self.hourglass_scale),
                     )
                     f_e = np.asarray(f_e_jax)
                     K_e = np.asarray(K_e_jax)

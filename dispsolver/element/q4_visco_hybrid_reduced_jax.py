@@ -55,22 +55,36 @@ Formulation
   hybrid volumetric PK2 `p*J*C^-1` added on top -- the identical
   deviatoric/volumetric split CPE4H uses, evaluated at one point instead
   of four.
-* Hourglass stabilization: Flanagan & Belytschko (1981), *A uniform strain
-  hexahedron and quadrilateral with orthogonal hourglass control*, IJNME
-  17 -- reused verbatim from `q4_reduced_jax.py` (same orthogonalized
-  `gamma = h - (h.x)*gX - (h.y)*gY` where `h=[1,-1,1,-1]`, same potential-
-  derived `f_hg = dPi_hg/du`, `K_hg = d^2 Pi_hg/du^2` pair). This is exactly
-  zero under rigid translation, rigid rotation (to first order in the
-  local/unrotated frame this element operates in -- verified numerically
-  below to the full nonlinear order too), and any constant-strain nodal
-  field, by construction -- so it cannot corrupt the patch test regardless
-  of the stabilization coefficient's value.
+* Hourglass control (2026-10-10; replaces the in-house
+  `0.05*(kappa+2*bparams[0])` Flanagan-Belytschko coefficient): Abaqus
+  *SECTION CONTROLS, HOURGLASS=ENHANCED | STIFFNESS, shared with CPE4R --
+  see `cpe4r_jax.py`'s module docstring for the spec quotes and the
+  derivation. ENHANCED (the Keywords Guide default for hyperelastic
+  materials, i.e. this element) adds the exact hourglass part of the
+  linear-elastic CPE4I (Q1E4) stiffness built from the INSTANTANEOUS
+  small-strain moduli of this material: G0 = 2 W1(I1=3) (g_inf + sum g_i)
+  (the Simo overstress at dt -> 0 recovers the full base response) and
+  lam0 = kappa - 2 G0 / 3 (the hybrid p = kappa (J-1) supplies kappa).
+  STIFFNESS uses 0.005 * G0 * ss. Both are evaluated with the hourglass
+  coordinate pulled back by the centroid polar rotation; force and tangent
+  are the exact gradient/Hessian.
+
+  The hourglass energy is a function of the TOTAL hourglass displacement
+  on the ORIGINAL configuration, so this element must be called Total
+  Lagrangian (`coords` = original, `u_elem` = total, `F_n` = I) --
+  `dynamic.py` dispatches it that way (`_ELEMENT_LARGE_DEF["CPE4RH"]`
+  `supports_ul=False`). Under the former UL dispatch the hourglass force
+  was rebuilt from the INCREMENTAL displacement on config n every step, so
+  the accumulated hourglass resistance reset to zero at every converged
+  increment; with ENHANCED, where the hourglass term carries the element's
+  bending stiffness, that would make bending history-free. The material
+  part still accepts `F_n` and stays UL-consistent (tests/test_ul_tl_consistency.py).
 * Tangent: because the pressure here has a closed form (no inner Newton
   to condense, unlike CPE4H/CPE4IH's iterative `q`), the internal force is
   already an explicit, differentiable function of `u_elem` alone --
   `K_mat = jax.jacobian(f_mat)(u_elem)` is the EXACT consistent tangent
-  (not an approximation, not FD), with `K_hg` added as the same closed-
-  form quadratic-potential Hessian `q4_reduced_jax.py` uses.
+  (not an approximation, not FD), with `K_hg` the exact Hessian of the
+  hourglass energy (cpe4r_jax._hg_tangent).
 
 Verification
 ------------
@@ -91,21 +105,15 @@ from functools import partial
 import jax
 import jax.numpy as jnp
 
-from .q4_visco_simo_fs_jax import _grads, _F_at, _BL_columns, _simo_pk2
+from .q4_visco_simo_fs_jax import _grads, _F_at, _BL_columns, _simo_pk2, _W1
+from .cpe4r_jax import (HOURGLASS_MODES, _ABAQUS_HG_FACTOR, enhanced_hourglass_matrix,
+                        _hg_force, _hg_tangent)
 
 # Natural-coordinate hourglass shape vector: nodal values of xi*eta at
 # node natural coordinates (-1,-1), (1,-1), (1,1), (-1,1) -- the one
 # bilinear pattern a centroid-only sample point cannot see. Identical to
 # q4_reduced_jax.py's `_HG_SHAPE`.
 _HG_SHAPE = jnp.array([1.0, -1.0, 1.0, -1.0], dtype=jnp.float64)
-
-# Hourglass stiffness scale factor (fraction of a representative modulus).
-# Same role and same default magnitude as q4_reduced_jax.py's `_ALPHA_HG`
-# (there validated against an AR-sweep locking benchmark); here it is a
-# numerical regularization choice, not a physical material parameter --
-# see module docstring.
-_ALPHA_HG = 0.05
-
 
 def _centroid_kinematics(coords, u_elem):
     """Centroid gradients, natural-domain "volume" w0, and F_inc."""
@@ -168,11 +176,11 @@ def _reduced_hybrid_force(base, coords, u_elem, state_elem, kappa, bparams,
     return f_mat, h_new, F, w0, gX, gY
 
 
-@partial(jax.jit, static_argnames=("base",))
+@partial(jax.jit, static_argnames=("base", "hourglass"))
 def compute_single_reduced_hybrid_jax(
     base, coords, u_elem, state_elem, kappa, bparams,
     g_i, tau_i, g_inf, dt, thickness=1.0, F_n=None,
-    distortion_j_crit=0.0, alpha_hg=_ALPHA_HG,
+    distortion_j_crit=0.0, hourglass="ENHANCED", hg_scale=1.0,
 ):
     """CPE4RH: 1-point reduced integration + hourglass + hybrid pressure.
 
@@ -214,34 +222,19 @@ def compute_single_reduced_hybrid_jax(
     state_new = jnp.broadcast_to(h_new, state_elem.shape)
     F_n_new = jnp.broadcast_to(F, F_n.shape)
 
-    # ---- Hourglass stabilization (Flanagan-Belytschko), verbatim from
-    # q4_reduced_jax.py -- see that file's module docstring for the
-    # derivation. Orthogonalized against rigid translation and constant
-    # strain by construction, so it is exactly zero for both regardless of
-    # `alpha_hg`'s value (verified in the patch test).
+    # ---- Hourglass control (see module docstring; TL call required) ----
+    if hourglass not in HOURGLASS_MODES:
+        raise ValueError(f"hourglass={hourglass!r}; expected one of {HOURGLASS_MODES}")
     gamma = _HG_SHAPE - (_HG_SHAPE @ x_nodes) * gX - (_HG_SHAPE @ y_nodes) * gY
-    ux = u_elem[0::2]
-    uy = u_elem[1::2]
-    qx = gamma @ ux
-    qy = gamma @ uy
-    # Representative modulus for the stabilization scale: bulk modulus
-    # (kappa) plus 2x the Arruda-Boyce/Neo-Hookean `mu`-family parameter
-    # (bparams[0]) as an order-of-magnitude shear-modulus stand-in -- a
-    # numerical regularization choice, not a physical stiffness claim, the
-    # same caveat q4_reduced_jax.py documents for its own J2 version (which
-    # uses `lam + 2*mu` there for the analogous reason: keep the
-    # stabilization well-conditioned without depending on the current
-    # nonlinear material tangent).
-    k_hg = alpha_hg * (kappa + 2.0 * bparams[0]) * w0 * (gX @ gX + gY @ gY)
-
-    f_hg = jnp.zeros(8, dtype=jnp.float64)
-    f_hg = f_hg.at[0::2].set(k_hg * qx * gamma)
-    f_hg = f_hg.at[1::2].set(k_hg * qy * gamma)
-
-    gg = jnp.outer(gamma, gamma)
-    K_hg = jnp.zeros((8, 8), dtype=jnp.float64)
-    K_hg = K_hg.at[0::2, 0::2].set(k_hg * gg)
-    K_hg = K_hg.at[1::2, 1::2].set(k_hg * gg)
+    # Instantaneous small-strain moduli of this material (dt -> 0).
+    G0 = 2.0 * _W1(base, 3.0, bparams) * (g_inf + jnp.sum(g_i))
+    if hourglass == "ENHANCED":
+        Hq = enhanced_hourglass_matrix(coords, kappa - 2.0 * G0 / 3.0, G0) * thickness
+    else:
+        Hq = (hg_scale * _ABAQUS_HG_FACTOR * G0 * w0 * (gX @ gX + gY @ gY)
+              * jnp.eye(2, dtype=jnp.float64))
+    f_hg = _hg_force(u_elem, gX, gY, gamma, Hq)
+    K_hg = _hg_tangent(u_elem, gX, gY, gamma, Hq)
 
     f_e = f_mat + f_hg
     K_e = K_mat + K_hg

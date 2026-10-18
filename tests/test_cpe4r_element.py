@@ -230,4 +230,4 @@ def test_unknown_hourglass_is_refused():
 def test_unset_hourglass_takes_abaqus_standard_default():
     """Keywords Guide: STIFFNESS is the Abaqus/Standard default except for
     hyperelastic/hyperfoam materials -- CPE4R here carries J2 only."""
-    assert _solver(_single(DISTORTED), "CPE4R").hourglass == "STIFFNESS"
+    assert _solver(_single(DISTORTED), "CPE4R")._hourglass_for(0) == "STIFFNESS"

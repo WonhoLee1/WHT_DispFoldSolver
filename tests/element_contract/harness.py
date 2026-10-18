@@ -139,6 +139,12 @@ REGISTRY = (
     ElementSpec("CPE4I", "visco", True, True, "PRODUCTION: PSA layers"),
     ElementSpec("CPE4H", "visco", True, True, "element-constant hybrid pressure"),
     ElementSpec("CPE4IH", "visco", True, False, "CPE4I + CPE4H"),
+    ElementSpec("CPE4RH", "visco", False, False,
+                "1-point + closed-form p + ENHANCED hourglass (the hyperelastic default)",
+                hourglass="ENHANCED"),
+    ElementSpec("CPE4RH_STIFFNESS", "visco", False, False,
+                "CPE4RH + HOURGLASS=STIFFNESS (0.005 G0)",
+                element_type="CPE4RH", hourglass="STIFFNESS"),
     # --- not dispatched yet; Stage 1 wires it --------------------------
     ElementSpec("CPE4", "visco", False, False,
                 "cpe4_jax.py exists but is unwired; dispatch lands in Stage 1"),
@@ -171,12 +177,6 @@ KNOWN_BROKEN_BATCH = {
                  "unfixed here: this element has never run.",
     "Q4_COROTATIONAL_HYBRID": "as Q4_HYBRID (same kernel, same wrapper-less "
                               "dispatch branch)",
-    "CPE4RH": "jax.jit static-argname hashing failure under vmap "
-              "(TypeError: unhashable type: BatchTracer). Reachable only via "
-              "the dict/batch form of element_type; the uniform-string form "
-              "takes the sequential path, which is what "
-              "tests/test_cpe4rh_patch.py exercises -- so the element is "
-              "verified on a path production would not use.",
 }
 
 
