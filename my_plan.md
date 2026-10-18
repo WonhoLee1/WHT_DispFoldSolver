@@ -1,3 +1,7 @@
+opencode new key
+oc_sk_7b253043b420_0ZCmEMsba4hp8p4bsc4rEDfUvlgknPjg
+
+
 claude -r --allow-dangerously-skip-permissions
 
 agy -c --dangerously-skip-permissions
@@ -62,6 +66,7 @@ http://desktop-whl:4040/English/?show=SIMACAEBMKRefMap/simabmk-c-neckingtensileb
 http://desktop-whl:4040/English/?show=SIMACAEBMKRefMap/simabmk-c-concreteslump.htm
 http://desktop-whl:4040/English/?show=SIMACAEBMKRefMap/simabmk-c-hertzcontact.htm
 http://desktop-whl:4040/English/?show=SIMACAEBMKRefMap/simabmk-c-pipecrushing.htm
+
 
 
 # static benchmark

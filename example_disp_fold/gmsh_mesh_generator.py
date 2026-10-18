@@ -338,7 +338,7 @@ class GmshMeshGenerator:
                     n6 = int(pl_grid[i + 1, j, k + 1])
                     n7 = int(pl_grid[i + 1, j + 1, k + 1])
                     n8 = int(pl_grid[i, j + 1, k + 1])
-                    mesh.elements[elem_id] = Element3D(elem_id, [n1, n2, n3, n4, n5, n6, n7, n8], elem_type="C3D8", pid=plate_pid)
+                    mesh.elements[elem_id] = Element3D(elem_id, [n1, n2, n3, n4, n5, n6, n7, n8], elem_type="C3D8_CR", pid=plate_pid)
                     elem_id += 1
 
         # Left plate top faces (j = ny_plate)
@@ -372,7 +372,7 @@ class GmshMeshGenerator:
                     n6 = int(pr_grid[i + 1, j, k + 1])
                     n7 = int(pr_grid[i + 1, j + 1, k + 1])
                     n8 = int(pr_grid[i, j + 1, k + 1])
-                    mesh.elements[elem_id] = Element3D(elem_id, [n1, n2, n3, n4, n5, n6, n7, n8], elem_type="C3D8", pid=plate_pid)
+                    mesh.elements[elem_id] = Element3D(elem_id, [n1, n2, n3, n4, n5, n6, n7, n8], elem_type="C3D8_CR", pid=plate_pid)
                     elem_id += 1
 
         # Right plate top faces (j = ny_plate)

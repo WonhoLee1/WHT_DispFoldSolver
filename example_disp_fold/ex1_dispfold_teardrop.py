@@ -68,6 +68,7 @@ class TeeLogger:
 def run_dispfold_simulation(
     dim: str = "3D",
     preset: str = "teardrop",
+    elem_case: Optional[str] = None,
     theta_max_deg: float = 90.0,
     enable_predictor: bool = True,
     tie_method: str = "MPC",
@@ -102,7 +103,7 @@ def run_dispfold_simulation(
         print("=" * 115)
 
         # 3. Model Specification
-        config = UnifiedFoldModelConfig(preset=preset, dim=dim)
+        config = UnifiedFoldModelConfig(preset=preset, dim=dim, elem_case=elem_case)
         config.simulation_case.theta_max_deg = theta_max_deg
         config.simulation_case.enable_predictor = enable_predictor
         config.simulation_case.tie_method = tie_method
@@ -112,6 +113,7 @@ def run_dispfold_simulation(
 
         resolved_contact = config.resolve_contact_guard()
         print(f"[*] Configuration: {len(config.layers)} layers, Total Thickness = {config.total_thickness:.3f} mm")
+        print(f"[*] Element Case: {config.simulation_case.elem_case} (Solid: {config.layers[1].elem_type_3d if dim=='3D' else config.layers[1].elem_type_2d}, PSA: {config.layers[0].elem_type_3d if dim=='3D' else config.layers[0].elem_type_2d})")
         print(f"[*] Contact Mode: {contact_mode} -> Resolved: {resolved_contact}")
         print(f"[*] Kinematic Predictor: {'ENABLED (carry_contacting_nodes)' if enable_predictor else 'DISABLED'}")
 
@@ -148,8 +150,10 @@ def run_dispfold_simulation(
         # 8. Solver Instantiation
         if dim == "2D":
             solver = DynamicSolver2D(mesh, materials=materials, nlgeom=True)
+            solver.max_du_limit = 1.0
         else:
             solver = DynamicSolver3D(mesh, materials=materials, nlgeom=True, solution_controls=sol_preset)
+            solver.max_du_limit = 1.0
 
         # Wire Wohlmuth Dual Mortar Self-Contact if requested by preset or geometry guard
         if config.requires_self_contact():
@@ -194,6 +198,13 @@ def run_dispfold_simulation(
         th_max_rad = np.radians(theta_max_deg)
         pivot_L = meta["left_pivot"]
         pivot_R = meta["right_pivot"]
+
+        # Precompute display stack nodes mounted on support plates for full-stack predictor
+        hinge_gap = config.geometry.hinge_half_gap
+        disp_left_plate_nodes = [nid for nid, node in mesh.nodes.items() if node.x <= -hinge_gap + 1e-4 and node.y >= 0.0]
+        disp_right_plate_nodes = [nid for nid, node in mesh.nodes.items() if node.x >= hinge_gap - 1e-4 and node.y >= 0.0]
+        nid_map = mesh.node_id_to_index()
+        ndof_n = 2 if dim == "2D" else 3
 
         # History containers
         history_time = [0.0]
@@ -268,21 +279,33 @@ def run_dispfold_simulation(
                     if abs(node.z) < 1e-4:
                         solver.fix_dof(nid, 2, 0.0)
 
-            # Kinematic Rotation Predictor
+            # Kinematic Rotation Predictor (Carry entire display laminate rigidly in plate zones)
             if enable_predictor:
                 dth_L = -(theta_curr - theta_prev)
+                cos_dth_L = np.cos(dth_L); sin_dth_L = np.sin(dth_L)
+                for nid in disp_left_plate_nodes:
+                    node = mesh.nodes[nid]
+                    idx = nid_map[nid]
+                    cx = node.x + solver.u[idx * ndof_n + 0]
+                    cy = node.y + solver.u[idx * ndof_n + 1]
+                    dx = cx - pivot_L[0]; dy = cy - pivot_L[1]
+                    solver.u[idx * ndof_n + 0] = pivot_L[0] + cos_dth_L * dx - sin_dth_L * dy - node.x
+                    solver.u[idx * ndof_n + 1] = pivot_L[1] + sin_dth_L * dx + cos_dth_L * dy - node.y
+
                 dth_R = +(theta_curr - theta_prev)
-                # Rotate prescribed slave DOFs as initial guess
-                ndof_n = 2 if dim == "2D" else 3
-                nid_map = mesh.node_id_to_index()
-                for nid in tied_l_nodes:
+                cos_dth_R = np.cos(dth_R); sin_dth_R = np.sin(dth_R)
+                for nid in disp_right_plate_nodes:
+                    node = mesh.nodes[nid]
                     idx = nid_map[nid]
-                    solver.u[idx * ndof_n + 0] = solver.fixed_dofs.get(idx * ndof_n + 0, solver.u[idx * ndof_n + 0])
-                    solver.u[idx * ndof_n + 1] = solver.fixed_dofs.get(idx * ndof_n + 1, solver.u[idx * ndof_n + 1])
-                for nid in tied_r_nodes:
-                    idx = nid_map[nid]
-                    solver.u[idx * ndof_n + 0] = solver.fixed_dofs.get(idx * ndof_n + 0, solver.u[idx * ndof_n + 0])
-                    solver.u[idx * ndof_n + 1] = solver.fixed_dofs.get(idx * ndof_n + 1, solver.u[idx * ndof_n + 1])
+                    cx = node.x + solver.u[idx * ndof_n + 0]
+                    cy = node.y + solver.u[idx * ndof_n + 1]
+                    dx = cx - pivot_R[0]; dy = cy - pivot_R[1]
+                    solver.u[idx * ndof_n + 0] = pivot_R[0] + cos_dth_R * dx - sin_dth_R * dy - node.x
+                    solver.u[idx * ndof_n + 1] = pivot_R[1] + sin_dth_R * dx + cos_dth_R * dy - node.y
+
+                # Exact Dirichlet prescribed values on fixed DOFs
+                for dof, val in solver.fixed_dofs.items():
+                    solver.u[dof] = val
 
             # Solve step
             converged, iters = solver.solve_step(
@@ -580,6 +603,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Unified 2D/3D Display 180° Teardrop Folding Simulation")
     parser.add_argument("--dim", type=str, default="3D", choices=["2D", "3D"], help="Simulation dimension")
     parser.add_argument("--preset", type=str, default="teardrop", choices=["teardrop", "compact_4", "u_shape", "compact_waterdrop", "crease_zero_gap"], help="Kinematic preset")
+    parser.add_argument("--elem_case", type=str, default=None, choices=["3D-Opt1", "3D-Opt2-H", "3D-Base", "2D-Opt1", "2D-Opt2", "2D-Base"], help="Element formulation case preset")
     parser.add_argument("--theta_max", type=float, default=90.0, help="Maximum plate rotation angle in deg (default 90° for 180° total fold)")
     parser.add_argument("--enable_predictor", dest="enable_predictor", action="store_true", default=True, help="Enable kinematic rotation predictor")
     parser.add_argument("--no_predictor", dest="enable_predictor", action="store_false", help="Disable kinematic rotation predictor")
@@ -597,11 +621,12 @@ if __name__ == "__main__":
         from example_disp_fold.model_spec import UnifiedFoldModelConfig
         from example_disp_fold.gmsh_mesh_generator import GmshMeshGenerator
 
-        cfg = UnifiedFoldModelConfig(preset=args.preset, dim=args.dim)
+        cfg = UnifiedFoldModelConfig(preset=args.preset, dim=args.dim, elem_case=args.elem_case)
         mesh, meta = GmshMeshGenerator(cfg).build()
         run_kwargs = {
             "dim": args.dim,
             "preset": args.preset,
+            "elem_case": args.elem_case,
             "theta_max_deg": args.theta_max,
             "enable_predictor": args.enable_predictor,
             "tie_method": args.tie_method,
@@ -614,6 +639,7 @@ if __name__ == "__main__":
         run_dispfold_simulation(
             dim=args.dim,
             preset=args.preset,
+            elem_case=args.elem_case,
             theta_max_deg=args.theta_max,
             enable_predictor=args.enable_predictor,
             tie_method=args.tie_method,

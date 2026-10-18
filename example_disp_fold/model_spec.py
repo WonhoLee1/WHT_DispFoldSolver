@@ -11,6 +11,21 @@ from typing import Dict, List, Tuple, Any, Optional
 import numpy as np
 
 
+# Canonical, verified element formulation cases (SSOT, standard Abaqus element types)
+# Solvers automatically promote these to Co-Rotational kernels under nlgeom=True via ElementCatalog
+ELEM_CASES_2D: Dict[str, Dict[str, str]] = {
+    "2D-Opt1":   {"solid": "CPE4I", "psa": "CPE4H", "plate": "CPE4"},
+    "2D-Opt2":   {"solid": "CPE4R", "psa": "CPE4H", "plate": "CPE4"},
+    "2D-Base":   {"solid": "CPE4",  "psa": "CPE4H", "plate": "CPE4"},
+}
+
+ELEM_CASES_3D: Dict[str, Dict[str, str]] = {
+    "3D-Opt1":   {"solid": "C3D8I", "psa": "C3D8H", "plate": "C3D8"},
+    "3D-Opt2-H": {"solid": "C3D8R", "psa": "C3D8H", "plate": "C3D8"},
+    "3D-Base":   {"solid": "C3D8",  "psa": "C3D8H", "plate": "C3D8"},
+}
+
+
 @dataclass
 class LayerSpec:
     """Individual laminated display layer specification."""
@@ -18,8 +33,8 @@ class LayerSpec:
     thickness: float              # Layer thickness in mm (e.g. 0.030, 0.060)
     material_name: str            # Referenced material key ('PSA', 'PET', 'GLASS')
     is_void_in_hinge: bool = False # Whether voided in free hinge span (e.g. layer 0 bottom PSA)
-    elem_type_2d: str = "CPE4I_CR" # 2D solid formulation
-    elem_type_3d: str = "C3D8I_CR" # 3D solid formulation
+    elem_type_2d: str = "CPE4I"   # 2D solid formulation (standard Abaqus name)
+    elem_type_3d: str = "C3D8I"   # 3D solid formulation (standard Abaqus name)
     ny_elements: int = 1          # Number of elements through layer thickness
     color: str = "#3498db"        # Hex color code for visualization
 
@@ -71,6 +86,7 @@ class SimulationCaseSpec:
     """Nonlinear solver runtime configuration and parameters."""
     dim: str = "3D"                   # "2D" or "3D"
     preset_name: str = "teardrop"     # Preset name identifier
+    elem_case: Optional[str] = None   # "3D-Opt1", "3D-Opt2-H", "3D-Base", "2D-Opt1", "2D-Opt2", "2D-Base"
     theta_max_deg: float = 90.0       # Folding angle per plate in degrees (total 180°)
     total_time: float = 1.0           # Pseudo-time duration (s)
     dt_init: float = 0.005            # Initial time increment (s)
@@ -86,15 +102,15 @@ class SimulationCaseSpec:
 class UnifiedFoldModelConfig:
     """Single Source of Truth container uniting geometry, layers, materials, and case."""
 
-    def __init__(self, preset: str = "teardrop", dim: str = "3D") -> None:
+    def __init__(self, preset: str = "teardrop", dim: str = "3D", elem_case: Optional[str] = None) -> None:
         self.geometry = HingeGeometrySpec()
         self.mesh = MeshSpec()
         self.materials: Dict[str, MaterialSpec] = {}
         self.layers: List[LayerSpec] = []
-        self.simulation_case = SimulationCaseSpec(dim=dim, preset_name=preset)
+        self.simulation_case = SimulationCaseSpec(dim=dim, preset_name=preset, elem_case=elem_case)
 
         self._setup_standard_materials()
-        self.load_preset(preset)
+        self.load_preset(preset, elem_case=elem_case)
 
     def _setup_standard_materials(self) -> None:
         """Initializes canonical, literature-verified material definitions."""
@@ -140,10 +156,30 @@ class UnifiedFoldModelConfig:
             density=7.85e-9,
         )
 
-    def load_preset(self, preset: str) -> None:
+    def load_preset(self, preset: str, elem_case: Optional[str] = None) -> None:
         """Loads a predefined kinematic and stackup preset."""
         preset = preset.lower()
         self.simulation_case.preset_name = preset
+        if elem_case is not None:
+            self.simulation_case.elem_case = elem_case
+
+        # Resolve element formulation case (Abaqus standard names promoted via ElementCatalog)
+        case_name = self.simulation_case.elem_case
+        if not case_name:
+            case_name = "3D-Opt1" if self.simulation_case.dim == "3D" else "2D-Opt1"
+        self.simulation_case.elem_case = case_name
+
+        case_3d_key = case_name if case_name in ELEM_CASES_3D else "3D-Opt1"
+        case_2d_key = case_name if case_name in ELEM_CASES_2D else "2D-Opt1"
+
+        spec_3d = ELEM_CASES_3D[case_3d_key]
+        spec_2d = ELEM_CASES_2D[case_2d_key]
+
+        solid_2d = spec_2d["solid"]
+        psa_2d = spec_2d["psa"]
+        solid_3d = spec_3d["solid"]
+        psa_3d = spec_3d["psa"]
+
         self.layers.clear()
 
         if preset == "teardrop":
@@ -155,13 +191,13 @@ class UnifiedFoldModelConfig:
             # 7 PSA (30 um) + 6 PET (60 um) + 1 GLASS (60 um)
             # Layer 0 bottom PSA has tape void in hinge [-7.5, 7.5]
             self.layers.append(LayerSpec("PSA_0_Voided", 0.030, "PSA", is_void_in_hinge=True,
-                                         elem_type_2d="CPE4H_CR", elem_type_3d="C3D8H_CR", color="#f39c12"))
+                                         elem_type_2d=psa_2d, elem_type_3d=psa_3d, color="#f39c12"))
             for i in range(1, 6):
-                self.layers.append(LayerSpec(f"PET_{i}", 0.060, "PET", elem_type_2d="CPE4I_CR", elem_type_3d="C3D8I_CR", color="#3498db"))
-                self.layers.append(LayerSpec(f"PSA_{i}", 0.030, "PSA", elem_type_2d="CPE4H_CR", elem_type_3d="C3D8H_CR", color="#e67e22"))
-            self.layers.append(LayerSpec("PET_6", 0.060, "PET", elem_type_2d="CPE4I_CR", elem_type_3d="C3D8I_CR", color="#2980b9"))
-            self.layers.append(LayerSpec("PSA_6", 0.030, "PSA", elem_type_2d="CPE4H_CR", elem_type_3d="C3D8H_CR", color="#e67e22"))
-            self.layers.append(LayerSpec("GLASS_Top", 0.060, "GLASS", elem_type_2d="CPE4I_CR", elem_type_3d="C3D8I_CR", color="#2ecc71"))
+                self.layers.append(LayerSpec(f"PET_{i}", 0.060, "PET", elem_type_2d=solid_2d, elem_type_3d=solid_3d, color="#3498db"))
+                self.layers.append(LayerSpec(f"PSA_{i}", 0.030, "PSA", elem_type_2d=psa_2d, elem_type_3d=psa_3d, color="#e67e22"))
+            self.layers.append(LayerSpec("PET_6", 0.060, "PET", elem_type_2d=solid_2d, elem_type_3d=solid_3d, color="#2980b9"))
+            self.layers.append(LayerSpec("PSA_6", 0.030, "PSA", elem_type_2d=psa_2d, elem_type_3d=psa_3d, color="#e67e22"))
+            self.layers.append(LayerSpec("GLASS_Top", 0.060, "GLASS", elem_type_2d=solid_2d, elem_type_3d=solid_3d, color="#2ecc71"))
 
         elif preset == "compact_4":
             # 4-layer fast verification stackup: PET - PSA - PET - GLASS
@@ -169,10 +205,10 @@ class UnifiedFoldModelConfig:
             self.geometry.hinge_pivot_x = 1.4
             self.geometry.hinge_pivot_y = 0.0
 
-            self.layers.append(LayerSpec("PET_Bottom", 0.060, "PET", elem_type_2d="CPE4I_CR", elem_type_3d="C3D8I_CR", color="#3498db"))
-            self.layers.append(LayerSpec("PSA_Mid", 0.030, "PSA", elem_type_2d="CPE4H_CR", elem_type_3d="C3D8H_CR", color="#e67e22"))
-            self.layers.append(LayerSpec("PET_Mid", 0.060, "PET", elem_type_2d="CPE4I_CR", elem_type_3d="C3D8I_CR", color="#2980b9"))
-            self.layers.append(LayerSpec("GLASS_Top", 0.060, "GLASS", elem_type_2d="CPE4I_CR", elem_type_3d="C3D8I_CR", color="#2ecc71"))
+            self.layers.append(LayerSpec("PET_Bottom", 0.060, "PET", elem_type_2d=solid_2d, elem_type_3d=solid_3d, color="#3498db"))
+            self.layers.append(LayerSpec("PSA_Mid", 0.030, "PSA", elem_type_2d=psa_2d, elem_type_3d=psa_3d, color="#e67e22"))
+            self.layers.append(LayerSpec("PET_Mid", 0.060, "PET", elem_type_2d=solid_2d, elem_type_3d=solid_3d, color="#2980b9"))
+            self.layers.append(LayerSpec("GLASS_Top", 0.060, "GLASS", elem_type_2d=solid_2d, elem_type_3d=solid_3d, color="#2ecc71"))
 
         elif preset == "u_shape":
             # Semicircular pure U-fold (Fixed pivot at origin)

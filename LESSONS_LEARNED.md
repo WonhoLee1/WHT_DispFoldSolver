@@ -505,3 +505,22 @@ deck06 DUAL_MORTAR는 세 결함이 겹쳐 수렴하지 못했다(하나만 고�
   - 스텝별 수렴 완료 시점마다 `step_converged` 시그널(`step, t, theta, u, iters, M_L, M_R`)을 발행하여 3D 뷰포트의 `pv_mesh.points`를 제로-알로케이션으로 인플레이스 갱신하고 슬라이더 범위를 실시간 확장함.
   - Matplotlib 캔버스는 전체 Figure 재생성 대신 `line.set_data()` 및 `ax.relim()`, `canvas.draw_idle()` 비동기 렌더링을 적용하여 연산 병목 없이 60fps에 준하는 매끄러운 라이브 스트리밍을 구현함.
 
+### 15.6 14-Layer 다층 박막 라미네이트 회전 구동 시 전계층 강체 회전 기구학적 예측기(Full-Stack Rigid Kinematic Predictor) 필수성
+- **결함 현상 및 버그 메커니즘**:
+  - 14-Layer 적층 디스플레이($t \approx 30\,\mu\text{m}$ 초박막 PSA 7개 층, 비압축성 초탄성체 $\nu \approx 0.499$)를 강체 지지판($Y=0$)에 부착하여 180° 티어드롭 회전 구동 시, 지지판 접촉면 하면 절점(`tied_l_nodes`, $Y=0$)에만 기구학적 예측 증분($\Delta \mathbf{u}$)을 부여하고 상부 13개 층의 절점($Y > 0$, 945개 절점)을 이전 스텝 좌표($\mathbf{x}_{old}$)로 방치할 경우 심각한 수치적 붕괴 발생.
+  - 지지판이 미소 각도($\sim 1.6^\circ$)만 회전해도 최하단 PSA 레이어 바닥면이 수직으로 $35\,\mu\text{m}$ 이상 상승하여 요소 상면($30\,\mu\text{m}$)을 완전히 관통함.
+  - 이로 인해 요소 체적 변형률이 $\epsilon_{vol} \approx -3.0$, $J_{vol} = 1 + \epsilon_{vol} = -2.0 < 0$ (음체적 반전)으로 폭발하여 요소 조립 시 `last_assembly_error = 1` 발생, Line Search가 100% 기각(`(s, 'err')`)되고 솔버의 시간 증분 적응 루틴이 $dt \le 0.0003\,\text{s}$까지 붕괴하며 스텝 4($\theta \approx 3.9^\circ$)에서 해석이 영구 고착됨.
+- **수치역학적 원인 분석**:
+  - 박막 라미네이트의 지지판 구역은 물리적으로 지지판과 결합되어 일체로 강체 운동(Rigid Body Rotation)을 수행해야 함.
+  - 예측기(Predictor) 단계에서 지지판 접촉면($Y=0$)만 회전시키고 상부 박막을 제자리에 방치하면, 물리적으로 존재하지 않는 인위적 고전단/고압축 충격이 초박막 점착제 요소에 인가되어 초기 추정해($\mathbf{u}_{trial}$)가 뉴턴-랩슨 수렴 반경(Radius of Convergence)을 완전히 벗어나게 됨.
+- **방어 대책 및 구현 표준**:
+  - 지지판 구역($X \le -7.5\,\text{mm}$ 및 $X \ge +7.5\,\text{mm}$)에 속하는 적층 디스플레이의 전 절점(1008개 절점)을 사전에 인덱싱(`disp_left_plate_nodes`, `disp_right_plate_nodes`).
+  - 힌지 회전 증분 시 지지판 절점뿐만 아니라 디스플레이 전 계층의 절점을 지지판 피벗 중심으로 완벽히 강체 회전 변환:
+    $$\mathbf{x}_{new} = \mathbf{x}_{pivot} + \mathbf{R}(\Delta \theta) (\mathbf{x}_{cur} - \mathbf{x}_{pivot})$$
+    $$\mathbf{u}_{new} = \mathbf{x}_{new} - \mathbf{X}_{ref}$$
+  - 이로써 지지판 부착 영역의 모든 14개 층 요소 내부 응력 및 체적 변형률이 제로($J=1.0$)인 완벽한 강체 초기 추정해를 제공하여, 뉴턴-랩슨 반복이 오직 중앙 자유 힌지 루프 구간의 굽힘 변형에만 집중할 수 있게 됨.
+- **실증 검증 결과**:
+  - `ex1_dispfold_teardrop.py --dim 3D --preset teardrop --theta_max 90.0` 구동 시, 단 한 번의 인위적 컷백 없이 $0^\circ \to 90.00^\circ$ (180° 전체 폴딩) 131개 스텝을 458초(7.6분)만에 100% 완주.
+  - 좌/우 힌지 반력 모멘트 대칭 오차 $1.5 \times 10^{-9}\%$, 수평 잔차 합력 $1.3 \times 10^{-12}\,\text{N}$으로 기계 정밀도 수준의 물리적 평형 무결성을 입증함.
+
+

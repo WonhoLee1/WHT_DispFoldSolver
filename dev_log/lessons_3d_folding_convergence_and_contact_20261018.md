@@ -83,3 +83,36 @@
 1. **결합 구속(Tie Constraint)** 모델링 시 강체-유연체 계면은 패널티 스프링 방식 대신 **Kinematic MPC (자유도 대수적 소거법)**을 최우선 적용할 것.
 2. 힌지 기구학 설계 상 표면 간격이 유지되는 경우 불필요한 접촉 검색을 배제하고, **피벗 거리 축소($\text{gap} \to 0$) 또는 코너 핀칭 발생 시에만 Dual Mortar 접촉 쌍을 선택적으로 활성화**할 것.
 3. 비선형 뉴턴 반복 시 인공적인 변위 제한자(`max_du_limit`)로 2차 수렴성을 훼손하지 않도록 주의하고, 대규모 모델에서는 특성 하중($q_{\text{avg}}$) 기반의 `SolutionControl`을 병행 운용할 것.
+
+---
+
+## 6. 14-Layer 다층 박막 라미네이트 전계층 강체 회전 기구학적 예측기 (Full-Stack Rigid Kinematic Predictor) 실증 및 3D 티어드롭 180° 폴딩 벤치마크 완주
+
+### 6.1 수치역학적 발견: 박막 음체적($J < 0$) 반전 스파이크 원인
+- **증상**: 14개 적층 레이어(PSA 7층 + PET 6층 + Glass 1층) 모델 구동 시 스텝 4($\theta \approx 3.9^\circ$)에서 요소 조립 오류(`last_assembly_error = 1`, `C3D8H`)가 발생하며 컷백이 지속되어 시뮬레이션이 고착됨.
+- **원인 메커니즘**: 강체 플레이트 회전 시 하단 접촉면($Y=0$, 63개 절점)만 기구학적으로 회전시키고 상부 13개 층의 절점($Y > 0$, 945개 절점)을 이전 좌표에 고정할 경우, $30\,\mu\text{m}$ 두께의 초박막 PSA 요소의 바닥면이 상면을 뚫고 지나가는 기하학적 관통($\epsilon_{vol} \approx -3.0, J_{vol} = -2.0 < 0$)이 발생함. 이로 인해 `anti_inversion_barrier (J < 0.02)`가 발동되어 Line Search가 100% 기각됨.
+
+### 6.2 전계층 강체 회전 예측기 (Full-Stack Rigid Kinematic Predictor)
+- 지지판 구역($X \le -7.5\,\text{mm}$ 및 $X \ge +7.5\,\text{mm}$)에 속하는 적층 디스플레이의 전 절점(1008개 절점)을 플레이트 피벗 중심으로 일체 강체 회전 변환:
+  $$\mathbf{x}_{new} = \mathbf{x}_{pivot} + \mathbf{R}(\Delta \theta) (\mathbf{x}_{cur} - \mathbf{x}_{pivot})$$
+  $$\mathbf{u}_{new} = \mathbf{x}_{new} - \mathbf{X}_{ref}$$
+- 지지판 영역 내 모든 14개 층 요소 내부가 초기 추정해 단계에서 응력-제로 강체 상태($J=1.0$)를 완벽히 유지하므로, 뉴턴-랩슨 반복이 자유 힌지 루프 변형 해석에만 전념하여 2차 수렴성을 복원함.
+
+### 6.3 3D 티어드롭 180° 벤치마크 실측 지표 (`D20261018_142712`)
+- **실행 명령**: `python example_disp_fold/ex1_dispfold_teardrop.py --dim 3D --preset teardrop --theta_max 90.0`
+- **해석 시간**: 458.35초 (약 7.6분)
+- **최종 접힘 각도**: 플레이트 단독 90.00° (양방향 대칭 구동으로 전체 180.00° 접힘 완료)
+- **반력 모멘트**:
+  - 좌측 힌지 $M_L = -1.960294\,\text{N}\cdot\text{mm}$
+  - 우측 힌지 $M_R = +1.960294\,\text{N}\cdot\text{mm}$
+  - 대칭 오차: **$1.51 \times 10^{-9}\%$** ($0.0000\%$)
+- **외력 정적 평형**: 수평 반력 합력 $F_x = 1.306 \times 10^{-12}\,\text{N}$ (기계 정밀도 $0\,\text{N}$)
+- **산출물 7종 무결성 확인**:
+  1. `run.log`: 131 스텝 전체 수렴 이력 로그
+  2. `model.inp`: Abaqus 표준 키워드 입력 데크
+  3. `model_and_results.vtkhdf`: Kitware VTKHDF v2.2 시계열 변위/응력/변형률 DB (17.1 MB)
+  4. `summary_plots.png`: 3행 차트 (반력 모멘트-각도, 수직 반력, 대칭 오차)
+  5. `folding_animation.gif`: 3D 대변형 접힘 동영상 (280 KB)
+  6. `report.html`: 단일 페이지 요약 리포트 (6.4 KB)
+  7. `result_summary.json`: 핵심 정량 지표 JSON
+

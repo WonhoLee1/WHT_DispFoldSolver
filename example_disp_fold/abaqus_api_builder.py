@@ -92,10 +92,18 @@ class AbaqusApiBuilder:
                 abq_elem_type = "CPE4H"
             elif "CPE4I" in abq_elem_type:
                 abq_elem_type = "CPE4I"
+            elif "CPE4R" in abq_elem_type:
+                abq_elem_type = "CPE4R"
+            elif "CPE4" in abq_elem_type:
+                abq_elem_type = "CPE4"
             elif "C3D8H" in abq_elem_type:
                 abq_elem_type = "C3D8H"
             elif "C3D8I" in abq_elem_type:
                 abq_elem_type = "C3D8I"
+            elif "C3D8R" in abq_elem_type:
+                abq_elem_type = "C3D8R"
+            elif "C3D8" in abq_elem_type:
+                abq_elem_type = "C3D8"
 
             elset_name = f"ELSET_{lay.name.upper()}"
             _w(f"*ELEMENT, TYPE={abq_elem_type}, ELSET={elset_name}")

@@ -324,6 +324,10 @@ def run_3d_display_plate_fold(
     penalty_tie: float = 1.0e5,
     max_steps: Optional[int] = None,
     preset: str = "ADAPTIVE",
+    max_du_limit: Optional[float] = None,
+    use_anderson: bool = True,
+    out_pkl_name: str = "ex13_3d_fold_result.pkl",
+    debug_iters: bool = False,
 ) -> Dict[str, Any]:
     """Executes full 3D 180-degree teardrop folding simulation with adaptive time-stepping."""
     if config is None:
@@ -365,6 +369,12 @@ def run_3d_display_plate_fold(
     }
 
     solver = DynamicSolver3D(mesh, materials, nlgeom=True, solution_controls=preset)
+    if max_du_limit is not None:
+        # Newton correction clamp (dynamic3d.py reads it via getattr; solver default 0.10 mm)
+        solver.max_du_limit = float(max_du_limit)
+    if debug_iters:
+        solver.debug_sdi = True  # per-Newton-iteration r_norm / r_norm/q print (dynamic3d.py)
+    print(f"[*] max_du_limit={getattr(solver, 'max_du_limit', 'solver default 0.10')} | Anderson={'ON' if use_anderson else 'OFF'}")
 
     # 4. Tie Constraints: Kinematic MPC Elimination (Abaqus *TIE parity)
     # Coupled display bottom nodes follow the rigid plate motion directly via Dirichlet BCs.
@@ -454,7 +464,7 @@ def run_3d_display_plate_fold(
         converged, iters = solver.solve_step(
             dt=dt_actual,
             max_iters=25,
-            use_anderson_accel=True,
+            use_anderson_accel=use_anderson,
             anderson_m=4,
         )
 
@@ -510,7 +520,7 @@ def run_3d_display_plate_fold(
     # Save results for view_ex13_pyvista.py
     out_dir = os.path.join(REPO_ROOT, "examples", "results")
     os.makedirs(out_dir, exist_ok=True)
-    out_pkl = os.path.join(out_dir, "ex13_3d_fold_result.pkl")
+    out_pkl = os.path.join(out_dir, out_pkl_name)
 
     res_data = {
         "mesh": mesh,
@@ -541,6 +551,10 @@ if __name__ == "__main__":
     parser.add_argument("--width", type=float, default=1.0, help="Display extrusion width in Z (mm)")
     parser.add_argument("--nz", type=int, default=2, help="Number of elements along Z width")
     parser.add_argument("--max_steps", type=int, default=None, help="Maximum steps to run")
+    parser.add_argument("--max_du_limit", type=float, default=None, help="Newton correction clamp [mm] (default: solver's 0.10)")
+    parser.add_argument("--no_anderson", action="store_true", help="Disable Anderson acceleration")
+    parser.add_argument("--debug_iters", action="store_true", help="Print per-iteration residual norms")
+    parser.add_argument("--out_pkl", type=str, default="ex13_3d_fold_result.pkl", help="Result pickle file name under examples/results")
     parser.add_argument("--sol_preset", type=str, default="ADAPTIVE", choices=["ADAPTIVE", "STANDARD", "RELAXED"], help="SolutionControl preset")
     args = parser.parse_args()
 
@@ -551,4 +565,8 @@ if __name__ == "__main__":
         nz_disp=args.nz,
         max_steps=args.max_steps,
         preset=args.sol_preset,
+        max_du_limit=args.max_du_limit,
+        use_anderson=not args.no_anderson,
+        out_pkl_name=args.out_pkl,
+        debug_iters=args.debug_iters,
     )
