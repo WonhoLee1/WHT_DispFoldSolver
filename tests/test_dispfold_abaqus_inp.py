@@ -66,12 +66,21 @@ def test_abaqus_model_builder_inp_string_content_2d():
     # 5. Sets and Step
     assert "*NSET, NSET=NSET_TIED_LEFT" in inp_str
     assert "*NSET, NSET=NSET_TIED_RIGHT" in inp_str
-    assert "*STEP, NLGEOM=YES" in inp_str
+    assert "*NSET, NSET=RP_LEFT" in inp_str
+    assert "*NSET, NSET=RP_RIGHT" in inp_str
+    assert "*RIGID BODY, ELSET=ELSET_PLATE_LEFT, REF NODE=" in inp_str
+    assert "*RIGID BODY, ELSET=ELSET_PLATE_RIGHT, REF NODE=" in inp_str
+    assert "*TIE, NAME=TIE_LEFT" in inp_str
+    assert "*TIE, NAME=TIE_RIGHT" in inp_str
+    assert "*STEP, NAME=Step-1_Folding, NLGEOM=YES" in inp_str
     assert "*STATIC" in inp_str
     assert "*AMPLITUDE, NAME=AMP_SMOOTH, DEFINITION=SMOOTH STEP" in inp_str
 
-    # 6. Boundary Conditions
+    # 6. Boundary Conditions and Output Requests
     assert "*BOUNDARY" in inp_str
+    assert "*OUTPUT, FIELD" in inp_str
+    assert "*OUTPUT, HISTORY" in inp_str
+    assert "*ENERGY OUTPUT" in inp_str
     assert "*END STEP" in inp_str
 
 
@@ -91,17 +100,21 @@ def test_abaqus_inp_lossless_roundtrip_2d():
         # Validate with built-in roundtrip validator
         val_res = builder.validate_inp_roundtrip(res_file)
         assert val_res["valid"] is True
-        assert val_res["num_nodes"] == len(mesh.nodes)
+        assert val_res["num_nodes"] == len(mesh.nodes) + 2
+        assert val_res["mesh_nodes"] == len(mesh.nodes)
+        assert val_res["ref_nodes"] == 2
         assert val_res["num_elements"] == len(mesh.elements)
+        assert val_res["rbe2_constraints"] == 2
+        assert val_res["tie_constraints"] == 2
 
         # Direct in-depth parsing check via read_abaqus_input
         model_parsed = read_abaqus_input(res_file)
 
-        # 1. Nodes check
-        assert len(model_parsed.mesh.nodes) == len(mesh.nodes)
+        # 1. Nodes check (continuum mesh + 2 reference nodes)
+        assert len(model_parsed.mesh.nodes) == len(mesh.nodes) + 2
         orig_coords = mesh.nodes_array()
         parsed_coords = model_parsed.mesh.nodes_array()
-        assert np.allclose(orig_coords, parsed_coords, atol=1e-5)
+        assert np.allclose(orig_coords, parsed_coords[:len(orig_coords)], atol=1e-5)
 
         # 2. Elements check
         assert len(model_parsed.mesh.elements) == len(mesh.elements)
@@ -129,13 +142,11 @@ def test_abaqus_inp_lossless_roundtrip_2d():
         assert pytest.approx(model_parsed.solver_config.get("dt_init"), rel=1e-4) == config.simulation_case.dt_init
         assert pytest.approx(model_parsed.solver_config.get("t_total"), rel=1e-4) == config.simulation_case.total_time
 
-        # 6. Boundary Conditions check
-        assert len(model_parsed.boundaries) >= 2
+        # 6. Boundary Conditions check (translations + rotations)
+        assert len(model_parsed.boundaries) >= 4
         for bc in model_parsed.boundaries:
             assert int(bc.nset) in model_parsed.mesh.nodes
-            assert bc.dof1 == 1
-            assert bc.dof2 == 2
-            assert bc.value == 0.0
+            assert bc.dof1 in (1, 6)
 
         # 7. Part Names mapping check
         assert len(model_parsed.part_names) >= 2
@@ -157,12 +168,12 @@ def test_abaqus_inp_lossless_roundtrip_3d():
 
         # 1. read_abaqus_input validation
         model_parsed = read_abaqus_input(res_file)
-        assert len(model_parsed.mesh.nodes) == len(mesh.nodes)
+        assert len(model_parsed.mesh.nodes) == len(mesh.nodes) + 2
         assert len(model_parsed.mesh.elements) == len(mesh.elements)
 
         orig_coords = mesh.nodes_array()
         # Projected in-plane coords check
-        assert np.allclose(orig_coords[:, :2], model_parsed.mesh.nodes_array(), atol=1e-5)
+        assert np.allclose(orig_coords[:, :2], model_parsed.mesh.nodes_array()[:len(orig_coords)], atol=1e-5)
 
         first_elem = next(iter(model_parsed.mesh.elements.values()))
         assert len(first_elem.node_ids) == 8
@@ -175,7 +186,7 @@ def test_abaqus_inp_lossless_roundtrip_3d():
 
         # Materials and BCs check
         assert len(model_parsed.materials) >= 4
-        assert len(model_parsed.boundaries) >= 2
+        assert len(model_parsed.boundaries) >= 4
         assert model_parsed.solver_config.get("procedure") == "STATIC"
 
         # 2. Full 3D coordinate validation via read_inp(dim=3)
@@ -183,4 +194,4 @@ def test_abaqus_inp_lossless_roundtrip_3d():
         part = next(iter(m3_parsed.parts.values()))
         sorted_nids = sorted(part.nodes.keys())
         coords_3d = np.array([part.nodes[nid] for nid in sorted_nids], dtype=np.float64)
-        assert np.allclose(orig_coords, coords_3d, atol=1e-5)
+        assert np.allclose(orig_coords, coords_3d[:len(orig_coords)], atol=1e-5)

@@ -75,6 +75,7 @@ def run_dispfold_simulation(
     contact_mode: str = "AUTO",
     sol_preset: str = "ADAPTIVE",
     max_steps: Optional[int] = None,
+    stages: Optional[List[Any]] = None,
     launch_gui: bool = False,
     results_base_dir: Optional[str] = None,
     step_callback: Optional[Any] = None,
@@ -110,6 +111,8 @@ def run_dispfold_simulation(
         config.simulation_case.contact_mode = contact_mode
         config.simulation_case.solution_preset = sol_preset
         config.simulation_case.max_steps = max_steps
+        if stages is not None:
+            config.simulation_case.stages = stages
 
         resolved_contact = config.resolve_contact_guard()
         print(f"[*] Configuration: {len(config.layers)} layers, Total Thickness = {config.total_thickness:.3f} mm")
@@ -187,15 +190,24 @@ def run_dispfold_simulation(
 
         print(f"[*] Solver ready: {solver.num_dofs} active DOFs. SolutionControl = {sol_preset}.")
 
-        # 9. Adaptive Time Stepping Controller
-        dt_ctrl = AdaptiveDtController(
-            dt_init=config.simulation_case.dt_init,
-            dt_min=config.simulation_case.dt_min,
-            dt_max=config.simulation_case.dt_max,
-            target_iters=8,
-        )
+        # 9. Multi-stage vs Single-stage configuration
+        if config.simulation_case.stages:
+            stages = config.simulation_case.stages
+        else:
+            from example_disp_fold.model_spec import StageSpec
+            stages = [
+                StageSpec(
+                    name="Step-1_Folding",
+                    stage_type="FOLD",
+                    duration=config.simulation_case.total_time,
+                    theta_start_deg=0.0,
+                    theta_target_deg=theta_max_deg,
+                    dt_init=config.simulation_case.dt_init,
+                    dt_min=config.simulation_case.dt_min,
+                    dt_max=config.simulation_case.dt_max,
+                )
+            ]
 
-        th_max_rad = np.radians(theta_max_deg)
         pivot_L = meta["left_pivot"]
         pivot_R = meta["right_pivot"]
 
@@ -220,153 +232,177 @@ def run_dispfold_simulation(
         # Record step 0 to VTKHDF
         vdb.add_step(0.0, solver.u)
 
-        t = 0.0
         step = 0
-        theta_prev = 0.0
+        t_global = 0.0
+        theta_prev = np.radians(stages[0].theta_start_deg)
         u_converged = solver.u.copy()
         consecutive_cutbacks = 0
+        total_cutbacks = 0
         max_cutbacks = 20
+        aborted = False
 
-        print("\n" + "-" * 115)
-        print(f"{'Step':>5} | {'Time':>7} | {'Theta':>7} | {'dt':>8} | {'Fx_L [N]':>9} | {'Fx_R [N]':>9} | {'Sum Fx':>10} | {'M_drive_L':>11} | {'M_drive_R':>11} | {'Symm Err':>9} | {'Iters':>5} | {'Status':>6}")
-        print("-" * 115)
+        print("\n" + "-" * 125)
+        print(f"{'Step':>5} | {'Stage':>14} | {'Time':>7} | {'Theta':>7} | {'dt':>8} | {'Fx_L [N]':>9} | {'Fx_R [N]':>9} | {'Sum Fx':>10} | {'M_drive_L':>11} | {'M_drive_R':>11} | {'Symm Err':>9} | {'Iters':>5} | {'Status':>6}")
+        print("-" * 125)
 
-        while t < 1.0 - 1e-6:
-            if max_steps is not None and step >= max_steps:
-                print(f"[!] Reached max_steps={max_steps}. Terminating solve loop.")
+        for s_idx, stg in enumerate(stages):
+            if aborted or (max_steps is not None and step >= max_steps):
                 break
 
-            step += 1
-            dt = dt_ctrl.dt
-            t_next = min(1.0, t + dt)
-            dt_actual = t_next - t
-
-            s = t_next
-            theta_curr = th_max_rad * smoothstep_amp(s)
-
-            # Apply Kinematic Rigid Plate & Tied Display Dirichlet BCs (Fold upwards into +Y)
-            # Left plate: rotate clockwise (-theta) around pivot_L
-            cos_th_L = np.cos(-theta_curr); sin_th_L = np.sin(-theta_curr)
-            tied_l_nodes = meta["plate_left_nodes"] + meta["disp_bottom_left_nids"]
-            for nid in tied_l_nodes:
-                node = mesh.nodes[nid]
-                dx0 = node.x - pivot_L[0]
-                dy0 = node.y - pivot_L[1]
-                x_new = pivot_L[0] + cos_th_L * dx0 - sin_th_L * dy0
-                y_new = pivot_L[1] + sin_th_L * dx0 + cos_th_L * dy0
-                solver.fix_dof(nid, 0, x_new - node.x)
-                solver.fix_dof(nid, 1, y_new - node.y)
-                if dim == "3D":
-                    solver.fix_dof(nid, 2, 0.0)
-
-            # Right plate: rotate counter-clockwise (+theta) around pivot_R
-            cos_th_R = np.cos(theta_curr); sin_th_R = np.sin(theta_curr)
-            tied_r_nodes = meta["plate_right_nodes"] + meta["disp_bottom_right_nids"]
-            for nid in tied_r_nodes:
-                node = mesh.nodes[nid]
-                dx0 = node.x - pivot_R[0]
-                dy0 = node.y - pivot_R[1]
-                x_new = pivot_R[0] + cos_th_R * dx0 - sin_th_R * dy0
-                y_new = pivot_R[1] + sin_th_R * dx0 + cos_th_R * dy0
-                solver.fix_dof(nid, 0, x_new - node.x)
-                solver.fix_dof(nid, 1, y_new - node.y)
-                if dim == "3D":
-                    solver.fix_dof(nid, 2, 0.0)
-
-            # Symmetry BC on 3D at Z = 0
-            if dim == "3D":
-                for nid, node in mesh.nodes.items():
-                    if abs(node.z) < 1e-4:
-                        solver.fix_dof(nid, 2, 0.0)
-
-            # Kinematic Rotation Predictor (Carry entire display laminate rigidly in plate zones)
-            if enable_predictor:
-                dth_L = -(theta_curr - theta_prev)
-                cos_dth_L = np.cos(dth_L); sin_dth_L = np.sin(dth_L)
-                for nid in disp_left_plate_nodes:
-                    node = mesh.nodes[nid]
-                    idx = nid_map[nid]
-                    cx = node.x + solver.u[idx * ndof_n + 0]
-                    cy = node.y + solver.u[idx * ndof_n + 1]
-                    dx = cx - pivot_L[0]; dy = cy - pivot_L[1]
-                    solver.u[idx * ndof_n + 0] = pivot_L[0] + cos_dth_L * dx - sin_dth_L * dy - node.x
-                    solver.u[idx * ndof_n + 1] = pivot_L[1] + sin_dth_L * dx + cos_dth_L * dy - node.y
-
-                dth_R = +(theta_curr - theta_prev)
-                cos_dth_R = np.cos(dth_R); sin_dth_R = np.sin(dth_R)
-                for nid in disp_right_plate_nodes:
-                    node = mesh.nodes[nid]
-                    idx = nid_map[nid]
-                    cx = node.x + solver.u[idx * ndof_n + 0]
-                    cy = node.y + solver.u[idx * ndof_n + 1]
-                    dx = cx - pivot_R[0]; dy = cy - pivot_R[1]
-                    solver.u[idx * ndof_n + 0] = pivot_R[0] + cos_dth_R * dx - sin_dth_R * dy - node.x
-                    solver.u[idx * ndof_n + 1] = pivot_R[1] + sin_dth_R * dx + cos_dth_R * dy - node.y
-
-                # Exact Dirichlet prescribed values on fixed DOFs
-                for dof, val in solver.fixed_dofs.items():
-                    solver.u[dof] = val
-
-            # Solve step
-            converged, iters = solver.solve_step(
-                dt=dt_actual,
-                max_iters=25,
-                use_anderson_accel=True,
-                anderson_m=4,
+            dt_ctrl = AdaptiveDtController(
+                dt_init=stg.dt_init,
+                dt_min=stg.dt_min,
+                dt_max=stg.dt_max,
+                target_iters=8,
             )
 
-            if not converged:
-                consecutive_cutbacks += 1
-                if consecutive_cutbacks > max_cutbacks:
-                    print(f"\n[FATAL] Exceeded maximum cutbacks ({max_cutbacks}). Terminating.")
+            th_start_rad = np.radians(stg.theta_start_deg)
+            th_target_rad = np.radians(stg.theta_target_deg)
+            t_stage = 0.0
+
+            while t_stage < stg.duration - 1e-6:
+                if max_steps is not None and step >= max_steps:
+                    print(f"[!] Reached max_steps={max_steps}. Terminating solve loop.")
+                    aborted = True
                     break
-                dt_ctrl.notify_convergence(iters=iters, converged=False)
-                solver.u = u_converged.copy()
-                print(f"  [CUTBACK {consecutive_cutbacks}] Retrying step {step} with dt={dt_ctrl.dt:.5f}s ...")
-                continue
 
-            # Step converged
-            consecutive_cutbacks = 0
-            u_converged = solver.u.copy()
-            theta_prev = theta_curr
-            t = t_next
-            dt_ctrl.notify_convergence(iters=iters, converged=True)
+                step += 1
+                dt = dt_ctrl.dt
+                t_stage_next = min(stg.duration, t_stage + dt)
+                dt_actual = t_stage_next - t_stage
 
-            # Reactions & Moments
-            if dim == "2D":
-                res_L = solver.compute_section_reactions(node_ids=tied_l_nodes, center_pt=pivot_L)
-                res_R = solver.compute_section_reactions(node_ids=tied_r_nodes, center_pt=pivot_R)
-            else:
-                res_L = solver.compute_section_reactions(node_ids=tied_l_nodes, center_pt=(pivot_L[0], pivot_L[1], 0.0))
-                res_R = solver.compute_section_reactions(node_ids=tied_r_nodes, center_pt=(pivot_R[0], pivot_R[1], 0.0))
+                s = t_stage_next / max(1e-9, stg.duration)
+                if stg.stage_type == "HOLD":
+                    theta_curr = th_target_rad
+                else:
+                    theta_curr = th_start_rad + (th_target_rad - th_start_rad) * smoothstep_amp(s)
 
-            M_L = res_L["Mz"];  M_R = res_R["Mz"]
+                # Apply Kinematic Rigid Plate & Tied Display Dirichlet BCs (Fold upwards into +Y)
+                # Left plate: rotate clockwise (-theta) around pivot_L
+                cos_th_L = np.cos(-theta_curr); sin_th_L = np.sin(-theta_curr)
+                tied_l_nodes = meta["plate_left_nodes"] + meta["disp_bottom_left_nids"]
+                for nid in tied_l_nodes:
+                    node = mesh.nodes[nid]
+                    dx0 = node.x - pivot_L[0]
+                    dy0 = node.y - pivot_L[1]
+                    x_new = pivot_L[0] + cos_th_L * dx0 - sin_th_L * dy0
+                    y_new = pivot_L[1] + sin_th_L * dx0 + cos_th_L * dy0
+                    solver.fix_dof(nid, 0, x_new - node.x)
+                    solver.fix_dof(nid, 1, y_new - node.y)
+                    if dim == "3D":
+                        solver.fix_dof(nid, 2, 0.0)
 
-            Fx_L = res_L["Fx"]; Fx_R = res_R["Fx"]
-            sum_Fx = Fx_L + Fx_R
-            avg_M = 0.5 * (abs(M_L) + abs(M_R))
-            diff_M = abs(abs(M_L) - abs(M_R))
-            symm_err = (diff_M / max(avg_M, 1e-6)) * 100.0
+                # Right plate: rotate counter-clockwise (+theta) around pivot_R
+                cos_th_R = np.cos(theta_curr); sin_th_R = np.sin(theta_curr)
+                tied_r_nodes = meta["plate_right_nodes"] + meta["disp_bottom_right_nids"]
+                for nid in tied_r_nodes:
+                    node = mesh.nodes[nid]
+                    dx0 = node.x - pivot_R[0]
+                    dy0 = node.y - pivot_R[1]
+                    x_new = pivot_R[0] + cos_th_R * dx0 - sin_th_R * dy0
+                    y_new = pivot_R[1] + sin_th_R * dx0 + cos_th_R * dy0
+                    solver.fix_dof(nid, 0, x_new - node.x)
+                    solver.fix_dof(nid, 1, y_new - node.y)
+                    if dim == "3D":
+                        solver.fix_dof(nid, 2, 0.0)
 
-            deg_disp = np.degrees(theta_curr)
-            print(f"{step:5d} | {t:7.4f} | {deg_disp:6.2f}° | {dt_actual:8.5f} | {Fx_L:+9.3f} | {Fx_R:+9.3f} | {sum_Fx:+10.3e} | {M_L:+11.4f} | {M_R:+11.4f} | {symm_err:8.4f}% | {iters:5d} | {'CONV':>6}")
+                # Symmetry BC on 3D at Z = 0
+                if dim == "3D":
+                    for nid, node in mesh.nodes.items():
+                        if abs(getattr(node, "z", 0.0)) < 1e-4:
+                            solver.fix_dof(nid, 2, 0.0)
 
-            history_time.append(t)
-            history_theta.append(deg_disp)
-            history_iters.append(iters)
-            history_M_L.append(M_L)
-            history_M_R.append(M_R)
-            history_Fx_L.append(Fx_L)
-            history_Fx_R.append(Fx_R)
-            history_symm_err.append(symm_err)
-            history_u.append(u_converged.copy())
+                # Kinematic Rotation Predictor (Carry entire display laminate rigidly in plate zones)
+                if enable_predictor:
+                    dth_L = -(theta_curr - theta_prev)
+                    cos_dth_L = np.cos(dth_L); sin_dth_L = np.sin(dth_L)
+                    for nid in disp_left_plate_nodes:
+                        node = mesh.nodes[nid]
+                        idx = nid_map[nid]
+                        cx = node.x + solver.u[idx * ndof_n + 0]
+                        cy = node.y + solver.u[idx * ndof_n + 1]
+                        dx = cx - pivot_L[0]; dy = cy - pivot_L[1]
+                        solver.u[idx * ndof_n + 0] = pivot_L[0] + cos_dth_L * dx - sin_dth_L * dy - node.x
+                        solver.u[idx * ndof_n + 1] = pivot_L[1] + sin_dth_L * dx + cos_dth_L * dy - node.y
 
-            # Stream step to VTKHDF
-            vdb.add_step(t, u_converged)
+                    dth_R = +(theta_curr - theta_prev)
+                    cos_dth_R = np.cos(dth_R); sin_dth_R = np.sin(dth_R)
+                    for nid in disp_right_plate_nodes:
+                        node = mesh.nodes[nid]
+                        idx = nid_map[nid]
+                        cx = node.x + solver.u[idx * ndof_n + 0]
+                        cy = node.y + solver.u[idx * ndof_n + 1]
+                        dx = cx - pivot_R[0]; dy = cy - pivot_R[1]
+                        solver.u[idx * ndof_n + 0] = pivot_R[0] + cos_dth_R * dx - sin_dth_R * dy - node.x
+                        solver.u[idx * ndof_n + 1] = pivot_R[1] + sin_dth_R * dx + cos_dth_R * dy - node.y
 
-            # Live callback notification (PySide6 / streaming)
-            if step_callback is not None:
-                step_callback(step, t, deg_disp, u_converged.copy(), iters, M_L, M_R)
+                    # Exact Dirichlet prescribed values on fixed DOFs
+                    for dof, val in solver.fixed_dofs.items():
+                        solver.u[dof] = val
+
+                # Solve step
+                converged, iters = solver.solve_step(
+                    dt=dt_actual,
+                    max_iters=25,
+                    use_anderson_accel=True,
+                    anderson_m=4,
+                )
+
+                if not converged:
+                    consecutive_cutbacks += 1
+                    total_cutbacks += 1
+                    if consecutive_cutbacks > max_cutbacks:
+                        print(f"\n[FATAL] Exceeded maximum cutbacks ({max_cutbacks}). Terminating.")
+                        aborted = True
+                        break
+                    dt_ctrl.notify_convergence(iters=iters, converged=False)
+                    solver.u = u_converged.copy()
+                    print(f"  [CUTBACK {consecutive_cutbacks}] Retrying step {step} with dt={dt_ctrl.dt:.5f}s ...")
+                    continue
+
+                # Step converged
+                consecutive_cutbacks = 0
+                u_converged = solver.u.copy()
+                theta_prev = theta_curr
+                t_stage = t_stage_next
+                t_global += dt_actual
+                dt_ctrl.notify_convergence(iters=iters, converged=True)
+
+                # Reactions & Moments
+                if dim == "2D":
+                    res_L = solver.compute_section_reactions(node_ids=tied_l_nodes, center_pt=pivot_L)
+                    res_R = solver.compute_section_reactions(node_ids=tied_r_nodes, center_pt=pivot_R)
+                else:
+                    res_L = solver.compute_section_reactions(node_ids=tied_l_nodes, center_pt=(pivot_L[0], pivot_L[1], 0.0))
+                    res_R = solver.compute_section_reactions(node_ids=tied_r_nodes, center_pt=(pivot_R[0], pivot_R[1], 0.0))
+
+                M_L = res_L["Mz"];  M_R = res_R["Mz"]
+
+                Fx_L = res_L["Fx"]; Fx_R = res_R["Fx"]
+                sum_Fx = Fx_L + Fx_R
+                avg_M = 0.5 * (abs(M_L) + abs(M_R))
+                diff_M = abs(abs(M_L) - abs(M_R))
+                symm_err = (diff_M / max(avg_M, 1e-6)) * 100.0
+
+                deg_disp = float(np.degrees(theta_curr))
+                print(f"{step:5d} | {stg.name:>14} | {t_global:7.4f} | {deg_disp:6.2f}° | {dt_actual:8.5f} | {Fx_L:+9.3f} | {Fx_R:+9.3f} | {sum_Fx:+10.3e} | {M_L:+11.4f} | {M_R:+11.4f} | {symm_err:8.4f}% | {iters:5d} | {'CONV':>6}")
+
+                history_time.append(t_global)
+                history_theta.append(deg_disp)
+                history_iters.append(iters)
+                history_M_L.append(M_L)
+                history_M_R.append(M_R)
+                history_Fx_L.append(Fx_L)
+                history_Fx_R.append(Fx_R)
+                history_symm_err.append(symm_err)
+                history_u.append(u_converged.copy())
+
+                # Stream step to VTKHDF
+                vdb.add_step(t_global, u_converged)
+
+                # Live callback notification (PySide6 / streaming)
+                if step_callback is not None:
+                    step_callback(step, t_global, deg_disp, u_converged.copy(), iters, M_L, M_R)
 
         vdb.close()
         wall_time = time.perf_counter() - t_start
@@ -399,7 +435,8 @@ def run_dispfold_simulation(
             "wall_time_s": float(wall_time),
             "num_steps": len(history_theta) - 1,
             "avg_iters": float(np.mean(history_iters[1:])) if len(history_iters) > 1 else 0.0,
-            "cutbacks": consecutive_cutbacks,
+            "cutbacks": total_cutbacks,
+            "num_stages": len(stages),
         }
         json_path = os.path.join(out_dir, "result_summary.json")
         with open(json_path, "w", encoding="utf-8") as f:

@@ -31,18 +31,31 @@ class AbaqusApiBuilder:
     def build_model_hierarchy(self) -> Model:
         """Constructs Model, Part, Assembly, Step, and SolutionControl."""
         model = Model(name=f"DispFold_{self.dim}_Model")
-        step_name = "Step-1_Folding"
-        step = model.StaticStep(
-            name=step_name,
-            time_period=self.config.simulation_case.total_time,
-            nlgeom=True,
-            dt_init=self.config.simulation_case.dt_init,
-            dt_min=self.config.simulation_case.dt_min,
-            dt_max=self.config.simulation_case.dt_max,
-        )
-
+        stages = self.config.simulation_case.stages
         preset = self.config.simulation_case.solution_preset
-        step.solution_controls = SolutionControl(preset=preset)
+
+        if stages:
+            for stg in stages:
+                s = model.StaticStep(
+                    name=stg.name,
+                    time_period=stg.duration,
+                    nlgeom=True,
+                    dt_init=stg.dt_init,
+                    dt_min=stg.dt_min,
+                    dt_max=stg.dt_max,
+                )
+                s.solution_controls = SolutionControl(preset=preset)
+        else:
+            step_name = "Step-1_Folding"
+            step = model.StaticStep(
+                name=step_name,
+                time_period=self.config.simulation_case.total_time,
+                nlgeom=True,
+                dt_init=self.config.simulation_case.dt_init,
+                dt_min=self.config.simulation_case.dt_min,
+                dt_max=self.config.simulation_case.dt_max,
+            )
+            step.solution_controls = SolutionControl(preset=preset)
         return model
 
     def generate_inp_string(self) -> str:
@@ -63,8 +76,8 @@ class AbaqusApiBuilder:
         _w("*NODE")
         coords = self.mesh.nodes_array()
         nid_map = self.mesh.node_id_to_index()
-        # Sort by nid
         sorted_nids = sorted(nid_map.keys())
+
         if self.dim == "2D":
             for nid in sorted_nids:
                 idx = nid_map[nid]
@@ -73,6 +86,20 @@ class AbaqusApiBuilder:
             for nid in sorted_nids:
                 idx = nid_map[nid]
                 _w(f"{nid}, {coords[idx, 0]:.6f}, {coords[idx, 1]:.6f}, {coords[idx, 2]:.6f}")
+
+        # Dedicated Rigid Body Reference Nodes (pivots)
+        rp_left_nid = max(sorted_nids) + 1
+        rp_right_nid = max(sorted_nids) + 2
+        p_l = self.meta["left_pivot"]
+        p_r = self.meta["right_pivot"]
+        w_z = float(getattr(self.config.geometry, "width_z", 1.0))
+
+        if self.dim == "2D":
+            _w(f"{rp_left_nid}, {p_l[0]:.6f}, {p_l[1]:.6f}")
+            _w(f"{rp_right_nid}, {p_r[0]:.6f}, {p_r[1]:.6f}")
+        else:
+            _w(f"{rp_left_nid}, {p_l[0]:.6f}, {p_l[1]:.6f}, {0.5 * w_z:.6f}")
+            _w(f"{rp_right_nid}, {p_r[0]:.6f}, {p_r[1]:.6f}, {0.5 * w_z:.6f}")
 
         # 2. Elements per Layer and Plate
         _w("**" + "-" * 78)
@@ -86,7 +113,6 @@ class AbaqusApiBuilder:
                 continue
 
             elem_type = lay.elem_type_2d if self.dim == "2D" else lay.elem_type_3d
-            # Map solver element type to Abaqus native keyword
             abq_elem_type = elem_type.replace("_CR", "").replace("QUAD4", "CPE4I")
             if "CPE4H" in abq_elem_type:
                 abq_elem_type = "CPE4H"
@@ -122,7 +148,6 @@ class AbaqusApiBuilder:
         plate_eids_r = []
         for eid, elem in self.mesh.elements.items():
             if elem.pid == 4:
-                # Classify into left or right by node coords
                 idx0 = nid_map[elem.node_ids[0]]
                 if coords[idx0, 0] < 0.0:
                     plate_eids_l.append(eid)
@@ -158,54 +183,140 @@ class AbaqusApiBuilder:
                 if mat.hardening_modulus > 0:
                     _w(f"{mat.yield_stress + mat.hardening_modulus * 0.1:.2f}, 0.1")
             elif mat.mat_type == "HYPERELASTIC_VISCO":
-                # Arruda-Boyce Hyperelastic + Viscoelastic
                 _w(f"*HYPERELASTIC, ARRUDA-BOYCE\n{mat.arruda_boyce_mu:.6f}, {mat.arruda_boyce_lm:.2f}, 0.001")
                 if mat.prony_g:
                     _w("*VISCOELASTIC, TIME=PRONY")
                     for g, tau in zip(mat.prony_g, mat.prony_tau):
                         _w(f"{g:.4f}, 0.0, {tau:.4f}")
 
-        # 4. Tie Constraints (Coupling between plate and display bottom)
+        # 4. Node Sets
+        _w("**" + "-" * 78)
+        _w("** Node Sets for Constraints and Boundary Conditions")
+        _w("**" + "-" * 78)
+        _w("*NSET, NSET=RP_LEFT")
+        _w(str(rp_left_nid))
+        _w("*NSET, NSET=RP_RIGHT")
+        _w(str(rp_right_nid))
+
+        if self.meta.get("plate_left_nodes"):
+            _w("*NSET, NSET=NSET_PLATE_LEFT")
+            _w(", ".join(str(n) for n in self.meta["plate_left_nodes"]))
+        if self.meta.get("plate_right_nodes"):
+            _w("*NSET, NSET=NSET_PLATE_RIGHT")
+            _w(", ".join(str(n) for n in self.meta["plate_right_nodes"]))
+
+        if self.meta.get("disp_bottom_left_nids"):
+            _w("*NSET, NSET=NSET_TIED_LEFT")
+            _w(", ".join(str(n) for n in self.meta["disp_bottom_left_nids"]))
+        if self.meta.get("disp_bottom_right_nids"):
+            _w("*NSET, NSET=NSET_TIED_RIGHT")
+            _w(", ".join(str(n) for n in self.meta["disp_bottom_right_nids"]))
+
+        # 5. Rigid Body Constraints
+        _w("**" + "-" * 78)
+        _w("** Rigid Body Constraints (Support Plates to Pivot Reference Nodes)")
+        _w("**" + "-" * 78)
+        _w(f"*RIGID BODY, ELSET=ELSET_PLATE_LEFT, REF NODE={rp_left_nid}, PIN NSET=NSET_PLATE_LEFT")
+        _w(f"*RIGID BODY, ELSET=ELSET_PLATE_RIGHT, REF NODE={rp_right_nid}, PIN NSET=NSET_PLATE_RIGHT")
+
+        # 6. Tie Constraints (Coupling between plate and display bottom)
         _w("**" + "-" * 78)
         _w("** Tie Constraints / Multi-Point Constraints")
         _w("**" + "-" * 78)
-        _w("*NSET, NSET=NSET_TIED_LEFT")
-        _w(", ".join(str(n) for n in self.meta["disp_bottom_left_nids"]))
-        _w("*NSET, NSET=NSET_TIED_RIGHT")
-        _w(", ".join(str(n) for n in self.meta["disp_bottom_right_nids"]))
+        _w("*TIE, NAME=TIE_LEFT")
+        _w("NSET_TIED_LEFT, NSET_PLATE_LEFT")
+        _w("*TIE, NAME=TIE_RIGHT")
+        _w("NSET_TIED_RIGHT, NSET_PLATE_RIGHT")
 
-        # 5. Step and Boundary Conditions
-        _w("**" + "-" * 78)
-        _w("** Step 1: 180-Degree Upward Teardrop Folding")
-        _w("**" + "-" * 78)
-        _w("*STEP, NLGEOM=YES")
-        _w("180-Degree Teardrop Folding with Adaptive Time Increments")
-        dt_init = self.config.simulation_case.dt_init
-        total_t = self.config.simulation_case.total_time
-        dt_min = self.config.simulation_case.dt_min
-        dt_max = self.config.simulation_case.dt_max
-        _w(f"*STATIC\n{dt_init:.5f}, {total_t:.2f}, {dt_min:.5e}, {dt_max:.5f}")
+        # 7. Contact Definitions (Self-contact if required)
+        if self.config.requires_self_contact():
+            if self.dim == "2D":
+                top_l_nids = sorted(list({n for seg in self.meta.get("disp_top_left_segments", []) for n in seg}))
+                top_r_nids = sorted(list({n for seg in self.meta.get("disp_top_right_segments", []) for n in seg}))
+            else:
+                top_l_nids = sorted(list({n for face in self.meta.get("disp_top_left_faces", []) for n in face}))
+                top_r_nids = sorted(list({n for face in self.meta.get("disp_top_right_faces", []) for n in face}))
 
-        # Amplitude for smooth folding
+            if top_l_nids and top_r_nids:
+                _w("**" + "-" * 78)
+                _w("** Surface and Contact Interaction")
+                _w("**" + "-" * 78)
+                _w("*NSET, NSET=NSET_TOP_LEFT")
+                _w(", ".join(str(n) for n in top_l_nids))
+                _w("*NSET, NSET=NSET_TOP_RIGHT")
+                _w(", ".join(str(n) for n in top_r_nids))
+                _w("*SURFACE, NAME=SURF_TOP_LEFT, TYPE=NODE")
+                _w("NSET_TOP_LEFT")
+                _w("*SURFACE, NAME=SURF_TOP_RIGHT, TYPE=NODE")
+                _w("NSET_TOP_RIGHT")
+                _w("*SURFACE INTERACTION, NAME=CONTACT_PROP")
+                _w("*SURFACE BEHAVIOR, PRESSURE-OVERCLOSURE=HARD")
+                _w("*CONTACT PAIR, INTERACTION=CONTACT_PROP")
+                _w("SURF_TOP_RIGHT, SURF_TOP_LEFT")
+
+        # 8. Amplitude Definitions
+        _w("**" + "-" * 78)
+        _w("** Amplitude Definitions")
+        _w("**" + "-" * 78)
         _w("*AMPLITUDE, NAME=AMP_SMOOTH, DEFINITION=SMOOTH STEP")
         _w("0.0, 0.0, 1.0, 1.0")
 
-        # Boundary Conditions on Left / Right Pinned Plates
-        _w("**" + "-" * 78)
-        _w("** Boundary Conditions")
-        _w("**" + "-" * 78)
-        _w("*BOUNDARY")
-        if self.meta.get("plate_left_nodes"):
-            pin_l = self.meta["plate_left_nodes"][0]
-            _w(f"{pin_l}, 1, 2, 0.0")
-        if self.meta.get("plate_right_nodes"):
-            pin_r = self.meta["plate_right_nodes"][0]
-            _w(f"{pin_r}, 1, 2, 0.0")
+        # 9. Step(s) and Boundary Conditions
+        stages = self.config.simulation_case.stages
+        if not stages:
+            from example_disp_fold.model_spec import StageSpec
+            stages = [
+                StageSpec(
+                    name="Step-1_Folding",
+                    stage_type="FOLD",
+                    duration=self.config.simulation_case.total_time,
+                    theta_start_deg=0.0,
+                    theta_target_deg=self.config.simulation_case.theta_max_deg,
+                    dt_init=self.config.simulation_case.dt_init,
+                    dt_min=self.config.simulation_case.dt_min,
+                    dt_max=self.config.simulation_case.dt_max,
+                )
+            ]
 
-        p_l = self.meta["left_pivot"]
-        p_r = self.meta["right_pivot"]
-        _w(f"** Plate Rotation Pivots: Left=({p_l[0]:.2f}, {p_l[1]:.2f}), Right=({p_r[0]:.2f}, {p_r[1]:.2f})")
-        _w("*END STEP")
+        for s_idx, stg in enumerate(stages):
+            _w("**" + "-" * 78)
+            _w(f"** Step {s_idx + 1}: {stg.name} ({stg.stage_type})")
+            _w("**" + "-" * 78)
+            _w(f"*STEP, NAME={stg.name}, NLGEOM=YES")
+            _w(f"{stg.name}: {stg.stage_type} - Rotation {stg.theta_start_deg:.1f}deg -> {stg.theta_target_deg:.1f}deg, Duration={stg.duration:.2f}s")
+            _w(f"*STATIC\n{stg.dt_init:.5f}, {stg.duration:.2f}, {stg.dt_min:.5e}, {stg.dt_max:.5f}")
+
+            # Rotations in radians (UR3 = DOF 6)
+            th_target_rad = float(np.radians(stg.theta_target_deg))
+            _w("** Boundary Conditions on Reference Nodes")
+            _w("*BOUNDARY, AMPLITUDE=AMP_SMOOTH")
+            _w(f"{rp_left_nid}, 1, 2, 0.0")
+            _w(f"{rp_left_nid}, 6, 6, {-th_target_rad:.6f}")
+            _w(f"{rp_right_nid}, 1, 2, 0.0")
+            _w(f"{rp_right_nid}, 6, 6, {th_target_rad:.6f}")
+
+            if self.dim == "3D":
+                _w("** 3D Symmetry on Z=0 Plane")
+                _w("*BOUNDARY")
+                z0_nodes = [nid for nid, node in self.mesh.nodes.items() if abs(getattr(node, "z", 0.0)) < 1e-4]
+                if z0_nodes:
+                    for nid in z0_nodes:
+                        _w(f"{nid}, 3, 3, 0.0")
+
+            # Standard Output Requests (Field and History)
+            _w("** Field and History Output Requests")
+            _w("*OUTPUT, FIELD, VARIABLE=PRESELECT")
+            _w("*NODE OUTPUT")
+            _w("U, RF")
+            _w("*ELEMENT OUTPUT, DIRECTIONS=YES")
+            _w("S, MISES, LE, E")
+            if self.config.requires_self_contact():
+                _w("*CONTACT OUTPUT")
+                _w("CPRESS, COPEN, CSHEAR, CSTATUS")
+            _w("*OUTPUT, HISTORY")
+            _w("*ENERGY OUTPUT")
+            _w("ALLIE, ALLKE, ALLSE, ALLVD, ALLAE, ALLSD, ALLFD")
+            _w("*END STEP")
 
         return "\n".join(lines) + "\n"
 
@@ -225,29 +336,72 @@ class AbaqusApiBuilder:
         return filepath
 
     def validate_inp_roundtrip(self, filepath: str) -> Dict[str, Any]:
-        """Validates that the emitted .inp can be parsed back bit-identically."""
-        model_parsed = read_abaqus_input(filepath)
-        n_nodes_parsed = len(model_parsed.mesh.nodes)
-        n_elems_parsed = len(model_parsed.mesh.elements)
+        """Validates that the emitted .inp can be parsed back with full keyword fidelity."""
+        from dispsolver.io import read_inp
+        model_legacy = read_abaqus_input(filepath)
+        model_inp = read_inp(filepath, dim=2 if self.dim == "2D" else 3)
+
+        n_nodes_parsed = len(model_legacy.mesh.nodes)
+        n_elems_parsed = len(model_legacy.mesh.elements)
 
         n_nodes_orig = len(self.mesh.nodes)
         n_elems_orig = len(self.mesh.elements)
+        n_nodes_expected = n_nodes_orig + 2  # +2 Reference Nodes (RP_LEFT, RP_RIGHT)
 
-        if n_nodes_parsed != n_nodes_orig:
-            raise ValueError(f"Roundtrip node count mismatch: orig={n_nodes_orig}, parsed={n_nodes_parsed}")
+        if n_nodes_parsed != n_nodes_expected:
+            raise ValueError(f"Roundtrip node count mismatch: orig={n_nodes_orig}, expected={n_nodes_expected}, parsed={n_nodes_parsed}")
         if n_elems_parsed != n_elems_orig:
             raise ValueError(f"Roundtrip elem count mismatch: orig={n_elems_orig}, parsed={n_elems_parsed}")
+
+        # Check materials
+        for mat_name in self.config.materials.keys():
+            if not any(mat_name in str(name) for name in model_legacy.material_names.values()):
+                raise ValueError(f"Material {mat_name} missing from roundtrip parsed model")
+
+        # Check essential sets
+        for sname in ["RP_LEFT", "RP_RIGHT", "NSET_PLATE_LEFT", "NSET_PLATE_RIGHT", "NSET_TIED_LEFT", "NSET_TIED_RIGHT"]:
+            if sname not in model_legacy.mesh.node_sets:
+                raise ValueError(f"Essential Node Set {sname} missing from roundtrip parsed model")
+
+        for elname in ["ELSET_PLATE_LEFT", "ELSET_PLATE_RIGHT"]:
+            if elname not in model_legacy.mesh.element_sets:
+                raise ValueError(f"Essential Element Set {elname} missing from roundtrip parsed model")
+
+        # Check constraints
+        if len(model_legacy.rbe2_constraints) < 2:
+            raise ValueError(f"Expected at least 2 RigidBody constraints, found {len(model_legacy.rbe2_constraints)}")
+        if len(model_legacy.penalty_constraints) < 2:
+            raise ValueError(f"Expected at least 2 Tie constraints, found {len(model_legacy.penalty_constraints)}")
+
+        # Check boundaries (at least 4: 2 translation + 2 rotation)
+        if len(model_legacy.boundaries) < 4:
+            raise ValueError(f"Expected at least 4 boundary conditions, found {len(model_legacy.boundaries)}")
+
+        # Check steps and output requests via model_inp
+        analysis_steps = {k: v for k, v in model_inp.steps.items() if k.lower() != "initial"}
+        if not analysis_steps:
+            raise ValueError("No analysis steps found in parsed AbaqusModel")
+        for sname, step_obj in analysis_steps.items():
+            if not step_obj.field_output_requests:
+                raise ValueError(f"Field output requests missing in step {sname}")
+            if not step_obj.history_output_requests:
+                raise ValueError(f"History output requests missing in step {sname}")
 
         return {
             "valid": True,
             "num_nodes": n_nodes_parsed,
+            "mesh_nodes": n_nodes_orig,
+            "ref_nodes": 2,
             "num_elements": n_elems_parsed,
-            "materials": list(model_parsed.materials.keys()),
-            "node_sets": list(model_parsed.mesh.node_sets.keys()),
-            "element_sets": list(model_parsed.mesh.element_sets.keys()),
-            "boundaries": model_parsed.boundaries,
-            "solver_config": model_parsed.solver_config,
-            "part_names": model_parsed.part_names,
+            "materials": list(model_legacy.materials.keys()),
+            "node_sets": list(model_legacy.mesh.node_sets.keys()),
+            "element_sets": list(model_legacy.mesh.element_sets.keys()),
+            "boundaries": model_legacy.boundaries,
+            "rbe2_constraints": len(model_legacy.rbe2_constraints),
+            "tie_constraints": len(model_legacy.penalty_constraints),
+            "steps": [s for s in model_inp.steps.keys() if s.lower() != "initial"],
+            "solver_config": model_legacy.solver_config,
+            "part_names": model_legacy.part_names,
         }
 
 

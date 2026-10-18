@@ -82,6 +82,19 @@ class MeshSpec:
 
 
 @dataclass
+class StageSpec:
+    """Individual folding simulation stage specification (Fold, Hold, Unfold)."""
+    name: str                          # Stage identifier (e.g. "Step-1_Fold", "Step-2_Hold", "Step-3_Unfold")
+    stage_type: str                    # "FOLD", "HOLD", "UNFOLD"
+    duration: float = 1.0              # Pseudo-time duration for this stage (s)
+    theta_start_deg: float = 0.0       # Rotation angle at stage start (deg)
+    theta_target_deg: float = 90.0     # Target rotation angle at stage end (deg)
+    dt_init: float = 0.005             # Initial time increment (s)
+    dt_min: float = 1.0e-5             # Minimum allowed time increment (s)
+    dt_max: float = 0.02              # Maximum allowed time increment (s)
+
+
+@dataclass
 class SimulationCaseSpec:
     """Nonlinear solver runtime configuration and parameters."""
     dim: str = "3D"                   # "2D" or "3D"
@@ -97,6 +110,57 @@ class SimulationCaseSpec:
     tie_method: str = "MPC"           # "MPC" (algebraic elimination) or "PENALTY"
     contact_mode: str = "AUTO"        # "AUTO", "OFF", "DUAL_MORTAR"
     max_steps: Optional[int] = None   # Optional step limit for smoke tests
+    stages: Optional[List[StageSpec]] = None # Optional multi-stage sequence; None -> single-stage fold
+
+    def setup_multistage_cycle(
+        self,
+        fold_time: float = 1.0,
+        hold_time: float = 1.0,
+        unfold_time: float = 1.0,
+        theta_max_deg: Optional[float] = None,
+        dt_init: Optional[float] = None,
+        dt_min: Optional[float] = None,
+        dt_max: Optional[float] = None,
+    ) -> List[StageSpec]:
+        """Sets up canonical 3-stage Fold -> Hold -> Unfold cycle."""
+        th_max = self.theta_max_deg if theta_max_deg is None else theta_max_deg
+        dti = self.dt_init if dt_init is None else dt_init
+        dtm = self.dt_min if dt_min is None else dt_min
+        dtx = self.dt_max if dt_max is None else dt_max
+
+        self.stages = [
+            StageSpec(
+                name="Step-1_Fold",
+                stage_type="FOLD",
+                duration=fold_time,
+                theta_start_deg=0.0,
+                theta_target_deg=th_max,
+                dt_init=dti,
+                dt_min=dtm,
+                dt_max=dtx,
+            ),
+            StageSpec(
+                name="Step-2_Hold",
+                stage_type="HOLD",
+                duration=hold_time,
+                theta_start_deg=th_max,
+                theta_target_deg=th_max,
+                dt_init=dti,
+                dt_min=dtm,
+                dt_max=dtx,
+            ),
+            StageSpec(
+                name="Step-3_Unfold",
+                stage_type="UNFOLD",
+                duration=unfold_time,
+                theta_start_deg=th_max,
+                theta_target_deg=0.0,
+                dt_init=dti,
+                dt_min=dtm,
+                dt_max=dtx,
+            ),
+        ]
+        return self.stages
 
 
 class UnifiedFoldModelConfig:
@@ -319,6 +383,10 @@ class UnifiedFoldModelConfig:
         D_mono = sum(E_eff * (b * (t ** 3) / 12.0 + A * ((y_c - y_NA) ** 2)) for E_eff, t, y_c, A in layer_data)
 
         return D_slip, D_mono, y_NA
+
+    def setup_multistage_cycle(self, **kwargs) -> List[StageSpec]:
+        """Convenience forwarder to configure multi-stage cycle on simulation_case."""
+        return self.simulation_case.setup_multistage_cycle(**kwargs)
 
 
 # Aliases for specification consistency with PRD and tests
