@@ -26,9 +26,14 @@
 7. `*PLASTIC, HARDENING=KINEMATIC/COMBINED`, `*CYCLIC HARDENING`. 커널 `material/plastic_hardening.py`는 있으나 어떤 솔버도 참조하지 않음. 리더는 ISOTROPIC만 허용 (`keywords/material.py:278`). 반복 접힘 PET의 Bauschinger 효과에 필수. Chaboche 지원 범위는 미확인.
 8. `*STATIC, STABILIZE`. 리더 `Static`은 `direct`만 받음. 안정화는 레거시 `solver/stabilization.py`에만 있고 solver2d/3d에는 없음 (접촉 채터링 안정화는 별개). 포팅 필요.
 9. `*VISCO` 스텝 (시간영역 점탄성, CETOL). 스텝 종류는 STATIC/DYNAMIC뿐. 프레임워크는 PSA Prony(τ 0.05, 0.5 s)를 total_time=1.0과 함께 쓰므로 접힘 속도에 민감. STATIC dt가 물리 시간으로 쓰이는지 먼저 확인 (미확인).
-10. `*INITIAL CONDITIONS, TYPE=STRESS`. **2026-10-18 부분 해결**: 3D `C3D8`/`C3D8H`는 동작, 나머지 커널과 2D는 명시적 거부 (`dev_log/prd_initial_stress_20261018.md`). 종전에는 `create_solver*`에서 `AttributeError`. 열팽창(`*EXPANSION`)은 있음. 합지 잔류응력·curl 재현용.
+10. `*INITIAL CONDITIONS, TYPE=STRESS`. **2026-10-18 부분 해결**: 3D `C3D8`/`C3D8H`(NLGEOM 켬·끔 모두)는 동작, 나머지 커널과 2D는 명시적 거부 (`dev_log/prd_initial_stress_20261018.md`). 종전에는 `create_solver*`에서 `AttributeError`. 열팽창(`*EXPANSION`)은 있음. 합지 잔류응력·curl 재현용.
 11. `*RESTART`. `result_io`는 결과 저장만 있고 재시작은 없음.
+    - **2026-10-18 조사**: `MultiStepExecutor`에 메모리 내 `StateCheckpoint`(u, v, a, `elem_sdvs`, 누적 시간)와 스텝 분기용 복원이 있고 `tests/test_multi_step_*.py`가 있음. 디스크 재시작은 없음(분기 결과 pkl만 저장). 리더에 `*RESTART` 미등록.
+    - 체크포인트에 빠진 상태: 접촉 마찰 상태(`commit_friction_state` 대상), 갱신 라그랑지안 기준 `_ul_F_n`, 구속 객체 내부 상태, dt 제어기. 이대로 재개하면 모델이 달라질 수 있음.
+    - 판단: 설계(PRD)가 필요한 별도 작업. 이번 라운드에서는 구현하지 않음.
 12. `*ORIENTATION`은 PARTIAL. 재료 커널에 미연결. 이방성 필름용.
+    - **2026-10-18 조사**: 리더는 파싱·저장하고, 이방성 재료(`ENGINEERING CONSTANTS`)에 방향이 걸린 섹션은 `orientation-not-connected`로 **정의를 거부**(조용히 무시하지 않음, `keywords/material.py` `finalize_materials`). 등방성 재료는 정보 로그만 남기고 영향 없음.
+    - 폴더블 프레임워크의 재료(PET, PSA, GLASS, PLATE)는 모두 등방성이라 현재 영향 없음. 이방성 필름을 쓰게 될 때까지 보류.
 
 ## 3. 어려움
 

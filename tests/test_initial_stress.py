@@ -102,3 +102,24 @@ def test_s4_2d_refuses_initial_stress_explicitly(tmp_path):
     model = _read(tmp_path, deck, dim=2)
     with pytest.raises(NotImplementedError, match="2D.*initial stress"):
         model.create_solver2d()
+
+
+@pytest.mark.parametrize("elem_type", ["C3D8", "C3D8H"])
+def test_s3_nlgeom_off_internal_force_is_stress_times_area(tmp_path, elem_type):
+    # The step decides the kernel (NLGEOM=NO runs different ones from NLGEOM=YES); the same
+    # continuum-mechanics check must hold there.
+    model = _read(tmp_path, _cube_deck("EL, 10.0", elem_type), dim=3)
+    solver, sysm = model.create_solver3d("S1")
+    solver.assemble_system(np.zeros(solver.num_dofs))
+    f = np.asarray(solver.f_int).reshape(-1, 3)
+    x = np.asarray(sysm.coords)[:, 0]
+    assert f[x > 0.5, 0].sum() == pytest.approx(10.0, abs=1e-9)
+    assert f[x < 0.5, 0].sum() == pytest.approx(-10.0, abs=1e-9)
+    assert np.abs(f[:, 1:]).max() < 1e-9
+
+
+def test_s3_nlgeom_off_c3d8i_ignores_initial_stress_and_is_refused(tmp_path):
+    # Measured: C3D8I without NLGEOM returns f_int = 0 for S11 = 10 (kernel drops the field).
+    model = _read(tmp_path, _cube_deck("EL, 10.0", "C3D8I"), dim=3)
+    with pytest.raises(NotImplementedError, match="initial stress"):
+        model.create_solver3d("S1")

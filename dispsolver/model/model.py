@@ -1104,8 +1104,9 @@ class Model:
 
         # 3. Predefined fields: initial stress goes to the per-element Gauss-point array the kernels read
         # Kernels verified (tests/test_initial_stress.py) to put the field into f_int; 1 = C3D8 under
-        # NLGEOM (C3D8_CR), 2 = C3D8H. A kernel not listed here is refused rather than assumed.
-        stress_kernels = {1, 2}
+        # NLGEOM (C3D8_CR), 2 = C3D8H, 16/17 = C3D8/C3D8H without NLGEOM. A kernel not listed
+        # here is refused rather than assumed.
+        stress_kernels = {1, 2, 16, 17}
         for pf in sys.predefined_fields:
             if pf.field_type.upper() != "STRESS":
                 continue

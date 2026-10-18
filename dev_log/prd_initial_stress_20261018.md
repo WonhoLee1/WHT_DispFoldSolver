@@ -50,8 +50,8 @@ R5. 2D: 이번 범위에서는 계산을 구현하지 않는다. 대신 `create_
 
 ## 7. 결과 (2026-10-18)
 
-- 소비 확인된 커널: `C3D8` (NLGEOM 아래 k=1, C3D8_CR), `C3D8H` (k=2). u=0 내부력이 σ·A와 일치(1e-9).
-- 소비하지 않아 `NotImplementedError`로 거부: `C3D8I`, `C3D8R` (측정: NLGEOM 아래 S11=10에서 f_int=0). 이전에는 어떤 요소든 `create_solver3d`에서 `AttributeError`로 죽어 이 문제에 도달하지도 못했음.
+- 소비 확인된 커널: NLGEOM 켬 `C3D8`(k=1, C3D8_CR)·`C3D8H`(k=2), NLGEOM 끔 `C3D8`(k=16)·`C3D8H`(k=17). u=0 내부력이 σ·A와 일치(1e-9).
+- 소비하지 않아 `NotImplementedError`로 거부: `C3D8I`(NLGEOM 켬 k=11, 끔 k=18), `C3D8R`(켬 k=13, 끔 k=8). 측정: S11=10에서 f_int=0. 이전에는 어떤 요소든 `create_solver3d`에서 `AttributeError`로 죽어 이 문제에 도달하지도 못했음.
 - 2D: `NotImplementedError("2D solver does not support initial stress ...")`.
 - 미검증이라 거부 목록에 남은 커널: EAS TL(k=0), F-bar(k=3), C3D10M(k=4), C3D6(k=7), C3D4_ANP(k=9), C3D8I_CR(k=11), NLGEOM 끔 선형 C3D8(k=10) 등. 소스상 소비하는 것으로 보이는 것(k=0, 3, 7)은 테스트를 추가해 `stress_kernels`에 넣으면 지원됨.
 - 후속: (a) 위 커널별 테스트 추가, (b) C3D8I/C3D8R 커널 구현, (c) 2D 커널 전체 구현(별도 PRD).
