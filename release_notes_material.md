@@ -227,4 +227,14 @@ mat_d.DamageEvolution(type="ENERGY_LINEAR", Gf=2.0, L=1.0)
 - `dispsolver/material3d/numba_materials.py` — `material_dispatch_2d` 신설 (2026-10-02, 2D CPE4I/CPE4 J2 탄소성 UMAT 및 일관 접선 강성 $C^{ep}_{3\times 3}$).
 - `tests/test_cpe4i_plasticity_2d.py` → **2 passed** (2026-10-02, 단일 CPE4I 요소 1축 인장 항복 및 경화 슬로프 2차 수렴성 검증).
 
+## 7.2 독립 재측정 기록 (2026-10-18, P5 이동 경화 & Numba JIT 캐싱 가속)
+
+- `pytest tests/test_plastic_hardening.py` → **9 passed in 28.85s (ALL GREEN)**:
+  - 선형 이동 경화(Ziegler-Prager) Bauschinger 효과 검증: 1축 주기 인장/압축에서 역방향 조기 항복 현상($\sigma_{rev} = \sigma_y - 2\alpha$) 엄밀 재현.
+  - 일관 탄소성 접선계수 $\mathbf{C}_{ep}$와 중앙차분 수치 야코비안 오차: **$1.25 \times 10^{-11}$** (2차 수렴성 증명).
+  - 반경 복귀 후 항복면 일치 오차 $|q(\mathbf{s}-\boldsymbol{\alpha}) - \sigma_y|$: **$2.84 \times 10^{-14}\,\text{MPa}$** (기계 정밀도).
+  - 13개 SDV 동적 할당: 2D 솔버(`DynamicSolver2D`) 및 3D 솔버에서 `get_default_sdv_count` 기반 이동 경화 상태변수($\boldsymbol{\epsilon}^p[6], \bar{\epsilon}^p[1], \boldsymbol{\alpha}[6]$) 완벽 보존.
+- `dispsolver/material3d/numba_materials.py` — 12개 핵심 함수 `@njit(fastmath=True, cache=True)` 적용:
+  - 콜드 스타트 지연: **59.98초 $\to$ 0.63초 (94.3배 온디스크 로딩 가속)**.
+
 

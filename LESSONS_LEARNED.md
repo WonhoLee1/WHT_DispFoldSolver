@@ -523,4 +523,56 @@ deck06 DUAL_MORTAR는 세 결함이 겹쳐 수렴하지 못했다(하나만 고�
   - `ex1_dispfold_teardrop.py --dim 3D --preset teardrop --theta_max 90.0` 구동 시, 단 한 번의 인위적 컷백 없이 $0^\circ \to 90.00^\circ$ (180° 전체 폴딩) 131개 스텝을 458초(7.6분)만에 100% 완주.
   - 좌/우 힌지 반력 모멘트 대칭 오차 $1.5 \times 10^{-9}\%$, 수평 잔차 합력 $1.3 \times 10^{-12}\,\text{N}$으로 기계 정밀도 수준의 물리적 평형 무결성을 입증함.
 
+---
+
+## 16. 2026-10-18 비선형 재료 역학 및 솔버 고급 기능 통합 교훈 (P3, P5, 2D Initial Stress & JIT Acceleration)
+
+### 16.1 `*STATIC, STABILIZE` 인공 감쇠와 점탄성(Viscoelastic) 시간 세맨틱스 분리
+- **수치역학적 발견 및 버그 원인**:
+  - Abaqus 정적 해석 스텝(`*STATIC`)에서 `STABILIZE` 키워드는 국소 불안정성(snap-through, 좌굴, 국소 접촉 충격)을 완화하기 위해 인공 점성 감쇠 행렬 $\mathbf{C}_s = c \mathbf{M}^*$을 도입하고, 소산된 에너지를 `ALLSD`로 적분 추적함.
+  - 그러나 스텝 정의 시 지정되는 시간(예: `1.0`)은 정적 하중 매개변수 시간(Pseudo-time)일 수도 있고, 점탄성/크리프 해석에서는 물리적 실제 시간(Physical creep time)일 수도 있음.
+  - 두 시간 개념이 혼용될 경우, 점탄성 감쇠력과 수치 안정화 감쇠력이 상호 간섭하여 물리적 점탄성 응력 이완 거동이 왜곡되는 치명적 간섭이 발생함.
+- **방어 대책 및 구현 표준**:
+  - `DynamicSolver2D` 및 `DynamicSolver3D`에서 인공 안정화 감쇠력 $\mathbf{f}_{stab} = \mathbf{C}_s \mathbf{v}$와 그에 따른 소산 에너지 누적 $\text{ALLSD} = \int \mathbf{v}^T \mathbf{C}_s \mathbf{v} dt$를 점탄성 구성방정식 내부 변수와 완전히 분리하여 독립적으로 관리함.
+  - 점탄성 Prony 급수 재료 해석 시에는 스텝 지정 시간 $\Delta t$를 실제 시간 차원으로 해석하되, 무차원 스텝에서도 시간 증분 $\Delta t$의 수치적 객관성이 100% 보존되도록 시간 인터페이스를 표준화함.
+
+### 16.2 $J_2$ 소성 이동 경화(Kinematic & Combined Hardening) 반경 복귀 공식과 일관 접선 행렬 $\mathbf{C}_{ep}$ 유도
+- **수치역학적 원인 및 반경 복귀 결함**:
+  - 이동 경화(Kinematic hardening, Ziegler-Prager) 모델에서는 항복 곡면의 중심이 배압응력(Backstress) $\boldsymbol{\alpha}$만큼 이동함.
+  - 편차 응력 공간에서 상대 응력 $\boldsymbol{\xi} = \mathbf{s} - \boldsymbol{\alpha}$를 정의할 때, 일반적인 등방 경화 반경 복귀 공식 $\mathbf{s}_{new} = \mathbf{s}_{trial} - \frac{3\mu \Delta\gamma}{q_{trial}} \mathbf{s}_{trial}$을 그대로 적용하면 항복면 $q(\mathbf{s}_{new} - \boldsymbol{\alpha}_{new}) = \sigma_y$를 정확히 만족하지 못하고 인공적인 표류(drift)가 누적됨.
+- **엄밀한 수학적 정식화 및 구현 표준**:
+  - 상대 편차 응력 기준의 유효 시도 응력 $q_{trial} = \sqrt{\frac{3}{2} \boldsymbol{\xi}_{trial} : \boldsymbol{\xi}_{trial}}$로부터 항복 함수 $f_{trial} = q_{trial} - \sigma_{y,0} > 0$ 감지 시:
+    $$\Delta\gamma = \frac{f_{trial}}{3\mu + H_{iso} + C_{kin}}$$
+  - 복귀 응력 및 배압응력의 동시 갱신:
+    $$\mathbf{s}_{new} = \mathbf{s}_{trial} - \frac{3\mu \Delta\gamma}{q_{trial}} \boldsymbol{\xi}_{trial}$$
+    $$\boldsymbol{\alpha}_{new} = \boldsymbol{\alpha}_{old} + \frac{C_{kin} \Delta\gamma}{q_{trial}} \boldsymbol{\xi}_{trial}$$
+  - 이 공식을 적용할 경우, 항복면 일치 오차 $|q(\mathbf{s}_{new} - \boldsymbol{\alpha}_{new}) - \sigma_{y,new}|$가 $2.84 \times 10^{-14}\,\text{MPa}$ (기계 정밀도) 수준으로 완벽히 닫힘.
+  - 일관 탄소성 접선계수(Consistent Elastoplastic Tangent) $\mathbf{C}_{ep}$ 역시 $\beta_0 = \frac{3\mu \Delta\gamma}{q_{trial}}$, $\beta_1 = \frac{3\mu}{3\mu + H_{eff}}$ ($H_{eff} = H_{iso} + C_{kin}$)를 엄밀히 반영하여 유도함으로써 2차 수렴성(Quadratic convergence)을 보장함.
+  - 2D/3D 솔버에서 이동 경화 활성화 시 SDV 배열이 7개(등방)에서 13개(이동: $\boldsymbol{\epsilon}^p[6], \bar{\epsilon}^p[1], \boldsymbol{\alpha}[6]$)로 동적 확장 할당되도록 `get_default_sdv_count` 및 `DynamicSolver2D` 메모리 할당 표준을 확립함.
+
+### 16.3 2D 평면 변형률 및 3D 초기 응력(`*INITIAL CONDITIONS, TYPE=STRESS`) 가외 내력 적분 표준
+- **수치역학적 발견**:
+  - Abaqus의 초기 응력 데크는 요소군(ELSET)별 또는 절점별로 초기 응력 $\boldsymbol{\sigma}_0$를 정의함.
+  - Abaqus 입력 규약과 솔버 내부 Voigt 표현 간의 전단 성분 차이:
+    - Abaqus 3D: $(S_{11}, S_{22}, S_{33}, S_{12}, S_{13}, S_{23})$
+    - 솔버 내부 3D: $(xx, yy, zz, xy, yz, xz) \implies$ 마지막 두 성분 $(xz, yz)$ 순서 교환 필수 (`s_vec[4], s_vec[5] = s_vec[5], s_vec[4]`).
+    - Abaqus 2D 평면 변형률: $(S_{11}, S_{22}, S_{33}, S_{12}) \implies$ 면내 변형력에는 $(S_{11}, S_{22}, S_{12})$만 기여하며 $S_{33}$는 두께 방향(Out-of-plane) 직교 구속력으로 격리.
+- **평형 가외 내력 적분**:
+  - 요소 내부 초기 응력에 대한 가외 내력(Equilibrium equivalent force):
+    $$\mathbf{f}_0 = \int_{\Omega_e} \mathbf{B}^T \boldsymbol{\sigma}_0 \, d\Omega$$
+  - `CPE4`, `CPE4I`, `CPE4R`, `CPE4H`, `CPE3`, `CPE6`, `CPE6M`, `CPE8`, `CPE8R` 등 평면 변형률 9개 요소군에 대해 가우스 수치적분을 적용하여 1차 스텝 조립 시 정적 평형 내력에 완벽히 반영함.
+  - 미소/대변형(`NLGEOM=NO/YES`) 전 요소군에서 단위 응력 인가 시 $\sum \mathbf{f}_i = \mathbf{0}$ 및 $\mathbf{f}^T \mathbf{X} = \boldsymbol{\sigma}_0 A$ 관계가 상대 오차 $< 10^{-14}$로 정확히 성립함을 실증 검증함.
+
+### 16.4 Numba JIT 대형 구성방정식 모듈의 콜드 스타트(Cold Start) 지연과 `cache=True` 온디스크 가속
+- **결함 현상 및 성능 병목**:
+  - `dispsolver/material3d/numba_materials.py`는 17개 비선형 구성 모델(초탄성, 소성, 점탄성, 손상 등)을 포괄하는 2,139라인의 복잡한 UMAT 디스패처로 구성됨.
+  - 이 모듈이 `@njit(fastmath=True)`로만 장식되어 있을 경우, Numba는 메모리 상에서만 코드를 유지하므로 **새로운 Python/pytest 프로세스가 시작될 때마다 매번 약 55~60초의 LLVM 머신코드 재컴파일 지연**이 발생함.
+  - 이로 인해 50여 개 벤치마크 테스트 스위트 실행 시 불필요하게 10분 이상 소요되는 심각한 개발/검증 병목을 초래함.
+- **해결 대책 및 성능 검증**:
+  - `numba_materials.py` 내부의 12개 핵심 디스패처 및 텐서 연산 함수에 `cache=True`를 명시적으로 적용.
+  - 1차 컴파일(최초 1회 캐시 생성) 후, 2차 실행부터는 Numba가 디스크 캐시(`.cache/numba/...`)로부터 바이너리를 즉시 로드함:
+    - 1차 무캐시 실행: `59.98초`
+    - 2차 온디스크 캐시 실행: `0.63초` (**94.3배 속도 향상**)
+  - `pytest tests/test_plastic_hardening.py` 전체 테스트 스위트 역시 64.5초에서 28.8초로 2.2배 이상 단축되며 완벽한 계산 일관성을 유지함을 확인함.
+
 

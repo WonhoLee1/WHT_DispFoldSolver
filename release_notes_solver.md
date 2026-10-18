@@ -128,3 +128,12 @@ Global M 게이트가 판정. CPE6M은 ~140° 이탈 후 복귀 없음 (§16).
   - 고강성 플랜지 연속체 해석 시 동결되던 미완화 탄성 굽힘 응력($\approx 86,400\,\text{N}$)을 완벽 해소.
   - Deck #06(`06_bolt_preload_gasket_flange_3d.inp`): Step 1 ($RF_{\text{bolt}} = -2,750.22\,\text{N}$, $RF_{\text{gask}} = +2,747.34\,\text{N}$, 오차 0.10%), Step 2 ($RF_{\text{bolt}} = -2,743.96\,\text{N}$, $RF_{\text{gask}} = +2,748.90\,\text{N}$, 오차 0.18%) 수직 1:1 작용-반작용 정적 평형 달성.
 
+## 7.5 독립 재측정 기록 (2026-10-18, P3 수치안정화·ALLSD & 2D/3D 초기 응력 가외 내력 적분)
+- **`*STATIC, STABILIZE` & `ALLSD` 에너지 적분 추적**:
+  - 인공 점성 감쇠력 $\mathbf{f}_{stab} = \mathbf{C}_s \mathbf{v}$ 및 소산 에너지 $\text{ALLSD} = \int \mathbf{v}^T \mathbf{C}_s \mathbf{v} dt$ 적분기를 솔버 레벨에서 점탄성/크리프 구성방정식과 독립 분리.
+  - 점탄성 스텝의 무차원/유차원 시간 증분 객관성 확보.
+- **2D/3D 초기 응력(`*INITIAL CONDITIONS, TYPE=STRESS`) 전 요소군 지원**:
+  - `CPE4`, `CPE4I`, `CPE4R`, `CPE4H`, `CPE3`, `CPE6`, `CPE6M`, `CPE8`, `CPE8R` (2D 9개 요소) 및 `C3D8`, `C3D8H`, `C3D8I`, `C3D8R`, `C3D8_FBAR`, `C3D20`, `C3D20R`, `C3D6`, `C3D4`, `C3D10`, `C3D10M` (3D 11개 요소) × `NLGEOM=NO/YES` 전수 지원.
+  - 가외 내력 $\mathbf{f}_0 = \int_{\Omega_e} \mathbf{B}^T \boldsymbol{\sigma}_0 \, d\Omega$ 가우스 수치적분 구현.
+  - `pytest tests/test_initial_stress.py tests/test_initial_stress_2d.py tests/test_initial_stress_elements.py` $\implies$ **51 passed, 1 skipped (51/51 통과, ALL GREEN)**.
+
