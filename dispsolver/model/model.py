@@ -1102,48 +1102,34 @@ class Model:
                             )
                             solver.add_constraint(rc)
 
-        # 3. Apply Predefined Fields (Initial Stress/SDV)
+        # 3. Predefined fields: initial stress goes to the per-element Gauss-point array the kernels read
+        # Kernels verified (tests/test_initial_stress.py) to put the field into f_int; 1 = C3D8 under
+        # NLGEOM (C3D8_CR), 2 = C3D8H. A kernel not listed here is refused rather than assumed.
+        stress_kernels = {1, 2}
+        for pf in sys.predefined_fields:
+            if pf.field_type.upper() != "STRESS":
+                continue
+            for idx in self._get_elset_indices(sys, pf.region):
+                kern = solver._row_kernel.get(int(idx))
+                if kern not in stress_kernels:
+                    raise NotImplementedError(
+                        f"initial stress (*INITIAL CONDITIONS, TYPE=STRESS, region {pf.region!r}): element row {idx} "
+                        f"runs kernel {kern}, which does not apply it; supported kernels {sorted(stress_kernels)}")
+                s_vec = np.zeros(6, dtype=np.float64)
+                if callable(pf.values):
+                    # evaluated once at the element centroid, not per quadrature point
+                    cx, cy, cz = np.mean(sys.coords[sys.elem_conn_0based[idx]], axis=0)
+                    s_vec[:] = pf.values(cx, cy, cz)
+                elif isinstance(pf.values, (list, np.ndarray, tuple)):
+                    vals = np.asarray(pf.values, dtype=np.float64)
+                    if vals.size > 6:
+                        raise ValueError(f"initial stress for {pf.region!r}: {vals.size} values, "
+                                         "at most 6 (S11 S22 S33 S12 S13 S23)")
+                    s_vec[:vals.size] = vals       # omitted components are zero (Keywords Guide)
+                else:
+                    s_vec[:3] = float(pf.values)   # scalar -> hydrostatic
+                solver.elem_stress_init[idx, :, :] = s_vec
 
-        if len(sys.predefined_fields) > 0:
-            inv_eid = {idx: g for g, idx in sys.elem_local_to_global.items()} if hasattr(sys, 'elem_local_to_global') else {}
-            # Fallback if elem_local_to_global is not structured that way, just use idx -> gid
-            # Wait, sys.elem_local_to_global is Dict[Tuple[str, int], int], where int is gid.
-            # But we want 0-based index to gid. In sys.global_elsets, it gives 0-based indices.
-            # So gid = idx + 1
-            for pf in sys.predefined_fields:
-                if pf.field_type.upper() == "STRESS":
-                    el_indices = self._get_elset_indices(sys, pf.region)
-                    for idx in el_indices:
-                        gid = idx + 1
-                        states = solver.element_states.get(gid)
-                        if states:
-                            # pf.values can be scalar, array, or callable
-                            for q, state in enumerate(states):
-                                # Determine stress vector
-                                s_vec = np.zeros(6, dtype=np.float64)
-                                if callable(pf.values):
-                                    # We don't have natural coordinates handy here, so we approximate with element centroid
-                                    # In a full implementation, we'd query the exact quadrature point coords
-                                    # For now, approximate centroid:
-                                    conn = sys.elem_conn_0based[idx]
-                                    coords = sys.coords[conn]
-                                    cx, cy, cz = np.mean(coords, axis=0)
-                                    val = pf.values(cx, cy, cz)
-                                    s_vec[:] = val
-                                elif isinstance(pf.values, (list, np.ndarray, tuple)):
-                                    s_vec[:] = pf.values
-                                else:
-                                    # scalar -> hydrostatic pressure
-                                    p = float(pf.values)
-                                    s_vec[0] = p
-                                    s_vec[1] = p
-                                    s_vec[2] = p
-                                state.stress_initial[:] = s_vec
-                            
-                            # Also update the DOD fast path array if it exists
-                            if hasattr(solver, "elem_stress_init") and solver.elem_stress_init is not None:
-                                solver.elem_stress_init[idx, :, :] = s_vec
-                            
         return solver, sys
 
     def create_solver2d(self, step_name: Optional[str] = None, notices: Optional[list] = None):
@@ -1203,34 +1189,12 @@ class Model:
                             )
                             solver.add_constraint(rc)
 
-        # Apply Predefined Fields (Initial Stress/SDV)
-        if len(sys.predefined_fields) > 0:
-            for pf in sys.predefined_fields:
-                if pf.field_type.upper() == "STRESS":
-                    el_indices = self._get_elset_indices(sys, pf.region)
-                    for idx in el_indices:
-                        gid = idx + 1
-                        states = solver.element_states.get(gid)
-                        if states:
-                            for q, state in enumerate(states):
-                                s_vec = np.zeros(3, dtype=np.float64)
-                                if callable(pf.values):
-                                    conn = sys.elem_conn_0based[idx]
-                                    coords = sys.coords[conn]
-                                    cx, cy = np.mean(coords[:, :2], axis=0)
-                                    val = pf.values(cx, cy)
-                                    s_vec[:] = val
-                                elif isinstance(pf.values, (list, np.ndarray, tuple)):
-                                    s_vec[:] = pf.values[:3]
-                                else:
-                                    p = float(pf.values)
-                                    s_vec[0] = p
-                                    s_vec[1] = p
-                                    s_vec[2] = 0.0
-                                state.stress_initial[:] = s_vec
-                            
-                            if hasattr(solver, "elem_stress_init") and solver.elem_stress_init is not None:
-                                solver.elem_stress_init[idx, :, :] = s_vec
-                            
+        # Predefined fields: no 2D kernel reads an initial stress, so refuse instead of solving another model
+        for pf in sys.predefined_fields:
+            if pf.field_type.upper() == "STRESS":
+                raise NotImplementedError(
+                    f"2D solver does not support initial stress (*INITIAL CONDITIONS, TYPE=STRESS, region {pf.region!r}); "
+                    "use the 3D solver or remove the field")
+
         return solver, sys
 
