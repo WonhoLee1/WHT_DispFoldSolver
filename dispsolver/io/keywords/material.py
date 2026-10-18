@@ -276,7 +276,7 @@ class Plastic(Keyword):
         # kinematic hardening is not represented (the model hardens isotropically); Johnson-Cook
         # plasticity has no solver material (material_id refuses it)
         hardening: Literal["ISOTROPIC", "KINEMATIC", "MULTILINEAR KINEMATIC", "COMBINED", "JOHNSON COOK", "USER"] = Param(
-            "ISOTROPIC", supported=("ISOTROPIC",))
+            "ISOTROPIC", supported=("ISOTROPIC", "KINEMATIC", "COMBINED"))
         rate: Optional[str] = Param(None, unsupported="PLASTIC RATE not supported")
         dependencies: int = 0
         data_type: Optional[str] = Param(None, unsupported="PLASTIC DATA TYPE not supported")
@@ -298,7 +298,7 @@ class Plastic(Keyword):
             raise InputError("*PLASTIC: the first plastic strain must be zero (Keywords Guide)")
         if len(table) > 10:
             raise Unsupported(f"*PLASTIC: {len(table)} hardening points; the tabular kernel holds 10")
-        yield PlasticRecord(hardening="ISOTROPIC", kind=kind, table=table, loc=ctx.loc)
+        yield PlasticRecord(hardening=p.hardening, kind=kind, table=table, loc=ctx.loc)
 
 
 @applies(PlasticRecord)
@@ -306,6 +306,37 @@ def _apply_plastic(reader: AbaqusInputReader, rec: PlasticRecord) -> None:
     mat = reader.current_material
     if mat is not None:
         mat.Plastic(table=rec.table, hardening=rec.hardening)
+
+
+# ─── 4b. *CYCLIC HARDENING ───────────────────────────────────────────────────
+
+@dataclass(frozen=True)
+class CyclicHardeningRecord(Record):
+    table: Tuple[Tuple[float, ...], ...]
+
+
+@keyword("CYCLIC HARDENING", support="FULL", contexts={KeywordContext.MATERIAL, KeywordContext.GLOBAL})
+class CyclicHardening(Keyword):
+    """Specifies nonlinear isotropic hardening in combination with kinematic hardening or alone."""
+
+    class Params(Schema):
+        parameters: Optional[str] = Param(None, control=True)
+        dependencies: int = 0
+
+    Row = FloatRow
+
+    def to_records(self, p, rows, ctx) -> Iterable[Record]:
+        kind, table = _tabulate("CYCLIC HARDENING", rows, 3, p.dependencies, ("yield stress", "Q_inf", "b"), curve=True)
+        if kind != "const":
+            raise Unsupported("*CYCLIC HARDENING: temperature- or field-dependent table is not represented")
+        yield CyclicHardeningRecord(table=table, loc=ctx.loc)
+
+
+@applies(CyclicHardeningRecord)
+def _apply_cyclic_hardening(reader: AbaqusInputReader, rec: CyclicHardeningRecord) -> None:
+    mat = reader.current_material
+    if mat is not None:
+        mat.CyclicHardening(table=rec.table)
 
 
 # ─── 5. *CREEP ───────────────────────────────────────────────────────────────

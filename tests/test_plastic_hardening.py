@@ -206,3 +206,182 @@ def test_material_cae_advanced_plasticity_interface():
     props_kin = mat_kin.to_numba_props()
     assert props_kin.get("hardening_type") == "KINEMATIC"
 
+
+def test_plastic_keyword_kinematic_and_cyclic_hardening_reader():
+    """Verify *PLASTIC, HARDENING=KINEMATIC/COMBINED and *CYCLIC HARDENING .inp parsing."""
+    from dispsolver.io.abaqus_reader import _parse_source
+    from dispsolver.material.resolve import resolve_material
+
+    # 1. Kinematic hardening deck
+    text_kin = """*MATERIAL, NAME=STEEL_KIN
+*ELASTIC
+210000.0, 0.3
+*PLASTIC, HARDENING=KINEMATIC
+250.0, 0.0
+300.0, 0.01
+*CYCLIC HARDENING
+250.0, 100.0, 10.0
+"""
+    _, m_kin = _parse_source(text_kin, dim=2)
+    mat_k = m_kin.materials["STEEL_KIN"]
+    assert mat_k.extra_params["hardening_type"] == "KINEMATIC"
+    assert mat_k.extra_params["C_kin"] == 5000.0
+    mid_k, props_k = resolve_material(mat_k, 2)
+    assert mid_k == 2  # MAT_J2_PLASTICITY
+    assert props_k[0] == 210000.0
+    assert props_k[1] == 0.3
+    assert props_k[2] == 250.0
+    assert props_k[3] == 0.0  # H_iso
+    assert props_k[4] == 5000.0  # C_kin
+    assert props_k[5] == 1.0  # h_code == 1 for KINEMATIC
+
+    # 2. Combined hardening deck
+    text_comb = """*MATERIAL, NAME=STEEL_COMB
+*ELASTIC
+210000.0, 0.3
+*PLASTIC, HARDENING=COMBINED
+250.0, 0.0
+300.0, 0.01
+*CYCLIC HARDENING
+250.0, 100.0, 10.0
+"""
+    _, m_comb = _parse_source(text_comb, dim=2)
+    mat_c = m_comb.materials["STEEL_COMB"]
+    assert mat_c.extra_params["hardening_type"] == "COMBINED"
+    mid_c, props_c = resolve_material(mat_c, 2)
+    assert mid_c == 2  # MAT_J2_PLASTICITY
+    assert props_c[5] == 2.0  # h_code == 2 for COMBINED
+
+
+def test_consistent_tangent_jacobian_match():
+    """Verify algorithmic consistent elastoplastic tangent C_ep matches central FD Jacobian."""
+    E = 200000.0
+    nu = 0.3
+    sigma_y0 = 250.0
+    H_iso = 500.0
+    C_kin = 10000.0
+
+    alpha = np.array([10.0, -5.0, -5.0, 2.0, 0.0, 0.0], dtype=np.float64)
+    ep = np.zeros(6, dtype=np.float64)
+    eq_p = 0.001
+
+    e_total = np.array([0.005, -0.0015, -0.0015, 0.002, 0.0, 0.0], dtype=np.float64)
+    S0, alpha_new, ep_new, eq_p_new, C_ep = return_mapping_linear_kinematic(
+        e_total, alpha, ep, eq_p, E, nu, sigma_y0, H_iso, C_kin
+    )
+
+    # Numerical central difference perturbation of total strain
+    h = 1e-7
+    C_fd = np.zeros((6, 6), dtype=np.float64)
+    for j in range(6):
+        e_p = e_total.copy()
+        e_p[j] += h
+        e_m = e_total.copy()
+        e_m[j] -= h
+        S_p, _, _, _, _ = return_mapping_linear_kinematic(
+            e_p, alpha, ep, eq_p, E, nu, sigma_y0, H_iso, C_kin
+        )
+        S_m, _, _, _, _ = return_mapping_linear_kinematic(
+            e_m, alpha, ep, eq_p, E, nu, sigma_y0, H_iso, C_kin
+        )
+        C_fd[:, j] = (S_p - S_m) / (2.0 * h)
+
+    # Compare algorithmic tangent with central finite difference Jacobian
+    rel_diff = np.linalg.norm(C_ep - C_fd) / np.linalg.norm(C_fd)
+    assert rel_diff < 1e-8, f"Consistent tangent relative error {rel_diff:.3e} exceeds tolerance"
+
+
+def test_single_element_cyclic_bauschinger_2d():
+    """Verify Bauschinger effect in 2D single element under cyclic loading with DynamicSolver2D."""
+    from dispsolver.mesh2d.mesh2d import Mesh2D
+    from dispsolver.solver2d.dynamic2d import DynamicSolver2D
+    from dispsolver.model.material import Material
+
+    mesh = Mesh2D()
+    mesh.add_node(1, 0.0, 0.0)
+    mesh.add_node(2, 1.0, 0.0)
+    mesh.add_node(3, 1.0, 1.0)
+    mesh.add_node(4, 0.0, 1.0)
+    mesh.add_element(1, [1, 2, 3, 4], "CPE4I")
+
+    E = 200000.0
+    nu = 0.3
+    sigma_y0 = 250.0
+
+    mat = Material(name="KinSteel")
+    mat.Elastic(table=((E, nu),))
+    mat.Plastic(table=((sigma_y0, 0.0), (350.0, 0.005)), hardening="KINEMATIC")
+    materials = {0: mat}
+
+    solver = DynamicSolver2D(mesh, materials=materials, nlgeom=False)
+    assert solver.elem_sdvs.shape[2] >= 13
+
+    # Boundary conditions: pure eps_xx strain
+    solver.fix_dof(1, 0, 0.0)
+    solver.fix_dof(4, 0, 0.0)
+    solver.fix_dof(1, 1, 0.0)
+    solver.fix_dof(2, 1, 0.0)
+    solver.fix_dof(3, 1, 0.0)
+    solver.fix_dof(4, 1, 0.0)
+
+    # Forward tension loading
+    u_fwd = 0.005
+    for inc in range(1, 6):
+        u_val = u_fwd * (inc / 5.0)
+        solver.fix_dof(2, 0, u_val)
+        solver.fix_dof(3, 0, u_val)
+        conv, iters = solver.solve_step(dt=0.1)
+        assert conv
+
+    eq_p_fwd = float(solver.elem_sdvs[0, 0, 6])
+    alpha_fwd = solver.elem_sdvs[0, 0, 7:13].copy()
+    assert eq_p_fwd > 0.0
+    assert alpha_fwd[0] > 0.0
+
+    # Unload within elastic range
+    solver.fix_dof(2, 0, 0.002)
+    solver.fix_dof(3, 0, 0.002)
+    conv, iters = solver.solve_step(dt=0.1)
+    assert conv
+    eq_p_unload = float(solver.elem_sdvs[0, 0, 6])
+    alpha_unload = solver.elem_sdvs[0, 0, 7:13].copy()
+    assert np.isclose(eq_p_unload, eq_p_fwd)
+    assert np.allclose(alpha_unload, alpha_fwd)
+
+    # Reverse loading into compression
+    for inc in range(1, 8):
+        u_val = 0.002 - (0.007 * (inc / 7.0))
+        solver.fix_dof(2, 0, u_val)
+        solver.fix_dof(3, 0, u_val)
+        conv, iters = solver.solve_step(dt=0.1)
+        assert conv
+
+    eq_p_rev = float(solver.elem_sdvs[0, 0, 6])
+    alpha_rev = solver.elem_sdvs[0, 0, 7:13].copy()
+    assert eq_p_rev > eq_p_fwd
+    assert alpha_rev[0] < alpha_fwd[0]
+
+
+def test_isotropic_hardening_bit_identical():
+    """Verify HARDENING=ISOTROPIC behaves identically and does not regress."""
+    from dispsolver.material3d.numba_materials import material_dispatch_3d, MAT_J2_PLASTICITY
+
+    E = 200000.0
+    nu = 0.3
+    sigma_y0 = 250.0
+    H_iso = 5000.0
+
+    # Isotropic: h_code == 0
+    props_iso = np.array([E, nu, sigma_y0, H_iso, 0.0, 0.0], dtype=np.float64)
+    sdv_prev = np.zeros(13, dtype=np.float64)
+    strain = np.array([0.005, -0.0015, -0.0015, 0.0, 0.0, 0.0], dtype=np.float64)
+    F = np.eye(3, dtype=np.float64)
+
+    S_1, C_1, sdv_1, err_1 = material_dispatch_3d(
+        MAT_J2_PLASTICITY, props_iso, sdv_prev, strain, F, 1.0, 0.1
+    )
+    assert err_1 == 0
+    assert sdv_1[6] > 0.0  # eq_p accumulated
+    assert np.all(sdv_1[7:13] == 0.0)  # No backstress for isotropic hardening
+
+

@@ -36,6 +36,7 @@ from dispsolver.solver3d.assembly_utils import (
 # 6 CPE3, 7 CPE6, 9 CPE8, 10 CPE8R, 18 T2D2.
 from dispsolver.model.element_catalog import cr_wrapped_kernels as _cr_wrapped_kernels
 from dispsolver.material.catalog import is_linear_elastic
+from dispsolver.material3d.numba_materials import get_default_sdv_count
 _CR_WRAPPED_KERNELS_2D = _cr_wrapped_kernels(2)
 from dispsolver.model.element_catalog import KERNELS as _KERNEL_TABLE
 _KERNELS_2D = _KERNEL_TABLE[2]
@@ -210,7 +211,10 @@ class DynamicSolver2D:
 
         self._build_kernel_groups()
 
-        self.elem_sdvs = np.zeros((n_elems, 9, 7), dtype=np.float64)
+        max_sdvs = 7
+        for mt in self.elem_mat_types:
+            max_sdvs = max(max_sdvs, get_default_sdv_count(mt))
+        self.elem_sdvs = np.zeros((n_elems, 9, max_sdvs), dtype=np.float64)
         # *INITIAL CONDITIONS, TYPE=STRESS: element value, Abaqus plane-strain order xx yy zz xy
         self.elem_stress_init = np.zeros((n_elems, 4), dtype=np.float64)
 

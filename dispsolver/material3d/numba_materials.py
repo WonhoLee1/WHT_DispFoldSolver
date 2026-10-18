@@ -56,7 +56,7 @@ def get_default_sdv_count(mat_type: int) -> int:
     elif mat_type == MAT_HYPERELASTIC_MARLOW:
         return 0
     elif mat_type == MAT_J2_PLASTICITY:
-        return 7  # eq_plastic_strain (1), plastic_strain_tensor (6)
+        return 13  # plastic_strain_tensor (6), eq_plastic_strain (1), backstress (6)
     elif mat_type == MAT_J2_PLASTICITY_NONLINEAR:
         return 7  # eq_plastic_strain (1), plastic_strain_tensor (6)
     elif mat_type == MAT_J2_PLASTICITY_TABULAR:
@@ -707,11 +707,14 @@ def material_dispatch_3d(
                 C_mat[i, j] = (S_p[i] - S_m[i]) / (2.0 * h)
 
     elif mat_type == MAT_J2_PLASTICITY:
-        # props: [E, nu, sigma_y0, H]
+        # props: [E, nu, sigma_y0, H_iso, C_kin, h_code]
         E = props[0]
         nu = props[1]
         sigma_y0 = props[2]
-        H = props[3]
+        H_iso = props[3]
+        C_kin = props[4] if len(props) > 4 else 0.0
+        h_code = props[5] if len(props) > 5 else 0.0
+        H_eff = H_iso + C_kin
 
         mu = E / (2.0 * (1.0 + nu))
         K = E / (3.0 * (1.0 - 2.0 * nu))
@@ -727,10 +730,14 @@ def material_dispatch_3d(
 
         ep_old = np.zeros(6, dtype=np.float64)
         eq_p_old = 0.0
+        alpha_old = np.zeros(6, dtype=np.float64)
         if len(sdv_prev) >= 7:
             for i in range(6):
                 ep_old[i] = sdv_prev[i]
             eq_p_old = sdv_prev[6]
+        if len(sdv_prev) >= 13 and h_code > 0.5:
+            for i in range(6):
+                alpha_old[i] = sdv_prev[7 + i]
 
         e_trial = E_voigt - ep_old
         trace_e = e_trial[0] + e_trial[1] + e_trial[2]
@@ -750,12 +757,20 @@ def material_dispatch_3d(
         s_trial[4] = mu * e_dev[4]
         s_trial[5] = mu * e_dev[5]
 
-        norm_s = np.sqrt(
-            s_trial[0]**2 + s_trial[1]**2 + s_trial[2]**2 +
-            2.0 * (s_trial[3]**2 + s_trial[4]**2 + s_trial[5]**2)
+        xi_trial = np.zeros(6, dtype=np.float64)
+        if h_code > 0.5:
+            for i in range(6):
+                xi_trial[i] = s_trial[i] - alpha_old[i]
+        else:
+            for i in range(6):
+                xi_trial[i] = s_trial[i]
+
+        norm_xi = np.sqrt(
+            xi_trial[0]**2 + xi_trial[1]**2 + xi_trial[2]**2 +
+            2.0 * (xi_trial[3]**2 + xi_trial[4]**2 + xi_trial[5]**2)
         )
-        q_trial = np.sqrt(1.5) * norm_s
-        sigma_y_cur = sigma_y0 + H * eq_p_old
+        q_trial = np.sqrt(1.5) * norm_xi
+        sigma_y_cur = sigma_y0 + H_iso * eq_p_old
         f_trial = q_trial - sigma_y_cur
 
         hydro_p = K * trace_e
@@ -764,11 +779,14 @@ def material_dispatch_3d(
             S_voigt[0] += hydro_p
             S_voigt[1] += hydro_p
             S_voigt[2] += hydro_p
+            if len(sdv_new) >= 7:
+                for i in range(min(len(sdv_prev), len(sdv_new))):
+                    sdv_new[i] = sdv_prev[i]
         else:
-            d_gamma = f_trial / (3.0 * mu + H)
+            d_gamma = f_trial / (3.0 * mu + H_eff)
             eq_p_new = eq_p_old + d_gamma
-            scale_s = 1.0 - (3.0 * mu * d_gamma) / max(q_trial, 1e-12)
-            s_new = s_trial * scale_s
+            scale_s = (3.0 * mu * d_gamma) / max(q_trial, 1e-12)
+            s_new = s_trial - scale_s * xi_trial
 
             S_voigt = s_new.copy()
             S_voigt[0] += hydro_p
@@ -776,16 +794,23 @@ def material_dispatch_3d(
             S_voigt[2] += hydro_p
 
             if len(sdv_new) >= 7:
-                n_flow = s_trial / max(norm_s, 1e-12)
+                n_flow = xi_trial / max(norm_xi, 1e-12)
                 flow_fac = d_gamma * np.sqrt(1.5)
-                for i in range(6):
+                for i in range(3):
                     sdv_new[i] = ep_old[i] + flow_fac * n_flow[i]
+                for i in range(3, 6):
+                    sdv_new[i] = ep_old[i] + 2.0 * flow_fac * n_flow[i]
                 sdv_new[6] = eq_p_new
+
+            if len(sdv_new) >= 13 and h_code > 0.5:
+                alpha_inc_fac = (C_kin * d_gamma) / max(q_trial, 1e-12)
+                for i in range(6):
+                    sdv_new[7 + i] = alpha_old[i] + alpha_inc_fac * xi_trial[i]
 
             # Algorithmic consistent elastoplastic tangent C_ep (Simo & Hughes 1998)
             beta0 = (3.0 * mu * d_gamma) / max(q_trial, 1e-12)
-            beta1 = (3.0 * mu) / (3.0 * mu + H)
-            n_vec = s_trial / max(norm_s, 1e-12)
+            beta1 = (3.0 * mu) / (3.0 * mu + H_eff)
+            n_vec = np.sqrt(1.5) * xi_trial / max(q_trial, 1e-12)
 
             C_vol = np.zeros((6, 6), dtype=np.float64)
             for r in range(3):

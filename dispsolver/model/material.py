@@ -99,7 +99,7 @@ class Material:
                 nu_val = float(table[1]) if len(table) > 1 else 0.3
                 self.elastic = (E_val, nu_val)
 
-    def Plastic(self, table: Any, hardening: str = "ISOTROPIC", field_table: Any = None) -> None:
+    def Plastic(self, table: Any, hardening: str = "ISOTROPIC", field_table: Any = None, **kwargs) -> None:
         """Abaqus-style Plastic property definition.
 
         If table rows have 3 columns: ((yield, strain, temp), ...), temperature dependence is activated.
@@ -124,14 +124,58 @@ class Material:
             self.extra_params["tabular_plastic"] = self.plastic
         else:
             self.plastic = [(float(row[0]), float(row[1])) for row in table]
-            if hardening.upper() == "TABULAR" or len(self.plastic) >= 2:   # >= 2 points: the tabular kernel holds the last yield constant
+            h_up = hardening.upper()
+            if h_up in ["KINEMATIC", "COMBINED"]:
+                self.mat_type = "J2_PLASTICITY"
+                self.extra_params["hardening_type"] = h_up
+                sy0 = self.plastic[0][0] if self.plastic else 400.0
+                self.extra_params["yield_stress"] = float(sy0)
+                if len(self.plastic) > 1:
+                    dep = self.plastic[1][1] - self.plastic[0][1]
+                    H_val = (self.plastic[1][0] - self.plastic[0][0]) / dep if dep > 1e-12 else 0.0
+                else:
+                    H_val = float(kwargs.get("C_kin", kwargs.get("H", 0.0)))
+
+                if h_up == "KINEMATIC":
+                    self.extra_params["H_iso"] = 0.0
+                    self.extra_params["C_kin"] = float(H_val)
+                    self.extra_params["hardening_modulus"] = 0.0
+                else:  # COMBINED
+                    C_kin_val = float(kwargs.get("C_kin", H_val))
+                    H_iso_val = float(kwargs.get("H_iso", kwargs.get("H", 0.0)))
+                    self.extra_params["H_iso"] = H_iso_val
+                    self.extra_params["C_kin"] = C_kin_val
+                    self.extra_params["hardening_modulus"] = H_iso_val
+            elif h_up == "TABULAR" or (h_up == "ISOTROPIC" and len(self.plastic) >= 2):
                 self.mat_type = "TABULAR_PLASTIC"
                 self.extra_params["tabular_plastic"] = self.plastic
-            elif hardening.upper() in ["KINEMATIC", "COMBINED"]:
-                self.mat_type = "J2_PLASTICITY"
-                self.extra_params["hardening_type"] = hardening.upper()
             else:
                 self.mat_type = "J2_PLASTICITY"
+                self.extra_params["hardening_type"] = "ISOTROPIC"
+
+    def CyclicHardening(self, table: Any = None, **kwargs) -> None:
+        """Abaqus standard Cyclic Hardening definition (*CYCLIC HARDENING).
+        
+        Specifies nonlinear isotropic hardening in combination with kinematic hardening or alone:
+        table: ((sigma_0, Q_inf, b), ...) or Q_inf=..., b=...
+        """
+        if table is not None and len(table) > 0:
+            row = table[0] if isinstance(table[0], (list, tuple)) else table
+            if len(row) >= 3:
+                self.extra_params["yield_stress"] = float(row[0])
+                self.extra_params["R_inf"] = float(row[1])
+                self.extra_params["b_exp"] = float(row[2])
+            elif len(row) == 2:
+                self.extra_params["R_inf"] = float(row[0])
+                self.extra_params["b_exp"] = float(row[1])
+        if "Q_inf" in kwargs:
+            self.extra_params["R_inf"] = float(kwargs["Q_inf"])
+        if "R_inf" in kwargs:
+            self.extra_params["R_inf"] = float(kwargs["R_inf"])
+        if "b" in kwargs:
+            self.extra_params["b_exp"] = float(kwargs["b"])
+        if "b_exp" in kwargs:
+            self.extra_params["b_exp"] = float(kwargs["b_exp"])
 
     def DamageInitiation(self, type: str = "DUCTILE", table: Any = None, **kwargs) -> None:
         """Abaqus-style damage initiation (*DAMAGE INITIATION).
@@ -639,15 +683,16 @@ class Material:
             H_mod = getattr(self, "H", getattr(self, "hardening_modulus", None))
             R_inf = self.extra_params.get("R_inf", None)
             b_exp = self.extra_params.get("b_exp", None)
+            h_type = self.extra_params.get("hardening_type", "ISOTROPIC").upper()
 
-            if "tabular_plastic" in self.extra_params:
+            if "tabular_plastic" in self.extra_params and h_type not in ["KINEMATIC", "COMBINED"]:
                 props["mat_type"] = MAT_J2_PLASTICITY_TABULAR
                 props["E"] = float(E_val)
                 props["nu"] = float(nu_val)
                 props["tabular"] = self.extra_params["tabular_plastic"]
                 props["eps_fail"] = float(self.extra_params.get("eps_fail", 1e9))
                 props["sigma_fail"] = float(self.extra_params.get("sigma_fail", 0.0))
-            elif R_inf is not None and b_exp is not None:
+            elif R_inf is not None and b_exp is not None and h_type not in ["KINEMATIC", "COMBINED"]:
                 props["mat_type"] = MAT_J2_PLASTICITY_NONLINEAR
                 props["E"] = float(E_val)
                 props["nu"] = float(nu_val)
@@ -659,18 +704,29 @@ class Material:
                 props["E"] = float(E_val)
                 props["nu"] = float(nu_val)
                 props["mat_type"] = MAT_J2_PLASTICITY
+                props["hardening_type"] = h_type
                 if self.plastic and len(self.plastic) > 0:
                     props["yield_stress"] = float(self.plastic[0][0])
                     if len(self.plastic) > 1:
                         sy0_p, ep0 = self.plastic[0]
                         sy1_p, ep1 = self.plastic[1]
                         dep = ep1 - ep0
-                        props["hardening_modulus"] = float((sy1_p - sy0_p) / dep) if dep > 1e-12 else 0.0
+                        slope = float((sy1_p - sy0_p) / dep) if dep > 1e-12 else 0.0
                     else:
-                        props["hardening_modulus"] = float(H_mod) if H_mod is not None else float(self.extra_params.get("hardening_modulus", 0.0))
+                        slope = float(H_mod) if H_mod is not None else float(self.extra_params.get("hardening_modulus", 0.0))
                 else:
                     props["yield_stress"] = float(sy0) if sy0 is not None else float(self.extra_params.get("yield_stress", 1e9))
-                    props["hardening_modulus"] = float(H_mod) if H_mod is not None else float(self.extra_params.get("hardening_modulus", 0.0))
+                    slope = float(H_mod) if H_mod is not None else float(self.extra_params.get("hardening_modulus", 0.0))
+
+                if h_type == "KINEMATIC":
+                    props["hardening_modulus"] = 0.0
+                    props["C_kin"] = float(self.extra_params.get("C_kin", slope))
+                elif h_type == "COMBINED":
+                    props["hardening_modulus"] = float(self.extra_params.get("H_iso", 0.0))
+                    props["C_kin"] = float(self.extra_params.get("C_kin", slope))
+                else:
+                    props["hardening_modulus"] = slope
+                    props["C_kin"] = 0.0
 
         elif upper_type in ["DRUCKER_PRAGER", "DRUCKER-PRAGER", "DP"]:
             from dispsolver.material3d.numba_materials import MAT_DRUCKER_PRAGER

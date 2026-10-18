@@ -123,6 +123,10 @@ def material_id(material: Any) -> int:
     if "tabular_plastic" in extra or "tabular" in extra:
         return MAT_J2_PLASTICITY_TABULAR
 
+    # Kinematic & Combined J2 plasticity (takes precedence over isotropic Voce)
+    if extra.get("hardening_type") in ("KINEMATIC", "COMBINED"):
+        return MAT_J2_PLASTICITY
+
     # Nonlinear Voce J2 plasticity
     if "R_inf" in extra or "b_exp" in extra:
         return MAT_J2_PLASTICITY_NONLINEAR
@@ -384,10 +388,26 @@ def pack_props(material: Any, dim: int = 3) -> np.ndarray:
         H = getattr(material, "H", getattr(material, "hardening_modulus", None))
         if H is None:
             H = extra.get("hardening_modulus", extra.get("H", 0.0))
+        h_type = str(extra.get("hardening_type", "ISOTROPIC")).upper()
+        if h_type == "KINEMATIC":
+            h_code = 1.0
+            C_kin = float(extra.get("C_kin", H if H is not None else 0.0))
+            H_iso = 0.0
+        elif h_type == "COMBINED":
+            h_code = 2.0
+            C_kin = float(extra.get("C_kin", 0.0))
+            H_iso = float(extra.get("H_iso", H if H is not None else 0.0))
+        else:
+            h_code = 0.0
+            C_kin = 0.0
+            H_iso = float(H if H is not None else 0.0)
+
         props[0] = E_val
         props[1] = nu_val
         props[2] = float(sy)
-        props[3] = float(H)
+        props[3] = float(H_iso)
+        props[4] = float(C_kin)
+        props[5] = float(h_code)
         return props
 
     if mid == MAT_J2_PLASTICITY_NONLINEAR:

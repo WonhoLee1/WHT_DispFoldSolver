@@ -146,7 +146,7 @@ def return_mapping_linear_kinematic(
     ep_new[5] += 2.0 * flow_factor * n_flow[5]
 
     # Kinematic backstress update: d_alpha = (2/3) * C_kin * d_ep_tensor
-    # For Voigt tensorial components: d_alpha = C_kin * flow_factor * (2/3)*sqrt(1.5) = C_kin * d_gamma * sqrt(2/3)
+    # For tensorial components: d_alpha = (2/3) * C_kin * sqrt(1.5) * d_gamma * n_flow = C_kin * (d_gamma / q_trial) * xi_trial
     alpha_inc_factor = (2.0 / 3.0) * C_kin * np.sqrt(1.5) * d_gamma
     alpha_new = alpha_old.copy()
     alpha_new[0] += alpha_inc_factor * n_flow[0]
@@ -156,20 +156,25 @@ def return_mapping_linear_kinematic(
     alpha_new[4] += alpha_inc_factor * n_flow[4]
     alpha_new[5] += alpha_inc_factor * n_flow[5]
 
-    # Updated deviatoric stress
-    scale_xi = 1.0 - (3.0 * mu * d_gamma) / max(q_trial, 1e-15)
-    xi_new = xi_trial * scale_xi
-    s_new = xi_new + alpha_new
+    # Updated deviatoric stress: s_new = s_trial - (3*mu * d_gamma / q_trial) * xi_trial
+    scale_s = (3.0 * mu * d_gamma) / max(q_trial, 1e-15)
+    s_new = s_trial.copy()
+    s_new[0] -= scale_s * xi_trial[0]
+    s_new[1] -= scale_s * xi_trial[1]
+    s_new[2] -= scale_s * xi_trial[2]
+    s_new[3] -= scale_s * xi_trial[3]
+    s_new[4] -= scale_s * xi_trial[4]
+    s_new[5] -= scale_s * xi_trial[5]
 
     S_voigt = s_new.copy()
     S_voigt[0] += hydro_p
     S_voigt[1] += hydro_p
     S_voigt[2] += hydro_p
 
-    # Algorithmic consistent tangent
+    # Algorithmic consistent elastoplastic tangent (Simo & Hughes 1998)
     beta0 = (3.0 * mu * d_gamma) / max(q_trial, 1e-15)
     beta1 = (3.0 * mu) / (3.0 * mu + H_eff)
-    n_vec = xi_trial / max(norm_xi, 1e-15)
+    n_vec = np.sqrt(1.5) * xi_trial / max(q_trial, 1e-15)
 
     C_ep = C_vol + (1.0 - beta0) * C_dev - 2.0 * mu * (beta1 - beta0) * np.outer(n_vec, n_vec)
 
