@@ -619,3 +619,21 @@ deck06 DUAL_MORTAR는 세 결함이 겹쳐 수렴하지 못했다(하나만 고�
   - JAX 기반 `CPE4IH` 커널(`compute_single_hybrid_status`)에서 내부 자유도 자코비안 $\mathbf{K}_{qq}$ ($5\times 5$)는 상단 $4\times 4$ EAS 블록($O(G V_0) \sim +10^3$)과 하단 $1\times 1$ 압력 컴플라이언스 블록($K_{pp} = -V_0/\kappa \sim -4.5\times 10^{-5}$)의 물리적 차원과 부호가 전혀 다름.
   - 기존 코드가 `1e-10 * mean(|diag(K_qq)|) * I_5`($\approx +10^{-7}$)를 일괄 합산하면서 작은 음수인 $K_{pp}$를 $0.22\%$ 교란시켰고, 이것이 `tests/element_contract/test_contract.py`의 `C8` (유한차분 자코비안 일치) 계약을 $3.44 \times 10^{-3}$ 오차로 실패하게 만든 근본 원인이었음.
   - EAS 블록과 압력 블록을 각각의 스케일과 부호에 맞게 분리 정규화(`_reg_kqq`)하고 4개 Simo-Rifai EAS 모드와 영평균 체적 변동 에너지 $\frac{1}{2}\kappa(J-\bar{J})^2$를 결합함으로써, `CPE4IH`의 `C1`~`C9` 전 계약을 100% 통과시킴 (`_XFAIL`에서 `CPE4IH` 3건 완전 제거).
+
+### 16.9 FrontISTR (`fistr1.exe`) 2D/3D 180° Tear-Drop 대변형 폴딩 해석 구현 및 포트란 소스코드(`FrontISTR-master`) 수치역학적 검증 교훈
+- **배경**: `example_disp_fold`의 2D 평면변형률 및 3D 연속체 폴더블 디스플레이 Tear-Drop 180° 폴딩($\theta = \pm 90^\circ$) 모델을 오픈소스 대규모 병렬 FEM 솔버 **FrontISTR (`fistr1.exe`)**로 구축·해석하는 과정에서 포트란 원시 소스코드(`FrontISTR-master/fistr1/src/`)를 직접 추적하여 4가지 핵심 수치역학적 사실과 정식화 특성을 규명함.
+- **교훈 1 — FrontISTR 2D 평면 요소(`231, 232, 241, 242`)의 기하 비선형 미지원과 1층 돌출 `TYPE=361` 평면변형률 등가 모델링**:
+  - `fstr_CreateMatrix.f90` (line 371) 및 `static_LIB_2d.f90` (`UPDATE_C2`, line 508) 인스펙션 결과, FrontISTR의 2D 평면 요소는 `nlgeom_flag /= INFINITESIMAL`일 때 즉시 중단(`stop`)되도록 하드코딩되어 있으며 미소 변형률(Small Strain)만 계산함.
+  - 따라서 FrontISTR `NLSTATIC`에서 2D 평면변형률 대변형(180° 폴딩) 해석을 수행할 때는 2D Quad4 격자를 $Z$ 방향으로 1개 층 돌출시킨 `TYPE=361` 육면체 요소로 구성하고 전 절점에 $u_z = 0$ 구속(`!BOUNDARY` `Z_FIXED, 3, 3, 0.0`)을 부여해야 함. 이는 수학적으로 2D 평면변형률($\varepsilon_{zz} = \gamma_{xz} = \gamma_{yz} = 0$)과 100% 동치이면서 3D 대변형 정식화 및 유한 회전 경계조건을 그대로 활용할 수 있음.
+- **교훈 2 — `!BOUNDARY, ROT_CENTER=<NGRP>` 기반 엄밀한 Rodrigues 유한 회전 경계조건**:
+  - `fstr_AddBC.f90`의 `get_rot_displacement()`는 `ROT_CENTER` 절점 그룹의 초기 좌표 $\mathbf{X}_p$와 현재 변위 $\mathbf{u}_p$를 기준으로 Rodrigues 유한 회전 행렬을 계산하여 종속 절점들의 병진 변위 증분 $\Delta \mathbf{u}$를 매 서브스텝 자동 부과함.
+  - 본체 메쉬와 분리된 고정 참조 요소(`EL_PIVOT_REF`, 전 절점 1~3 자유도 구속) 위에 좌/우 피벗 절점(`PIVOT_L=(-1.4, 0, z0)`, `PIVOT_R=(+1.4, 0, z0)`)을 배치하고 회전 자유도 `dof=3`($\theta_z = \mp \pi/2\text{ rad}$)과 병진 자유도 `dof=1, 2`(`0.0`)를 함께 지정하면 $90^\circ$ 유한 회전이 소수점 14자리 정밀도로 정확히 부과됨.
+- **교훈 3 — 대변형 전단($\gamma > 200\%$)을 겪는 초연성 점착층(PSA)의 Saint-Venant Kirchhoff(`!ELASTIC`) Poynting 붕괴와 `!HYPERELASTIC, TYPE=NEOHOOKE` 필수 적용**:
+  - 180° 폴딩 시 PSA 층($E = 0.05\text{ MPa}$, $\nu = 0.499$)은 $\gamma_{12} > 2.2$ ($>200\%$)의 대변형 단순 전단을 겪음.
+  - Total Lagrangian `!ELASTIC` (Saint-Venant Kirchhoff) 적용 시 Green-Lagrange 수직 변형률 $E_{22} = \frac{1}{2}\gamma^2$로 인해 비물리적인 수직 압축 응력과 접선 강성 음수화(Poynting/Biot 단순 전단 좌굴)가 $\theta \approx 28^\circ$ (`sub_step = 26`)에서 발생하여 요소가 붕괴됨.
+  - 반면 `!HYPERELASTIC, TYPE=NEOHOOKE` ($C_{10} = \frac{\mu}{2} = 8.3388926\times 10^{-3}\text{ MPa}$, $D_1 = \frac{2}{K} = 0.24\text{ MPa}^{-1}$)를 적용하면 등적 불변량 $\bar{I}_1 = J^{-2/3}I_1$과 체적 에너지 $(J-1)^2/D_1$를 사용하므로 단순 전단에서도 $J \equiv 1$이 보존되어 $180^\circ$ 완전 폴딩까지 붕괴 없이 수렴함.
+- **교훈 4 — FrontISTR `TYPE=361` 요소 정식화별(`FI`, `BBAR`, `IC`, `FBAR`) Total Lagrangian 접선 강성 일관성 차이**:
+  - `static_LIB_3dIC.f90` (`FORM361=IC`, line 437): 내부 비적합 모드 정적 응축 시 `ddaux = -[Kaa]^{-1}([Kad] ddu)`에서 이전 반복의 내부 잔차 `-qf_a`가 누락되어 뉴턴 수렴률이 2차(Quadratic)에서 선형($\sim 0.85$/iter)으로 저하됨.
+  - `static_LIB_Fbar.f90` (`FORM361=FBAR`, line 254): `TOTALLAG` 모드에서 초기 응력 스케일링 항 `sff = dot_product(stress, dstrain)` 계산 시 $\mathbf{S}:\mathbf{C} = 2\mathbf{S}:\mathbf{E} + \operatorname{tr}(\mathbf{S})$의 계수 $2$와 $\operatorname{tr}(\mathbf{S})$가 생략되어 뉴턴 수렴률이 선형($\sim 0.693$/iter)으로 저하됨.
+  - `static_LIB_3d.f90` (`FORM361=FI`) 및 `static_LIB_C3D8.f90` (`FORM361=BBAR`): Total Lagrangian 기하 접선 강성(`B = BL0 + BL1` 및 `BN^T Smat BN`)이 내력 적분과 정확히 일관되어, `compact_4` (4층) 및 `teardrop` (14층) 2D/3D 전 케이스에서 **매 서브스텝 단 3회 뉴턴 반복(`9.9e-1 -> 2.2e-3 -> 1.8e-8`)으로 90 서브스텝(180° 폴딩) 100% 2차 수렴(`FrontISTR Completed !!`, 좌우 모멘트 대칭 오차 0.0000%, 수평 반력 합 $\sim 10^{-12}\text{ N}$)**을 달성함.
+
