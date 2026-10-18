@@ -89,6 +89,7 @@ KERNELS: Dict[int, Dict[int, KernelInfo]] = {
         17: KernelInfo("CAX4", 4, small_strain=True,
                        nlgeom_unsupported="axisymmetric kernels are small strain and cannot be co-rotated"),
         18: KernelInfo("T2D2 truss", 2, small_strain=True, cr_wrap=True),
+        19: KernelInfo("COH2D4 cohesive", 4, small_strain=False),
     },
 }
 
@@ -245,6 +246,7 @@ _ELEMENT_DESCRIPTORS: Tuple[ElementDescriptor, ...] = (
     _plane("Q8R", 10, 10, 8, "REDUCED"),
     *[_plane(n, 10, 10, 8, "REDUCED", True, "runs as CPE8R; " + _NO_HYBRID) for n in ("CPE8RH", "CPS8RH")],
     ElementDescriptor("T2D2", 2, "TRUSS", 2, "FULL", kernel_nlgeom_yes=18, kernel_nlgeom_no=18, aliases=("TRUSS2D", "LINK")),
+    ElementDescriptor("COH2D4", 2, "COHESIVE", 4, "FULL", kernel_nlgeom_yes=19, kernel_nlgeom_no=19, aliases=("COH2D",)),
     # ------------------------------------------------------------------ 2D axisymmetric (small strain only)
     _cax("CAX4", 17, 4),
     _cax("CAX4I", 17, 4, "INCOMPATIBLE", note="runs as CAX4; incompatible modes are not implemented"),

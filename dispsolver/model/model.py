@@ -10,7 +10,7 @@ from dispsolver.model.names import CaseInsensitiveDict
 from dispsolver.model.part import Part
 from dispsolver.model.material import Material
 from dispsolver.model.control import SolutionControl
-from dispsolver.model.section import Section, SolidSection, ShellSection, SectionControls, MaterialOrientation
+from dispsolver.model.section import Section, SolidSection, ShellSection, CohesiveSection, SectionControls, MaterialOrientation
 from dispsolver.model.assembly import Assembly, FlattenedSolverSystem
 from dispsolver.model.step import Step, InitialStep, PredefinedField
 from dispsolver.model.amplitude import Amplitude, TabularAmplitude, SmoothStepAmplitude, UserFunctionAmplitude
@@ -240,6 +240,27 @@ class Model:
             material_name=str(material),
             thickness=float(thickness),
             num_int_pts=int(num_int_pts)
+        )
+        self.sections[str(name)] = sec
+        return sec
+
+    def CohesiveSection(
+        self,
+        name: str,
+        material: str,
+        response: str = "TRACTION SEPARATION",
+        initial_thickness: float = 1.0,
+        out_of_plane_thickness: float = 1.0,
+        controls: Optional[Union[str, SectionControls]] = None
+    ) -> CohesiveSection:
+        """Create and register a CohesiveSection in this Model (*COHESIVE SECTION in Abaqus)."""
+        sec = CohesiveSection(
+            name=str(name),
+            material_name=str(material),
+            response=str(response),
+            initial_thickness=float(initial_thickness),
+            out_of_plane_thickness=float(out_of_plane_thickness),
+            controls=controls
         )
         self.sections[str(name)] = sec
         return sec

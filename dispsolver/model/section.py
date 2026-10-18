@@ -75,6 +75,10 @@ class SolidSection(Section):
     orientation_name: Optional[str] = None
     controls: Optional[Union[str, SectionControls]] = None
 
+    @property
+    def kind(self) -> str:
+        return "SOLID"
+
 
 @dataclass
 class ShellSection(Section):
@@ -82,3 +86,22 @@ class ShellSection(Section):
     thickness: float = 1.0
     num_int_pts: int = 5
     offset: float = 0.0
+
+    @property
+    def kind(self) -> str:
+        return "SHELL"
+
+
+@dataclass
+class CohesiveSection(Section):
+    """Cohesive section definition (*COHESIVE SECTION in Abaqus)."""
+    response: str = "TRACTION SEPARATION"
+    initial_thickness: float = 1.0
+    out_of_plane_thickness: float = 1.0
+    controls: Optional[Union[str, SectionControls]] = None
+
+    @property
+    def kind(self) -> str:
+        return "COHESIVE"
+
+

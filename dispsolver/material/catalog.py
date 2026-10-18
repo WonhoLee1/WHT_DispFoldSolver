@@ -34,6 +34,7 @@ from dispsolver.material3d.numba_materials import (
     MAT_J2_DUCTILE_DAMAGE,
     MAT_DRUCKER_PRAGER,
     MAT_CONCRETE_DP,
+    MAT_COHESIVE,
     MAT_CUSTOM_ELASTIC,
 )
 
@@ -68,6 +69,7 @@ _SPECS: list[MaterialSpec] = [
     MaterialSpec(MAT_J2_DUCTILE_DAMAGE, "J2_DUCTILE_DAMAGE", linear_elastic=False, dims=frozenset({2, 3}), needs_F=False),
     MaterialSpec(MAT_DRUCKER_PRAGER, "DRUCKER_PRAGER", linear_elastic=False, dims=frozenset({2, 3}), needs_F=False),
     MaterialSpec(MAT_CONCRETE_DP, "CONCRETE_DP", linear_elastic=False, dims=frozenset({2, 3}), needs_F=False),
+    MaterialSpec(MAT_COHESIVE, "COHESIVE", linear_elastic=False, dims=frozenset({2, 3}), needs_F=False),
     MaterialSpec(MAT_CUSTOM_ELASTIC, "CUSTOM_ELASTIC", linear_elastic=True, dims=frozenset({2, 3}), needs_F=False),
 ]
 
@@ -106,6 +108,12 @@ def material_id(material: Any) -> int:
     c_mat = getattr(material, "C_mat", None)
     if c_mat is not None or "C_mat" in extra:
         return MAT_CUSTOM_ELASTIC
+
+    # Cohesive / Traction-separation
+    if "cohesive" in extra or extra.get("mat_type") in ("COHESIVE", "TRACTION") or extra.get("elastic_type") == "TRACTION":
+        return MAT_COHESIVE
+    if "damage_init" in extra and isinstance(extra.get("damage_init"), dict) and str(extra["damage_init"].get("criterion", "")).upper() in ("MAXS", "MAXPE", "QUADS", "QUADE"):
+        return MAT_COHESIVE
 
     # Ductile damage
     if "damage_init" in extra or "damage_evol" in extra or "damage_init_type" in extra:
@@ -535,6 +543,35 @@ def pack_props(material: Any, dim: int = 3) -> np.ndarray:
             tau_val = float(item[2] if len(item) > 2 else item[1])
             props[5 + 2 * m_idx] = g_val
             props[6 + 2 * m_idx] = tau_val
+        return props
+
+    if mid == MAT_COHESIVE:
+        coh = extra.get("cohesive", {}) if isinstance(extra.get("cohesive"), dict) else {}
+        di = extra.get("damage_init", {}) if isinstance(extra.get("damage_init"), dict) else {}
+        de = extra.get("damage_evol", {}) if isinstance(extra.get("damage_evol"), dict) else {}
+
+        Knn = float(coh.get("Knn", extra.get("Knn", extra.get("K_nn", E_val))))
+        Kss = float(coh.get("Kss", extra.get("Kss", extra.get("K_ss", Knn))))
+        Nmax = float(coh.get("Nmax", di.get("Nmax", extra.get("Nmax", extra.get("N_max", 0.0)))))
+        Smax = float(coh.get("Smax", di.get("Smax", extra.get("Smax", extra.get("S_max", Nmax)))))
+        Gc = float(coh.get("Gc", de.get("Gf", extra.get("Gc", extra.get("G_c", extra.get("Gf", 0.0))))))
+        crit_str = str(coh.get("criterion", di.get("criterion", "MAXS"))).upper()
+        init_crit = 1.0 if crit_str in ("QUADS", "QUADE") else 0.0
+        evol_type = 0.0
+        delta_f = float(coh.get("delta_f", de.get("delta_f", extra.get("delta_f", 0.0))))
+        visc = float(coh.get("viscosity", extra.get("viscosity", 0.0)))
+        thick = float(coh.get("thickness", extra.get("thickness", 1.0)))
+
+        props[0] = Knn
+        props[1] = Kss
+        props[2] = Nmax
+        props[3] = Smax
+        props[4] = Gc
+        props[5] = init_crit
+        props[6] = evol_type
+        props[7] = delta_f
+        props[8] = visc
+        props[9] = thick
         return props
 
     # Fallback to direct props attribute if available

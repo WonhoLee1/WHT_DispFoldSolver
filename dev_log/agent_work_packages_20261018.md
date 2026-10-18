@@ -162,10 +162,11 @@ hand-off 형식 (작업 끝에 반드시 제출):
 
 ---
 
-## P6 (선택, 장기). Cohesive 요소 COH2D4
+## P6. Cohesive 요소 COH2D4 (완료: 2026-10-18, tests/test_coh2d4.py 11/11 GREEN)
 
 **브랜치**: `feat/p6-cohesive-coh2d4`
 **목표**: 2D 4절점 점착 요소 `COH2D4`와 `*COHESIVE SECTION`, traction-separation 거동(선형 탄성 시작 + 손상 개시/진전).
+**상태**: **COMPLETED (완료)** — `tests/test_coh2d4.py` 11개 전 검증 항목 100% 통과 (강체 모드 1.45e-11, 탄젠트 < 1.2e-5, 파괴 에너지 보존 < 1.2e-5, 압축 침투 차단, Abaqus 키워드, DynamicSolver2D 다중 스텝 박리 수렴 실증). 상세: `dev_log/cohesive_coh2d4_p6_20261018.md`.
 
 **소유 파일**: 새 파일들 (예: `dispsolver/element2d/coh2d4_*.py`, 새 테스트). `dispsolver/model/element_catalog.py`와 `dispsolver/model/assembly.py`는 **등록 한 줄 수준**만 허용하고, 수정한 줄을 hand-off에 명시.
 **수정 금지**: 기존 요소 커널, 솔버 루프.

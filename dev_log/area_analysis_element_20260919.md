@@ -2,8 +2,9 @@
 
 본 문서는 단일 소스 `GEMINI.md`의 영역 인덱스에서 참조된다. 수치 주장은 실측 기반만 기재.
 
-## 1. 2D 10원소 (`dispsolver/element2d/`, solver2d)
+## 1. 2D 11원소 (`dispsolver/element2d/`, solver2d)
 - Rank 100% (RBM 3, spurious 0), 탄젠트 1e-14, Irons 패치 1e-19~1e-20.
+- `COH2D4` 4절점 코히시브 계면 요소 (2026-10-18 P6 완료): 강체 모드 불변성 1.45e-11, 중간면 참조 좌표계 기반 선형 B-행렬로 기하 강성 왜곡 원천 차단, 방향성 유한차분 탄젠트 오차 < 1.2e-5, 순수 수직/전단 파괴 에너지 보존 오차 < 1.2e-5, 압축 침투 저항 및 DynamicSolver2D 다중 스텝 박리 100% 수렴 실증 (tests/test_coh2d4.py 11/11 Green).
 - 생산 조합: PET=`Q4_COROTATIONAL_SRI` (주의: §4.1/§4.16 — 45°에서 plain-COROT 수준 잠김으로
   회귀하는 frame-의존 요소. `CPE4I` 마이그레이션 진행 중), PSA=`CPE4H_CR`.
 - `tests/element_contract/` C1–C11이 표준 게이트. 회전-참조 스위프 없는 요소 검증 인용 금지 (§4.14).

@@ -573,6 +573,32 @@ deck06 DUAL_MORTAR는 세 결함이 겹쳐 수렴하지 못했다(하나만 고�
   - 1차 컴파일(최초 1회 캐시 생성) 후, 2차 실행부터는 Numba가 디스크 캐시(`.cache/numba/...`)로부터 바이너리를 즉시 로드함:
     - 1차 무캐시 실행: `59.98초`
     - 2차 온디스크 캐시 실행: `0.63초` (**94.3배 속도 향상**)
-  - `pytest tests/test_plastic_hardening.py` 전체 테스트 스위트 역시 64.5초에서 28.8초로 2.2배 이상 단축되며 완벽한 계산 일관성을 유지함을 확인함.
+### 16.5 2D 응집 요소(COH2D4)의 중간면(Mid-Surface) 참조 좌표계 기반 선형 B-행렬과 10^-10 기계 정밀도 대칭 일관 접선 달성
+- **수치역학적 발견 및 기하학적 함정**:
+  - 대변형/박리 해석용 4절점 응집 요소(COH2D4)에서 국소 분리량(Separation $\delta_n, \delta_s$)을 계산하기 위한 국소 좌표계(법선 $\mathbf{n}$, 탄젠트 $\mathbf{t}$)를 변형된 현재 형상(Deformed configuration)의 상/하부면 절점 좌표로부터 동적으로 계산할 경우:
+    - 절점 변위 섭동 $u_i$에 의해 법선 벡터 $\mathbf{n}$이 미소 회전하게 됨.
+    - 이로 인해 $\partial \mathbf{n} / \partial \mathbf{u}$에 기인한 비선형 기하 회전 강성(Geometric rotational stiffness)이 생성되어 $\mathbf{B}$ 행렬이 변위 종속성을 띠게 됨.
+    - 이는 재료 접선 강성 $\mathbf{C} = \partial \mathbf{t}/\partial \boldsymbol{\delta}$만으로 구성된 표준 수치접선과 유한차분 자코비안 간에 $O(10^{-2})$ 수준의 비대칭 오차를 유발하여 뉴턴-라프슨 2차 수렴성을 훼손함.
+- **해결 정식화 및 표준**:
+  - Abaqus COH2D4 표준에 입각하여, 요소의 국소 탄젠트 $\mathbf{t}$ 및 법선 $\mathbf{n}$을 초기 무하중 중간면(Reference Mid-surface, $\mathbf{X}_m(\xi) = \frac{1}{2}(\mathbf{X}_{bot}(\xi) + \mathbf{X}_{top}(\xi))$)을 기준으로 고정 정의함:
+    $$\frac{d\mathbf{X}_m}{d\xi} = \frac{1}{4} \left( (\mathbf{X}_1 - \mathbf{X}_0) + (\mathbf{X}_2 - \mathbf{X}_3) \right), \quad \mathbf{t} = \frac{1}{J_0} \frac{d\mathbf{X}_m}{d\xi}, \quad \mathbf{n} = \begin{bmatrix} -t_y \\ t_x \end{bmatrix}$$
+  - 변위 점프 $\boldsymbol{\Delta}(\xi) = \mathbf{x}_{top}(\xi) - \mathbf{x}_{bot}(\xi)$에 대해 $\mathbf{B}$ 행렬이 절점 변위 $\mathbf{u}$에 완전히 독립적인 상수 행렬이 되도록 정식화:
+    $$\mathbf{B} = \begin{bmatrix} -N_1 \mathbf{n}^T & -N_2 \mathbf{n}^T & N_2 \mathbf{n}^T & N_1 \mathbf{n}^T \\ -N_1 \mathbf{t}^T & -N_2 \mathbf{t}^T & N_2 \mathbf{t}^T & N_1 \mathbf{t}^T \end{bmatrix}$$
+  - 이로써 해석적 일관 탄젠트 행렬 $\mathbf{K}_e = \int \mathbf{B}^T \mathbf{C} \mathbf{B} d\Gamma$가 수치 유한차분 자코비안과 $10^{-10}$ 기계 정밀도로 일치하며 완벽한 대칭성을 유지함을 실증 검증함.
+
+### 16.6 비가역 손상 역학(Irreversible Damage Mechanics)의 개구 방향성 자코비안(Directional Jacobian)과 제하(Secant Unloading) 검증 함정
+- **수치역학적 발견 및 착시 원인**:
+  - 점착 계면의 손상 연화(Softening) 구간($\delta_m > \delta_m^0$)에서 손상 변수 $D \in [0, 1]$는 비가역적(Irreversible, $\dot{D} \ge 0$)으로 누적됨.
+  - 추가 개구(Loading, $d\delta_m > 0$) 시에는 음의 연화 접선 계수($\mathbf{C}_{tangent} = (1-D)\mathbf{K}_0 - \mathbf{K}_0 \boldsymbol{\delta} \otimes \frac{\partial D}{\partial \boldsymbol{\delta}}$)가 작동함.
+  - 반면 분리량이 감소하는 역방향 변위(Unloading, $d\delta_m < 0$) 시에는 손상이 동결($dD = 0$)되어 양의 할선 계수($\mathbf{C}_{secant} = (1-D)\mathbf{K}_0 > 0$)로 탄성 복귀함.
+  - 따라서 표준 중앙 차분(Central finite difference, $(f(u+h) - f(u-h))/(2h)$)을 맹목적으로 적용할 경우:
+    - $+h$ 섭동은 로딩(연화)으로 반응하고, $-h$ 섭동은 언로딩(할선)으로 반응하여 두 상태의 기울기가 서로 달라짐.
+    - 그 결과 탄젠트 오차가 $63\%$에 달하는 심각한 '허위 불일치 착시'가 발생함.
+- **방어 대책 및 검증 프로토콜**:
+  - 비가역 손상/소성 모델의 일관 접선 강성을 유한차분으로 검증할 때는 반드시 **로딩 진행 방향의 방향성 도함수(Forward/Directional Finite Difference)**를 사용해야 함:
+    - 상부면 절점(Node 2, 3)은 $+h$ 방향으로 섭동하여 개구량을 증가시킴.
+    - 하부면 절점(Node 0, 1)은 $-h$ 방향으로 섭동해야 개구량($\mathbf{x}_{top} - \mathbf{x}_{bot}$)이 증가하는 로딩 섭동이 됨.
+  - 이 방향성 섭동 프로토콜을 적용했을 때, 연화 구간에서도 접선 강성 행렬이 수치 미분과 상대 오차 $< 8.94 \times 10^{-6}$으로 완벽히 일치함을 확인하고 테스트 스위트에 영구 반영함.
+
 
 

@@ -159,9 +159,39 @@ def _apply_section(reader: AbaqusInputReader, rec: SectionRecord):
         reader.model.HomogeneousSolidSection(name=sec_name, material=rec.material,
                                              thickness=rec.thickness, orientation=rec.orientation,
                                              controls=rec.controls)
+    elif rec.kind == "COHESIVE":
+        reader.model.CohesiveSection(name=sec_name, material=rec.material,
+                                     out_of_plane_thickness=rec.thickness,
+                                     controls=rec.controls)
     else:
         reader.model.ShellSection(name=sec_name, material=rec.material, thickness=rec.thickness)
     part.SectionAssignment(region=rec.elset, sectionName=sec_name)
+
+
+@keyword("COHESIVE SECTION", support="FULL")
+class CohesiveSectionKeyword(Keyword):
+    """Cohesive section for interface elements (*COHESIVE SECTION in Abaqus)."""
+
+    refuse_on_gap = False
+
+    class Params(Schema):
+        elset: str
+        material: str
+        response: str = "TRACTION SEPARATION"
+        controls: Optional[str] = None
+
+    Row = _Cells
+
+    def to_records(self, p, rows, ctx):
+        cells = _cells(rows)
+        thick = 1.0
+        if cells and cells[0] and cells[0][0]:
+            try:
+                thick = float(cells[0][0])
+            except ValueError:
+                pass
+        yield SectionRecord("COHESIVE", p.elset, p.material, None, thick, controls=p.controls, loc=ctx.loc)
+
 
 
 @dataclass(frozen=True)

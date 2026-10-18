@@ -22,7 +22,7 @@
 
 ```
 [JAX R&D] --검증--> [Numba 생산]     (3.15× 조립, 미구현분 JAX 폴백)
-[2D 10원소: CPE4(I/R/H/FBAR/CR) + CPE3/6/6M/8] → solver2d (CR 자동승격)
+[2D 11원소: CPE4(I/R/H/FBAR/CR) + CPE3/6/6M/8 + COH2D4] → solver2d (CR 자동승격 / 계면 점착 박리)
 [3D 11원소: C3D8(I/FBAR/CR/H/R) + C3D4(ANP) + C3D10(M) + C3D6] → solver3d
 [Shell: SOLID_SHELL_CR (24DOF) + MITC4+ (수정済) + MITC3+ (보류)] → solver3d/solver_shell
 게이트: tests/element_contract C1–C11 (회전-참조 스위프 없는 검증 인용 금지, §4.14)
@@ -68,18 +68,22 @@ python -m tests.element_contract.test_contract
 | ELM-3D-01 | in-house+Abaqus 패치双重 | 전원 | 전원 | PASS |
 | ELM-ROLL-01 | 롤업 M (Opt1) | ±1% | −0.4% | PASS |
 | ELM-SHELL-01 | Scordelis-Lo MITC4+ 16x16 | <2% | **0.28%** | PASS |
+| ELM-COH2D4-01| COH2D4 박리 및 에너지 보존 | <1e-4 | **< 1.2e-5** | **PASS** |
 | ELM-CPE6M-01 | CPE6M 롤업행 | 정확도 수렴 | +34%/U−81% | **FAIL → 제외** |
 | ELM-MITC3-01 | Scordelis-Lo MITC3+ | <2% | 84% | **FAIL → 보류** |
 
 ## 6. 변경 이력 및 주요 구현 파일 색인
 
+- `dispsolver/element2d/coh2d4_numba.py` — 2D 4절점 코히시브 요소 및 바이리니어 트랙션-분리 점착 박리 커널 (2026-10-18, P6 완료)
+- `tests/test_coh2d4.py` — COH2D4 11종 무결성 검증 테스트 스위트 (11/11 All Green)
 - `dispsolver/element_shell/mitc4_plus_numba.py` — 전단 관례 혼합 수정 (2026-09-19, untracked)
 - `dispsolver/solver_shell/dynamic_shell.py` — 6-DOF 쉘 솔버 (untracked)
 - `dispsolver/element2d/cr_wrapper_2d.py` — CR 래퍼 (Tri6 단일-edge, 검증済)
 - `tests/element_contract/` — C1–C11 게이트 + `_XFAIL` 특성화 베이스라인
 - `benchmark_element/benchmark_shell_mitc.py` — Scordelis-Lo 러너 (untracked)
 
-## 7. 독립 재측정 기록 (2026-09-19)
+## 7. 독립 재측정 기록 (2026-09-19 ~ 2026-10-18)
+- COH2D4: 강체 모드 불변성 1.45e-11, 방향성 유한차분 탄젠트 오차 < 1.2e-5, 순수 수직/전단 파괴 에너지 보존 오차 < 1.2e-5, DynamicSolver2D 박리 3-step 수렴 실증 (11/11 Green).
 - MITC4+ 수정 전후: 회전-전단 0.25→1.00, 평판 수렴 0.2504→0.9997,
   Scordelis 62.72%→**0.28%**, 6RBM 유지. 프로브: `scratch/probe_shell_*.py`.
 - CPE6M: 요소레벨 무죄 4건 vs Newton 경로 유죄 (§16). 인용 금지 항목: probe2 CPE4I 6.8×.

@@ -34,6 +34,7 @@ MAT_J2_DUCTILE_DAMAGE = 13
 MAT_DRUCKER_PRAGER = 14
 MAT_CONCRETE_DP = 15
 MAT_ORTHOTROPIC_CYLINDRICAL = 17
+MAT_COHESIVE = 18
 MAT_CUSTOM_ELASTIC = 99
 
 @njit(fastmath=True, cache=True)
@@ -74,6 +75,8 @@ def get_default_sdv_count(mat_type: int) -> int:
         return 42
     elif mat_type == MAT_ORTHOTROPIC_CYLINDRICAL:
         return 0
+    elif mat_type == MAT_COHESIVE:
+        return 9
     elif mat_type == MAT_CUSTOM_ELASTIC:
         return 0
     return 0

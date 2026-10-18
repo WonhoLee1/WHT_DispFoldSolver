@@ -48,6 +48,7 @@ from dispsolver.material3d.numba_materials import (
     MAT_DRUCKER_PRAGER,
     MAT_VISCOELASTIC_PRONY,
     MAT_CONCRETE_DP,
+    MAT_COHESIVE,
     MAT_HYPER_VISCOELASTIC,
     MAT_CUSTOM_ELASTIC,
     MAT_HYPERELASTIC_NEOHOOKEAN,
@@ -307,6 +308,7 @@ def _consumed_by(mid: int) -> set:
         MAT_J2_DUCTILE_DAMAGE: {"*PLASTIC", "*DAMAGE INITIATION", "*DAMAGE EVOLUTION"},
         MAT_DRUCKER_PRAGER: {"*DRUCKER PRAGER"},
         MAT_CONCRETE_DP: {"*CONCRETE DAMAGED PLASTICITY"},
+        MAT_COHESIVE: {"*DAMAGE INITIATION", "*DAMAGE EVOLUTION"},
     }.get(mid, set())
 
 

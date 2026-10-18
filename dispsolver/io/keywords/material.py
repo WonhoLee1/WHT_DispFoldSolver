@@ -165,7 +165,7 @@ class Elastic(Keyword):
             "ISOTROPIC", "ENGINEERING CONSTANTS", "ORTHOTROPIC", "ANISOTROPIC",
             "TRACTION", "BILAMINA", "LAMINA", "SHORT FIBER", "COUPLED TRACTION",
             "TRANSVERSELY ISOTROPIC", "SHEAR"
-        ] = Param("ISOTROPIC", supported=("ISOTROPIC", "ENGINEERING CONSTANTS"))
+        ] = Param("ISOTROPIC", supported=("ISOTROPIC", "ENGINEERING CONSTANTS", "TRACTION"))
         # Keywords Guide default LONG TERM; both are represented (see catalog: Prony packing)
         moduli: Literal["LONG TERM", "INSTANTANEOUS"] = "LONG TERM"
         dependencies: int = 0
@@ -666,7 +666,7 @@ class DamageInitiation(Keyword):
             "PLY FABRIC", "HSNFIBER", "HSNMATRIX", "TSINVMATRIX", "MAX STRAIN", "MAX STRESS", "TSAIWU",
             "TSAIWUE", "HYSTERESIS ENERGY", "MAXE", "MAXPE", "MAXPS", "MAXS", "MAXU", "QUADE", "QUADS",
             "QUADU", "USER"
-        ] = Param(supported=("DUCTILE", "JOHNSON COOK"))
+        ] = Param(supported=("DUCTILE", "JOHNSON COOK", "MAXS", "QUADS"))
         definition: Optional[str] = Param(None, unsupported="DAMAGE INITIATION DEFINITION not supported")
         dependencies: int = Param(0, unsupported="DAMAGE INITIATION DEPENDENCIES not supported")
         frequency: Optional[int] = Param(None, control=True)
@@ -679,6 +679,11 @@ class DamageInitiation(Keyword):
     def to_records(self, p, rows, ctx) -> Iterable[Record]:
         if not rows:
             raise InputError("*DAMAGE INITIATION: no data line")
+        if p.criterion in ("MAXS", "QUADS"):
+            v = _cells(rows[0], 4)
+            vals = tuple(float(x) for x in v if x is not None)
+            yield DamageInitiationRecord(criterion=p.criterion, table=(vals,), loc=ctx.loc)
+            return
         if p.criterion == "JOHNSON COOK":
             if len(rows) != 1:
                 raise InputError("*DAMAGE INITIATION, CRITERION=JOHNSON COOK takes one data line")
@@ -736,7 +741,7 @@ class DamageEvolution(Keyword):
 
     class Params(Schema):
         # TYPE is required (Keywords Guide); SOFTENING defaults to LINEAR
-        type: Literal["DISCONTINUOUS", "DISPLACEMENT", "ENERGY", "HYSTERESIS ENERGY"] = Param(supported=("ENERGY",))
+        type: Literal["DISCONTINUOUS", "DISPLACEMENT", "ENERGY", "HYSTERESIS ENERGY"] = Param(supported=("ENERGY", "DISPLACEMENT"))
         softening: Literal["LINEAR", "EXPONENTIAL", "TABULAR"] = Param("LINEAR", supported=("LINEAR", "EXPONENTIAL"))
         degradation: Literal["MAXIMUM", "MULTIPLICATIVE"] = Param("MAXIMUM", supported=("MAXIMUM",))
         dependencies: int = Param(0, unsupported="DAMAGE EVOLUTION DEPENDENCIES not supported")
@@ -753,6 +758,10 @@ class DamageEvolution(Keyword):
         v = _cells(rows[0], 2) if rows else [None, None]      # an all-blank line: Gf == 0
         if v[1] is not None:
             raise Unsupported("*DAMAGE EVOLUTION: temperature-dependent fracture energy is not represented")
+        if p.type == "DISPLACEMENT":
+            delta_f = float(v[0]) if v[0] is not None else 0.0
+            yield DamageEvolutionRecord(type=f"DISPLACEMENT_{p.softening}", Gf=delta_f, loc=ctx.loc)
+            return
         yield Note("gap", "damage-energy-regularization",
                    "*DAMAGE EVOLUTION, TYPE=ENERGY: the characteristic length is fixed at L=1.0 and the failure "
                    "displacement u_f comes from sigma_y0 (Abaqus: element characteristic length, stress at "

@@ -200,25 +200,72 @@ class Material:
                 "Troom": float(kwargs.get("Troom", kwargs.get("T_room", 20.0))),
                 "Tmelt": float(kwargs.get("Tmelt", kwargs.get("T_melt", 1000.0))),
                 "eps0": float(kwargs.get("eps0", kwargs.get("eps_dot_0", 1.0)))}
+        elif t in ["MAXS", "MAXPE", "QUADS", "QUADE"]:
+            row = table[0] if isinstance(table[0], (list, tuple)) else table
+            N_val = float(row[0])
+            S_val = float(row[1]) if len(row) > 1 else N_val
+            self.extra_params["damage_init"] = {
+                "type": t,
+                "criterion": t,
+                "Nmax": N_val,
+                "Smax": S_val,
+            }
         else:
-            raise ValueError("DamageInitiation type must be DUCTILE or JOHNSON_COOK")
+            raise ValueError("DamageInitiation type must be DUCTILE, JOHNSON_COOK, MAXS, or QUADS")
 
     def DamageEvolution(self, type: str = "ENERGY_LINEAR", Gf: float = 1.0,
-                        L: float = 1.0) -> None:
-        """Abaqus-style damage evolution (*DAMAGE EVOLUTION, TYPE=ENERGY).
+                        L: float = 1.0, table: Any = None, **kwargs) -> None:
+        """Abaqus-style damage evolution (*DAMAGE EVOLUTION, TYPE=ENERGY or DISPLACEMENT).
 
-        type "ENERGY_LINEAR": D = u_bar/u_f. "ENERGY_EXPONENTIAL":
+        type "ENERGY_LINEAR" / "ENERGY": D = u_bar/u_f. "ENERGY_EXPONENTIAL":
         D = 1-exp(-3*u_bar/u_f), u_f = 2*G_f/sigma_f. L = characteristic
         element length (mesh objectivity).
+        type "DISPLACEMENT" / "DISPLACEMENT_LINEAR": failure at specified delta_f.
         """
         t = type.upper()
-        if t == "ENERGY_LINEAR":
-            evol = 0
-        elif t == "ENERGY_EXPONENTIAL":
-            evol = 1
+        if table is not None and len(table) > 0:
+            row = table[0] if isinstance(table[0], (list, tuple)) else table
+            val = float(row[0])
         else:
-            raise ValueError("DamageEvolution type must be ENERGY_LINEAR or ENERGY_EXPONENTIAL")
-        self.extra_params["damage_evol"] = {"type": evol, "Gf": float(Gf), "L": float(L)}
+            val = float(Gf)
+
+        if t in ("ENERGY", "ENERGY_LINEAR"):
+            evol = 0
+            self.extra_params["damage_evol"] = {"type": evol, "Gf": val, "L": float(L)}
+        elif t in ("ENERGY_EXPONENTIAL",):
+            evol = 1
+            self.extra_params["damage_evol"] = {"type": evol, "Gf": val, "L": float(L)}
+        elif t in ("DISPLACEMENT", "DISPLACEMENT_LINEAR"):
+            evol = 2
+            self.extra_params["damage_evol"] = {"type": evol, "delta_f": val, "L": float(L)}
+        else:
+            raise ValueError("DamageEvolution type must be ENERGY_LINEAR, ENERGY_EXPONENTIAL, or DISPLACEMENT")
+
+    def Cohesive(
+        self,
+        Knn: float = 1.0e5,
+        Kss: float = 1.0e5,
+        Nmax: float = 0.0,
+        Smax: float = 0.0,
+        Gc: float = 0.0,
+        criterion: str = "MAXS",
+        delta_f: float = 0.0,
+        viscosity: float = 0.0,
+        thickness: float = 1.0,
+    ) -> None:
+        """Helper to define Cohesive Traction-Separation constitutive law."""
+        self.mat_type = "COHESIVE"
+        self.extra_params["cohesive"] = {
+            "Knn": float(Knn),
+            "Kss": float(Kss),
+            "Nmax": float(Nmax),
+            "Smax": float(Smax),
+            "Gc": float(Gc),
+            "criterion": str(criterion).upper(),
+            "delta_f": float(delta_f),
+            "viscosity": float(viscosity),
+            "thickness": float(thickness),
+        }
 
     def DruckerPrager(self, beta: float = 20.0, psi: float = 20.0,
                       d0: float = 100.0, H: float = 0.0) -> None:
