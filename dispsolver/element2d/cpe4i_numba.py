@@ -48,17 +48,18 @@ def _voigt_transform_2d(J0: np.ndarray) -> np.ndarray:
     invJ11 =  J0[0, 0] / detJ0
 
     # T0_inv_T maps natural Voigt strain [eps_xi, eps_eta, gamma_xi_eta]^T to physical [eps_x, eps_y, gamma_xy]^T
+    # via eps_X = J0^{-1} E_xi J0^{-T}
     T = np.zeros((3, 3), dtype=np.float64)
     T[0, 0] = invJ00 * invJ00
-    T[0, 1] = invJ10 * invJ10
-    T[0, 2] = invJ00 * invJ10
+    T[0, 1] = invJ01 * invJ01
+    T[0, 2] = invJ00 * invJ01
 
-    T[1, 0] = invJ01 * invJ01
+    T[1, 0] = invJ10 * invJ10
     T[1, 1] = invJ11 * invJ11
-    T[1, 2] = invJ01 * invJ11
+    T[1, 2] = invJ10 * invJ11
 
-    T[2, 0] = 2.0 * invJ00 * invJ01
-    T[2, 1] = 2.0 * invJ10 * invJ11
+    T[2, 0] = 2.0 * invJ00 * invJ10
+    T[2, 1] = 2.0 * invJ01 * invJ11
     T[2, 2] = invJ00 * invJ11 + invJ01 * invJ10
     return T
 

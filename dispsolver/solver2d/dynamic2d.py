@@ -543,6 +543,12 @@ class DynamicSolver2D:
             elif k == 19:
                 from dispsolver.element2d.coh2d4_numba import assemble_mesh_coh2d4_numba
                 f_sub, K_sub, err = assemble_mesh_coh2d4_numba(node_coords_all, sub_conn, u_eval, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls)
+            elif k == 20:
+                from dispsolver.element2d.cpe4ih_numba import assemble_mesh_cpe4ih_numba
+                f_sub, K_sub, err = assemble_mesh_cpe4ih_numba(node_coords_all, sub_conn, u_eval, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls)
+            elif k == 21:
+                from dispsolver.element2d.cr_wrapper_2d import assemble_mesh_cpe4ih_cr_numba
+                f_sub, K_sub, err = assemble_mesh_cpe4ih_cr_numba(node_coords_all, sub_conn, u_eval, sub_mat, sub_props, sub_sdvs, dt, elem_controls=sub_controls)
             else:
                 raise ValueError(f"Unknown element kernel index: {k}")
 

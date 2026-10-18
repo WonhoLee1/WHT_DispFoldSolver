@@ -23,6 +23,7 @@ from numba import njit, prange
 from dispsolver.element3d.c3d8_corotational_numba import compute_element_rotation_3d
 from dispsolver.element3d.c3d8_eas_numba import compute_c3d8_eas_element_numba
 from dispsolver.element3d.c3d8_hybrid_numba import compute_c3d8_hybrid_element_umat_numba, assemble_mesh_c3d8_hybrid_numba
+from dispsolver.element3d.c3d8ih_numba import compute_c3d8ih_element_numba
 from dispsolver.element3d.c3d8r_numba import compute_c3d8r_element_numba
 from dispsolver.element3d.solid_shell_numba import compute_solid_shell_element_numba
 
@@ -282,4 +283,52 @@ def assemble_mesh_solid_shell_cr_numba(node_coords, elem_conn, u_global, elem_ma
         err_flags[e] = err
 
     return f_elems, K_elems, int(np.sum(err_flags))
+
+
+# ==============================================================================
+# C3D8IH_CR: 9-mode EAS + 4-DOF Linear Hybrid Pressure + Co-Rotational Wrapper
+# ==============================================================================
+
+@njit(fastmath=True)
+def compute_c3d8ih_cr_element_numba(coords, u_elem, mat_type, props, sdvs, dt, elem_controls=None, elem_stress_init=None):
+    """Compute 3D C3D8IH (Incompatible Modes + Hybrid Linear Pressure) with Co-rotational kinematics."""
+    R, u_loc, _ = _extract_corotational_frame_hex3d(coords, u_elem)
+    ctrl = elem_controls if elem_controls is not None else np.empty(0, dtype=np.float64)
+    stress_init = elem_stress_init if elem_stress_init is not None else np.empty((0, 6), dtype=np.float64)
+    f_loc, K_loc, err = compute_c3d8ih_element_numba(coords, u_loc, mat_type, props, sdvs, dt, ctrl, stress_init)
+    f_glob, K_glob = _transform_corotational_system_hex3d(R, f_loc, K_loc)
+    return f_glob, K_glob, err
+
+
+@njit(parallel=True, fastmath=True)
+def assemble_mesh_c3d8ih_cr_numba(node_coords, elem_conn, u_global, elem_mat_types, elem_props, elem_sdvs, dt, elem_controls=None, elem_stress_init=None):
+    """Parallel assembly of C3D8IH_CR elements."""
+    n_elems = elem_conn.shape[0]
+    f_elems = np.zeros((n_elems, 24), dtype=np.float64)
+    K_elems = np.zeros((n_elems, 24, 24), dtype=np.float64)
+    err_flags = np.zeros(n_elems, dtype=np.int32)
+    use_controls = (elem_controls is not None and elem_controls.shape[0] == n_elems)
+    has_stress_init = (elem_stress_init is not None and elem_stress_init.shape[0] == n_elems)
+
+    for e in prange(n_elems):
+        conn = elem_conn[e]
+        elem_nodes = np.zeros((8, 3), dtype=np.float64)
+        u_elem = np.zeros(24, dtype=np.float64)
+        for i in range(8):
+            nid = conn[i]
+            elem_nodes[i, :] = node_coords[nid, :]
+            u_elem[3 * i : 3 * i + 3] = u_global[3 * nid : 3 * nid + 3]
+
+        ctrl = elem_controls[e] if use_controls else np.empty(0, dtype=np.float64)
+        stress_init = elem_stress_init[e] if has_stress_init else np.empty((0, 6), dtype=np.float64)
+
+        f_e, K_e, err = compute_c3d8ih_cr_element_numba(
+            elem_nodes, u_elem, elem_mat_types[e], elem_props[e], elem_sdvs[e], dt, ctrl, stress_init
+        )
+        f_elems[e] = f_e
+        K_elems[e] = K_e
+        err_flags[e] = err
+
+    return f_elems, K_elems, int(np.sum(err_flags) > 0)
+
 

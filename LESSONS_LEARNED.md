@@ -600,5 +600,22 @@ deck06 DUAL_MORTAR는 세 결함이 겹쳐 수렴하지 못했다(하나만 고�
     - 하부면 절점(Node 0, 1)은 $-h$ 방향으로 섭동해야 개구량($\mathbf{x}_{top} - \mathbf{x}_{bot}$)이 증가하는 로딩 섭동이 됨.
   - 이 방향성 섭동 프로토콜을 적용했을 때, 연화 구간에서도 접선 강성 행렬이 수치 미분과 상대 오차 $< 8.94 \times 10^{-6}$으로 완벽히 일치함을 확인하고 테스트 스위트에 영구 반영함.
 
+### 16.7 `CPE4IH` (2D) 및 `C3D8IH` (3D) 비적합 모드 + 선형 혼합 압력 요소의 2단계 Schur 보완 응축과 $O(K)-O(K)$ 상쇄 원천 차단
+- **수치역학적 배경 및 잠김 메커니즘**:
+  - 초탄성/거의 비압축성($\nu \to 0.5$) 박막이 굽힘을 받을 때, 표준 혼합 요소(`CPE4H`, `C3D8H`)는 기생 전단 변형률로 인해 단일 층 굽힘에서 심각한 전단 잠김(Shear Locking)을 겪으며, 반대로 표준 비적합 모드 요소(`CPE4I`, `C3D8I`)는 사다리꼴/왜곡 요소망에서 고차 체적 구속으로 인해 체적 잠김(Volumetric Locking)을 겪음.
+  - Abaqus Theory Manual §3.2.3 & §3.2.4 및 Simo & Rifai (1990) / Simo & Armero (1992) 표준에 따라, 전단 잠김과 체적 잠김을 동시에 소거하기 위해 비적합 모드($\boldsymbol{\alpha}$: 2D 4-모드, 3D 9-모드)와 선형 혼합 압력장($p = p_0 + \mathbf{p}_{\text{lin}} \cdot \tilde{\boldsymbol{\xi}}$: 2D 3-DOF, 3D 4-DOF)을 결합한 `CPE4IH` 및 `C3D8IH` (및 Co-rotational 래퍼 `CPE4IH_CR`, `C3D8IH_CR`)를 구현함.
+- **2단계 Schur 보완 정적 응축(Two-Stage Isochoric-then-Pressure Condensation)**:
+  - 비적합 모드 $\boldsymbol{\alpha}$에 벌크 탄성계수 $K$를 직접 포함시켜 $\mathbf{K}_{uu} - \mathbf{K}_{u\alpha}\mathbf{K}_{\alpha\alpha}^{-1}\mathbf{K}_{\alpha u}$를 계산하면 $\nu \to 0.5$ ($K/G \to \infty$) 극한에서 $O(K) - O(K)$ 부동소수점 뺄셈 상쇄(Catastrophic Cancellation)가 발생함.
+  - 이를 원천 차단하기 위해:
+    1. Piola 스케일링된 선형 압력 기저 $\tilde{\mathbf{n}}_{p,\text{lin}}(\boldsymbol{\xi}) = \frac{\det \mathbf{J}_0}{\det \mathbf{J}(\boldsymbol{\xi})} \boldsymbol{\xi}$를 도입하여 요소 평균 압력 $p_0$와 엄밀한 $L^2(\Omega_e)$ 직교성($\int_{\Omega_e} \tilde{\mathbf{n}}_{p,\text{lin}} \, d\Omega \equiv \mathbf{0}$)을 확보하고, 임의의 왜곡 요소망에서 상수 변형률 시 선형 압력 모드가 항등적으로 0이 되어 Irons 패치 테스트를 기계 정밀도($< 10^{-12}$)로 통과하도록 보장함.
+    2. **1단계 (Isochoric EAS 응축)**: 순수 편차 강성 $\mathbf{K}_{\alpha\alpha,\text{dev}} = O(G)$ (조건수 $\approx 1.33$, $K$와 무관한 순수 SPD)만을 역행렬 연산하여 $\boldsymbol{\alpha}$를 먼저 응축함.
+    3. **2단계 (선형 및 평균 압력 응축)**: 유효 압력 Schur 보완 행렬 $\mathbf{S}_{pp} = \mathbf{K}_{\alpha p}^\mathsf{T} \mathbf{K}_{\alpha\alpha,\text{dev}}^{-1} \mathbf{K}_{\alpha p} + \frac{1}{K}\mathbf{H}_{pp}$를 통해 선형 압력 기울기 $\mathbf{p}_{\text{lin}}$과 요소 평균 압력 $p_0$를 응축함으로써, $O(K) - O(K)$ 상쇄 없이 정확한 평면 변형률/3D 굽힘 강성 $\frac{E}{1-\nu^2}$를 복원함(단일 층 세장 보 순수 굽힘 오차 $1.36 \times 10^{-9}$).
 
-
+### 16.8 2D EAS 요소(`cpe4i_numba.py`)의 Voigt 변환 $\mathbf{J}_0^{-1}$ vs $\mathbf{J}_0^{-\mathsf{T}}$ 전치 결함 교정 및 JAX 안장점 스케일 분리 정규화
+- **결함 1 — `_voigt_transform_2d` 전치 오류**:
+  - `dispsolver/element2d/cpe4i_numba.py`의 `_voigt_transform_2d`에서 공변 변환 행렬 구성 시 `invJ01`과 `invJ10`이 서로 뒤바뀌어($\mathbf{J}_0^{-\mathsf{T}}$ 대신 $\mathbf{J}_0^{-1}$ 적용) 있었음. 이는 축 정렬 직사각형 요소(`invJ01 = invJ10 = 0`)에서는 완전히 은폐되나, 회전된 고세장비($\text{AR}=7$) 요소에서 심각한 굽힘 에너지 이방성을 유발함.
+  - 이를 엄밀한 $\mathbf{J}_0^{-\mathsf{T}}$ 성분으로 교정하여 `CPE4I` 및 `CPE4IH` 모두 임의 기준틀 회전($0^\circ \sim 90^\circ$)에서 굽힘 에너지가 기계 정밀도로 불변함을 검증함.
+- **결함 2 — `q4_visco_eas_jax.py` 안장점(Saddle-Point) 행렬 단일 스케일 정규화 오류**:
+  - JAX 기반 `CPE4IH` 커널(`compute_single_hybrid_status`)에서 내부 자유도 자코비안 $\mathbf{K}_{qq}$ ($5\times 5$)는 상단 $4\times 4$ EAS 블록($O(G V_0) \sim +10^3$)과 하단 $1\times 1$ 압력 컴플라이언스 블록($K_{pp} = -V_0/\kappa \sim -4.5\times 10^{-5}$)의 물리적 차원과 부호가 전혀 다름.
+  - 기존 코드가 `1e-10 * mean(|diag(K_qq)|) * I_5`($\approx +10^{-7}$)를 일괄 합산하면서 작은 음수인 $K_{pp}$를 $0.22\%$ 교란시켰고, 이것이 `tests/element_contract/test_contract.py`의 `C8` (유한차분 자코비안 일치) 계약을 $3.44 \times 10^{-3}$ 오차로 실패하게 만든 근본 원인이었음.
+  - EAS 블록과 압력 블록을 각각의 스케일과 부호에 맞게 분리 정규화(`_reg_kqq`)하고 4개 Simo-Rifai EAS 모드와 영평균 체적 변동 에너지 $\frac{1}{2}\kappa(J-\bar{J})^2$를 결합함으로써, `CPE4IH`의 `C1`~`C9` 전 계약을 100% 통과시킴 (`_XFAIL`에서 `CPE4IH` 3건 완전 제거).

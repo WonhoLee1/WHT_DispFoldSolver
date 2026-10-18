@@ -388,72 +388,87 @@ def _residuals_h(base, u_elem, q, coords, state_elem, kappa, bparams,
     """
     _eye = jnp.eye(2)
     F_n = jnp.stack([_eye, _eye, _eye, _eye]) if F_n is None else F_n
-    # Mode mask. With an independent pressure unknown the DILATATIONAL
-    # enhanced modes (0: F11~xi, 3: F22~eta) would relax the very volumetric
-    # constraint p already enforces -- double relaxation, measured as a ~4x
-    # too-soft element (ratio 0.26 vs beam theory at every aspect ratio).
-    # Only the SHEAR modes are kept: in pure bending u=-kappa*X*Y, v=kappa*X^2/2
-    # the bilinear field can represent u exactly but not v, and the missing
-    # term is dv/dX ~ xi, i.e. mode 2 (F21~xi); mode 1 (F12~eta) is its
-    # transpose for bending about the other axis. So p handles volumetric,
-    # modes 1-2 handle bending, and neither treats the same constraint twice.
-    _MASK = jnp.array([0.0, 1.0, 1.0, 0.0])
-    alpha = q[:4] * (_MASK if use_eas else 0.0)
+    # All 4 Simo-Rifai modes must stay active when use_eas=True so the enhanced
+    # gradient tensor F_enh = (detJ0/detJ) D_k J0^-T remains isotropic under
+    # arbitrary element rotation (C6/C7). The element-constant pressure p = q[4]
+    # replaces the element-MEAN volumetric energy, while for CPE4IH (use_eas=True)
+    # the zero-mean fluctuating volumetric potential 0.5*kappa*(J - J_bar)^2
+    # couples the normal EAS modes to the linear bending dilatation so that
+    # tr(eps) = 0 pointwise in pure bending. Because sum_gp (J_gp - J_bar)*w0_gp == 0
+    # identically, d/dE_gp [int 0.5*kappa*(J - J_bar)^2 dV0] = kappa*(J_gp - J_bar)*J_gp*C_gp^-1.
+    _MASK = jnp.array([1.0, 1.0, 1.0, 1.0]) if use_eas else jnp.zeros(4)
+    alpha = q[:4] * _MASK
     p = q[4]
     Fenh_all = _enh_modes_all(coords)
 
-    f_u = jnp.zeros(8)
-    f_a = jnp.zeros(4)
-    r_p = 0.0
+    # Pass 1: compute per-GP kinematics and element-mean Jacobian J_bar on config 0
+    F_inc_all = []
+    F_all = []
+    J_all = []
+    w_all = []
+    w0_all = []
+    gX_all = []
+    gY_all = []
+    detFn_all = []
     vol = 0.0
-    state_new = jnp.empty_like(state_elem)
-    F_n_new = jnp.zeros((4, 2, 2))
+    J_int = 0.0
     for gp in range(4):
         xi, eta = _GP2[gp]
         gX, gY, detJ = _grads(xi, eta, coords)
         w = detJ * _W2[gp] * thickness
-
-        # Enhancement in the INCREMENTAL frame -- same 2026-09-10 change as
-        # `_residuals`; see the long note there.
         F_inc_c = _F_at(gX, gY, u_elem)
         F_inc = F_inc_c + jnp.einsum('j,jab->ab', alpha, Fenh_all[gp])
         F = F_inc @ F_n[gp]
         J = F[0, 0] * F[1, 1] - F[0, 1] * F[1, 0]
+        Fn_gp = F_n[gp]
+        detFn = jnp.maximum(jnp.abs(Fn_gp[0, 0] * Fn_gp[1, 1] - Fn_gp[0, 1] * Fn_gp[1, 0]), 1e-30)
+        w0 = w / detFn
+
+        F_inc_all.append(F_inc)
+        F_all.append(F)
+        J_all.append(J)
+        w_all.append(w)
+        w0_all.append(w0)
+        gX_all.append(gX)
+        gY_all.append(gY)
+        detFn_all.append(detFn)
+        vol = vol + w0
+        J_int = J_int + J * w0
+
+    J_bar = J_int / jnp.maximum(vol, 1e-30)
+    kappa_fluct = kappa if use_eas else 0.0
+
+    f_u = jnp.zeros(8)
+    f_a = jnp.zeros(4)
+    r_p = 0.0
+    state_new = jnp.empty_like(state_elem)
+    F_n_new = jnp.zeros((4, 2, 2))
+    for gp in range(4):
+        F_inc = F_inc_all[gp]
+        F = F_all[gp]
+        J = J_all[gp]
+        w = w_all[gp]
+        w0 = w0_all[gp]
+        gX = gX_all[gp]
+        gY = gY_all[gp]
+        detFn = detFn_all[gp]
 
         # deviatoric/isochoric + viscoelastic overstress only (kappa = 0)
         S_v, h_new = _simo_pk2(base, F, state_elem[gp], 0.0, bparams,
                                g_i, tau_i, g_inf, dt, distortion_j_crit=0.0)
 
-        # hybrid volumetric stress  p J C^-1   (2D Voigt [11, 22, 12])
+        # hybrid volumetric stress: mean pressure p + zero-mean EAS fluctuation
+        p_gp = p + kappa_fluct * (J - J_bar)
         C = F.T @ F
         Cinv = jnp.linalg.inv(C + 1e-15 * jnp.eye(2))
-        S_vol = p * J * jnp.array([Cinv[0, 0], Cinv[1, 1], Cinv[0, 1]])
+        S_vol = p_gp * J * jnp.array([Cinv[0, 0], Cinv[1, 1], Cinv[0, 1]])
         S_tot = S_v + S_vol
 
-        # Work-conjugacy push-forward onto config n (finding F4), applied to
-        # EVERY term of the two-field functional so that
-        #   Pi = int [ W_iso + p(J-1) - p^2/(2K) ] dV0
-        # is differentiated once, consistently: `S_n`/`w` for the two stress
-        # residuals and `w0 = w/det(F_n)` for the pressure row (dV0 = dV_n /
-        # det F_n). Previously `f_u` used the pushed S_n while `f_a` used the
-        # raw S_tot and `r_p` integrated on config n, so the three rows
-        # belonged to three different functionals and the `K_qu = K_uq^T`
-        # assumed by the condensation below was false: measured 5.2e-3 (TL)
-        # and 5.4e-1 (UL, 25 deg reference rotation) for CPE4IH, with the
-        # condensed tangent 4.7e-3 / 1.8e-1 away from a finite-difference
-        # d f_e/d u. CPE4H (use_eas=False) was exact in TL -- with alpha
-        # frozen at 0 the enhanced half of the mismatch disappears -- which
-        # is why this never showed up in the TL patch tests.
         Fn_gp = F_n[gp]
         S0_tensor = jnp.array([[S_tot[0], S_tot[2]], [S_tot[2], S_tot[1]]])
-        detFn = jnp.maximum(jnp.abs(Fn_gp[0, 0] * Fn_gp[1, 1] - Fn_gp[0, 1] * Fn_gp[1, 0]), 1e-30)
         Sn_tensor = (Fn_gp @ S0_tensor @ Fn_gp.T) / detFn
         S_n_voigt = jnp.array([Sn_tensor[0, 0], Sn_tensor[1, 1], Sn_tensor[0, 1]])
-        w0 = w / detFn
 
-        # BL and G both from the ENHANCED incremental gradient (BL used to be
-        # built from the compatible F_inc_c, dropping the alpha-dependent half
-        # of dE_inc/du).
         BL = _BL_columns(F_inc, gX, gY)
         FtFe = jnp.einsum('ba,jbc->jac', F_inc, Fenh_all[gp])
         G = jnp.stack([_voigt_sym(FtFe[j]) for j in range(4)], axis=1)
@@ -462,12 +477,11 @@ def _residuals_h(base, u_elem, q, coords, state_elem, kappa, bparams,
         f_a = f_a + G.T @ S_n_voigt * w
 
         r_p = r_p + (J - 1.0) * w0
-        vol = vol + w0
         state_new = state_new.at[gp].set(h_new)
         F_n_new = F_n_new.at[gp].set(F)
 
     r_p = r_p - (p / jnp.maximum(kappa, 1e-30)) * vol
-    f_a = f_a * (_MASK if use_eas else 0.0)
+    f_a = f_a * _MASK
     return f_u, jnp.concatenate([f_a, jnp.array([r_p])]), state_new, F_n_new
 
 
@@ -505,6 +519,17 @@ def compute_single_hybrid_status(coords, u_elem, alpha, state_elem, kappa, bpara
     # itself, so it cannot bias the converged solution.
     _merit_w = jnp.array([1.0, 1.0, 1.0, 1.0, _p_scale], dtype=jnp.float64)
 
+    def _reg_kqq(K_qq):
+        # Regularize the 4x4 EAS block and the 1x1 pressure block on their OWN
+        # physical scales (and sign: K_qq[4,4] = -V0/kappa < 0). Previously a
+        # single mean(abs(diag(K_qq))) added +1e-10*reg_a (~1e-7) to K_qq[4,4]
+        # (~-4.5e-5), perturbing the pressure Schur complement by ~0.3% (C8).
+        diag_a = jnp.abs(jnp.diag(K_qq)[:4])
+        reg_a = jnp.where(use_eas, 1e-12 * jnp.maximum(jnp.mean(diag_a), 1e-30), 1.0)
+        reg_p = -1e-12 * jnp.maximum(jnp.abs(K_qq[4, 4]), 1e-30)
+        reg_vec = jnp.array([reg_a, reg_a, reg_a, reg_a, reg_p], dtype=jnp.float64)
+        return K_qq + jnp.diag(reg_vec)
+
     def _q_cond(carry):
         _q, dq_meas, it, failed = carry
         return (dq_meas > _ALPHA_CONV_TOL) & (it < _ALPHA_MAX_IT) & (~failed)
@@ -513,8 +538,7 @@ def compute_single_hybrid_status(coords, u_elem, alpha, state_elem, kappa, bpara
         q, _dq_prev, it, _failed = carry
         f_q = _fq(q, u_elem)
         K_qq = jax.jacobian(_fq, argnums=0)(q, u_elem)
-        reg = jnp.maximum(jnp.mean(jnp.abs(jnp.diag(K_qq))), 1e-30)
-        dq = -jnp.linalg.solve(K_qq + 1e-10 * reg * jnp.eye(5), f_q)
+        dq = -jnp.linalg.solve(_reg_kqq(K_qq), f_q)
         norms = jnp.stack([
             jnp.linalg.norm(_fq(q + ls * dq, u_elem) * _merit_w)
             for ls in _LS_STEPS])
@@ -548,8 +572,7 @@ def compute_single_hybrid_status(coords, u_elem, alpha, state_elem, kappa, bpara
     K_qq = jax.jacobian(_fq, argnums=0)(q, u_elem)
     K_qu = K_uq.T
 
-    reg = jnp.maximum(jnp.mean(jnp.abs(jnp.diag(K_qq))), 1e-30)
-    K_qq_reg = K_qq + 1e-10 * reg * jnp.eye(5)
+    K_qq_reg = _reg_kqq(K_qq)
     K_e = K_uu - K_uq @ jnp.linalg.solve(K_qq_reg, K_qu)
     f_u = f_u - K_uq @ jnp.linalg.solve(K_qq_reg, f_q_res)
 

@@ -64,6 +64,8 @@ KERNELS: Dict[int, Dict[int, KernelInfo]] = {
         16: KernelInfo("C3D8 B-bar small strain", 8, small_strain=True, initial_stress="native"),
         17: KernelInfo("C3D8H u-p hybrid small strain", 8, small_strain=True, initial_stress="native"),
         18: KernelInfo("C3D8I EAS small strain", 8, small_strain=True, elastic_only=True, initial_stress="added"),
+        19: KernelInfo("C3D8IH (incompatible + hybrid)", 8, small_strain=True, initial_stress="native"),
+        20: KernelInfo("C3D8IH co-rotational", 8, small_strain=False, initial_stress="native"),
     },
     2: {
         0: KernelInfo("CPE4", 4, small_strain=True, initial_stress="added"),
@@ -90,6 +92,8 @@ KERNELS: Dict[int, Dict[int, KernelInfo]] = {
                        nlgeom_unsupported="axisymmetric kernels are small strain and cannot be co-rotated"),
         18: KernelInfo("T2D2 truss", 2, small_strain=True, cr_wrap=True),
         19: KernelInfo("COH2D4 cohesive", 4, small_strain=False),
+        20: KernelInfo("CPE4IH (incompatible + hybrid)", 4, small_strain=True, initial_stress="added"),
+        21: KernelInfo("CPE4IH co-rotational", 4, small_strain=False, initial_stress="added"),
     },
 }
 
@@ -178,12 +182,12 @@ _ELEMENT_DESCRIPTORS: Tuple[ElementDescriptor, ...] = (
     _hex("C3D8RH", 13, 8, "REDUCED", True, "runs as C3D8R (reduced integration); " + _NO_HYBRID),
     _hex("C3D8I", 11, 18, "INCOMPATIBLE", kernel_yes_inelastic=0, kernel_no_inelastic=0,
          note_no_inelastic=_C3D8I_NO_INEL, aliases=("C3D8_EAS",)),
-    _hex("C3D8IH", 11, 18, "INCOMPATIBLE", True, "runs as C3D8I (incompatible modes); " + _NO_HYBRID,
-         kernel_yes_inelastic=0, kernel_no_inelastic=0, note_no_inelastic=_C3D8I_NO_INEL),
+    _hex("C3D8IH", 20, 19, "INCOMPATIBLE", True),
     _hex("C3D8H", 2, 17, hybrid=True, aliases=("C3D8_HYBRID", "HYBRID")),
     # internal formulation names: the named kernel whatever NLGEOM says
     _hex("C3D8_CR", 1, 1, aliases=("C3D8_COROTATIONAL", "C3D8_FBAR_CR")),
     _hex("C3D8I_CR", 11, 11, "INCOMPATIBLE", kernel_yes_inelastic=0),   # NO + inelastic: refused (elastic-only kernel)
+    _hex("C3D8IH_CR", 20, 20, "INCOMPATIBLE", True),
     _hex("C3D8H_CR", 2, 2, hybrid=True),
     _hex("C3D8R_CR", 13, 13, "REDUCED"),
     _hex("C3D8_FBAR", 3, 3),
@@ -217,9 +221,7 @@ _ELEMENT_DESCRIPTORS: Tuple[ElementDescriptor, ...] = (
     *[_plane(n, 5, 0, 4) for n in ("CPE4", "CPS4")],
     *[_plane(n, 11, 1, 4, "INCOMPATIBLE") for n in ("CPE4I", "CPS4I")],
     _plane("Q4_EAS", 11, 1, 4, "INCOMPATIBLE", aliases=("INCOMPATIBLE",)),
-    *[_plane(n, 12, 1, 4, "INCOMPATIBLE", True,
-             note_yes="NLGEOM=YES runs the co-rotational hybrid kernel (no incompatible modes)",
-             note_no="NLGEOM=NO runs the incompatible-mode kernel (" + _NO_HYBRID + ")") for n in ("CPE4IH", "CPS4IH")],
+    *[_plane(n, 21, 20, 4, "INCOMPATIBLE", True) for n in ("CPE4IH", "CPS4IH")],
     *[_plane(n, 12, 3, 4, hybrid=True) for n in ("CPE4H", "CPS4H")],
     _plane("Q4_HYBRID", 12, 3, 4, hybrid=True),
     *[_plane(n, 13, 2, 4, "REDUCED") for n in ("CPE4R", "CPS4R")],
@@ -230,6 +232,7 @@ _ELEMENT_DESCRIPTORS: Tuple[ElementDescriptor, ...] = (
     _plane("CPE4_CR", 5, 5, 4, aliases=("Q4_COROTATIONAL", "CPE4_COROTATIONAL")),
     _plane("CPE4_FBAR", 4, 4, 4, aliases=("FBAR",)),
     _plane("CPE4I_CR", 11, 11, 4, "INCOMPATIBLE"),
+    _plane("CPE4IH_CR", 21, 21, 4, "INCOMPATIBLE", True),
     _plane("CPE4H_CR", 12, 12, 4, hybrid=True),
     _plane("CPE4R_CR", 13, 13, 4, "REDUCED"),
     _plane("CPE6M_CR", 14, 14, 6, "MODIFIED"),

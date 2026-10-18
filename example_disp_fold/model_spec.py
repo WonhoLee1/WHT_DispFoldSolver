@@ -14,15 +14,17 @@ import numpy as np
 # Canonical, verified element formulation cases (SSOT, standard Abaqus element types)
 # Solvers automatically promote these to Co-Rotational kernels under nlgeom=True via ElementCatalog
 ELEM_CASES_2D: Dict[str, Dict[str, str]] = {
-    "2D-Opt1":   {"solid": "CPE4I", "psa": "CPE4H", "plate": "CPE4"},
-    "2D-Opt2":   {"solid": "CPE4R", "psa": "CPE4H", "plate": "CPE4"},
-    "2D-Base":   {"solid": "CPE4",  "psa": "CPE4H", "plate": "CPE4"},
+    "2D-Opt1":    {"solid": "CPE4I", "psa": "CPE4H",  "plate": "CPE4"},
+    "2D-Opt1-IH": {"solid": "CPE4I", "psa": "CPE4IH", "plate": "CPE4"},
+    "2D-Opt2":    {"solid": "CPE4R", "psa": "CPE4H",  "plate": "CPE4"},
+    "2D-Base":    {"solid": "CPE4",  "psa": "CPE4H",  "plate": "CPE4"},
 }
 
 ELEM_CASES_3D: Dict[str, Dict[str, str]] = {
-    "3D-Opt1":   {"solid": "C3D8I", "psa": "C3D8H", "plate": "C3D8"},
-    "3D-Opt2-H": {"solid": "C3D8R", "psa": "C3D8H", "plate": "C3D8"},
-    "3D-Base":   {"solid": "C3D8",  "psa": "C3D8H", "plate": "C3D8"},
+    "3D-Opt1":    {"solid": "C3D8I", "psa": "C3D8H",  "plate": "C3D8"},
+    "3D-Opt1-IH": {"solid": "C3D8I", "psa": "C3D8IH", "plate": "C3D8"},
+    "3D-Opt2-H":  {"solid": "C3D8R", "psa": "C3D8H",  "plate": "C3D8"},
+    "3D-Base":    {"solid": "C3D8",  "psa": "C3D8H",  "plate": "C3D8"},
 }
 
 

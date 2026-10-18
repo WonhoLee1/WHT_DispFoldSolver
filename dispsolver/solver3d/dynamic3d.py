@@ -1238,6 +1238,18 @@ class DynamicSolver3D:
                         f_sub, K_sub = assemble_mesh_c3d8i_small_strain_numba(
                             node_coords_all, np.ascontiguousarray(sub_conn, dtype=np.int64), u_eval, C_all)
                         err = 0
+                    elif k == 19:
+                        from dispsolver.element3d.c3d8ih_numba import assemble_mesh_c3d8ih_numba
+                        f_sub, K_sub, err = assemble_mesh_c3d8ih_numba(
+                            node_coords_all, sub_conn, u_eval, sub_mat, sub_props, sub_sdvs, dt,
+                            elem_controls=sub_controls, elem_stress_init=sub_stress_init
+                        )
+                    elif k == 20:
+                        from dispsolver.element3d.cr_wrapper_3d import assemble_mesh_c3d8ih_cr_numba
+                        f_sub, K_sub, err = assemble_mesh_c3d8ih_cr_numba(
+                            node_coords_all, sub_conn, u_eval, sub_mat, sub_props, sub_sdvs, dt,
+                            elem_controls=sub_controls, elem_stress_init=sub_stress_init
+                        )
                     else:
                         raise ValueError(f"Unknown element kernel index: {k}")
 

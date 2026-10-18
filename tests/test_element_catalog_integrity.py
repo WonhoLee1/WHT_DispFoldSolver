@@ -17,7 +17,7 @@ from dispsolver.model.element_catalog import KERNELS, ElementCatalog, cr_wrapped
 
 def _assembly_branches(module) -> set:
     src = inspect.getsource(module)
-    body = src[src.index("def assemble_system"):]
+    body = src[src.index("def _assemble_physical"):]
     body = body[:body.index("\n    def ", 10)]
     return {int(k) for k in re.findall(r"\bk == (\d+):", body)}
 

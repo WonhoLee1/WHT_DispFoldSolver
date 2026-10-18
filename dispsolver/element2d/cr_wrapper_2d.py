@@ -23,6 +23,7 @@ from numba import njit, prange
 
 from dispsolver.element2d.cpe4i_numba import compute_cpe4i_element_numba
 from dispsolver.element2d.cpe4h_numba import compute_cpe4h_element_numba
+from dispsolver.element2d.cpe4ih_numba import compute_cpe4ih_element_numba
 from dispsolver.element2d.cpe4r_numba import compute_cpe4r_element_numba
 from dispsolver.element2d.cpe6m_numba import compute_cpe6m_element_numba
 
@@ -221,6 +222,14 @@ def compute_cpe6m_cr_element_numba(coords, u_elem, mat_type, props, sdvs, dt, el
     return fe, Ke, err
 
 
+@njit(fastmath=True)
+def compute_cpe4ih_cr_element_numba(coords, u_elem, mat_type, props, sdvs, dt, elem_controls=None):
+    R, u_loc, _ = _extract_corotational_frame_quad2d(coords, u_elem)
+    f_loc, K_loc, err = compute_cpe4ih_element_numba(coords, u_loc, mat_type, props, sdvs, dt, elem_controls)
+    fe, Ke = _transform_corotational_system_quad2d(R, f_loc, K_loc)
+    return fe, Ke, err
+
+
 # ==============================================================================
 # Parallel Mesh Assembly Dispatchers
 # ==============================================================================
@@ -265,6 +274,29 @@ def assemble_mesh_cpe4h_cr_numba(node_coords_all, elem_conn, u_global, elem_mat_
             u_e[2 * i + 0] = u_global[2 * nid + 0]
             u_e[2 * i + 1] = u_global[2 * nid + 1]
         fe, Ke, err = compute_cpe4h_cr_element_numba(coords_e, u_e, elem_mat_types[e], elem_props[e], elem_sdvs[e], dt, elem_controls[e] if elem_controls is not None else None)
+        f_elems[e] = fe
+        k_elems[e] = Ke
+        errors[e] = err
+    return f_elems, k_elems, int(np.sum(errors))
+
+
+@njit(parallel=True, fastmath=True)
+def assemble_mesh_cpe4ih_cr_numba(node_coords_all, elem_conn, u_global, elem_mat_types, elem_props, elem_sdvs, dt, elem_controls=None, elem_stress_init=None):
+    n_elems = elem_conn.shape[0]
+    f_elems = np.zeros((n_elems, 8), dtype=np.float64)
+    k_elems = np.zeros((n_elems, 8, 8), dtype=np.float64)
+    errors = np.zeros(n_elems, dtype=np.int32)
+    for e in prange(n_elems):
+        conn_e = elem_conn[e]
+        coords_e = np.zeros((4, 2), dtype=np.float64)
+        u_e = np.zeros(8, dtype=np.float64)
+        for i in range(4):
+            nid = conn_e[i]
+            coords_e[i, 0] = node_coords_all[nid, 0]
+            coords_e[i, 1] = node_coords_all[nid, 1]
+            u_e[2 * i + 0] = u_global[2 * nid + 0]
+            u_e[2 * i + 1] = u_global[2 * nid + 1]
+        fe, Ke, err = compute_cpe4ih_cr_element_numba(coords_e, u_e, elem_mat_types[e], elem_props[e], elem_sdvs[e], dt, elem_controls[e] if elem_controls is not None else None)
         f_elems[e] = fe
         k_elems[e] = Ke
         errors[e] = err

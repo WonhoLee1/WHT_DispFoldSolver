@@ -105,9 +105,6 @@ _XFAIL = {
     ("C6", "Q4_COROTATIONAL_SRI"): (1.58e+01, "DEFECT, known: bit-identical to "
                                     "Q4_SRI. PRODUCTION element (PET + GLASS) -- "
                                     "this is the R3 measurement; see the report."),
-    ("C6", "CPE4IH"): (4.19e+01, "DEFECT, NEW: 0.467 at 0 degrees (too SOFT) "
-                       "to 20.0 at 90 degrees. Same kernel family as C7/C8's "
-                       "CPE4IH findings. Stage 3 owns it."),
 
     # ---- C7: global-axis isotropy ------------------------------------
     ("C7", "Q4_SRI"): (6.71e-02, "DEFECT, known: shear sampled as the raw "
@@ -120,10 +117,6 @@ _XFAIL = {
                                     "element's absolute orientation intact. "
                                     "Measured bit-identical to Q4_SRI here, "
                                     "confirming AGENTS.md 4.14."),
-    ("C7", "CPE4IH"): (5.68e-02, "DEFECT, NEW (found by this suite): CPE4IH is "
-                       "anisotropic at the same order as the SRI family, while "
-                       "its siblings CPE4I/CPE4H are at 2e-14. Not previously "
-                       "reported. Stage 3 owns it."),
 
     # ---- C8: K is the FD Jacobian of the element's own residual -------
     ("C8", "Q4"): (9.46e-01, "BY DESIGN: as C2 -- a small-strain tangent "
@@ -138,12 +131,6 @@ _XFAIL = {
                        "Q4_COROTATIONAL."),
     ("C8", "Q4_COROTATIONAL_SRI"): (1.13e-01, "BY DESIGN: modified Newton, as "
                                     "Q4_COROTATIONAL."),
-    ("C8", "CPE4IH"): (3.44e-03, "DEFECT, NEW: CPE4IH's tangent is not the "
-                       "Jacobian of its own residual, while CPE4I/CPE4H are at "
-                       "1.3e-09 on the identical probe -- so this is NOT the "
-                       "modified-Newton exemption, it is the B1/B2/B3 class "
-                       "surviving in the one kernel B2's fix touched last. "
-                       "Stage 3 owns it."),
 
     # ---- C9: condensation symmetry -----------------------------------
     ("C9", "Q4_VISCO_SIMO"): (7.67e-03, "BY DESIGN: F-bar. The J_bar/J coupling "
