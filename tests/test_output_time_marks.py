@@ -94,3 +94,48 @@ def test_without_marks_the_increments_are_unchanged(tmp_path, dim, deck):
     t = _times(tmp_path, deck, dim, [])
     assert not np.isclose(t, 0.123, atol=1e-12).any()
     assert np.isclose(t[0], 0.1)                                  # the step's own initial increment
+
+
+# ---- reader --------------------------------------------------------------------------------------
+
+def _requests(deck_tail: str, dim: int = 2):
+    from tests.test_p1_reader_keywords import _parse_source
+    deck = ("*HEADING\nt\n*NODE\n1,0,0\n2,1,0\n3,1,1\n4,0,1\n"
+            "*ELEMENT, TYPE=CPE4, ELSET=EL\n1, 1,2,3,4\n*NSET, NSET=N1\n1\n"
+            "*TIME POINTS, NAME=TP1\n0.1, 0.5\n0.9\n"
+            "*STEP, NAME=S1\n*STATIC\n0.1, 1.0, 1e-4, 0.1\n" + deck_tail + "*END STEP\n")
+    reader, model = _parse_source(deck, dim=dim)
+    # the step also carries a default F-Output-1; the requests this deck defines are F-Output-Node/Elem-*
+    reqs = [r for n, r in model.steps["S1"].field_output_requests.items() if n.startswith(("F-Output-Node", "F-Output-Elem"))]
+    assert reqs, list(model.steps["S1"].field_output_requests)
+    return reader, reqs
+
+
+def test_time_points_table_and_output_request():
+    reader, reqs = _requests("*OUTPUT, FIELD, TIME POINTS=TP1\n*NODE OUTPUT\nU\n")
+    assert reader.time_point_tables["TP1"] == [0.1, 0.5, 0.9]
+    r = reqs[0]
+    assert r.time_points == [0.1, 0.5, 0.9] and r.exact_time_points is True
+    assert r.frequency is None                                   # a time-based request is not also per-increment
+
+
+def test_generate_form():
+    reader, _ = _requests("*OUTPUT, FIELD, NUMBER INTERVAL=2\n*NODE OUTPUT\nU\n")
+    from tests.test_p1_reader_keywords import _parse_source
+    deck = ("*HEADING\nt\n*NODE\n1,0,0\n*TIME POINTS, NAME=G, GENERATE\n0.0, 1.0, 0.25\n"
+            "*STEP, NAME=S1\n*STATIC\n*END STEP\n")
+    rdr, _ = _parse_source(deck, dim=2)
+    assert rdr.time_point_tables["G"] == [0.0, 0.25, 0.5, 0.75, 1.0]
+
+
+def test_time_interval_and_time_marks_no():
+    _, reqs = _requests("*OUTPUT, FIELD, TIME INTERVAL=0.2, TIME MARKS=NO\n*ELEMENT OUTPUT\nS\n")
+    r = reqs[0]
+    assert r.time_interval == pytest.approx(0.2) and r.exact_time_points is False
+    assert r.frequency is None
+
+
+def test_frequency_request_is_unchanged():
+    _, reqs = _requests("*OUTPUT, FIELD, FREQUENCY=3\n*NODE OUTPUT\nU\n")
+    r = reqs[0]
+    assert r.frequency == 3 and r.time_interval is None and r.time_points is None

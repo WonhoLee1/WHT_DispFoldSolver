@@ -523,9 +523,64 @@ def _handle_output(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     num_intervals = block.params.get("number interval")
     num_intervals = int(num_intervals) if num_intervals is not None else None
 
+    # TIME INTERVAL / TIME POINTS (name of a *TIME POINTS table) / TIME MARKS (default YES: increments end
+    # exactly on the requested times). FREQUENCY, NUMBER INTERVAL, TIME INTERVAL and TIME POINTS are
+    # alternatives, so a time-based request does not also fire every increment.
+    t_int = block.params.get("time interval", block.params.get("time_interval"))
+    t_int = float(t_int) if t_int not in (None, True, "") else None
+    tp_name = block.params.get("time points", block.params.get("time_points"))
+    t_points = None
+    if tp_name not in (None, True, ""):
+        tables = getattr(reader, "time_point_tables", {})
+        key = str(tp_name).strip().upper()
+        if key not in tables:
+            reader.diagnostics.add("error", "unknown-time-points",
+                                   f"*OUTPUT, TIME POINTS={tp_name}: no *TIME POINTS table of that name", None)
+        else:
+            t_points = list(tables[key])
+    marks = str(block.params.get("time marks", block.params.get("time_marks", "YES"))).strip().upper()
+    if t_int is not None or t_points is not None or num_intervals is not None:
+        frequency = None
+
     reader.current_step._current_output_type = out_type
     reader.current_step._current_output_freq = frequency
     reader.current_step._current_output_intervals = num_intervals
+    reader.current_step._current_output_time = dict(
+        time_interval=t_int, time_points=t_points, exact_time_points=(marks != "NO"))
+
+
+@GLOBAL_KEYWORD_REGISTRY.register(
+    "TIME POINTS",
+    valid_contexts={KeywordContext.GLOBAL, KeywordContext.STEP},
+    aliases=["TIMEPOINTS"],
+    support="FULL",
+    params={
+        "NAME": ParamSpec("NAME", required=True),
+        "GENERATE": ParamSpec("GENERATE", type=bool, default=False),
+    },
+    rows=RowSpec(min_columns=0, max_columns=8),
+    description="Table of times for output requests (*OUTPUT, TIME POINTS=name)",
+)
+def _handle_time_points(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
+    import numpy as np
+    name = str(block.params.get("name", "")).strip().upper()
+    rows = _parse_data_rows(block.data_lines, dtype=float, default=None)
+    times = []
+    if block.params.get("generate", False):
+        for r in rows:
+            vals = [v for v in r if v is not None]
+            if len(vals) < 2:
+                continue
+            start, end = vals[0], vals[1]
+            inc = vals[2] if len(vals) > 2 else (end - start)
+            n = int(np.floor((end - start) / inc + 1e-9))
+            times.extend(start + inc * np.arange(n + 1))
+    else:
+        for r in rows:
+            times.extend(v for v in r if v is not None)
+    if not hasattr(reader, "time_point_tables"):
+        reader.time_point_tables = {}
+    reader.time_point_tables[name] = sorted(float(t) for t in times)
 
 
 @GLOBAL_KEYWORD_REGISTRY.register(
@@ -546,6 +601,7 @@ def _handle_node_output(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
     out_type = getattr(reader.current_step, "_current_output_type", "FIELD")
     freq = getattr(reader.current_step, "_current_output_freq", 1)
     num_intervals = getattr(reader.current_step, "_current_output_intervals", None)
+    timing = getattr(reader.current_step, "_current_output_time", {})
 
     nset = block.params.get("nset", None)
     variables = []
@@ -571,6 +627,7 @@ def _handle_node_output(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
                 num_intervals=num_intervals,
                 variables=variables,
                 region=nset,
+                **timing,
             )
     else:
         req_name = f"H-Output-Node-{reader.current_step.name}-{len(reader.current_step.history_output_requests)}"
@@ -579,6 +636,7 @@ def _handle_node_output(reader: AbaqusInputReader, block: AbaqusKeywordBlock):
             frequency=freq,
             variables=variables,
             region=nset,
+            time_interval=timing.get("time_interval"),
         )
 
 
@@ -603,6 +661,7 @@ def _handle_element_output(reader: AbaqusInputReader, block: AbaqusKeywordBlock)
     out_type = getattr(reader.current_step, "_current_output_type", "FIELD")
     freq = getattr(reader.current_step, "_current_output_freq", 1)
     num_intervals = getattr(reader.current_step, "_current_output_intervals", None)
+    timing = getattr(reader.current_step, "_current_output_time", {})
 
     elset = block.params.get("elset", None)
     variables = []
@@ -628,6 +687,7 @@ def _handle_element_output(reader: AbaqusInputReader, block: AbaqusKeywordBlock)
                 num_intervals=num_intervals,
                 variables=variables,
                 region=elset,
+                **timing,
             )
     else:
         req_name = f"H-Output-Elem-{reader.current_step.name}-{len(reader.current_step.history_output_requests)}"
@@ -636,6 +696,7 @@ def _handle_element_output(reader: AbaqusInputReader, block: AbaqusKeywordBlock)
             frequency=freq,
             variables=variables,
             region=elset,
+            time_interval=timing.get("time_interval"),
         )
 
 
