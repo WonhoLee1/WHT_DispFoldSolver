@@ -214,3 +214,32 @@ def test_incompressible_limit_spectrum_of_cpe4i_and_cpe4ih_agree():
     eh = np.linalg.eigvalsh(0.5 * (Kh + Kh.T)) / G
     assert np.sum(ei > 50) == 1 and np.sum(eh > 50) == 1
     np.testing.assert_allclose(ei[3:7], eh[3:7], rtol=2e-3)
+
+
+# ---- 4. frame invariance of the enhanced-strain transform ---------------------------------------------------------
+#
+# `J = dN_dxi @ coords` is J[a, b] = dx_b/dxi_a, the TRANSPOSE of the textbook Jacobian. _voigt_transform_2d is
+# written for that convention, and it is the only one for which the element stiffness rotates with the element.
+# An "exact inverse of T0" written with the textbook convention (j12 = J0[0, 1] read as dx/deta) looks equivalent,
+# maps a natural strain to the right physical strain for a textbook J, and breaks this property by ~20 %
+# (measured 2026-10-20 on an uncommitted edit found in the shared tree). This test is the guard.
+
+def _rot2(deg):
+    c, s = np.cos(np.deg2rad(deg)), np.sin(np.deg2rad(deg))
+    return np.array([[c, -s], [s, c]])
+
+
+@pytest.mark.parametrize("fn", [compute_cpe4i_element_numba, compute_cpe4ih_element_numba])
+@pytest.mark.parametrize("shape", [
+    np.array([[0.0, 0.0], [2.0, 0.0], [2.0, 1.0], [0.0, 1.0]]),
+    X_DISTORTED,
+    np.array([[0.0, 0.0], [1.0, 0.0], [0.82, 0.2], [0.18, 0.2]]),
+], ids=["rect", "distorted", "trapezoid"])
+@pytest.mark.parametrize("deg", [30.0, 57.0])
+def test_element_stiffness_rotates_with_the_element(fn, shape, deg):
+    R = _rot2(deg)
+    Rb = np.kron(np.eye(4), R)
+    p = _props(nu=0.3)
+    K0 = fn(shape, np.zeros(8), 0, p, np.zeros((4, 7)), 0.0)[1]
+    K1 = fn(shape @ R.T, np.zeros(8), 0, p, np.zeros((4, 7)), 0.0)[1]
+    assert np.linalg.norm(K1 - Rb @ K0 @ Rb.T) / np.linalg.norm(K0) < 1e-12

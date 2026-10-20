@@ -199,3 +199,23 @@ def test_pressure_below_the_limit_converges():
 def test_pressure_above_the_limit_is_reported_not_raised():
     """No equilibrium exists above p_lim = 2/sqrt(3) sy ln(b/a): the answer is 'did not converge', never an exception."""
     assert _run("C3D8IH", 1.10)["converged"] is False
+
+
+# ---- frame invariance (3D) ----------------------------------------------------------------------------------------
+
+def _rot_xyz(a, b, c):
+    ca, sa, cb, sb, cc, sc = np.cos(a), np.sin(a), np.cos(b), np.sin(b), np.cos(c), np.sin(c)
+    Rx = np.array([[1, 0, 0], [0, ca, -sa], [0, sa, ca]])
+    Ry = np.array([[cb, 0, sb], [0, 1, 0], [-sb, 0, cb]])
+    Rz = np.array([[cc, -sc, 0], [sc, cc, 0], [0, 0, 1]])
+    return Rz @ Ry @ Rx
+
+
+@pytest.mark.parametrize("shape", [CUBE, HEX_DISTORTED], ids=["cube", "distorted"])
+def test_element_stiffness_rotates_with_the_element(shape):
+    R = _rot_xyz(0.4, 0.7, 1.1)
+    Rb = np.kron(np.eye(8), R)
+    mid, p = _mat_props(E=3000.0, nu=0.3)
+    K0 = compute_c3d8ih_element_numba(shape, np.zeros(24), mid, p, np.zeros((8, 7)))[1]
+    K1 = compute_c3d8ih_element_numba(shape @ R.T, np.zeros(24), mid, p, np.zeros((8, 7)))[1]
+    assert np.linalg.norm(K1 - Rb @ K0 @ Rb.T) / np.linalg.norm(K0) < 1e-12
