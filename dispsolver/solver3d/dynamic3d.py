@@ -2603,6 +2603,11 @@ class DynamicSolver3D:
         while t < T_total - 1e-12:
 
             dt = min(dt_ctrl.dt, T_total - t)
+            if output_mgr is not None and hasattr(output_mgr, "next_exact_time"):
+                # *OUTPUT TIME MARKS=YES: shorten this increment to end on the requested time
+                t_mark = output_mgr.next_exact_time(t)
+                if t_mark is not None and 1e-12 < t_mark - t < dt:
+                    dt = t_mark - t
             t_next = t + dt
             step_inc += 1
 

@@ -87,6 +87,12 @@ class OutputManager:
         self._vtkhdf_path: Optional[str] = vtkhdf_path
         # writer는 첫 번째 record_step()에서 lazy 초기화 (solver.mesh 필요)
 
+    def next_exact_time(self, step_time: float) -> Optional[float]:
+        """Earliest time any output request wants an increment to end on exactly, or None."""
+        times = [t for _, c in (*self.field_controllers, *self.history_controllers)
+                 if (t := c.next_exact_time(step_time)) is not None]
+        return min(times) if times else None
+
     def switch_step(
         self,
         step_name: str,

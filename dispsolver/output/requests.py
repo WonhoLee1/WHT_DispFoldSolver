@@ -146,6 +146,24 @@ class OutputTimingController:
         elif time_points is not None and len(time_points) > 0:
             self._target_times = np.array(time_points, dtype=np.float64)
 
+    def next_exact_time(self, step_time: float, eps: float = 1e-9) -> Optional[float]:
+        """Next time the solver must land on exactly (Abaqus ``*OUTPUT, TIME MARKS=YES``, the
+        documented default): the next explicit time point / interval boundary after `step_time`.
+        None when the request does not ask for exact times or has no time-based trigger."""
+        if not getattr(self.request, "exact_time_points", True):
+            return None
+        cands = []
+        if self._target_times is not None:
+            later = self._target_times[self._target_times > step_time + eps]
+            if later.size:
+                cands.append(float(later.min()))
+        ti = getattr(self.request, "time_interval", None)
+        if ti is not None and ti > 0.0:
+            k = np.floor((step_time + eps) / ti) + 1.0
+            cands.append(float(k * ti))
+        cands = [c for c in cands if c <= self.time_period + eps]
+        return min(cands) if cands else None
+
     def should_output(
         self,
         step_time: float,

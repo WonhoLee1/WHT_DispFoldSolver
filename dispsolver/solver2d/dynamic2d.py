@@ -1043,8 +1043,14 @@ class DynamicSolver2D:
 
         while t_curr < total_time - 1e-9:
             inc_count += 1
+            dt_nominal = dt                 # a clamped increment must not shrink the dt that follows
             if t_curr + dt > total_time:
                 dt = total_time - t_curr
+            if output_mgr is not None and hasattr(output_mgr, "next_exact_time"):
+                # *OUTPUT TIME MARKS=YES: shorten this increment to end on the requested time
+                t_mark = output_mgr.next_exact_time(t_curr)
+                if t_mark is not None and 1e-12 < t_mark - t_curr < dt:
+                    dt = t_mark - t_curr
 
             t_next = t_curr + dt
             self._apply_plan_bcs(plan, t_next)
@@ -1082,6 +1088,7 @@ class DynamicSolver2D:
                         is_last_step=is_last
                     )
 
+                dt = max(dt, dt_nominal)    # undo a clamp to a time mark before the growth rule below
                 if iters <= 4 and dt < dt_max:
                     dt = min(dt * 1.5, dt_max)
                 elif iters >= 10:
