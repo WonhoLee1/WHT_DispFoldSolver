@@ -74,7 +74,7 @@ def build_mesh(etype, L, h, nx, ny):
         for ix in range(nx):
             i0, j0 = ix * step, jy * step
             c = [(i0, j0), (i0 + step, j0), (i0 + step, j0 + step), (i0, j0 + step)]
-            if etype in ("CPE4", "CPE4I", "CPE4R", "CPE4H"):
+            if etype in ("CPE4", "CPE4I", "CPE4IH", "CPE4R", "CPE4H"):
                 elems.append([ids[p] for p in c])
             elif etype in ("CPE8", "CPE8R"):
                 mids = [(i0 + 1, j0), (i0 + 2, j0 + 1), (i0 + 1, j0 + 2), (i0, j0 + 1)]
@@ -147,7 +147,7 @@ def test_plasticity_softens_the_oracle_moment():
 
 # Elements whose bending is accurate (bilinear full integration CPE4 and the mean-dilatation CPE4H lock in
 # bending, +9% and +8% elastically, and are left out on purpose). Bounds are the measured accuracy of each element.
-_BENDING = [("CPE4I", 0.02), ("CPE4R", 0.03), ("CPE8R", 0.03)]
+_BENDING = [("CPE4I", 0.02), ("CPE4IH", 0.02), ("CPE4R", 0.03), ("CPE8R", 0.03)]
 
 
 @pytest.mark.parametrize("etype, bound", _BENDING)
