@@ -402,216 +402,225 @@ def run_folding_from_result(result, before_png_name: str = "ex12_before_folding_
     )
 
     cutback_count = 0
-    while solver.time < t_total - 1e-10:
-        if max_steps is not None and step >= max_steps:
-            # Early stop for profiling/smoke runs. Unlike shrinking
-            # t_total this leaves the angle ramp untouched, so the steps
-            # taken are the same ones a full run would take.
-            print(f"  [MAX STEPS] stopping after {step} steps as requested.")
-            break
-        dt = dt_ctrl.dt
+    # A raised exception inside the loop used to lose the whole run (the result is written only
+    # after it). Keep what was converged, save it, then re-raise (Abaqus 6.14 writes the last
+    # converged increment on failure).
+    _loop_exc = None
+    try:
+        while solver.time < t_total - 1e-10:
+            if max_steps is not None and step >= max_steps:
+                # Early stop for profiling/smoke runs. Unlike shrinking
+                # t_total this leaves the angle ramp untouched, so the steps
+                # taken are the same ones a full run would take.
+                print(f"  [MAX STEPS] stopping after {step} steps as requested.")
+                break
+            dt = dt_ctrl.dt
 
-        # No rotation-rate cap on dt: a 0.20 deg/step cap (bfaedd3) lowered the reachable angle
-        # from 39.6 to 17.5 deg/side on this model (measured 2026-10-09, same config and deck);
-        # the adaptive controller alone drives dt.
-        dt = max(dt, dt_ctrl.dt_min)
+            # No rotation-rate cap on dt: a 0.20 deg/step cap (bfaedd3) lowered the reachable angle
+            # from 39.6 to 17.5 deg/side on this model (measured 2026-10-09, same config and deck);
+            # the adaptive controller alone drives dt.
+            dt = max(dt, dt_ctrl.dt_min)
 
-        if solver.time + dt > t_total:
-            dt = t_total - solver.time
+            if solver.time + dt > t_total:
+                dt = t_total - solver.time
 
-        t_next = solver.time + dt
-        from dispsolver.fold_model_config import smoothstep_amp
-        amp_val = smoothstep_amp(t_next, t_total)
+            t_next = solver.time + dt
+            from dispsolver.fold_model_config import smoothstep_amp
+            amp_val = smoothstep_amp(t_next, t_total)
 
-        # Prescribe current step rotation values proportionally via C2 smoothstep ramp
-        targets = {}
-        for idx, rbe_con in enumerate(result.rbe2_constraints):
-            m_id = rbe_con.master_id
-            if m_id in prescribed_rotations:
-                theta_target = prescribed_rotations[m_id]
-                targets[idx] = theta_target * amp_val
-        solver.theta_targets = targets
-        _contact_theta_new = {idx_c: float(targets.get(idx_c, 0.0)) for idx_c, _ in _plate_contacts}
+            # Prescribe current step rotation values proportionally via C2 smoothstep ramp
+            targets = {}
+            for idx, rbe_con in enumerate(result.rbe2_constraints):
+                m_id = rbe_con.master_id
+                if m_id in prescribed_rotations:
+                    theta_target = prescribed_rotations[m_id]
+                    targets[idx] = theta_target * amp_val
+            solver.theta_targets = targets
+            _contact_theta_new = {idx_c: float(targets.get(idx_c, 0.0)) for idx_c, _ in _plate_contacts}
 
-        if _kin_tie:
-            # rigid-plate displacement of every master node at this theta:
-            #   u_m = u_rp + (R(theta) - I) (X_m - X_rp),  u_rp = 0 (pinned)
-            _um = {}
-            for idx_c, rbe_con in enumerate(result.rbe2_constraints):
-                th = float(targets.get(idx_c, 0.0))
-                c_, s_ = np.cos(th), np.sin(th)
-                m_idx = nid_to_idx[rbe_con.master_id]
-                xm, ym = solver.coords[m_idx]
-                for sid in rbe_con.slave_ids:
-                    k = nid_to_idx[sid]
-                    dx, dy = solver.coords[k][0] - xm, solver.coords[k][1] - ym
-                    _um[k] = ((c_ - 1.0) * dx - s_ * dy, s_ * dx + (c_ - 1.0) * dy)
-            _d, _v = [], []
-            for (si, m1, m2, N1, N2) in _kin_tie:
-                u1 = _um.get(m1); u2 = _um.get(m2)
-                if u1 is None or u2 is None:
-                    continue
-                _d += [2 * si, 2 * si + 1]
-                _v += [N1 * u1[0] + N2 * u2[0], N1 * u1[1] + N2 * u2[1]]
-            if _d:
-                _all_d = np.concatenate([np.array(translation_bc_dofs, dtype=np.int32),
-                                         np.array(_d, dtype=np.int32)])
-                _all_v = np.concatenate([np.array(translation_bc_vals, dtype=np.float64),
-                                         np.array(_v, dtype=np.float64)])
-                solver.set_prescribed_dofs(_all_d, bc_vals=_all_v)
+            if _kin_tie:
+                # rigid-plate displacement of every master node at this theta:
+                #   u_m = u_rp + (R(theta) - I) (X_m - X_rp),  u_rp = 0 (pinned)
+                _um = {}
+                for idx_c, rbe_con in enumerate(result.rbe2_constraints):
+                    th = float(targets.get(idx_c, 0.0))
+                    c_, s_ = np.cos(th), np.sin(th)
+                    m_idx = nid_to_idx[rbe_con.master_id]
+                    xm, ym = solver.coords[m_idx]
+                    for sid in rbe_con.slave_ids:
+                        k = nid_to_idx[sid]
+                        dx, dy = solver.coords[k][0] - xm, solver.coords[k][1] - ym
+                        _um[k] = ((c_ - 1.0) * dx - s_ * dy, s_ * dx + (c_ - 1.0) * dy)
+                _d, _v = [], []
+                for (si, m1, m2, N1, N2) in _kin_tie:
+                    u1 = _um.get(m1); u2 = _um.get(m2)
+                    if u1 is None or u2 is None:
+                        continue
+                    _d += [2 * si, 2 * si + 1]
+                    _v += [N1 * u1[0] + N2 * u2[0], N1 * u1[1] + N2 * u2[1]]
+                if _d:
+                    _all_d = np.concatenate([np.array(translation_bc_dofs, dtype=np.int32),
+                                             np.array(_d, dtype=np.int32)])
+                    _all_v = np.concatenate([np.array(translation_bc_vals, dtype=np.float64),
+                                             np.array(_v, dtype=np.float64)])
+                    solver.set_prescribed_dofs(_all_d, bc_vals=_all_v)
 
-        print("-" * 100)
-        print(f"Step {step + 1} | Attempting time increment: dt = {dt:.5f}s (t: {solver.time:.4f}s -> {t_next:.4f}s)")
-        print("-" * 100)
+            print("-" * 100)
+            print(f"Step {step + 1} | Attempting time increment: dt = {dt:.5f}s (t: {solver.time:.4f}s -> {t_next:.4f}s)")
+            print("-" * 100)
 
-        # Snapshot before the attempt so a failed step can be rolled back
-        checkpoint = solver.save_state()
-        # contact faces follow the prescribed plate angle; nodes already resting on a face are
-        # carried with it as the Newton starting point (after the checkpoint, so a cutback
-        # restores the committed state and re-predicts from the committed angle)
-        for idx_c, c in _plate_contacts:
-            c.carry_contacting_nodes(solver.u, _contact_theta_committed[idx_c], _contact_theta_new[idx_c])
-            c.set_rotation(_contact_theta_new[idx_c])
+            # Snapshot before the attempt so a failed step can be rolled back
+            checkpoint = solver.save_state()
+            # contact faces follow the prescribed plate angle; nodes already resting on a face are
+            # carried with it as the Newton starting point (after the checkpoint, so a cutback
+            # restores the committed state and re-predicts from the committed angle)
+            for idx_c, c in _plate_contacts:
+                c.carry_contacting_nodes(solver.u, _contact_theta_committed[idx_c], _contact_theta_new[idx_c])
+                c.set_rotation(_contact_theta_new[idx_c])
 
-        # Solve step
-        conv_code = solver.solve_step(dt)
+            # Solve step
+            conv_code = solver.solve_step(dt)
 
-        if conv_code >= 0:
-            for idx_c, _c in _plate_contacts:
-                _contact_theta_committed[idx_c] = _contact_theta_new[idx_c]
-            # Step converged
-            solver.time = t_next
-            step += 1
-            cutback_count = 0
+            if conv_code >= 0:
+                for idx_c, _c in _plate_contacts:
+                    _contact_theta_committed[idx_c] = _contact_theta_new[idx_c]
+                # Step converged
+                solver.time = t_next
+                step += 1
+                cutback_count = 0
 
-            # --- Outer Augmented Lagrangian correction loop ---
-            # A single converged Newton solve triggers exactly ONE
-            # update_augmented_lagrange() call (inside dynamic.py, on
-            # commit). Under continuously growing bending-moment demand
-            # as fold angle increases, one lambda update per step cannot
-            # catch up: the tie is a *penalty* spring, gap ~= F/k_tie,
-            # and F keeps climbing every step, so the gap grows smoothly
-            # and without bound (observed: 0mm through ~8deg, ~34mm by
-            # 68deg) even though Newton itself converges cleanly every
-            # step. Re-solve at the SAME theta target (tiny dt, does not
-            # meaningfully advance solver.time) so the lambda update that
-            # already fired gets a chance to actually cancel the residual
-            # gap, repeating (a real Uzawa/AL outer iteration) until the
-            # gap is small or a cap is hit.
-            _al_iters = 0
-            _al_max_iters = 8
-            _al_gap_tol_mm = 0.02
-            if result.penalty_constraints and _tie_method != "kinematic":
-                _al_max_gap = max(
-                    (check_tie_gap(solver.u, solver.coords, tc, nid_to_idx)["max_gap_mm"]
-                     for tc in result.penalty_constraints), default=0.0
-                )
-                while _al_max_gap > _al_gap_tol_mm and _al_iters < _al_max_iters:
-                    _al_conv = solver.solve_step(1e-6)
-                    if _al_conv < 0:
-                        break  # AL correction itself failed -- keep last good state, move on
-                    _al_iters += 1
+                # --- Outer Augmented Lagrangian correction loop ---
+                # A single converged Newton solve triggers exactly ONE
+                # update_augmented_lagrange() call (inside dynamic.py, on
+                # commit). Under continuously growing bending-moment demand
+                # as fold angle increases, one lambda update per step cannot
+                # catch up: the tie is a *penalty* spring, gap ~= F/k_tie,
+                # and F keeps climbing every step, so the gap grows smoothly
+                # and without bound (observed: 0mm through ~8deg, ~34mm by
+                # 68deg) even though Newton itself converges cleanly every
+                # step. Re-solve at the SAME theta target (tiny dt, does not
+                # meaningfully advance solver.time) so the lambda update that
+                # already fired gets a chance to actually cancel the residual
+                # gap, repeating (a real Uzawa/AL outer iteration) until the
+                # gap is small or a cap is hit.
+                _al_iters = 0
+                _al_max_iters = 8
+                _al_gap_tol_mm = 0.02
+                if result.penalty_constraints and _tie_method != "kinematic":
                     _al_max_gap = max(
                         (check_tie_gap(solver.u, solver.coords, tc, nid_to_idx)["max_gap_mm"]
                          for tc in result.penalty_constraints), default=0.0
                     )
-                if _al_iters > 0:
-                    print(f"            [AL] tie gap correction: {_al_iters} extra solve(s), "
-                          f"final max_gap={_al_max_gap:.4f}mm")
+                    while _al_max_gap > _al_gap_tol_mm and _al_iters < _al_max_iters:
+                        _al_conv = solver.solve_step(1e-6)
+                        if _al_conv < 0:
+                            break  # AL correction itself failed -- keep last good state, move on
+                        _al_iters += 1
+                        _al_max_gap = max(
+                            (check_tie_gap(solver.u, solver.coords, tc, nid_to_idx)["max_gap_mm"]
+                             for tc in result.penalty_constraints), default=0.0
+                        )
+                    if _al_iters > 0:
+                        print(f"            [AL] tie gap correction: {_al_iters} extra solve(s), "
+                              f"final max_gap={_al_max_gap:.4f}mm")
 
-            # Log current angles from u_extra and plate tip Y positions
-            n_extra_regular = solver.n_extra - len(result.rbe2_constraints)
-            angles = [float(np.degrees(solver.u_extra[n_extra_regular + idx])) for idx in range(len(result.rbe2_constraints))]
-            angles_str = "[" + ", ".join(f"{a:+.2f}deg" for a in angles) + "]" if angles else "[]"
+                # Log current angles from u_extra and plate tip Y positions
+                n_extra_regular = solver.n_extra - len(result.rbe2_constraints)
+                angles = [float(np.degrees(solver.u_extra[n_extra_regular + idx])) for idx in range(len(result.rbe2_constraints))]
+                angles_str = "[" + ", ".join(f"{a:+.2f}deg" for a in angles) + "]" if angles else "[]"
             
-            # Find plate tip nodes (outermost x near -40mm and +40mm)
-            y_left_tip, y_right_tip = 0.0, 0.0
-            for nid, n in mesh.nodes.items():
-                if abs(n.x - (-40.0)) < 1e-3 and abs(n.y - (-0.5)) < 1e-3:
-                    n_idx = nid_to_idx[nid]
-                    y_left_tip = n.y + solver.u[2 * n_idx + 1]
-                elif abs(n.x - 40.0) < 1e-3 and abs(n.y - (-0.5)) < 1e-3:
-                    n_idx = nid_to_idx[nid]
-                    y_right_tip = n.y + solver.u[2 * n_idx + 1]
+                # Find plate tip nodes (outermost x near -40mm and +40mm)
+                y_left_tip, y_right_tip = 0.0, 0.0
+                for nid, n in mesh.nodes.items():
+                    if abs(n.x - (-40.0)) < 1e-3 and abs(n.y - (-0.5)) < 1e-3:
+                        n_idx = nid_to_idx[nid]
+                        y_left_tip = n.y + solver.u[2 * n_idx + 1]
+                    elif abs(n.x - 40.0) < 1e-3 and abs(n.y - (-0.5)) < 1e-3:
+                        n_idx = nid_to_idx[nid]
+                        y_right_tip = n.y + solver.u[2 * n_idx + 1]
 
-            target_theta_deg = 90.0 * amp_val
-            max_u = np.max(np.abs(solver.u))
-            print(f"\n  [MONITOR] Step {step:3d} | Time {solver.time:.4f}s / {t_total:.1f}s ({solver.time/t_total*100:5.1f}%)")
-            print(f"            Fold Angle: Target +- {target_theta_deg:5.2f}deg | Actual {angles_str}")
-            print(f"            Plate Tips Y: Left={y_left_tip:+6.2f}mm | Right={y_right_tip:+6.2f}mm | Max Disp={max_u:6.2f}mm")
-            print(f"            Newton Iters: {conv_code:2d} | dt: {dt:.5f}s")
+                target_theta_deg = 90.0 * amp_val
+                max_u = np.max(np.abs(solver.u))
+                print(f"\n  [MONITOR] Step {step:3d} | Time {solver.time:.4f}s / {t_total:.1f}s ({solver.time/t_total*100:5.1f}%)")
+                print(f"            Fold Angle: Target +- {target_theta_deg:5.2f}deg | Actual {angles_str}")
+                print(f"            Plate Tips Y: Left={y_left_tip:+6.2f}mm | Right={y_right_tip:+6.2f}mm | Max Disp={max_u:6.2f}mm")
+                print(f"            Newton Iters: {conv_code:2d} | dt: {dt:.5f}s")
 
-            _track = check_region_tracking(solver.u, _driving_dofs, _driven_dofs, "plate", "display")
-            _gap_bits = []
-            for tc in (result.penalty_constraints or []):
-                g = check_tie_gap(solver.u, solver.coords, tc, nid_to_idx)
-                _gap_bits.append(
-                    f"{getattr(tc, 'name', 'tie')}: max_gap={g['max_gap_mm']:.4f}mm "
-                    f"mean={g['mean_gap_mm']:.4f}mm n={g['n_pairs']}"
-                )
-            print(
-                f"            [DIAGNOSTIC] display/plate max|u| ratio={_track['ratio']:.4f} "
-                f"(display={_track['max|u|_display']:.3f}mm, plate={_track['max|u|_plate']:.3f}mm)"
-                + ("  ** SUSPICIOUS: display not tracking plate **" if _track["suspicious"] else "")
-            )
-            if _gap_bits:
-                print(f"            [DIAGNOSTIC] Real tie gap (not just active-pair count): " + " | ".join(_gap_bits))
-            if _plate_contacts:
-                _cs = [c.stats(solver.u) for _, c in _plate_contacts]
-                print("            [CONTACT] plate faces: " + " | ".join(
-                    f"{c.name}: active={s['n_active']} max_pen={s['max_penetration']:.2e}mm"
-                    for (_, c), s in zip(_plate_contacts, _cs)))
-            if step % 10 == 0 or step == 1:
-                _curv = check_smooth_curvature(solver.u, solver.coords, nid_to_idx, _hinge_node_ids)
-                print(
-                    f"            [DIAGNOSTIC] Hinge curvature: max_curv_ratio={_curv['max_curv_ratio']:.2f} "
-                    f"kink_detected={_curv['kink_detected']}"
-                    + (f" at x={_curv['kink_x']:.2f}mm" if _curv["kink_detected"] else "")
-                )
-            print()
-
-            theta_deg = float(np.mean(np.abs(angles))) if angles else 0.0
-            writer.add_step(solver.time, solver.u,
-                            scalars={"theta_deg": theta_deg, "dt": dt,
-                                     "n_iter": float(conv_code)},
-                            state=(solver.state.copy() if solver.state is not None else None))
-            slip_tracker.record(solver.u, theta_deg=theta_deg, time=solver.time)
-
-            # Format monitor summary string for bottom plot label
-            n_tie_active = sum(getattr(tc, 'n_active', len(getattr(tc, 'pairs', []))) for tc in (result.penalty_constraints or []))
-            monitor_text = (
-                f"Step {step:3d} | Time {solver.time:.4f}s/{t_total:.1f}s ({solver.time/t_total*100:5.1f}%) | "
-                f"Angle: Target ±{target_theta_deg:.2f}° / Actual {angles_str} | "
-                f"Tips Y: L={y_left_tip:+.2f}mm, R={y_right_tip:+.2f}mm | Max|u|={max_u:.2f}mm | "
-                f"Iters: {conv_code:2d} | dt: {dt:.5f}s | Tie: {n_tie_active} active"
-            )
-
-            # Live update final PNG image periodically (every 5 steps or at completion)
-            if step % 5 == 0 or solver.time >= t_total - 1e-6:
-                try:
-                    plot_and_save_deformed_shape_png(
-                        mesh=mesh,
-                        u=solver.u,
-                        tie_constraints=result.penalty_constraints,
-                        rbe2_elements=result.rbe2_elements,
-                        rbe2_constraints=result.rbe2_constraints,
-                        save_path=after_png_path,
-                        monitor_text=monitor_text
+                _track = check_region_tracking(solver.u, _driving_dofs, _driven_dofs, "plate", "display")
+                _gap_bits = []
+                for tc in (result.penalty_constraints or []):
+                    g = check_tie_gap(solver.u, solver.coords, tc, nid_to_idx)
+                    _gap_bits.append(
+                        f"{getattr(tc, 'name', 'tie')}: max_gap={g['max_gap_mm']:.4f}mm "
+                        f"mean={g['mean_gap_mm']:.4f}mm n={g['n_pairs']}"
                     )
-                except Exception as _e:
-                    print(f"            [PNG WARN] Intermediate plot save failed ({_e}), continuing solve...")
+                print(
+                    f"            [DIAGNOSTIC] display/plate max|u| ratio={_track['ratio']:.4f} "
+                    f"(display={_track['max|u|_display']:.3f}mm, plate={_track['max|u|_plate']:.3f}mm)"
+                    + ("  ** SUSPICIOUS: display not tracking plate **" if _track["suspicious"] else "")
+                )
+                if _gap_bits:
+                    print(f"            [DIAGNOSTIC] Real tie gap (not just active-pair count): " + " | ".join(_gap_bits))
+                if _plate_contacts:
+                    _cs = [c.stats(solver.u) for _, c in _plate_contacts]
+                    print("            [CONTACT] plate faces: " + " | ".join(
+                        f"{c.name}: active={s['n_active']} max_pen={s['max_penetration']:.2e}mm"
+                        for (_, c), s in zip(_plate_contacts, _cs)))
+                if step % 10 == 0 or step == 1:
+                    _curv = check_smooth_curvature(solver.u, solver.coords, nid_to_idx, _hinge_node_ids)
+                    print(
+                        f"            [DIAGNOSTIC] Hinge curvature: max_curv_ratio={_curv['max_curv_ratio']:.2f} "
+                        f"kink_detected={_curv['kink_detected']}"
+                        + (f" at x={_curv['kink_x']:.2f}mm" if _curv["kink_detected"] else "")
+                    )
+                print()
 
-            dt = dt_ctrl.update(n_iter=conv_code, converged=True)
-        else:
-            # Cutback -- restore pre-attempt state and retry
-            solver.restore_state(checkpoint)
-            cutback_count = getattr(locals(), 'cutback_count', 0) + 1
-            dt = dt_ctrl.update(n_iter=25, converged=False)
-            max_cb = getattr(st, 'max_cutbacks', 20)
-            if cutback_count >= max_cb or dt <= dt_ctrl.dt_min:
-                print(f"FATAL: Exceeded maximum cutbacks ({max_cb}) or dt below minimum tolerance. Simulation aborted.")
-                break
-            print(f"  *** STEP {step+1} FAILED (conv={conv_code}, cutback {cutback_count}/{max_cb}). Cutting back dt to {dt_ctrl.dt:.5f}s ***\n")
+                theta_deg = float(np.mean(np.abs(angles))) if angles else 0.0
+                writer.add_step(solver.time, solver.u,
+                                scalars={"theta_deg": theta_deg, "dt": dt,
+                                         "n_iter": float(conv_code)},
+                                state=(solver.state.copy() if solver.state is not None else None))
+                slip_tracker.record(solver.u, theta_deg=theta_deg, time=solver.time)
+
+                # Format monitor summary string for bottom plot label
+                n_tie_active = sum(getattr(tc, 'n_active', len(getattr(tc, 'pairs', []))) for tc in (result.penalty_constraints or []))
+                monitor_text = (
+                    f"Step {step:3d} | Time {solver.time:.4f}s/{t_total:.1f}s ({solver.time/t_total*100:5.1f}%) | "
+                    f"Angle: Target ±{target_theta_deg:.2f}° / Actual {angles_str} | "
+                    f"Tips Y: L={y_left_tip:+.2f}mm, R={y_right_tip:+.2f}mm | Max|u|={max_u:.2f}mm | "
+                    f"Iters: {conv_code:2d} | dt: {dt:.5f}s | Tie: {n_tie_active} active"
+                )
+
+                # Live update final PNG image periodically (every 5 steps or at completion)
+                if step % 5 == 0 or solver.time >= t_total - 1e-6:
+                    try:
+                        plot_and_save_deformed_shape_png(
+                            mesh=mesh,
+                            u=solver.u,
+                            tie_constraints=result.penalty_constraints,
+                            rbe2_elements=result.rbe2_elements,
+                            rbe2_constraints=result.rbe2_constraints,
+                            save_path=after_png_path,
+                            monitor_text=monitor_text
+                        )
+                    except Exception as _e:
+                        print(f"            [PNG WARN] Intermediate plot save failed ({_e}), continuing solve...")
+
+                dt = dt_ctrl.update(n_iter=conv_code, converged=True)
+            else:
+                # Cutback -- restore pre-attempt state and retry
+                solver.restore_state(checkpoint)
+                cutback_count = getattr(locals(), 'cutback_count', 0) + 1
+                dt = dt_ctrl.update(n_iter=25, converged=False)
+                max_cb = getattr(st, 'max_cutbacks', 20)
+                if cutback_count >= max_cb or dt <= dt_ctrl.dt_min:
+                    print(f"FATAL: Exceeded maximum cutbacks ({max_cb}) or dt below minimum tolerance. Simulation aborted.")
+                    break
+                print(f"  *** STEP {step+1} FAILED (conv={conv_code}, cutback {cutback_count}/{max_cb}). Cutting back dt to {dt_ctrl.dt:.5f}s ***\n")
+    except Exception as _exc:
+        _loop_exc = _exc
+        print(f"FATAL: the increment loop raised {type(_exc).__name__}: {_exc}. "
+              f"Saving the {writer.n_steps} converged increments before re-raising.", flush=True)
 
     t_elapsed = time.time() - t_start_total
     reached_target = solver.time >= t_total - 1e-10
@@ -627,6 +636,8 @@ def run_folding_from_result(result, before_png_name: str = "ex12_before_folding_
     # ------------------------------------------------------------------
     writer.update_meta(reached_target=reached_target, wall_seconds=t_elapsed,
                        n_steps=writer.n_steps, final_time=solver.time)
+    if _loop_exc is not None:
+        writer.update_meta(aborted_by=f"{type(_loop_exc).__name__}: {_loop_exc}")
     for name, arr in slip_tracker.history().items():
         writer.add_array(f"slip__{name}", arr)
     t_post_start = time.time()
@@ -655,6 +666,8 @@ def run_folding_from_result(result, before_png_name: str = "ex12_before_folding_
         print(f"[PNG WARN] Final plot save failed ({_e})")
     solver.t_postprocess = time.time() - t_post_start
     print("Done.")
+    if _loop_exc is not None:
+        raise _loop_exc
     return {
         "solver": solver,
         "result": result,
