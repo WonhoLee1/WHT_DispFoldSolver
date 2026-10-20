@@ -61,13 +61,17 @@ class FrontISTRTeardropBuilder:
         solid_form361: str = "IC",
         substeps: int = 90,
         solver_method: str = "MUMPS",
+        mesh_spec: Optional[Any] = None,
     ) -> None:
         self.config = config
+        if mesh_spec is not None:
+            self.config.mesh = mesh_spec
         self.dim = config.simulation_case.dim.upper()
         self.psa_form361 = psa_form361.upper()
         self.solid_form361 = solid_form361.upper()
         self.substeps = substeps
         self.solver_method = solver_method.upper()
+        self.res_write_freq = max(1, substeps // 10) if substeps >= 10 else 1
 
         mesher = GmshMeshGenerator(config)
         self.raw_mesh, self.raw_meta = mesher.build()
@@ -327,8 +331,8 @@ class FrontISTRTeardropBuilder:
         _c(" 5")
         _c("!SOLUTION, TYPE=NLSTATIC")
         _c("!WRITE, LOG, FREQUENCY=1")
-        _c("!WRITE, RESULT, FREQUENCY=10")
-        _c("!WRITE, VISUAL, FREQUENCY=10")
+        _c(f"!WRITE, RESULT, FREQUENCY={self.res_write_freq}")
+        _c(f"!WRITE, VISUAL, FREQUENCY={self.res_write_freq}")
         _c("!OUTPUT_RES")
         _c(" DISP, ON")
         _c(" REACTION, ON")
@@ -560,21 +564,30 @@ def run_fistr_case(
     threads: int = 4,
     out_base_dir: Optional[str] = None,
     skip_run: bool = False,
+    mesh_spec: Optional[Any] = None,
+    case_name_override: Optional[str] = None,
+    width_z: Optional[float] = None,
+    theta_max_deg: Optional[float] = None,
 ) -> Dict[str, Any]:
     """Builds and runs a single 2D or 3D FrontISTR teardrop folding analysis."""
     if out_base_dir is None:
         out_base_dir = os.path.join(REPO_ROOT, "example_disp_fold", "results_fistr")
-    case_name = f"FISTR_{dim.upper()}_{preset}_{solid_form361}_{psa_form361}"
+    case_name = case_name_override or f"FISTR_{dim.upper()}_{preset}_{solid_form361}_{psa_form361}"
     run_dir = os.path.join(out_base_dir, case_name)
     os.makedirs(run_dir, exist_ok=True)
 
     config = UnifiedFoldModelConfig(preset=preset, dim=dim)
+    if width_z is not None:
+        config.geometry.width_z = float(width_z)
+    if theta_max_deg is not None:
+        config.simulation_case.theta_max_deg = float(theta_max_deg)
     builder = FrontISTRTeardropBuilder(
         config=config,
         psa_form361=psa_form361,
         solid_form361=solid_form361,
         substeps=substeps,
         solver_method="MUMPS",
+        mesh_spec=mesh_spec,
     )
 
     if not skip_run:

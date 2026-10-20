@@ -60,8 +60,9 @@ class GmshMeshGenerator:
         # Discrete X arrays (Left plate -> Free hinge -> Right plate)
         # Biased progression towards hinge
         prog = self.mesh_spec.bias_progression
-        # Left: -40 to -7.5 (denser towards -7.5)
-        s_p = np.geomspace(1.0, prog ** nx_p, nx_p + 1)
+        # Anchor total grading ratio to prog ** 20 so refinement (large nx_p) preserves aspect ratio without underflow
+        total_ratio = float(prog ** 20.0)
+        s_p = np.geomspace(1.0, total_ratio, nx_p + 1)
         s_p = (s_p - s_p[0]) / (s_p[-1] - s_p[0])
         xs_left = -half_L + s_p * ((-hinge_gap) - (-half_L))
 
@@ -224,6 +225,9 @@ class GmshMeshGenerator:
             "layup": self.case.preset_name,
         }
 
+        # Clean isolated unconnected nodes (e.g., from tape void in hinge)
+        self._clean_isolated_nodes(mesh, meta)
+
         # Verify element Jacobian / orientation
         self._verify_2d_mesh(mesh)
         return mesh, meta
@@ -244,7 +248,8 @@ class GmshMeshGenerator:
 
         # Biased progression in X
         prog = self.mesh_spec.bias_progression
-        s_p = np.geomspace(1.0, prog ** nx_p, nx_p + 1)
+        total_ratio = float(prog ** 20.0)
+        s_p = np.geomspace(1.0, total_ratio, nx_p + 1)
         s_p = (s_p - s_p[0]) / (s_p[-1] - s_p[0])
         xs_left = -half_L + s_p * ((-hinge_gap) - (-half_L))
         xs_hinge = np.linspace(-hinge_gap, hinge_gap, nx_h + 1)
@@ -338,7 +343,7 @@ class GmshMeshGenerator:
                     n6 = int(pl_grid[i + 1, j, k + 1])
                     n7 = int(pl_grid[i + 1, j + 1, k + 1])
                     n8 = int(pl_grid[i, j + 1, k + 1])
-                    mesh.elements[elem_id] = Element3D(elem_id, [n1, n2, n3, n4, n5, n6, n7, n8], elem_type="C3D8_CR", pid=plate_pid)
+                    mesh.elements[elem_id] = Element3D(elem_id, [n1, n2, n3, n4, n5, n6, n7, n8], elem_type="C3D8", pid=plate_pid)
                     elem_id += 1
 
         # Left plate top faces (j = ny_plate)
@@ -372,7 +377,7 @@ class GmshMeshGenerator:
                     n6 = int(pr_grid[i + 1, j, k + 1])
                     n7 = int(pr_grid[i + 1, j + 1, k + 1])
                     n8 = int(pr_grid[i, j + 1, k + 1])
-                    mesh.elements[elem_id] = Element3D(elem_id, [n1, n2, n3, n4, n5, n6, n7, n8], elem_type="C3D8_CR", pid=plate_pid)
+                    mesh.elements[elem_id] = Element3D(elem_id, [n1, n2, n3, n4, n5, n6, n7, n8], elem_type="C3D8", pid=plate_pid)
                     elem_id += 1
 
         # Right plate top faces (j = ny_plate)
@@ -436,9 +441,31 @@ class GmshMeshGenerator:
             "layup": self.case.preset_name,
         }
 
+        # Clean isolated unconnected nodes (e.g., from tape void in hinge)
+        self._clean_isolated_nodes(mesh, meta)
+
         # Verify element Jacobian / orientation
         self._verify_3d_mesh(mesh)
         return mesh, meta
+
+    def _clean_isolated_nodes(self, mesh: Any, meta: Dict[str, Any]) -> None:
+        """Removes nodes that are not referenced by any element (e.g., from void regions)."""
+        connected_nids = set()
+        for elem in mesh.elements.values():
+            for nid in elem.node_ids:
+                connected_nids.add(nid)
+
+        all_nids = list(mesh.nodes.keys())
+        isolated_nids = set(all_nids) - connected_nids
+        if not isolated_nids:
+            return
+
+        for nid in isolated_nids:
+            del mesh.nodes[nid]
+
+        for k in ["plate_left_nodes", "plate_right_nodes", "disp_bottom_left_nids", "disp_bottom_right_nids"]:
+            if k in meta:
+                meta[k] = [nid for nid in meta[k] if nid not in isolated_nids]
 
     def _verify_2d_mesh(self, mesh: Mesh2D) -> None:
         """Verifies det J > 0 on every Quad element."""

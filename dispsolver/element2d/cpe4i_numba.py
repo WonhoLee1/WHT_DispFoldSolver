@@ -39,31 +39,21 @@ def _shape_derivs_cpe4i(xi: float, eta: float) -> np.ndarray:
 
 @njit(fastmath=True)
 def _voigt_transform_2d(J0: np.ndarray) -> np.ndarray:
-    """Computes T0_inv_T for transformation of enhanced strain tensor: shape (3, 3)."""
-    # Inverse of centroid Jacobian J0
-    detJ0 = J0[0, 0] * J0[1, 1] - J0[0, 1] * J0[1, 0]
-    invJ00 =  J0[1, 1] / detJ0
-    invJ01 = -J0[0, 1] / detJ0
-    invJ10 = -J0[1, 0] / detJ0
-    invJ11 =  J0[0, 0] / detJ0
+    """Computes exact T0_inv for transformation of enhanced strain tensor: shape (3, 3).
 
-    # T0_inv_T maps natural Voigt strain [eps_xi, eps_eta, gamma_xi_eta]^T to physical [eps_x, eps_y, gamma_xy]^T
-    # via eps_X = J0^{-1} E_xi J0^{-T}
-    T = np.zeros((3, 3), dtype=np.float64)
-    T[0, 0] = invJ00 * invJ00
-    T[0, 1] = invJ01 * invJ01
-    T[0, 2] = invJ00 * invJ01
-
-    T[1, 0] = invJ10 * invJ10
-    T[1, 1] = invJ11 * invJ11
-    T[1, 2] = invJ10 * invJ11
-
-    T[2, 0] = 2.0 * invJ00 * invJ10
-    T[2, 1] = 2.0 * invJ01 * invJ11
-    T[2, 2] = invJ00 * invJ11 + invJ01 * invJ10
-    return T
-
-
+    Maps natural Voigt strain [eps_xi, eps_eta, gamma_xi_eta]^T to physical [eps_x, eps_y, gamma_xy]^T
+    via exact inversion of Simo-Rifai (1990) T0 strain transformation matrix.
+    """
+    j11 = J0[0, 0]
+    j12 = J0[0, 1]
+    j21 = J0[1, 0]
+    j22 = J0[1, 1]
+    T0 = np.array([
+        [j11 * j11, j21 * j21, j11 * j21],
+        [j12 * j12, j22 * j22, j12 * j22],
+        [2.0 * j11 * j12, 2.0 * j21 * j22, j11 * j22 + j12 * j21],
+    ], dtype=np.float64)
+    return np.linalg.inv(T0)
 @njit(fastmath=True)
 def compute_cpe4i_element_numba(
     coords: np.ndarray,      # (4, 2)

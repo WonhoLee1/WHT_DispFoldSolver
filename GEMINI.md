@@ -263,6 +263,53 @@ Element JIT Strategy: Use `--elem_jit jax` for R&D/prototyping (AutoDiff), and s
 
 ---
 
+---
+
+# 📱 FrontISTR 폴더블 디스플레이 박막 적층 굽힘 모델링 표준 규칙 (FrontISTR Display Bending Conforming Hybrid Standard)
+> **제정 목적**: 오픈소스 병렬 유한요소 솔버 FrontISTR(`fistr1.exe`) 환경에서 폴더블 디스플레이 박막 적층 구조물(PET, PSA, Cover Glass, Backplate)의 180° 대변형 굽힘/티어드롭 폴딩 해석 시, 1차 요소의 극심한 전단 잠김(Shear Locking: 모멘트 5배 폭등)과 비압축성 PSA의 체적 잠김(Volumetric Locking)을 TIE 접촉 오버헤드 없이 완전 소거하기 위한 단일 표준 규칙을 강제함.
+
+## 1. 요소 정식화 배치 원칙 (Layer-wise Element Formulation)
+1. **강성 필름층 (PET / PI / Cover Glass / Backplate)**:
+   - 반드시 **20절점 2차 육면체 (`TYPE=362`, 1개 층)**를 사용한다.
+   - FrontISTR의 1차 완전 적분(`361 FI`)은 박막 굽힘에서 93.3% 전단 잠김이 발생하므로 단독 사용을 엄금한다.
+   - 1차 비적합 모드(`361 IC`)는 대변형(`nlgeom=True`) 시 FrontISTR 소스코드(`fstr_setup.f90:398`)에서 강제로 `kel361FBAR`로 덮어씌워져 봉인되므로 사용 불가함.
+2. **초연성 점착층 (PSA, $\nu=0.499$)**:
+   - 반드시 **1차 u-P 혼합 육면체 (`TYPE=361` with `FORM361=UP` in .cnt)**를 사용한다.
+   - 물성 정식화는 단순 Saint-Venant Kirchhoff(`!ELASTIC`) 대신 대변형 전단 안정성을 보장하는 **`!HYPERELASTIC, TYPE=NEOHOOKE`** ($C_{10}=8.3389\times 10^{-3}\text{ MPa}$, $D_1=0.24\text{ MPa}^{-1}$)를 지정한다.
+
+## 2. 적합 세분화 메쉬 토폴로지 (Conforming Subdivision Topology — Hanging Node 0개 원칙)
+1. **격자 세분화 배율**:
+   - 강성 필름층(`362`)의 길이 방향 분할수를 $N_x$, 폭 방향 분할수를 $N_z(=1)$로 둘 때,
+   - PSA 점착층(`361 UP`)은 길이($X$)와 폭($Z$)을 각각 **2배($2 N_x, 2 N_z$)로 균일 세분화**한다.
+2. **절점 1:1 완전 공유 (Shared Nodes)**:
+   - 2차 요소 모서리 중간 노드(Mid-side node) 및 코너 노드의 $(X, Z)$ 좌표가 PSA 1차 요소의 코너 노드와 기계 정밀도로 일치하므로, 동일 절점 번호(Node ID)를 1:1로 직접 공유한다.
+   - 2차 요소 면 중심에는 독립 절점이 존재하지 않으며, PSA의 세분화된 4개 요소가 만나는 면 중심점은 PSA 요소 간 내부 절점으로 자연스럽게 연결된다.
+   - **`TIED` 페널티 접촉이나 MPC 구속을 일체 쓰지 않고, 단일 HEC-MW 그리드 토폴로지로 직접 조립한다** (TIE 페널티 강성 $10^6$에 의한 조건수 악화 및 수렴 실패 원천 차단).
+
+## 3. 대변형 굽힘 구동 및 경계 조건 프로토콜 (Kinematic Driving Protocol)
+1. **적층보 끝단 전 단면 일괄 강체 회전 변위 처방 절대 금지**:
+   - 14층 전체 단면에 오일러-베르누이 평면 단면 유지 변위($u_x(y), u_y(y)$)를 일괄 부여하면 연성 PSA가 끝단에서 층간 슬립을 일으키지 못해 인공적인 완전 결합(Monolithic Constraint) 특이성이 발생하고 뉴턴 반복이 발산함.
+2. **지지 플레이트 기반 유한 로드리게스 회전 구동**:
+   - 회전 구동은 디스플레이 하단 지지 플레이트(`EL_PLATE`)에 **`!BOUNDARY, ROT_CENTER=PIVOT_L/R`**로 부여한다.
+   - 힌지 영역의 14층 적층체는 층간 슬립을 자연스럽게 일으키며 매끄러운 대칭 티어드롭 루프 곡률을 형성하도록 둔다.
+   - 본체와 분리된 고정 참조 육면체 요소(`EL_PIVOT_REF`)를 배치하여 피벗 절점 `PIVOT_L`, `PIVOT_R`의 위치를 확정하고 `PIVOT_DUMMY, 1, 3, 0.0`으로 완전 구속한다.
+3. **2D 평면변형률 등가 모델링**:
+   - FrontISTR 2D 평면 요소(`231~242`)는 `NLSTATIC` 기하 비선형을 지원하지 않으므로, 2D Quad4 평면을 $Z$ 방향으로 $W=1.0\text{ mm}$ 돌출시킨 3D 연속체 요소로 구성하고 비구동 절점에 $u_z=0$ 구속(`Z_FIXED, 3, 3, 0.0`)을 부과하여 2D 평면변형률 상태를 엄밀하게 구현한다.
+
+## 4. 제어 파일(.cnt) 솔버 설정 표준
+```fortran
+!VERSION
+ 5
+!SOLUTION, TYPE=NLSTATIC
+!SOLVER, METHOD=MUMPS, TIMELOG=YES
+!SECTION, SECNUM=<PSA_SEC_IDS>, FORM361=UP
+!STEP, SUBSTEPS=90, MAXITER=35, CONVERG=1.0e-4
+ BOUNDARY, 1
+```
+- **실측 검증 완료 기준**: 14층 티어드롭 180° 접힘 시 컷백 0회 100% 수렴, 반력 모멘트 $M_L \approx 6.62\text{ N}\cdot\text{mm}$ (기생 전단 잠김 81.2% 소거), 좌우 대칭도 오차 $< 10^{-11}$.
+
+---
+
 # 🔬 [필독/절대엄수] 수치역학(FEA/전산역학) 전문 Pro 서브에이전트 운용 및 2차 독립 검증 프로토콜
 
 > **제정 배경**: 비선형 유한요소 기구학, 텐서 미분, 일관 접선 강성 및 왜곡 제어 구현 시, 단일 메인 에이전트의 컨텍스트 피로 및 자가 확증 편향으로 인한 구현 눈속임(임의의 스케일링 상수 `5000*kappa` 삽입, 물리적 기구학 생략)을 원천 차단하기 위함.

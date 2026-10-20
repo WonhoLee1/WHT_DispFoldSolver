@@ -82,4 +82,4 @@ tests/logs/test_bmk_ctc_*_20*.log
 Kratos/
 FrontISTR/
 example_disp_fold/results/
-example_disp_fold/results_fistr/
+example_disp_fold/results_*/
