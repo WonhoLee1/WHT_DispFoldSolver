@@ -326,6 +326,7 @@ def run_folding_from_result(result, before_png_name: str = "ex12_before_folding_
 
 
     solver.theta_penalty_k = st.theta_penalty_k
+    solver.set_contact_convergence_check(getattr(st, "contact_convergence_check", "STRICT"))
 
     print_model_review_from_builder_result(result, pid_element_type=getattr(solver, 'element_type_by_pid', None))
 

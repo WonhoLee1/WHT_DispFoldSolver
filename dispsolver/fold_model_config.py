@@ -332,6 +332,10 @@ class SolverTuningConfig:
     # > 0: round the plate's inner (hinge-side) edge with this radius [mm] for contact, as Abaqus'
     # FILLET RADIUS on an analytical rigid surface; a sharp edge chatters contact on/off
     plate_contact_fillet: float = 0.0
+    # Abaqus 2026 contact CONVERGENCE CHECK: STRICT (default, unchanged global test) | MODERATE |
+    # RELAXED | CONCEPT DESIGN, applied to the DOFs the plate contact acts on
+    # (DynamicSolver.set_contact_convergence_check).
+    contact_convergence_check: str = "STRICT"
     psa_element_type: str = "CPE4H"   # see pet_element_type; CPE4H locks in bending at one row, see the node-id-overflow assert in gen_ex12_inp.py
     glass_element_type: str = "CPE4R"
     # PARDISO linear solver options:

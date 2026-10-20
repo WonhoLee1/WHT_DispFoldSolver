@@ -132,6 +132,7 @@ class ContactControl:
     clearance: Optional[float] = None
     penetration_tolerance: Optional[float] = None
     approach: bool = False
+    convergence_check: str = "STRICT"
 
     def __init__(
         self,
@@ -149,8 +150,13 @@ class ContactControl:
         penetration_tolerance: Optional[float] = None,
         allowablePenetration: Optional[float] = None,
         approach: bool = False,
+        convergenceCheck: Optional[str] = None,
+        convergence_check: Optional[str] = None,
         **kwargs,
     ):
+        from dispsolver.model.control import normalize_convergence_check
+        cc = convergenceCheck if convergenceCheck is not None else convergence_check
+        self.convergence_check = normalize_convergence_check(cc if cc is not None else "STRICT")
         self.name = str(name)
         self.stabilize = kwargs.get("stabilize", stabilize)
         self.factor = float(kwargs.get("factor", factor))

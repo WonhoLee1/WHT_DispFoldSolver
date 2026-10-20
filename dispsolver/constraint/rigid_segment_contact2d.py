@@ -83,6 +83,9 @@ class RotatingRigidSegmentContact2D:
         self.fillet_radius = float(fillet_radius)
         self.theta = 0.0
         self.n_active = 0
+        # DOFs the contact acted on in the last apply_penalty (slave nodes in the contact zone);
+        # DynamicSolver reads it to scope CONVERGENCE CHECK to the contact DOFs.
+        self.last_contact_dofs = np.zeros(0, dtype=np.int64)
 
     # -- prescribed plate motion ---------------------------------------
     def set_rotation(self, theta: float) -> None:
@@ -199,6 +202,10 @@ class RotatingRigidSegmentContact2D:
         n = nloc @ R.T
         return g, n, curv, on
 
+    def _record_contact_dofs(self, near: np.ndarray) -> None:
+        idx = self._idx[np.asarray(near, dtype=bool)]
+        self.last_contact_dofs = np.concatenate([2 * idx, 2 * idx + 1]) if idx.size else np.zeros(0, dtype=np.int64)
+
     # -- DynamicSolver penalty-constraint protocol ----------------------
     def apply_penalty(self, u: np.ndarray, f_int: np.ndarray, K=None) -> None:
         if self.softening_gap > 0.0 or self.fillet_radius > 0.0:
@@ -206,6 +213,7 @@ class RotatingRigidSegmentContact2D:
             near = on & (g < 0.0)
             p, dp = self._pressure(g)
             self.n_active = int(np.count_nonzero(near & (p > 0.0)))
+            self._record_contact_dofs(near)
             if not np.any(near):
                 return
             I2 = np.eye(2)
@@ -224,6 +232,7 @@ class RotatingRigidSegmentContact2D:
         g, near = self._gaps(u, max(self.stiffness_gap_tol, 0.0))
         active = near & (g < 0.0)
         self.n_active = int(np.count_nonzero(active))
+        self._record_contact_dofs(near)
         if not np.any(near):
             return
         n = self._rot(self.theta) @ self.n0

@@ -1687,6 +1687,12 @@ class DynamicSolver3D:
                 return True
             c_tol = C_n_eff
             r_tol = R_p_eff
+            # *CONTROLS CONVERGENCE CHECK. RELAXED tests the correction alone and CONCEPT
+            # DESIGN accepts residual OR correction (the residual branch is
+            # _converged_by_residual). MODERATE needs a largest-flux denominator; here q is
+            # already the largest of load/reaction/inertia, so it is the same test as STRICT.
+            if getattr(self.solution_controls, "convergence_check", "STRICT") in ("RELAXED", "CONCEPT DESIGN"):
+                return du_free_max <= c_tol * du_inc_max or du_free_max <= self._r_zero
         else:
             c_tol = self._CORR_TOL
             r_tol = self._CORR_RESID_TOL

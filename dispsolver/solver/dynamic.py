@@ -835,6 +835,60 @@ class DynamicSolver:
 
     RBE2_VMAP_THRESHOLD = 16
 
+    #: Abaqus 2026 contact CONVERGENCE CHECK (STRICT | MODERATE | RELAXED | CONCEPT DESIGN).
+    #: Scopes the field-convergence tests to the DOFs the penalty-contact constraints are
+    #: acting on (`constraint.last_contact_dofs`); every other DOF keeps the STRICT test.
+    #: STRICT (default) is the unchanged global test.
+    contact_convergence_check = "STRICT"
+
+    def set_contact_convergence_check(self, value) -> None:
+        from dispsolver.model.control import normalize_convergence_check
+        self.contact_convergence_check = normalize_convergence_check(value)
+        from dispsolver.model.control import _warn_if_correction_only
+        _warn_if_correction_only(self.contact_convergence_check, "DynamicSolver.contact_convergence_check")
+
+    def _contact_dof_mask(self) -> Optional[np.ndarray]:
+        """Boolean mask of DOFs the contact constraints acted on in the last assembly."""
+        dofs = [np.asarray(c.last_contact_dofs, dtype=np.int64)
+                for c in self.penalty_constraints if getattr(c, "last_contact_dofs", None) is not None]
+        dofs = [d for d in dofs if d.size]
+        if not dofs:
+            return None
+        mask = np.zeros(self.n_dofs, dtype=bool)
+        d = np.concatenate(dofs)
+        mask[d[(d >= 0) & (d < self.n_dofs)]] = True
+        return mask if mask.any() else None
+
+    def _contact_scoped_converged(self, R_u, du, f_int, active_dofs, R_n, C_n, q_avg, c_metric):
+        """std_converged with the contact DOFs judged per `contact_convergence_check`.
+
+        Same four rules as *CONTROLS CONVERGENCE CHECK, applied to the contact DOFs only:
+        MODERATE divides the contact residual by the largest contact force instead of the
+        time-averaged flux q_avg, RELAXED drops the contact residual test (correction only),
+        CONCEPT DESIGN accepts contact residual OR correction. Returns None when no contact
+        DOF is active, so the caller keeps the global test."""
+        cmask = self._contact_dof_mask()
+        if cmask is None:
+            return None
+        n = self.n_dofs
+        a = np.asarray(active_dofs[:n], dtype=bool)
+        ac, anc = a & cmask, a & ~cmask
+        absR = np.abs(np.asarray(R_u)[:n])
+        absdu = np.abs(np.asarray(du)[:n])
+
+        def _mx(x, m):
+            return float(x[m].max()) if m.any() else 0.0
+
+        nc_ok = _mx(absR, anc) <= R_n * q_avg and _mx(absdu, anc) <= C_n * c_metric
+        f_c = _mx(np.abs(np.asarray(f_int)[:n]), ac)
+        r_strict = _mx(absR, ac) <= R_n * q_avg
+        r_mod = _mx(absR, ac) <= R_n * max(q_avg, f_c)
+        c_ok = _mx(absdu, ac) <= C_n * c_metric
+        mode = self.contact_convergence_check
+        contact_ok = {"MODERATE": r_mod and c_ok, "RELAXED": c_ok,
+                      "CONCEPT DESIGN": r_strict or c_ok}.get(mode, r_strict and c_ok)
+        return nc_ok and contact_ok
+
     @classmethod
     def from_config(
         cls,
@@ -3002,7 +3056,20 @@ class DynamicSolver:
             # Standard Abaqus check
             abaqus_r_converged = max_R_val <= R_n_eff * q_avg
             abaqus_c_converged = max_du_val <= C_n_eff * c_metric
-            std_converged = abaqus_r_converged and abaqus_c_converged
+            _sc = getattr(self, "solution_controls", None)
+            if _sc is None or getattr(_sc, "convergence_check", "STRICT") == "STRICT":
+                std_converged = abaqus_r_converged and abaqus_c_converged
+            else:
+                # *CONTROLS CONVERGENCE CHECK=MODERATE|RELAXED|CONCEPT DESIGN. MODERATE
+                # divides the residual by the LARGEST flux, STRICT by the time-averaged one.
+                q_max = max(float(np.max(np.abs(f_int))) if len(f_int) > 0 else 0.0, q_floor)
+                std_converged = _sc.field_accepts(
+                    abaqus_r_converged, max_R_val <= R_n_eff * q_max, abaqus_c_converged)
+            if self.contact_convergence_check != "STRICT":
+                _cs = self._contact_scoped_converged(
+                    R_u, du, f_int, active_dofs, R_n_eff, C_n_eff, q_avg, c_metric)
+                if _cs is not None:
+                    std_converged = _cs
 
             # Abaqus Alternative Convergence Check (saves 3~5 tail iterations per step)
             alt_converged = (max_du_val <= C_a_eff * c_metric) and (max_R_val <= R_p_eff * q_avg)

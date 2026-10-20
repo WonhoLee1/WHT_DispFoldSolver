@@ -195,6 +195,42 @@ class ActiveToleranceEngine:
         return (R_n_eff, C_n_eff, R_p_eff, C_a_eff)
 
 
+# Abaqus *CONTROLS, CONVERGENCE CHECK= (Keywords Guide). The four values differ in WHICH
+# conditions are tested and how they are joined, not in the tolerance sizes:
+#   STRICT (default)  residual/time-averaged flux  AND  correction/increment
+#   MODERATE          residual/largest flux        AND  correction/increment
+#   RELAXED           correction/increment only
+#   CONCEPT DESIGN    residual/time-averaged flux  OR   correction/increment
+CONVERGENCE_CHECKS = ("STRICT", "MODERATE", "RELAXED", "CONCEPT DESIGN")
+
+
+def _warn_if_correction_only(mode: str, where: str) -> None:
+    """RELAXED accepts an increment on the correction alone -- the displacement-only
+    acceptance AGENTS.md section 4.20 removed as false convergence. Allowed because Abaqus offers it, but
+    it is opt-in and must be visible in the log."""
+    if mode == "RELAXED":
+        import warnings
+        warnings.warn(
+            f"{where}=RELAXED accepts increments on the displacement correction alone (no residual "
+            "test); equilibrium is NOT checked. Use for concept/debug runs only.",
+            UserWarning, stacklevel=3)
+
+
+def normalize_convergence_check(value: Any) -> str:
+    """Canonical CONVERGENCE CHECK value. STANDARD is this project's older spelling of the
+    default and is kept as an alias of STRICT so existing decks keep reading."""
+    v = " ".join(str(value).replace("_", " ").split()).upper()
+    if v in ("", "STANDARD"):
+        return "STRICT"
+    if v == "CONCEPTDESIGN":
+        v = "CONCEPT DESIGN"
+    if v not in CONVERGENCE_CHECKS:
+        raise ValueError(
+            f"Unknown CONVERGENCE CHECK '{value}'. Supported: {', '.join(CONVERGENCE_CHECKS)}."
+        )
+    return v
+
+
 class SolutionControl:
     """Top-level Abaqus Solution Control container with 4-tier Presets and API Parity.
 
@@ -218,6 +254,7 @@ class SolutionControl:
         self.preset = str(preset).upper()
         self.adaptive_convergence = bool(adaptiveConvergence)
         self.max_relax_factor = float(maxRelaxFactor)
+        self.convergence_check = "STRICT"
 
         self.field = FieldControl()
         self.time_incrementation = TimeIncrementationControl()
@@ -278,6 +315,9 @@ class SolutionControl:
         if "preset" in kwargs:
             self.apply_preset(kwargs.pop("preset"))
 
+        for key in ("convergenceCheck", "convergence_check"):
+            if key in kwargs:
+                self.set_convergence_check(kwargs.pop(key))
         if "adaptiveConvergence" in kwargs:
             self.adaptive_convergence = bool(kwargs.pop("adaptiveConvergence"))
             self.tolerance_engine.is_active = self.adaptive_convergence
@@ -326,6 +366,25 @@ class SolutionControl:
         self.tolerance_engine.R_n_base = self.field.R_n
         self.tolerance_engine.C_n_base = self.field.C_n
 
+    def set_convergence_check(self, value: Any) -> None:
+        self.convergence_check = normalize_convergence_check(value)
+        _warn_if_correction_only(self.convergence_check, "*CONTROLS CONVERGENCE CHECK")
+
+    def field_accepts(self, residual_strict_ok: bool, residual_moderate_ok: bool,
+                      correction_ok: bool) -> bool:
+        """Combine the residual and correction tests per CONVERGENCE CHECK.
+
+        `residual_strict_ok` is residual vs the time-averaged flux, `residual_moderate_ok`
+        residual vs the largest flux (never stricter than the former)."""
+        c = self.convergence_check
+        if c == "MODERATE":
+            return residual_moderate_ok and correction_ok
+        if c == "RELAXED":
+            return correction_ok
+        if c == "CONCEPT DESIGN":
+            return residual_strict_ok or correction_ok
+        return residual_strict_ok and correction_ok
+
     def get_effective_tolerances(
         self,
         cutback_count: int = 0,
@@ -349,8 +408,7 @@ class SolutionControl:
 
         # Field controls
         f = self.field
-        conv_check = "RELAXED" if (self.preset in ["RELAXED", "CONCEPTUAL"]) else "STANDARD"
-        lines.append(f"*CONTROLS, PARAMETERS=FIELD, CONVERGENCE CHECK={conv_check}")
+        lines.append(f"*CONTROLS, PARAMETERS=FIELD, CONVERGENCE CHECK={self.convergence_check}")
         q_0_str = f"{f.q_0}" if f.q_0 is not None else ""
         c_0_str = f"{f.c_0}" if f.c_0 is not None else ""
         lines.append(f"  {f.R_n}, {f.C_n}, {q_0_str}, {c_0_str}, {f.R_p}, {f.C_a}")

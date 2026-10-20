@@ -46,8 +46,8 @@ if TYPE_CHECKING:
         "TYPE": ParamSpec("TYPE", supported=False, control=True),
         "CONVERGENCE CHECK": ParamSpec(
             "CONVERGENCE CHECK",
-            default="STANDARD",
-            choices=["STANDARD", "RELAXED", "OFF"],
+            default="STRICT",
+            choices=["STRICT", "MODERATE", "RELAXED", "CONCEPT DESIGN", "STANDARD", "OFF"],
             aliases=["CONVERGENCE_CHECK"],
             control=True,
         ),
@@ -75,6 +75,7 @@ def _handle_controls(reader: AbaqusInputReader, block: AbaqusKeywordBlock) -> No
     # 2. Check RESET
     if block.params.get("reset", False) or "reset" in block.params:
         ctrl.apply_preset("STANDARD")
+        ctrl.set_convergence_check("STRICT")
 
     # 3. Check ANALYSIS=DISCONTINUOUS
     analysis = str(block.params.get("analysis", "DEFAULT")).strip().upper()
@@ -84,11 +85,10 @@ def _handle_controls(reader: AbaqusInputReader, block: AbaqusKeywordBlock) -> No
     # 4. Check CONVERGENCE CHECK
     conv_check = block.params.get("convergence check", block.params.get("convergence_check"))
     if conv_check:
-        c_upper = str(conv_check).strip().upper()
-        if c_upper == "RELAXED":
-            ctrl.apply_preset("RELAXED")
-        elif c_upper == "STANDARD":
-            ctrl.apply_preset("STANDARD")
+        # Keywords Guide semantics (which tests apply, how they are joined) -- not a tolerance
+        # preset. The tolerances stay whatever the FIELD data line / ANALYSIS= set.
+        if str(conv_check).strip().upper() != "OFF":
+            ctrl.set_convergence_check(conv_check)
 
     # 5. Parse data lines according to PARAMETERS type
     param_type = str(block.params.get("parameters", "TIME INCREMENTATION")).strip().upper()
@@ -182,6 +182,15 @@ def _handle_controls(reader: AbaqusInputReader, block: AbaqusKeywordBlock) -> No
             aliases=["STIFFNESS_SCALE_FACTOR"],
         ),
         "CPSET": ParamSpec("CPSET", default=None),
+        # Abaqus 2026: contact-related convergence criteria (STRICT default). The 2026 keyword
+        # reference was not available when this was written -- placement on *CONTACT CONTROLS
+        # follows the 2026 release summary and is unconfirmed.
+        "CONVERGENCE CHECK": ParamSpec(
+            "CONVERGENCE CHECK",
+            default="STRICT",
+            choices=["STRICT", "MODERATE", "RELAXED", "CONCEPT DESIGN"],
+            aliases=["CONVERGENCE_CHECK"],
+        ),
     },
     rows=RowSpec(min_columns=0, max_columns=4),
     description="Define contact controls and stabilization parameters",
@@ -233,6 +242,7 @@ def _handle_contact_controls(reader: AbaqusInputReader, block: AbaqusKeywordBloc
         clearance=clearance,
         penetrationTolerance=pen_tol,
         approach=bool(block.params.get("approach", False)),
+        convergenceCheck=block.params.get("convergence check", block.params.get("convergence_check")),
     )
 
 
