@@ -627,12 +627,50 @@ def compute_c3d8_hybrid_element_umat_numba(
         f_global[3*i + 1] = R[1, 0] * f_l_node[0] + R[1, 1] * f_l_node[1] + R[1, 2] * f_l_node[2]
         f_global[3*i + 2] = R[2, 0] * f_l_node[0] + R[2, 1] * f_l_node[1] + R[2, 2] * f_l_node[2]
 
-    # Transform 24x24 stiffness block-wise (8x8 blocks of 3x3)
+    if small_strain:
+        # R = I and does not depend on u: the frozen-frame block transform is exact.
+        for i in range(8):
+            for j in range(8):
+                K_global[3*i : 3*i+3, 3*j : 3*j+3] = K_local[3*i : 3*i+3, 3*j : 3*j+3]
+        return f_global, K_global, 0
+
+    # Consistent tangent of f_g = R(u) f_loc(u_loc(u)), u_loc_i = R(u)^T (x_i - x_c) - (X_i - X_c):
+    #   df_g_i/du_k = dR/du_k f_loc_i + R (K_loc du_loc/du_k)_i
+    #   du_loc_i/du_(j,d) = R^T (delta_ij - 1/8) e_d + dR/du_(j,d)^T (x_i - x_c)
+    # Freezing R (the old R K_loc R^T) drops both dR terms. They are stiffness-sized in modes where the
+    # edge-based frame turns differently from the material (a soft layer rocking between stiff faces):
+    # the tangent was 99.7% off along such a direction and Newton crept at 1/64 steps for ~30 iterations.
+    L_ref = np.sqrt((coords[6, 0] - coords[0, 0]) ** 2 + (coords[6, 1] - coords[0, 1]) ** 2 +
+                    (coords[6, 2] - coords[0, 2]) ** 2) + 1e-300
+    h_fd = 1.0e-6 * L_ref
+    dR = np.zeros((24, 3, 3), dtype=np.float64)
+    for j in range(8):
+        for d in range(3):
+            cp = coords_curr.copy()
+            cm = coords_curr.copy()
+            cp[j, d] += h_fd
+            cm[j, d] -= h_fd
+            Rp = compute_element_rotation_3d(coords, cp)
+            Rm = compute_element_rotation_3d(coords, cm)
+            dR[3 * j + d] = (Rp - Rm) / (2.0 * h_fd)
+
+    M = np.zeros((24, 24), dtype=np.float64)   # du_loc / du
     for i in range(8):
+        c_i = coords_curr[i] - xc
         for j in range(8):
-            K_block_local = K_local[3*i : 3*i+3, 3*j : 3*j+3]
-            K_block_global = R @ K_block_local @ R.T
-            K_global[3*i : 3*i+3, 3*j : 3*j+3] = K_block_global
+            w = (1.0 if i == j else 0.0) - 0.125
+            for d in range(3):
+                k = 3 * j + d
+                for a in range(3):
+                    M[3 * i + a, k] = R[d, a] * w + dR[k][0, a] * c_i[0] + dR[k][1, a] * c_i[1] + dR[k][2, a] * c_i[2]
+
+    KM = K_local @ M
+    for i in range(8):
+        for k in range(24):
+            for a in range(3):
+                v = R[a, 0] * KM[3 * i, k] + R[a, 1] * KM[3 * i + 1, k] + R[a, 2] * KM[3 * i + 2, k]
+                v += dR[k][a, 0] * f_local[3 * i] + dR[k][a, 1] * f_local[3 * i + 1] + dR[k][a, 2] * f_local[3 * i + 2]
+                K_global[3 * i + a, k] = v
 
     return f_global, K_global, 0
 

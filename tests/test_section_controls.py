@@ -75,9 +75,11 @@ def test_c3d8_hybrid_distortion_control_barrier():
     """Verify that distortion control adds a steep repulsive barrier under extreme compression."""
     coords = _create_unit_hex_coords()
 
-    # Extreme triaxial compression: 95% volume reduction (J ≈ 0.05 < j_crit=0.1)
-    # Target scale s such that s^3 = 0.05 -> s ≈ 0.3684
-    s = 0.368403
+    # The kernel works with the linearised volume ratio J = 1 + div(u). Compress to J = 0.052, inside the
+    # barrier band (0.05 < J < j_crit = 0.1); J <= 0.05 is reported as an inverted element (error 1).
+    # The barrier pressure mu*jc*(jc-J)/J^3 is 17 against the bulk pressure 47 here, and its stiffness
+    # mu*jc*(3jc-2J)/J^4 is ~1100 against K = 50.
+    s = 1.0 - 0.948 / 3.0
     u_comp = np.zeros(24, dtype=np.float64)
     for i in range(8):
         u_comp[3 * i + 0] = (s - 1.0) * coords[i, 0]
@@ -113,8 +115,25 @@ def test_c3d8_hybrid_distortion_control_barrier():
     trace_K_off = np.trace(K_off)
     trace_K_on = np.trace(K_on)
 
-    assert norm_f_on > norm_f_off * 1.5, f"Expected repulsive barrier force, got on={norm_f_on}, off={norm_f_off}"
+    assert norm_f_on > norm_f_off * 1.2, f"Expected repulsive barrier force, got on={norm_f_on}, off={norm_f_off}"
     assert trace_K_on > trace_K_off * 1.5, f"Expected barrier stiffness enhancement, got on={trace_K_on}, off={trace_K_off}"
+
+
+def test_c3d8_hybrid_distortion_control_reports_inversion_below_floor():
+    """J <= 0.05 under distortion control is an inverted element: error flag 1 so the solver cuts back."""
+    coords = _create_unit_hex_coords()
+    s = 1.0 - 0.96 / 3.0  # J = 0.04
+    u = np.zeros(24, dtype=np.float64)
+    for i in range(8):
+        u[3 * i:3 * i + 3] = (s - 1.0) * coords[i]
+    props = np.array([1.0, 50.0, 0.25, 0.04], dtype=np.float64)
+    sdvs = np.zeros((8, 0), dtype=np.float64)
+    ctrl = np.zeros(8, dtype=np.float64)
+    ctrl[0] = 1.0
+    ctrl[1] = 0.1
+    _, _, err = compute_c3d8_hybrid_element_umat_numba(
+        coords, u, MAT_HYPERELASTIC_NEOHOOKEAN, props, sdvs, dt=1.0, controls=ctrl)
+    assert err == 1
 
 
 def test_anti_inversion_barrier_error_flag():

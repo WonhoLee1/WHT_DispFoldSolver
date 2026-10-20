@@ -5,7 +5,6 @@ element3d package
 from .base3d import SolidElement3D, QuadraturePointState3D
 from .c3d8_eas_jax import Hexa8EASElement
 from .c3d8_fbar_jax import Hexa8FbarElement
-from .c3d8r_jax import Hexa8ReducedElement
 from .c3d4_jax import Tetra4Element
 from .c3d4_anp_jax import Tetra4ANPElement
 from .c3d10_jax import Tetra10Element
@@ -65,7 +64,6 @@ __all__ = [
     "QuadraturePointState3D",
     "Hexa8EASElement",
     "Hexa8FbarElement",
-    "Hexa8ReducedElement",
     "Tetra4Element",
     "Tetra4ANPElement",
     "Tetra10Element",

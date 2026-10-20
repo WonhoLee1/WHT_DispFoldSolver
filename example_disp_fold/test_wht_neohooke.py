@@ -106,7 +106,7 @@ def run_wht_neohooke():
         reac_L = solver.compute_section_reactions(meta["plate_left_nodes"] + meta["disp_bottom_left_nids"], center_pt=pivot_L, current_coords=True)
         reac_R = solver.compute_section_reactions(meta["plate_right_nodes"] + meta["disp_bottom_right_nids"], center_pt=pivot_R, current_coords=True)
 
-        if step % 5 == 0 or step == substeps:
+        if True:
             print(f"    Step {step:2d}/{substeps} ({deg_curr:5.1f} deg): Iters={iters:2d} | M_L={reac_L['Mz']:+.4f} N*mm, M_R={reac_R['Mz']:+.4f} N*mm", flush=True)
 
         theta_prev = theta_curr

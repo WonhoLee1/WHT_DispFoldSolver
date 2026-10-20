@@ -10,7 +10,55 @@ Equivalents: Abaqus CPE4H / Ansys Mixed u-P SOLID182.
 import numpy as np
 from numba import njit, prange
 
-from dispsolver.material3d.numba_materials import material_dispatch_3d
+from dispsolver.material3d.numba_materials import (
+    material_dispatch_3d,
+    _eig3x3_jacobi_numba,
+    MAT_LINEAR_ELASTIC,
+)
+
+@njit(fastmath=True)
+def _hencky_to_green_gl_numba(eps_voigt: np.ndarray):
+    """Convert local small/Hencky strain eps_voigt into genuine Green-Lagrange strain E_voigt
+    and deformation gradient F_loc to ensure det(C) > 0 and prevent material explosion under large compression/shear.
+    """
+    eps_mat = np.zeros((3, 3), dtype=np.float64)
+    eps_mat[0, 0] = eps_voigt[0]
+    eps_mat[1, 1] = eps_voigt[1]
+    eps_mat[2, 2] = eps_voigt[2]
+    eps_mat[0, 1] = eps_mat[1, 0] = 0.5 * eps_voigt[3]
+    eps_mat[1, 2] = eps_mat[2, 1] = 0.5 * eps_voigt[4]
+    eps_mat[2, 0] = eps_mat[0, 2] = 0.5 * eps_voigt[5]
+
+    vals, V = _eig3x3_jacobi_numba(eps_mat)
+
+    exp_vals = np.zeros(3, dtype=np.float64)
+    detF = 1.0
+    for i in range(3):
+        exp_v = np.exp(vals[i])
+        exp_vals[i] = exp_v
+        detF *= exp_v
+
+    F_loc = np.zeros((3, 3), dtype=np.float64)
+    for i in range(3):
+        for j in range(3):
+            for k in range(3):
+                F_loc[i, j] += V[i, k] * exp_vals[k] * V[j, k]
+
+    C_loc = F_loc.T @ F_loc
+    E_gl = np.zeros((3, 3), dtype=np.float64)
+    for i in range(3):
+        for j in range(3):
+            E_gl[i, j] = 0.5 * (C_loc[i, j] - (1.0 if i == j else 0.0))
+
+    E_voigt = np.zeros(6, dtype=np.float64)
+    E_voigt[0] = E_gl[0, 0]
+    E_voigt[1] = E_gl[1, 1]
+    E_voigt[2] = E_gl[2, 2]
+    E_voigt[3] = 2.0 * E_gl[0, 1]
+    E_voigt[4] = 2.0 * E_gl[1, 2]
+    E_voigt[5] = 2.0 * E_gl[2, 0]
+
+    return E_voigt, F_loc, detF
 
 _GP1D = 1.0 / np.sqrt(3.0)
 _GPS = np.array([
@@ -110,24 +158,64 @@ def compute_cpe4h_element_numba(
         E_voigt[1] = eps[1]
         E_voigt[2] = eps[2]
         E_voigt[3] = eps[3]
+        if mat_type != MAT_LINEAR_ELASTIC:
+            E_gl_voigt, F_loc, detF = _hencky_to_green_gl_numba(E_voigt)
+        else:
+            E_gl_voigt = E_voigt
+            F_loc = I3
+            detF = 1.0
         sdv_pt = sdvs[q] if sdvs is not None and len(sdvs) > q else np.zeros(8, dtype=np.float64)
-        S, C6, sdv_new, mat_err = material_dispatch_3d(mat_type, props, sdv_pt, E_voigt, I3, 1.0, dt)
+        S, C6, sdv_new, mat_err = material_dispatch_3d(mat_type, props, sdv_pt, E_gl_voigt, F_loc, detF, dt)
         if mat_err != 0:
             has_error = 1
         if sdvs is not None and len(sdvs) > q:
             for s_i in range(min(len(sdv_new), len(sdvs[q]))):
                 sdvs[q, s_i] = sdv_new[s_i]
 
+        if mat_type != MAT_LINEAR_ELASTIC:
+            tr_S = (S[0] + S[1] + S[2]) / 3.0
+            S_use0 = S[0] - tr_S
+            S_use1 = S[1] - tr_S
+            S_use2 = S[2] - tr_S
+            S_use3 = S[3]
+
+            C4 = np.zeros((4, 4), dtype=np.float64)
+            for r in range(4):
+                for c in range(4):
+                    C4[r, c] = C6[r, c]
+            P_dev = np.eye(4, dtype=np.float64)
+            for r in range(3):
+                for c in range(3):
+                    P_dev[r, c] -= 1.0 / 3.0
+            C4 = P_dev @ C4 @ P_dev
+        else:
+            S_use0 = S[0]
+            S_use1 = S[1]
+            S_use2 = S[2]
+            S_use3 = S[3]
+            C4 = np.zeros((4, 4), dtype=np.float64)
+            for r in range(4):
+                for c in range(4):
+                    C4[r, c] = C6[r, c]
+
         for i in range(8):
-            fe[i] += (Bs[0, i] * S[0] + Bs[1, i] * S[1] + Bs[2, i] * S[2] + Bs[3, i] * S[3]) * dV[q]
-        C4 = np.zeros((4, 4), dtype=np.float64)
-        for r in range(4):
-            for c in range(4):
-                C4[r, c] = C6[r, c]
+            fe[i] += (Bs[0, i] * S_use0 + Bs[1, i] * S_use1 + Bs[2, i] * S_use2 + Bs[3, i] * S_use3) * dV[q]
+
         CB = C4 @ Bs
         for i in range(8):
             for j in range(8):
                 Ke[i, j] += (Bs[0, i] * CB[0, j] + Bs[1, i] * CB[1, j] + Bs[2, i] * CB[2, j] + Bs[3, i] * CB[3, j]) * dV[q]
+
+    if mat_type != MAT_LINEAR_ELASTIC:
+        K_bulk = props[1]
+        eps_vol_mean = 0.0
+        for m in range(8):
+            eps_vol_mean += bvol_avg[m] * u_elem[m]
+        p_mean = K_bulk * eps_vol_mean
+        for i in range(8):
+            fe[i] += bvol_avg[i] * p_mean * tot_vol
+            for j in range(8):
+                Ke[i, j] += bvol_avg[i] * bvol_avg[j] * (K_bulk * tot_vol)
 
     return fe, Ke, has_error
 

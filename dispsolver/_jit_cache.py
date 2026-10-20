@@ -40,7 +40,9 @@ Controls, all read once at import time:
   confirming every machine that will load the cache has an identical CPU
   feature set to the one that built it (e.g. a homogeneous deployment
   fleet), or accept the SIGILL risk knowingly.
-- `DISPFOLD_CACHE_VERSION` (default "v6", bumped from "v5" on 2026-09-10 for
+- `DISPFOLD_CACHE_VERSION` (default "v7", bumped from "v6" on 2026-10-21 for the consistent
+  (dR/du) tangent in c3d8_hybrid_numba.py, whose callers in cr_wrapper_3d.py are cache=True;
+  "v6" was bumped from "v5" on 2026-09-10 for
   the mesh-invariant forward-difference step in
   q4_visco_hybrid_simo_numba.py's `compute_visco_hybrid_simo_single_numba`
   (fixed absolute h=1e-6 -> per-column sqrt(eps)*max(|u_j|, L_elem), plus the
@@ -81,7 +83,7 @@ import functools
 
 _CACHE_ENABLED = os.environ.get("DISPFOLD_JIT_CACHE", "1") not in ("0", "false", "False")
 _JAX_CACHE_ENABLED = os.environ.get("DISPFOLD_JAX_CACHE", "0") not in ("0", "false", "False")
-_CACHE_VERSION = os.environ.get("DISPFOLD_CACHE_VERSION", "v6")
+_CACHE_VERSION = os.environ.get("DISPFOLD_CACHE_VERSION", "v7")
 
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 _CACHE_ROOT = os.path.join(_REPO_ROOT, ".cache")
@@ -138,7 +140,7 @@ def _ensure_numba_cache_dir():
     global _numba_cache_dir_set
     if _numba_cache_dir_set or not _CACHE_ENABLED:
         return
-    cache_dir = os.path.join(_CACHE_ROOT, "numba", _CACHE_VERSION, _PLATFORM_TAG)
+    cache_dir = numba_cache_dir()
     os.makedirs(cache_dir, exist_ok=True)
     try:
         import numba
@@ -146,6 +148,121 @@ def _ensure_numba_cache_dir():
     except ImportError:
         pass
     _numba_cache_dir_set = True
+    _hint_if_cold()
+
+
+# --------------------------------------------------------------------------------------------------
+# Warm-cache bookkeeping (see dispsolver/warmup.py). A cold cache is not an error, but the first solve
+# then compiles every kernel in-line -- minutes of silence that look like a hang -- so say so once.
+_MANIFEST_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "jit_manifest.json")
+_STAMP_NAME = ".warm_stamp.json"
+
+
+def numba_cache_dir() -> str:
+    return os.path.join(_CACHE_ROOT, "numba", _CACHE_VERSION, _PLATFORM_TAG)
+
+
+def numba_version() -> str:
+    try:
+        import numba
+        return numba.__version__
+    except ImportError:
+        return "none"
+
+
+def manifest_sha() -> str:
+    import hashlib
+    try:
+        with open(_MANIFEST_PATH, "rb") as fh:
+            return hashlib.sha256(fh.read()).hexdigest()[:16]
+    except OSError:
+        return "none"
+
+
+def fingerprint() -> dict:
+    """What a Numba cache is only valid for: machine (CPU), interpreter and the compiler stack."""
+    cpu = platform.processor()
+    try:
+        import llvmlite.binding as llvm
+        cpu = f"{llvm.get_host_cpu_name()}|{platform.processor()}"
+    except Exception:
+        pass
+    try:
+        import numpy
+        npv = numpy.__version__
+    except ImportError:
+        npv = "none"
+    return {"platform": _PLATFORM_TAG, "cpu": cpu, "numba": numba_version(), "numpy": npv,
+            "cache_version": _CACHE_VERSION, "repo": _REPO_ROOT}
+
+
+def _stamp_path() -> str:
+    return os.path.join(numba_cache_dir(), _STAMP_NAME)
+
+
+def write_warm_stamp(sha: str) -> None:
+    import json
+    import time
+    os.makedirs(numba_cache_dir(), exist_ok=True)
+    with open(_stamp_path(), "w", encoding="utf-8") as fh:
+        json.dump({"fingerprint": fingerprint(), "manifest": sha, "time": time.time()}, fh)
+
+
+def warm_state_reason(sha: str):
+    """None when this machine's cache was warmed for this machine and this manifest, else why not."""
+    import json
+    try:
+        with open(_stamp_path(), encoding="utf-8") as fh:
+            st = json.load(fh)
+    except (OSError, ValueError):
+        return "never warmed on this machine (no stamp)"
+    old, now = st.get("fingerprint", {}), fingerprint()
+    changed = sorted(k for k in now if old.get(k) != now[k])
+    if changed:
+        return "machine or software changed since the last warmup: " + ", ".join(changed)
+    if st.get("manifest") != sha:
+        return "kernel manifest changed since the last warmup (new or changed kernels)"
+    return None
+
+
+def clean_cache_dir() -> None:
+    import shutil
+    d = numba_cache_dir()
+    if os.path.isdir(d):
+        shutil.rmtree(d, ignore_errors=True)
+    os.makedirs(d, exist_ok=True)
+    print(f"[jit-cache] cleaned {d}")
+
+
+def _is_warmup_run() -> bool:
+    import sys
+    spec = getattr(sys.modules.get("__main__"), "__spec__", None)
+    return getattr(spec, "name", "") == "dispsolver.warmup"
+
+
+_hinted = False
+
+
+def _hint_if_cold():
+    global _hinted
+    if _hinted or not _CACHE_ENABLED or os.environ.get("DISPFOLD_WARMUP_HINT", "1") in ("0", "false", "False"):
+        return
+    _hinted = True
+    if _is_warmup_run():
+        return
+    reason = warm_state_reason(manifest_sha())
+    if reason is None:
+        return
+    import sys
+    lines = [
+        f"[jit-cache] {reason}.",
+        "[jit-cache] The first solve will compile its kernels in-line (minutes, no output). Run once:",
+        "[jit-cache]     python -m dispsolver.warmup --if-needed --jobs 4",
+        "[jit-cache] If a cached kernel raises odd errors after a move or an upgrade: "
+        "python -m dispsolver.warmup --clean.  (silence: DISPFOLD_WARMUP_HINT=0)",
+    ]
+    for line in lines:
+        print(line, file=sys.stderr)
 
 
 _jax_cache_configured = False

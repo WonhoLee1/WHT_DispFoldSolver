@@ -7,7 +7,7 @@ with Flanagan & Belytschko (1981) Orthogonal Hourglass Control.
 Tests:
 1. Hourglass Orthogonality: gamma_alpha strictly orthogonal to rigid-body modes and uniform strain.
 2. Rank 18 Spectrum: Exactly 6 zero eigenvalues (rigid body modes) + 18 positive eigenvalues.
-3. JAX vs Numba Parity: Bitwise matching between JAX Hexa8ReducedElement and Numba kernel.
+3. Hourglass modes: STIFFNESS and ENHANCED differ only in the hourglass part (zero for linear fields).
 4. Tangent Consistency: Finite-difference Jacobian agreement with algorithmic tangent (err < 1e-5).
 5. Shear Locking Freedom: Verify high bending flexibility compared to locked standard C3D8.
 """
@@ -15,7 +15,6 @@ Tests:
 import pytest
 import numpy as np
 
-from dispsolver.element3d.c3d8r_jax import Hexa8ReducedElement
 from dispsolver.element3d.c3d8r_numba import (
     compute_c3d8r_element_numba,
     assemble_mesh_c3d8r_numba
@@ -47,31 +46,44 @@ def make_distorted_hex_coords():
     return coords
 
 
+def _controls(hourglass_code):
+    ctrl = np.zeros(8, dtype=np.float64)
+    ctrl[5] = hourglass_code
+    return ctrl
+
+
 def test_c3d8r_hourglass_orthogonality():
-    """Verify that Flanagan-Belytschko gamma vectors are strictly orthogonal to linear fields."""
-    elem = Hexa8ReducedElement(alpha_hg=0.05)
+    """The hourglass vectors are orthogonal to rigid-body and linear fields.
+
+    Seen through the kernel: rigid motion gives zero force, and for a linear displacement field the force
+    is the same for every hourglass mode (the hourglass part carries nothing).
+    """
     coords = make_distorted_hex_coords()
+    props = np.array([200000.0, 0.3], dtype=np.float64)
+    sdvs = np.zeros((1, 1), dtype=np.float64)
 
-    gamma, dN_dx, V0 = elem.compute_orthogonal_hourglass_vectors(coords)
-    assert gamma.shape == (4, 8)
+    def force(u, code):
+        _, f, err = compute_c3d8r_element_numba(
+            coords, u, mat_type=MAT_LINEAR_ELASTIC, props=props, sdvs=sdvs.copy(), elem_controls=_controls(code))
+        assert err == 0
+        return f
 
-    # 1. Rigid body translation modes: u = c
-    ones = np.ones(8, dtype=np.float64)
-    for alpha in range(4):
-        dot_val = np.dot(gamma[alpha], ones)
-        assert abs(dot_val) < 1e-12, f"Rigid translation mode not orthogonal: {dot_val}"
+    # rigid translation and small rotation about z: no force at all
+    u_tr = np.tile([1.0, -2.0, 0.5], 8)
+    th = 1e-7
+    u_rot = np.zeros(24)
+    for a in range(8):
+        u_rot[3 * a] = -th * coords[a, 1]
+        u_rot[3 * a + 1] = th * coords[a, 0]
+    for u in (u_tr, u_rot):
+        assert np.linalg.norm(force(u, 1.0)) < 1e-4
 
-    # 2. Linear displacement fields: u_i = x_i
-    for alpha in range(4):
-        for i in range(3):
-            dot_val = np.dot(gamma[alpha], coords[:, i])
-            assert abs(dot_val) < 1e-12, f"Linear strain field {i} not orthogonal to gamma_{alpha}: {dot_val}"
-
-    # 3. Rigid body rotation modes: u = omega x r
-    # Rotation about Z: u_x = -y, u_y = x
-    for alpha in range(4):
-        dot_rot_z = np.dot(gamma[alpha], -coords[:, 1]) + np.dot(gamma[alpha], coords[:, 0])
-        assert abs(dot_rot_z) < 1e-12, f"Rigid rotation about Z not orthogonal: {dot_rot_z}"
+    # linear field u = G x: hourglass-mode independent
+    G = np.array([[1e-3, 2e-4, 0.0], [0.0, -5e-4, 3e-4], [1e-4, 0.0, 7e-4]])
+    u_lin = (coords @ G.T).reshape(-1)
+    f_stiff = force(u_lin, 1.0)
+    f_enh = force(u_lin, 0.0)
+    assert np.linalg.norm(f_stiff - f_enh) < 1e-9 * np.linalg.norm(f_stiff)
 
 
 def test_c3d8r_eigenvalue_spectrum_and_rank():
@@ -104,39 +116,27 @@ def test_c3d8r_eigenvalue_spectrum_and_rank():
     assert np.min(eigvals) >= -1e-7, f"Spurious negative eigenvalue found: {np.min(eigvals)}"
 
 
-def test_c3d8r_jax_numba_parity():
-    """Verify bitwise parity between JAX Hexa8ReducedElement and Numba compute_c3d8r_element_numba."""
+def test_c3d8r_stiffness_vs_enhanced_differ_only_in_hourglass_part():
+    """The two hourglass formulations share the centroid (uniform-strain) part: they differ, and by hourglass modes only."""
     coords = make_distorted_hex_coords()
     np.random.seed(123)
     u_elem = 0.001 * np.random.randn(24)
-
-    E_val = 200000.0
-    nu_val = 0.3
-    lam = (E_val * nu_val) / ((1.0 + nu_val) * (1.0 - 2.0 * nu_val))
-    mu = E_val / (2.0 * (1.0 + nu_val))
-    C_mat = np.array([
-        [lam + 2*mu, lam,        lam,        0,  0,  0],
-        [lam,        lam + 2*mu, lam,        0,  0,  0],
-        [lam,        lam,        lam + 2*mu, 0,  0,  0],
-        [0,          0,          0,          mu, 0,  0],
-        [0,          0,          0,          0,  mu, 0],
-        [0,          0,          0,          0,  0,  mu]
-    ], dtype=np.float64)
-
-    # JAX
-    elem_jax = Hexa8ReducedElement(alpha_hg=0.05)
-    K_jax, f_jax = elem_jax.compute_element_matrices(coords, u_elem, C_mat, G=mu)
-
-    # Numba
-    props = np.array([E_val, nu_val], dtype=np.float64)
+    props = np.array([200000.0, 0.3], dtype=np.float64)
     sdvs = np.zeros((1, 1), dtype=np.float64)
-    K_numba, f_numba, err = compute_c3d8r_element_numba(
-        coords, u_elem, mat_type=MAT_LINEAR_ELASTIC, props=props, sdvs=sdvs
-    )
 
-    assert err == 0
-    assert np.allclose(f_jax, f_numba, rtol=1e-7, atol=1e-8)
-    assert np.allclose(K_jax, K_numba, rtol=1e-7, atol=1e-8)
+    K_s, f_s, e1 = compute_c3d8r_element_numba(
+        coords, u_elem, mat_type=MAT_LINEAR_ELASTIC, props=props, sdvs=sdvs.copy(), elem_controls=_controls(1.0))
+    K_e, f_e, e2 = compute_c3d8r_element_numba(
+        coords, u_elem, mat_type=MAT_LINEAR_ELASTIC, props=props, sdvs=sdvs.copy(), elem_controls=_controls(0.0))
+    assert e1 == 0 and e2 == 0
+    dK = K_s - K_e
+    assert np.linalg.norm(dK) > 0.0
+    # the difference annihilates every rigid-body mode
+    for d in range(3):
+        t = np.zeros(24)
+        t[d::3] = 1.0
+        assert np.linalg.norm(dK @ t) < 1e-6 * np.linalg.norm(dK)
+    assert np.allclose(f_s - f_e, dK @ u_elem, rtol=1e-6, atol=1e-8)
 
 
 def test_c3d8r_tangent_consistency():

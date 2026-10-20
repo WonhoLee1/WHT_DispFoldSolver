@@ -15,7 +15,6 @@ import numpy as np
 import pytest
 
 from dispsolver.element3d.c3d8r_numba import compute_c3d8r_element_numba
-from dispsolver.element3d.c3d8r_jax import Hexa8ReducedElementJAX
 
 
 @pytest.fixture
