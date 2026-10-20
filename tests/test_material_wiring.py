@@ -67,6 +67,10 @@ _CASES = {
     "JOHNSON_COOK": (lambda: _mat("JOHNSON_COOK", elastic=(2e5, 0.3)), None),
     "BERGSTROM_BOYCE": (lambda: _mat("BERGSTROM_BOYCE", elastic=(2e5, 0.3)), None),
     "CREEP": (lambda: _mat("CREEP", elastic=(2e5, 0.3)), None),
+    # traction-separation (P6): catalog id 18, evaluated by the COH element kernels
+    "COHESIVE": (lambda: _mat("COHESIVE", extra={"cohesive": {"Knn": 1e5, "Kss": 1e5, "Nmax": 0.0, "Smax": 0.0,
+                                                              "Gc": 0.0, "criterion": "MAXS", "delta_f": 0.0,
+                                                              "viscosity": 0.0, "thickness": 1.0}}), 18),
 }
 
 
@@ -317,6 +321,15 @@ def _explained_change(m, old, new, key=None):
     reasoned corrections / refusals, else None."""
     extra = m.extra_params
     err = new.get("error")
+    # since A5 a definition the solver cannot honour is refused BY NAME (material.extra_params
+    # ["refused_definitions"]); the pre-A5 chain dropped it silently and ran something else
+    if err == "NotImplementedError" and "): its *" in new["msg"]:
+        return "unsupported definition refused by name (old chain silently dropped it)"
+    # P5: *PLASTIC, HARDENING=KINEMATIC|COMBINED packs the linear kinematic slot instead of isotropic H
+    if (not err and old.get("id") == new["id"] == 2
+            and str(extra.get("hardening_type", "")).upper() in ("KINEMATIC", "COMBINED")
+            and {i for i in range(64) if old["props"][i] != new["props"][i]} <= {3, 4, 5}):
+        return "KINEMATIC/COMBINED hardening: kinematic slot + flag (old: treated as isotropic H)"
     # old chain: any ENGINEERING CONSTANTS -> id 17 whatever else the material was
     # (viscoelasticity silently dropped); 17 exists for C3D20 only.
     if err and "has no *ELASTIC" in new["msg"] and not m.elastic:

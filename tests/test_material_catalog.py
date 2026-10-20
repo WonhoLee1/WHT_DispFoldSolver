@@ -102,6 +102,12 @@ def _create_sample_material(mid: int) -> Material:
     return m
 
 
+# Traction-separation laws are evaluated by the cohesive element kernels (COH2D4 ...), which take the
+# material through resolve.py, not by the continuum stress dispatch -- that dispatch answers err=2 for
+# them on purpose. (P6 added COHESIVE to the catalog; this test predates it.)
+_NOT_CONTINUUM_DISPATCHED = {"COHESIVE"}
+
+
 def test_catalog_dispatch_3d_coverage():
     """Verify that every MaterialSpec in MATERIALS is runnable by material_dispatch_3d."""
     dt = 0.01
@@ -111,7 +117,7 @@ def test_catalog_dispatch_3d_coverage():
     sdv_prev = np.zeros(64, dtype=np.float64)
 
     for mid, spec in MATERIALS.items():
-        if 3 not in spec.dims:
+        if 3 not in spec.dims or spec.name in _NOT_CONTINUUM_DISPATCHED:
             continue
         m = _create_sample_material(mid)
         props = pack_props(m, dim=3)
@@ -130,7 +136,7 @@ def test_catalog_dispatch_2d_coverage():
     dt = 0.01
 
     for mid, spec in MATERIALS.items():
-        if 2 not in spec.dims:
+        if 2 not in spec.dims or spec.name in _NOT_CONTINUUM_DISPATCHED:
             continue
         m = _create_sample_material(mid)
         props = pack_props(m, dim=2)

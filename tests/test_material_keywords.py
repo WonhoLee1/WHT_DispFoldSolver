@@ -520,9 +520,12 @@ def test_plastic_layout_and_unsupported_hardening():
     assert any(d.level == "gap" for d in bad)
     _, _, bad = _errors("*MATERIAL, NAME=F\n*PLASTIC, DEPENDENCIES=1\n250., 0., , 0.\n200., 0., , 1.\n")
     assert any(d.level == "gap" for d in bad)
+    # KINEMATIC and COMBINED are implemented since P5; MULTILINEAR KINEMATIC is still refused
     for h in ("KINEMATIC", "COMBINED"):
         _, _, bad = _errors(f"*MATERIAL, NAME=K\n*PLASTIC, HARDENING={h}\n250., 0.\n")
-        assert any(d.level == "gap" for d in bad), h
+        assert not any(d.level == "gap" for d in bad), h
+    _, _, bad = _errors("*MATERIAL, NAME=K\n*PLASTIC, HARDENING=MULTILINEAR KINEMATIC\n250., 0.\n")
+    assert any(d.level == "gap" for d in bad)
 
 
 def test_plastic_johnson_cook_items():
@@ -783,10 +786,11 @@ def test_refused_definition_is_named_when_nothing_is_left_to_compute():
 
 def test_material_with_a_refused_definition_is_refused_whatever_else_it_has():
     from dispsolver.material.resolve import resolve_material
-    _, m, _ = _errors("*MATERIAL, NAME=K\n*ELASTIC\n1000., 0.3\n*PLASTIC, HARDENING=KINEMATIC\n10., 0.\n")
+    # (KINEMATIC itself is implemented since P5; MULTILINEAR KINEMATIC is the refused one now)
+    _, m, _ = _errors("*MATERIAL, NAME=K\n*ELASTIC\n1000., 0.3\n*PLASTIC, HARDENING=MULTILINEAR KINEMATIC\n10., 0.\n")
     with pytest.raises(NotImplementedError) as ei:
         resolve_material(m.materials["K"], 3, "material of pid 0")
-    assert "HARDENING=KINEMATIC" in str(ei.value) and "different model" in str(ei.value)
+    assert "HARDENING=MULTILINEAR KINEMATIC" in str(ei.value) and "different model" in str(ei.value)
 
 
 def test_non_finite_packed_props_are_refused():

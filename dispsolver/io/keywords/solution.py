@@ -42,7 +42,9 @@ if TYPE_CHECKING:
             control=True,
         ),
         "RESET": ParamSpec("RESET", type=bool, default=False, control=True),
-        "FIELD": ParamSpec("FIELD", default="DISPLACEMENT", control=True),
+        # Keywords Guide: FIELD defaults to GLOBAL (all fields), not DISPLACEMENT. The handler does not
+        # read it (CONVERGENCE CHECK and the data lines apply to the displacement solve).
+        "FIELD": ParamSpec("FIELD", default="GLOBAL", control=True),
         "TYPE": ParamSpec("TYPE", supported=False, control=True),
         "CONVERGENCE CHECK": ParamSpec(
             "CONVERGENCE CHECK",
