@@ -310,6 +310,16 @@ class ElementCatalog:
         notes = [n for n in (desc.substitution_note, note) if n]
         if k_inc is not None and nu > 0.48:
             k = k_inc
+        elif nu > 0.48:
+            # Abaqus *DIAGNOSTICS NONHYBRID INCOMPRESSIBLE (6.13): warning above 0.48, error above 0.495
+            # for a non-hybrid element. This catalog has no hybrid alternative for the element, so say so.
+            # Both levels warn here (an error would stop decks that run today); the text says which.
+            import warnings
+            level = "above the Abaqus error limit of 0.495" if nu > 0.495 else "above the Abaqus warning limit of 0.48"
+            warnings.warn(
+                f"element type {et}: Poisson's ratio {nu:g} is {level} for a non-hybrid element; "
+                "expect volumetric locking (no hybrid kernel is available for this element type).",
+                UserWarning, stacklevel=2)
         if k_inel is not None and not linear_elastic:
             k = k_inel
             if not nlgeom and desc.note_no_inelastic:

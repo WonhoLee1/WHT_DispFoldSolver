@@ -105,7 +105,11 @@ class Material:
         If table rows have 3 columns: ((yield, strain, temp), ...), temperature dependence is activated.
         If field_table rows are given as ((yield, strain, F), ...), field-variable (FV1)
         dependence (*PLASTIC, DEPENDENCIES=1) is activated instead.
+
+        ``extrapolation`` ("CONSTANT" default, or "LINEAR"): how the isotropic table continues beyond
+        its last point (Abaqus *PLASTIC, EXTRAPOLATION=).
         """
+        self.extra_params["plastic_extrapolation"] = str(kwargs.get("extrapolation", "CONSTANT")).upper()
         if field_table is not None:
             rows = list(field_table)
             self.plastic = [(float(row[0]), float(row[1])) for row in rows]

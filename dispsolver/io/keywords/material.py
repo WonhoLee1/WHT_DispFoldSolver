@@ -266,6 +266,7 @@ class PlasticRecord(Record):
     hardening: str
     kind: str
     table: Tuple[Tuple[float, ...], ...]
+    extrapolation: str = "CONSTANT"
 
 
 @keyword("PLASTIC", support="FULL", contexts={KeywordContext.MATERIAL, KeywordContext.GLOBAL})
@@ -280,7 +281,7 @@ class Plastic(Keyword):
         rate: Optional[str] = Param(None, unsupported="PLASTIC RATE not supported")
         dependencies: int = 0
         data_type: Optional[str] = Param(None, unsupported="PLASTIC DATA TYPE not supported")
-        extrapolation: Optional[str] = Param(None, control=True)
+        extrapolation: Optional[Literal["CONSTANT", "LINEAR"]] = Param(None)
         number_backstresses: Optional[int] = Param(None, unsupported="PLASTIC NUMBER BACKSTRESSES not supported")
         properties: Optional[int] = Param(None, unsupported="PLASTIC PROPERTIES not supported")
         scalestress: Optional[float] = Param(None, unsupported="PLASTIC SCALESTRESS not supported")
@@ -298,14 +299,15 @@ class Plastic(Keyword):
             raise InputError("*PLASTIC: the first plastic strain must be zero (Keywords Guide)")
         if len(table) > 10:
             raise Unsupported(f"*PLASTIC: {len(table)} hardening points; the tabular kernel holds 10")
-        yield PlasticRecord(hardening=p.hardening, kind=kind, table=table, loc=ctx.loc)
+        yield PlasticRecord(hardening=p.hardening, kind=kind, table=table,
+                            extrapolation=str(p.extrapolation or "CONSTANT").upper(), loc=ctx.loc)
 
 
 @applies(PlasticRecord)
 def _apply_plastic(reader: AbaqusInputReader, rec: PlasticRecord) -> None:
     mat = reader.current_material
     if mat is not None:
-        mat.Plastic(table=rec.table, hardening=rec.hardening)
+        mat.Plastic(table=rec.table, hardening=rec.hardening, extrapolation=rec.extrapolation)
 
 
 # ─── 4b. *CYCLIC HARDENING ───────────────────────────────────────────────────

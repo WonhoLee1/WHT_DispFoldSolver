@@ -527,9 +527,13 @@ def _ogden_pk2_voigt(
 
 
 @njit(fastmath=True, cache=True)
-def _interp_tabular_hardening(eqps: float, n_pts: int, table_sy: np.ndarray, table_ep: np.ndarray):
+def _interp_tabular_hardening(eqps: float, n_pts: int, table_sy: np.ndarray, table_ep: np.ndarray,
+                              lin_extrap: bool = False):
     """Piecewise linear interpolation with O(log N) binary search for tabular hardening.
     Returns current yield stress sigma_y and local hardening modulus H = d(sigma_y)/d(eqps).
+    Beyond the last table point the yield stress is held constant (Abaqus EXTRAPOLATION=CONSTANT,
+    the default), or continues along the last segment's slope when `lin_extrap`
+    (*PLASTIC, EXTRAPOLATION=LINEAR).
     """
     if n_pts <= 1:
         return table_sy[0], 0.0
@@ -537,6 +541,9 @@ def _interp_tabular_hardening(eqps: float, n_pts: int, table_sy: np.ndarray, tab
         H0 = (table_sy[1] - table_sy[0]) / max(table_ep[1] - table_ep[0], 1e-12)
         return table_sy[0], H0
     if eqps >= table_ep[n_pts - 1]:
+        if lin_extrap:
+            H_end = (table_sy[n_pts - 1] - table_sy[n_pts - 2]) / max(table_ep[n_pts - 1] - table_ep[n_pts - 2], 1e-12)
+            return table_sy[n_pts - 1] + H_end * (eqps - table_ep[n_pts - 1]), H_end
         return table_sy[n_pts - 1], 0.0
 
     low = 0
@@ -1115,6 +1122,7 @@ def material_dispatch_3d(
         n_pts = int(props[2])
         eps_fail = props[3]
         sigma_fail = props[4]
+        lin_extrap = props[40] > 0.5     # *PLASTIC, EXTRAPOLATION=LINEAR (catalog packs it; 0 = CONSTANT)
 
         table_sy = np.zeros(n_pts, dtype=np.float64)
         table_ep = np.zeros(n_pts, dtype=np.float64)
@@ -1158,7 +1166,7 @@ def material_dispatch_3d(
             2.0 * (s_trial[3]**2 + s_trial[4]**2 + s_trial[5]**2)
         )
         q_trial = np.sqrt(1.5) * norm_s
-        sy_cur, H_cur = _interp_tabular_hardening(eq_p_old, n_pts, table_sy, table_ep)
+        sy_cur, H_cur = _interp_tabular_hardening(eq_p_old, n_pts, table_sy, table_ep, lin_extrap)
         f_trial = q_trial - sy_cur
         hydro_p = K * trace_e
 
@@ -1180,7 +1188,7 @@ def material_dispatch_3d(
             eq_p_new = eq_p_old
             H_eff = H_cur
             for _ in range(25):
-                sy_eval, H_eff = _interp_tabular_hardening(eq_p_new, n_pts, table_sy, table_ep)
+                sy_eval, H_eff = _interp_tabular_hardening(eq_p_new, n_pts, table_sy, table_ep, lin_extrap)
                 res = q_trial - 3.0 * mu * d_gamma - sy_eval
                 denom = 3.0 * mu + H_eff
                 d_dgamma = res / max(denom, 1e-12)

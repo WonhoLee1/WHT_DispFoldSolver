@@ -428,6 +428,7 @@ def pack_props(material: Any, dim: int = 3) -> np.ndarray:
         for p_idx in range(n_pts):
             props[5 + 2 * p_idx] = float(table[p_idx][0])
             props[6 + 2 * p_idx] = float(table[p_idx][1])
+        props[40] = 1.0 if str(extra.get("plastic_extrapolation", "CONSTANT")).upper() == "LINEAR" else 0.0
         return props
 
     if mid == MAT_J2_DUCTILE_DAMAGE:
