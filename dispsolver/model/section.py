@@ -41,7 +41,7 @@ class SectionControls:
     name: str
     distortion_control: bool = True
     length_ratio: float = 0.1
-    hourglass_control: str = "ENHANCED"
+    hourglass_control: str = "DEFAULT"
     viscous_damping: float = 0.0
     anti_inversion_barrier: bool = True
     min_det_f: float = 0.02
@@ -55,8 +55,9 @@ class SectionControls:
         arr[3] = 1.0 if self.anti_inversion_barrier else 0.0
         arr[4] = float(self.min_det_f)
         # Hourglass mode: 0 = ENHANCED, 1 = STIFFNESS, 2 = VISCOUS
-        hg_map = {"ENHANCED": 0.0, "STIFFNESS": 1.0, "VISCOUS": 2.0}
-        arr[5] = hg_map.get(self.hourglass_control.upper(), 0.0)
+        # 3 = not given: the kernel resolves it per material (Keywords Guide default)
+        hg_map = {"ENHANCED": 0.0, "STIFFNESS": 1.0, "VISCOUS": 2.0, "DEFAULT": 3.0}
+        arr[5] = hg_map.get(self.hourglass_control.upper(), 3.0)
         return arr
 
 

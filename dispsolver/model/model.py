@@ -187,7 +187,7 @@ class Model:
         name: str,
         distortion_control: bool = True,
         length_ratio: float = 0.1,
-        hourglass_control: str = "ENHANCED",
+        hourglass_control: str = "DEFAULT",
         viscous_damping: float = 0.0,
         anti_inversion_barrier: bool = True,
         min_det_f: float = 0.02,

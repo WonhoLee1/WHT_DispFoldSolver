@@ -199,7 +199,7 @@ class SectionControlsRecord(Record):
     name: str
     distortion_control: bool = True
     length_ratio: float = 0.1
-    hourglass_control: str = "ENHANCED"
+    hourglass_control: str = "DEFAULT"
     viscous_damping: float = 0.0
 
 
@@ -224,7 +224,7 @@ class SectionControlsKeyword(Keyword):
             dist_str = str(p.distortion_control).strip().upper()
             dist_on = dist_str in ("YES", "Y", "TRUE", "ON", "1")
         lr = float(p.length_ratio) if p.length_ratio is not None else 0.1
-        hg = str(p.hourglass).strip().upper() if p.hourglass is not None else "ENHANCED"
+        hg = str(p.hourglass).strip().upper() if p.hourglass is not None else "DEFAULT"
         yield SectionControlsRecord(
             name=p.name,
             distortion_control=dist_on,

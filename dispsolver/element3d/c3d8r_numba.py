@@ -22,7 +22,7 @@ try:
 except ImportError:
     HAS_NUMBA = False
 
-from dispsolver.material3d.numba_materials import material_dispatch_3d, MAT_CUSTOM_ELASTIC
+from dispsolver.material3d.numba_materials import material_dispatch_3d, MAT_CUSTOM_ELASTIC, resolve_hourglass_mode
 
 
 if HAS_NUMBA:
@@ -279,9 +279,10 @@ if HAS_NUMBA:
         else:
             G = C_mat[3, 3]
 
-        hg_mode = 0.0  # 0: ENHANCED (Puso 2000), 1: STIFFNESS (Flanagan-Belytschko)
+        hg_mode = 3.0  # 0: ENHANCED (Puso 2000), 1: STIFFNESS (Flanagan-Belytschko), 3: not given -> by material
         if elem_controls.shape[0] > 5:
             hg_mode = elem_controls[5]
+        hg_mode = resolve_hourglass_mode(hg_mode, mat_type)
 
         Le = V0 ** (1.0 / 3.0)
 

@@ -37,6 +37,10 @@ MAT_ORTHOTROPIC_CYLINDRICAL = 17
 MAT_COHESIVE = 18
 MAT_CUSTOM_ELASTIC = 99
 
+# Section-controls code for "HOURGLASS= not given": the Keywords Guide default (STIFFNESS, but ENHANCED for
+# hyperelastic materials) is resolved per material inside the reduced-integration kernels.
+HG_UNSET = 3.0
+
 @njit(fastmath=True, cache=True)
 def get_default_sdv_count(mat_type: int) -> int:
     """Return the number of state-dependent variables (SDVs) needed per integration point."""
@@ -2147,3 +2151,18 @@ def material_dispatch_2d(
 
     return sigma, C_mat_2d, sdv_new, err
 
+
+@njit(cache=True)
+def resolve_hourglass_mode(code: float, mat_type: int) -> float:
+    """Hourglass control a reduced-integration kernel applies: 0 = ENHANCED, 1 = STIFFNESS.
+
+    `code` is the section-controls value (0 ENHANCED, 1 STIFFNESS, 2 VISCOUS, HG_UNSET = not given). Not given
+    resolves as the Keywords Guide says (*SECTION CONTROLS, HOURGLASS): STIFFNESS, except ENHANCED for
+    hyperelastic materials. The in-house default had been ENHANCED for everything, which for C3D8R is the
+    constant G*Le/12 stabilization and locks pure bending (bending ratio 0.498, LOCKED)."""
+    if code != 3.0:
+        return code
+    if (mat_type == 1 or mat_type == 4 or mat_type == 5 or mat_type == 6 or mat_type == 8
+            or mat_type == 9 or mat_type == 10 or mat_type == 11):
+        return 0.0
+    return 1.0

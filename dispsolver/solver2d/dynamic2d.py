@@ -203,7 +203,7 @@ class DynamicSolver2D:
         self.elem_controls[:, 2] = 0.0   # viscous_damping default 0.0
         self.elem_controls[:, 3] = 1.0   # anti_inversion_barrier default ON
         self.elem_controls[:, 4] = 0.02  # min_det_f default 0.02
-        self.elem_controls[:, 5] = 0.0   # hourglass_control default ENHANCED
+        self.elem_controls[:, 5] = 3.0   # hourglass_control not given: STIFFNESS, ENHANCED for hyperelastic (per material)
         self.elem_controls[:, 6] = 1.0   # hourglass_scale default 1.0
 
         if hasattr(self.mesh, "elem_controls") and self.mesh.elem_controls is not None:

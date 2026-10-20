@@ -578,8 +578,8 @@ class Assembly:
         elem_controls[:, 2] = 0.0   # viscous_damping default 0.0
         elem_controls[:, 3] = 1.0   # anti_inversion_barrier default ON
         elem_controls[:, 4] = 0.02  # min_det_f default 0.02
-        elem_controls[:, 5] = 0.0   # hourglass_control default ENHANCED
-        elem_controls[:, 6] = 1.0   # hourglass_scale default 1.0
+        elem_controls[:, 5] = 3.0   # hourglass_control not given: STIFFNESS, ENHANCED for hyperelastic (per material)
+        elem_controls[:, 6] = 0.0   # 0 = kernel default: 3D Flanagan-Belytschko alpha 0.05, 2D scale 1.0 (the slot means alpha in 3D)
         for e_idx, pid in enumerate(all_elem_pids):
             if pid in controls_by_pid:
                 elem_controls[e_idx] = controls_by_pid[pid].to_control_array()

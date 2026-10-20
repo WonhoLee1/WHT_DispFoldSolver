@@ -690,7 +690,9 @@ class DynamicSolver3D:
         self.elem_controls[:, 2] = 0.0   # viscous_damping default 0.0
         self.elem_controls[:, 3] = 1.0   # anti_inversion_barrier default ON
         self.elem_controls[:, 4] = 0.02  # min_det_f default 0.02
-        
+        self.elem_controls[:, 5] = 3.0   # hourglass_control not given: STIFFNESS, ENHANCED for hyperelastic (per material)
+        # [:, 6] stays 0: the 3D kernel then uses its own Flanagan-Belytschko alpha (0.05); the 2D kernels read it as a scale (default 1)
+
         self._build_kernel_groups()
 
         # Check if mesh or sections provide custom controls

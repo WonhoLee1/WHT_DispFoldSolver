@@ -21,6 +21,8 @@ from __future__ import annotations
 import numpy as np
 from numba import njit, prange
 
+from dispsolver.material3d.numba_materials import resolve_hourglass_mode
+
 # Flanagan-Belytschko base hourglass mode at 4 corners
 _HG = np.array([1.0, -1.0, 1.0, -1.0], dtype=np.float64)
 _ABAQUS_HG_FACTOR = 0.005
@@ -258,10 +260,11 @@ def compute_cps4r_element_numba(
     hy = np.sum(_HG * coords[:, 1])
     gamma = _HG - hx * bx - hy * by
 
-    hg_mode = 0.0
+    hg_mode = 3.0
     hg_scale = 1.0
     if elem_controls is not None and len(elem_controls) > 5:
         hg_mode = elem_controls[5]
+    hg_mode = resolve_hourglass_mode(hg_mode, mat_type)
     if elem_controls is not None and len(elem_controls) > 6 and elem_controls[6] > 0.0:
         hg_scale = elem_controls[6]
 
