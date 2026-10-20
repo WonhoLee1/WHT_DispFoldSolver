@@ -250,6 +250,15 @@ class DynamicSolver2D:
                 continue
             if k is None:
                 continue
+            from dispsolver.model.element_catalog import KERNELS as _K2
+            if _K2[2][k].elastic_only and not linear_elastic:
+                # these kernels build their stiffness from E and nu and never call the material model: a
+                # plastic or hyperelastic material used to be solved as linear elastic without a word
+                failures.setdefault(et, (
+                    f"element type {et} runs a linear-elastic-only kernel ({k}: {_K2[2][k].name}) but its material "
+                    f"(type {int(self.elem_mat_types[idx])}) is not linear elastic; the 2D kernels that follow the "
+                    f"material model are " + ", ".join(i.name for k2, i in _K2[2].items() if not i.elastic_only)))
+                continue
             desc = ElementCatalog.lookup(et, 2)
             if desc is not None and desc.plane_stress and not (linear_elastic and abs(float(self.elem_props[idx, 1])) < 1e-15):
                 # No 2D kernel implements plane stress (sigma_33 = 0); the
@@ -946,9 +955,14 @@ class DynamicSolver2D:
         step: Any,
         sys: Optional[Any] = None,
         output_mgr: Optional[Any] = None,
-        verbose: bool = True
+        verbose: bool = True,
+        restart: Optional[dict] = None
     ) -> bool:
-        """Run complete incremental solve over the Step time period."""
+        """Run complete incremental solve over the Step time period.
+
+        restart: a record from dispsolver.solver.restart (read with restart.load); the step continues from
+        the increment it was written at. ``step.restart_write`` (a dict with ``frequency``, ``path``,
+        ``overlay``) asks this solve to write such records."""
         # Effective NLGEOM for this step (same rule as DynamicSolver3D.solve:
         # once on, it stays on for the rest of the analysis).
         want = bool(getattr(step, "nlgeom", self.nlgeom)) or bool(getattr(self, "_nlgeom_engaged", False))
@@ -1005,12 +1019,27 @@ class DynamicSolver2D:
 
         plan = self._lower_step(step, sys, total_time)
         dynamic = _dyn.is_dynamic(self)
-        if step_ti is not None and dynamic and step_ti.get("initial_acceleration", True):
+        if restart is None and step_ti is not None and dynamic and step_ti.get("initial_acceleration", True):
             # Abaqus computes the initial acceleration at the start of every *DYNAMIC
             # step (INITIAL omitted); INITIAL=NO keeps the current one
             self._apply_plan_bcs(plan, 0.0)
             _dyn.initial_acceleration(self, plan.f_ext(0.0, self.u), dt,
                                       _dyn.prescribed_acceleration(plan, 0.0, dt, self._u_step_start))
+
+        inc_no = 1        # number of the next converged increment (restart records count converged increments)
+        if restart is not None:
+            from dispsolver.solver import restart as _restart
+            rs = restart["step"]
+            if rs["name"] != step.name:
+                raise ValueError(f"restart record was written in step {rs['name']!r}, not {step.name!r}")
+            for w in _restart.apply(self, restart):
+                if verbose:
+                    print(f"  [RESTART] {w}", flush=True)
+            t_curr, inc_count, inc_no, total_iters = rs["time"], rs["inc"], rs["inc_no"], rs["total_iters"]
+            if restart["dt_ctrl"] is not None:
+                dt = restart["dt_ctrl"]["dt"]
+            if verbose:
+                print(f"  [RESTART] continuing step {step.name!r} at t = {t_curr:g} (increment {inc_no})", flush=True)
 
         while t_curr < total_time - 1e-9:
             inc_count += 1
@@ -1057,6 +1086,14 @@ class DynamicSolver2D:
                     dt = min(dt * 1.5, dt_max)
                 elif iters >= 10:
                     dt = max(dt * 0.85, dt_min)
+
+                inc_no += 1
+                rq = getattr(step, "restart_write", None)
+                if rq is not None:
+                    from types import SimpleNamespace
+                    from dispsolver.solver import restart as _restart
+                    _restart.maybe_write(self, step, rq, t_curr, inc_count, inc_no, total_iters,
+                                         SimpleNamespace(dt=dt), total_time)
             else:
                 self.u = u_prev
                 self.elem_sdvs = sdvs_prev

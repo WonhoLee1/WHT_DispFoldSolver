@@ -710,9 +710,14 @@ def test_orientation_origin_and_rotation():
     _, m, bad = _errors("*ORIENTATION, NAME=O\n2., 1., 0., 1., 2., 0., 1., 1., 0.\n")
     assert not [d for d in bad if d.level == "error"]
     assert np.allclose(m.orientations["O"].frame, np.eye(3))
-    # additional rotation alpha != 0 is not represented
-    _, _, bad = _errors("*ORIENTATION, NAME=P\n1., 0., 0., 0., 1., 0.\n1, 30.\n")
-    assert any(d.level == "gap" for d in bad)
+    # additional rotation alpha about a local direction turns the frame (right-hand rule): 30 deg about axis 1
+    _, m, bad = _errors("*ORIENTATION, NAME=P\n1., 0., 0., 0., 1., 0.\n1, 30.\n")
+    assert not [d for d in bad if d.level in ("error", "gap")]
+    c, s30 = np.cos(np.radians(30.0)), np.sin(np.radians(30.0))
+    assert np.allclose(m.orientations["P"].frame, [[1, 0, 0], [0, c, s30], [0, -s30, c]])
+    # ... but an angle without the direction it turns about is an input error, not a guess
+    _, _, bad = _errors("*ORIENTATION, NAME=Q\n1., 0., 0., 0., 1., 0.\n, 30.\n")
+    assert any(d.level == "error" for d in bad)
     # NODES: only the first line holds node numbers (the second line is direction, alpha)
     _, m, bad = _errors("*ORIENTATION, NAME=N, DEFINITION=NODES\n1, 2, 3\n1, 0.\n")
     assert m.orientations["N"].node_ids == (1, 2, 3)
@@ -915,15 +920,20 @@ def test_arruda_boyce_nonpositive_lambda_m_is_refused():
         resolve_material(m.materials["A"], 3, "material of pid 0")
 
 
-def test_section_orientation_on_an_anisotropic_material_is_refused():
+def test_section_orientation_on_an_anisotropic_material_is_refused_only_when_the_frame_varies():
     from dispsolver.material.resolve import resolve_material
     deck = ("*NODE\n1, 0, 0, 0\n*ELEMENT, TYPE=C3D8, ELSET=E\n1, 1, 1, 1, 1, 1, 1, 1, 1\n"
             "*ORIENTATION, NAME=O\n1., 0., 0., 0., 1., 0.\n*MATERIAL, NAME=ORTHO\n"
             "*ELASTIC, TYPE=ENGINEERING CONSTANTS\n10., 2., 2., .3, .3, .3, 1., 1.\n1.\n"
             "*MATERIAL, NAME=ISO\n*ELASTIC\n10., .3\n"
             "*SOLID SECTION, ELSET=E, MATERIAL=ORTHO, ORIENTATION=O\n")
+    # a RECTANGULAR orientation is a fixed frame: the assembly rotates the stiffness into it, nothing to refuse
     reader, model = _read_snippet(deck)
-    assert any(d.code == "orientation-not-connected" and d.level == "gap" for d in reader.diagnostics)
+    assert not any(d.code == "orientation-not-connected" for d in reader.diagnostics)
+    # a frame that varies by element (cylindrical) is still refused, with the reason
+    reader, model = _read_snippet(deck.replace("*ORIENTATION, NAME=O\n", "*ORIENTATION, NAME=O, SYSTEM=CYLINDRICAL\n"))
+    assert any(d.code == "orientation-not-connected" and d.level == "gap" and "CYLINDRICAL" in d.message
+               for d in reader.diagnostics)
     assert model.materials["ORTHO"].extra_params["refused_definitions"]
     deck_iso = deck.replace("MATERIAL=ORTHO", "MATERIAL=ISO")
     reader, model = _read_snippet(deck_iso)

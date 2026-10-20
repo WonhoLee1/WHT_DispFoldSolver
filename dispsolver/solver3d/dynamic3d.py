@@ -2480,9 +2480,14 @@ class DynamicSolver3D:
         sensors: Optional[List[Any]] = None,
         iteration_hooks: Optional[List[Any]] = None,
         output_mgr: Optional[Any] = None,
-        verbose: bool = True
+        verbose: bool = True,
+        restart: Optional[dict] = None
     ) -> bool:
-        """Fully encapsulated Abaqus-like step solve engine."""
+        """Fully encapsulated Abaqus-like step solve engine.
+
+        restart: a record from dispsolver.solver.restart (read with restart.load); the step continues from
+        the increment it was written at instead of starting over. ``step.restart_write`` (a dict with
+        ``frequency``, ``path``, ``overlay``) asks this solve to write such records."""
         from dispsolver.solver.dt_controller import AdaptiveDtController
         from dispsolver.model.sensor import SensorManager, Sensor, IterationHook
 
@@ -2563,7 +2568,7 @@ class DynamicSolver3D:
 
         max_step_iters = getattr(step, "max_iters", 80 if len(self.constraints) > 0 else 50)
         plan = self._lower_step(step, sys, T_total)
-        if step_ti is not None and dynamic and step_ti.get("initial_acceleration", True):
+        if restart is None and step_ti is not None and dynamic and step_ti.get("initial_acceleration", True):
             # Abaqus computes the initial acceleration at the start of every *DYNAMIC
             # step (INITIAL omitted); INITIAL=NO keeps the current one
             self._apply_plan_bcs(plan, 0.0)
@@ -2574,6 +2579,20 @@ class DynamicSolver3D:
         # converged increments (a cutback retries the same inc with att+1).
         self.increment_log = []
         inc_no, att_no = 1, 1
+
+        if restart is not None:
+            from dispsolver.solver import restart as _restart
+            rs = restart["step"]
+            if rs["name"] != step.name:
+                raise ValueError(f"restart record was written in step {rs['name']!r}, not {step.name!r}")
+            for w in _restart.apply(self, restart):
+                if verbose:
+                    print(f"  [RESTART] {w}", flush=True)
+            t, step_inc, inc_no, total_iters = rs["time"], rs["inc"], rs["inc_no"], rs["total_iters"]
+            if restart["dt_ctrl"] is not None:
+                vars(dt_ctrl).update(restart["dt_ctrl"])
+            if verbose:
+                print(f"  [RESTART] continuing step {step.name!r} at t = {t:g} (increment {inc_no})", flush=True)
 
         while t < T_total - 1e-12:
 
@@ -2641,6 +2660,11 @@ class DynamicSolver3D:
                         f_ext=f_ext,
                         is_last_step=is_last
                     )
+
+                rq = getattr(step, "restart_write", None)
+                if rq is not None:
+                    from dispsolver.solver import restart as _restart
+                    _restart.maybe_write(self, step, rq, t, step_inc, inc_no, total_iters, dt_ctrl, T_total)
             else:
                 # Rollback displacement, SDV, and constraint state on cutback
                 self.u = u_prev

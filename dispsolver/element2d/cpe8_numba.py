@@ -9,6 +9,8 @@ Equivalents: Abaqus CPE8, CPE8R / Ansys PLANE183 (Quad).
 import numpy as np
 from numba import njit, prange
 
+from dispsolver.material3d.numba_materials import material_dispatch_2d
+
 # 3x3 Gauss rule for CPE8 full integration
 _G3 = np.sqrt(0.6)
 _GPS_3X3 = np.array([
@@ -224,11 +226,6 @@ def compute_cpe8_element_numba(
 
         return fe, Ke, has_error
 
-    c_fac = E / ((1.0 + nu) * (1.0 - 2.0 * nu))
-    C11 = c_fac * (1.0 - nu)
-    C12 = c_fac * nu
-    C33 = c_fac * 0.5 * (1.0 - 2.0 * nu)
-
     B = np.zeros((3, 16), dtype=np.float64)
 
     for q in range(n_gps):
@@ -263,61 +260,15 @@ def compute_cpe8_element_numba(
 
         eps = B @ u_elem
 
-        sigma_y0 = props[2] if len(props) > 2 else 0.0
-        H_hard = props[3] if len(props) > 3 else 0.0
-
-        s_xx_tr = C11 * eps[0] + C12 * eps[1]
-        s_yy_tr = C12 * eps[0] + C11 * eps[1]
-        s_zz_tr = C12 * (eps[0] + eps[1])
-        s_xy_tr = C33 * eps[2]
-
-        Cep = np.zeros((3, 3), dtype=np.float64)
-
-        if sigma_y0 > 0.0:
-            p_mean = (s_xx_tr + s_yy_tr + s_zz_tr) / 3.0
-            S_xx = s_xx_tr - p_mean
-            S_yy = s_yy_tr - p_mean
-            S_zz = s_zz_tr - p_mean
-            S_xy = s_xy_tr
-
-            q_tr = np.sqrt(1.5 * (S_xx*S_xx + S_yy*S_yy + S_zz*S_zz + 2.0*S_xy*S_xy))
-            phi_tr = q_tr - sigma_y0
-            if phi_tr > 0.0:
-                G_shear = C33
-                K_bulk = E / (3.0 * (1.0 - 2.0 * nu))
-                d_gamma = phi_tr / (3.0 * G_shear + H_hard)
-                q_new = q_tr - 3.0 * G_shear * d_gamma
-                beta = q_new / q_tr
-                s_xx = p_mean + beta * S_xx
-                s_yy = p_mean + beta * S_yy
-                s_xy = beta * S_xy
-                sigma = np.array([s_xx, s_yy, s_xy], dtype=np.float64)
-
-                mu_h = 3.0 * G_shear / (3.0 * G_shear + H_hard)
-                theta_h = mu_h - (1.0 - beta)
-                f_dir = 3.0 * G_shear * theta_h / (q_tr * q_tr)
-
-                Cep[0, 0] = K_bulk + (4.0 / 3.0) * G_shear * beta - f_dir * S_xx * S_xx
-                Cep[0, 1] = K_bulk - (2.0 / 3.0) * G_shear * beta - f_dir * S_xx * S_yy
-                Cep[0, 2] = - f_dir * S_xx * S_xy
-
-                Cep[1, 0] = Cep[0, 1]
-                Cep[1, 1] = K_bulk + (4.0 / 3.0) * G_shear * beta - f_dir * S_yy * S_yy
-                Cep[1, 2] = - f_dir * S_yy * S_xy
-
-                Cep[2, 0] = Cep[0, 2]
-                Cep[2, 1] = Cep[1, 2]
-                Cep[2, 2] = G_shear * beta - f_dir * S_xy * S_xy
-            else:
-                sigma = np.array([s_xx_tr, s_yy_tr, s_xy_tr], dtype=np.float64)
-                Cep[0, 0], Cep[0, 1], Cep[0, 2] = C11, C12, 0.0
-                Cep[1, 0], Cep[1, 1], Cep[1, 2] = C12, C11, 0.0
-                Cep[2, 0], Cep[2, 1], Cep[2, 2] = 0.0, 0.0, C33
-        else:
-            sigma = np.array([s_xx_tr, s_yy_tr, s_xy_tr], dtype=np.float64)
-            Cep[0, 0], Cep[0, 1], Cep[0, 2] = C11, C12, 0.0
-            Cep[1, 0], Cep[1, 1], Cep[1, 2] = C12, C11, 0.0
-            Cep[2, 0], Cep[2, 1], Cep[2, 2] = 0.0, 0.0, C33
+        # Stress and tangent from the material model at this Gauss point (this kernel used to carry a stateless
+        # perfectly-plastic J2 of its own, read from props[2], props[3], and ignored the material).
+        sdv_pt = sdvs[q] if (sdvs is not None and len(sdvs) > q) else np.zeros(8, dtype=np.float64)
+        sigma, Cep, sdv_new, mat_err = material_dispatch_2d(mat_type, props, sdv_pt, eps, dt)
+        if mat_err != 0:
+            has_error = 1
+        if sdvs is not None and len(sdvs) > q:
+            for s_i in range(min(len(sdv_new), len(sdvs[q]))):
+                sdvs[q, s_i] = sdv_new[s_i]
 
         dV = abs(detJ) * wt
 

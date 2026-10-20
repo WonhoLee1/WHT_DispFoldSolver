@@ -548,13 +548,56 @@ def execute_inp_smoke(
                                 reader=reader)
 
 
+def _plan_restart(model, executor, targets, source, job, restart_dir, oldjob):
+    """*RESTART: set the write requests on the steps; for READ, load the record and decide what still runs.
+
+    Returns (steps still to run, {step name: record to continue from}, warnings)."""
+    from dispsolver.solver import restart as _restart
+
+    is_file = isinstance(source, (str, os.PathLike)) and os.path.isfile(str(source))
+    restart_dir = restart_dir or (os.path.dirname(os.path.abspath(str(source))) if is_file else os.getcwd())
+    job = job or (os.path.splitext(os.path.basename(str(source)))[0] if is_file else "job")
+    all_steps = [s for s in model.steps if s != "Initial"]
+
+    carry = model.restart_write
+    for name in all_steps:                       # a request holds from the step that states it onwards
+        own = getattr(model.steps[name], "restart_write", None)
+        if own is not None:
+            carry = own if own["frequency"] > 0 else None        # FREQUENCY=0 in a step switches writing off
+        if carry is not None:
+            model.steps[name].restart_write = dict(carry, path=os.path.join(restart_dir, job))
+
+    read = model.restart_read
+    if read is None:
+        return targets, {}, []
+    if oldjob is None:
+        raise ValueError("*RESTART, READ needs the old job: execute_inp(..., oldjob=<name>)")
+    if not 1 <= read["step"] <= len(all_steps):
+        raise ValueError(f"*RESTART, READ, STEP={read['step']}: the deck has {len(all_steps)} step(s)")
+    stem = oldjob if os.path.dirname(oldjob) else os.path.join(restart_dir, oldjob)
+    step_name = all_steps[read["step"] - 1]
+    state = _restart.load(_restart.find_record(stem, step_name, read["inc"]))
+    complete = state["step"]["time"] >= float(getattr(model.steps[step_name], "time_period", 1.0)) - 1e-9
+    if read["end_step"] and not complete:
+        raise ValueError(f"*RESTART, READ, STEP={read['step']}, END STEP: step {step_name!r} did not finish in the old job")
+    later = [t for t in targets if all_steps.index(t) > all_steps.index(step_name)]
+    if complete:
+        warnings = _restart.apply(executor.solver, state)
+        return later, {}, warnings
+    return [t for t in targets if all_steps.index(t) >= all_steps.index(step_name)], {step_name: state}, []
+
+
+
 def execute_inp(
     source: Union[str, os.PathLike],
     dim: Optional[int] = None,
     step_name: Optional[str] = None,
     dt: Optional[float] = None,
     verbose: bool = True,
-    strict: bool = True
+    strict: bool = True,
+    job: Optional[str] = None,
+    restart_dir: Optional[str] = None,
+    oldjob: Optional[str] = None
 ) -> Any:
     """Read an Abaqus .inp file, compile to solver system, and execute analysis steps.
 
@@ -576,6 +619,11 @@ def execute_inp(
         Time increment override (single-step path, or per-step dt_init).
     verbose : bool
         If True, prints execution progress.
+    job, restart_dir, oldjob : Optional[str]
+        *RESTART. Records written by ``*RESTART, WRITE`` go to ``<restart_dir>/<job>_<step>_<inc>.rst``
+        (``<job>.rst`` with OVERLAY); ``job`` defaults to the deck's file name and ``restart_dir`` to its
+        directory (the working directory for a raw string). ``*RESTART, READ`` reads the records of
+        ``oldjob`` (a name, or a path without extension; as in Abaqus it is given outside the deck).
         
     Returns
     -------
@@ -616,11 +664,13 @@ def execute_inp(
 
     executor = MultiStepExecutor(model, verbose=verbose, dim=dim)
     executor.initialize_solver(notices=reader.diagnostics.notice_sink())
+    targets, resume, restart_warnings = _plan_restart(model, executor, targets, source, job, restart_dir, oldjob)
     ok_all = True
     n_iter, n_inc, max_inc_iter = 0, 0, 0
     for sname in targets:
         ok = executor.execute_step(model.steps[sname],
-                                   from_parent_checkpoint=True)
+                                   from_parent_checkpoint=True,
+                                   restart=resume.get(sname))
         ok_all = ok_all and ok
         st = getattr(executor.solver, "last_solve_stats", None) or {}
         n_iter += int(st.get("iterations", 0))
@@ -643,5 +693,5 @@ def execute_inp(
         "results_by_step": executor.results_by_step,
         "steps_executed": targets,
         "unsupported_keywords": list(reader.unsupported_keywords),
-        "warnings": list(reader.warnings),
+        "warnings": list(reader.warnings) + restart_warnings,
     }

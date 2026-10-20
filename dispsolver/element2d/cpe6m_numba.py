@@ -9,6 +9,8 @@ Equivalents: Abaqus CPE6M / Modified 6-node Tri.
 import numpy as np
 from numba import njit, prange
 
+from dispsolver.material3d.numba_materials import material_dispatch_2d
+
 _GPS_TRI = np.array([
     [1.0 / 6.0, 1.0 / 6.0],
     [2.0 / 3.0, 1.0 / 6.0],
@@ -55,15 +57,11 @@ def compute_cpe6m_element_numba(
     """
     Computes 12x12 Ke and 12-element fe for 1 CPE6M modified element with volumetric B-bar.
     """
-    E = props[0]
-    nu = props[1]
-    if nu > 0.499999:
-        nu = 0.499999
-
-    c_fac = E / ((1.0 + nu) * (1.0 - 2.0 * nu))
-    C11 = c_fac * (1.0 - nu)
-    C12 = c_fac * nu
-    C33 = c_fac * 0.5 * (1.0 - 2.0 * nu)
+    # The stabilisation below needs the elastic shear modulus; it comes from the material's INITIAL tangent
+    # (a plastic tangent would soften it and release the volumetric hourglass mode).
+    _, C0, _, _ = material_dispatch_2d(mat_type, props, np.zeros(8, dtype=np.float64),
+                                       np.zeros(3, dtype=np.float64), 0.0)
+    C33 = C0[2, 2]
 
     Ke = np.zeros((12, 12), dtype=np.float64)
     fe = np.zeros(12, dtype=np.float64)
@@ -142,21 +140,20 @@ def compute_cpe6m_element_numba(
             B_bar[2, j] = B[2, j]
 
         eps = B_bar @ u_elem
-        s_xx = C11 * eps[0] + C12 * eps[1]
-        s_yy = C12 * eps[0] + C11 * eps[1]
-        s_xy = C33 * eps[2]
-        sigma = np.array([s_xx, s_yy, s_xy], dtype=np.float64)
+        sdv_pt = sdvs[q] if (sdvs is not None and len(sdvs) > q) else np.zeros(8, dtype=np.float64)
+        sigma, Dm, sdv_new, mat_err = material_dispatch_2d(mat_type, props, sdv_pt, eps, dt)
+        if mat_err != 0:
+            has_error = 1
+        if sdvs is not None and len(sdvs) > q:
+            for s_i in range(min(len(sdv_new), len(sdvs[q]))):
+                sdvs[q, s_i] = sdv_new[s_i]
 
         dV = detJ * wt
 
         for i in range(12):
             fe[i] += (B_bar[0, i] * sigma[0] + B_bar[1, i] * sigma[1] + B_bar[2, i] * sigma[2]) * dV
 
-        CB = np.zeros((3, 12), dtype=np.float64)
-        for j in range(12):
-            CB[0, j] = C11 * B_bar[0, j] + C12 * B_bar[1, j]
-            CB[1, j] = C12 * B_bar[0, j] + C11 * B_bar[1, j]
-            CB[2, j] = C33 * B_bar[2, j]
+        CB = Dm @ B_bar
 
         for i in range(12):
             for j in range(12):

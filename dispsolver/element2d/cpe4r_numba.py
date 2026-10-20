@@ -21,6 +21,8 @@ from __future__ import annotations
 import numpy as np
 from numba import njit, prange
 
+from dispsolver.material3d.numba_materials import material_dispatch_2d
+
 # Flanagan-Belytschko base hourglass mode at 4 corners
 _HG = np.array([1.0, -1.0, 1.0, -1.0], dtype=np.float64)
 
@@ -151,10 +153,14 @@ def compute_cpe4r_element_numba(
     Computes 8x8 Ke and 8-element fe for 1 CPE4R element with Enhanced/Stiffness
     Hourglass Control and Distortion Control.
     """
-    E = props[0]
-    nu = props[1]
-    lam = E * nu / ((1.0 + nu) * (1.0 - 2.0 * nu))
-    mu = E / (2.0 * (1.0 + nu))
+    # State variables of the (single) integration point; the hourglass and distortion constants come from the
+    # material's INITIAL elastic tangent (Abaqus takes them from the elastic moduli, so they must not soften
+    # with the plastic tangent), and the stress below from the current state.
+    sdv_pt = sdvs[0] if (sdvs is not None and len(sdvs) > 0) else np.zeros(8, dtype=np.float64)
+    _, C0, _, _ = material_dispatch_2d(mat_type, props, np.zeros(len(sdv_pt), dtype=np.float64),
+                                       np.zeros(3, dtype=np.float64), 0.0)
+    lam = C0[0, 1]
+    mu = C0[2, 2]
     kappa = lam + mu  # 2D plane strain bulk modulus
 
     # 1. Centroid derivatives and geometry
@@ -194,15 +200,18 @@ def compute_cpe4r_element_numba(
     E11 = 0.5 * (C11 - 1.0)
     E01 = C01  # engineering shear = 2 * E01
 
-    # Linear-elastic PK2 constitutive response (plane strain)
-    c_fac = E / ((1.0 + nu) * (1.0 - 2.0 * nu))
-    D11 = c_fac * (1.0 - nu)
-    D12 = c_fac * nu
-    D33 = c_fac * 0.5 * (1.0 - 2.0 * nu)
-
-    S0 = D11 * E00 + D12 * E11
-    S1 = D12 * E00 + D11 * E11
-    S2 = D33 * E01
+    # PK2 stress and material tangent from the material model at the Green-Lagrange strain (E01 is the
+    # engineering shear); for a linear elastic material this is the St. Venant-Kirchhoff law as before.
+    S_gl, Dm, sdv_new, mat_err = material_dispatch_2d(
+        mat_type, props, sdv_pt, np.array([E00, E11, E01], dtype=np.float64), dt)
+    if mat_err != 0:
+        has_error = 1
+    if sdvs is not None and len(sdvs) > 0:
+        for s_i in range(min(len(sdv_new), len(sdvs[0]))):
+            sdvs[0, s_i] = sdv_new[s_i]
+    S0 = S_gl[0]
+    S1 = S_gl[1]
+    S2 = S_gl[2]
     S_v = np.array([S0, S1, S2], dtype=np.float64)
 
     # Internal force from 1-point material: fe = area * BL^T @ S_v
@@ -211,11 +220,7 @@ def compute_cpe4r_element_numba(
         fe[i] = (BL[0, i] * S0 + BL[1, i] * S1 + BL[2, i] * S2) * area
 
     # 1-point material stiffness Ke_mat = area * BL^T @ D @ BL
-    DBL = np.zeros((3, 8), dtype=np.float64)
-    for j in range(8):
-        DBL[0, j] = D11 * BL[0, j] + D12 * BL[1, j]
-        DBL[1, j] = D12 * BL[0, j] + D11 * BL[1, j]
-        DBL[2, j] = D33 * BL[2, j]
+    DBL = Dm @ BL
 
     Ke = np.zeros((8, 8), dtype=np.float64)
     for i in range(8):

@@ -68,12 +68,12 @@ KERNELS: Dict[int, Dict[int, KernelInfo]] = {
         20: KernelInfo("C3D8IH co-rotational", 8, small_strain=False, initial_stress="native"),
     },
     2: {
-        0: KernelInfo("CPE4", 4, small_strain=True, initial_stress="added"),
+        0: KernelInfo("CPE4", 4, small_strain=True, cr_wrap=True, initial_stress="added"),   # cr_wrap: the NLGEOM kernel for nonlinear materials
         1: KernelInfo("CPE4I", 4, small_strain=True, initial_stress="added"),
         2: KernelInfo("CPE4R", 4, small_strain=True, initial_stress="added"),
         3: KernelInfo("CPE4H", 4, small_strain=True, initial_stress="added"),
-        4: KernelInfo("CPE4 F-bar", 4, small_strain=False, initial_stress="added"),
-        5: KernelInfo("CPE4 co-rotational", 4, small_strain=False, initial_stress="added"),
+        4: KernelInfo("CPE4 F-bar", 4, small_strain=False, elastic_only=True, initial_stress="added"),
+        5: KernelInfo("CPE4 co-rotational", 4, small_strain=False, elastic_only=True, initial_stress="added"),
         6: KernelInfo("CPE3", 3, small_strain=True, cr_wrap=True, initial_stress="added"),
         7: KernelInfo("CPE6", 6, small_strain=True, cr_wrap=True, initial_stress="added"),
         8: KernelInfo("CPE6M", 6, small_strain=True, initial_stress="added"),
@@ -83,14 +83,14 @@ KERNELS: Dict[int, Dict[int, KernelInfo]] = {
         12: KernelInfo("CPE4H co-rotational", 4, small_strain=False, initial_stress="added"),
         13: KernelInfo("CPE4R co-rotational", 4, small_strain=False, initial_stress="added"),
         14: KernelInfo("CPE6M co-rotational", 6, small_strain=False, initial_stress="added"),
-        15: KernelInfo("CAX8", 8, small_strain=True,
+        15: KernelInfo("CAX8", 8, small_strain=True, elastic_only=True,
                        nlgeom_unsupported="axisymmetric kernels are small strain and a rotation in the r-z plane "
                                           "is not a rigid motion of the ring, so they cannot be co-rotated"),
-        16: KernelInfo("CAX8R", 8, small_strain=True,
+        16: KernelInfo("CAX8R", 8, small_strain=True, elastic_only=True,
                        nlgeom_unsupported="axisymmetric kernels are small strain and cannot be co-rotated"),
-        17: KernelInfo("CAX4", 4, small_strain=True,
+        17: KernelInfo("CAX4", 4, small_strain=True, elastic_only=True,
                        nlgeom_unsupported="axisymmetric kernels are small strain and cannot be co-rotated"),
-        18: KernelInfo("T2D2 truss", 2, small_strain=True, cr_wrap=True),
+        18: KernelInfo("T2D2 truss", 2, small_strain=True, cr_wrap=True, elastic_only=True),
         19: KernelInfo("COH2D4 cohesive", 4, small_strain=False),
         20: KernelInfo("CPE4IH (incompatible + hybrid)", 4, small_strain=True, initial_stress="added"),
         21: KernelInfo("CPE4IH co-rotational", 4, small_strain=False, initial_stress="added"),
@@ -218,7 +218,7 @@ _ELEMENT_DESCRIPTORS: Tuple[ElementDescriptor, ...] = (
       for n, nn in (("S4", 4), ("S4R", 4), ("S3", 3), ("S3R", 3), ("STRI3", 3), ("S8", 8), ("S8R", 8),
                     ("S9R5", 8), ("STRI65", 6), ("M3D4", 4), ("M3D4R", 4))],
     # ------------------------------------------------------------------ 2D plane strain / stress
-    *[_plane(n, 5, 0, 4) for n in ("CPE4", "CPS4")],
+    *[_plane(n, 5, 0, 4, kernel_yes_inelastic=0) for n in ("CPE4", "CPS4")],  # kernel 5 is linear elastic only
     *[_plane(n, 11, 1, 4, "INCOMPATIBLE") for n in ("CPE4I", "CPS4I")],
     _plane("Q4_EAS", 11, 1, 4, "INCOMPATIBLE", aliases=("INCOMPATIBLE",)),
     *[_plane(n, 21, 20, 4, "INCOMPATIBLE", True) for n in ("CPE4IH", "CPS4IH")],

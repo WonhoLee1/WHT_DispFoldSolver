@@ -10,6 +10,8 @@ Equivalents: Abaqus CPE4H / Ansys Mixed u-P SOLID182.
 import numpy as np
 from numba import njit, prange
 
+from dispsolver.material3d.numba_materials import material_dispatch_3d
+
 _GP1D = 1.0 / np.sqrt(3.0)
 _GPS = np.array([
     [-_GP1D, -_GP1D],
@@ -40,130 +42,92 @@ def compute_cpe4h_element_numba(
     coords: np.ndarray,      # (4, 2)
     u_elem: np.ndarray,      # (8,)
     mat_type: int,
-    props: np.ndarray,       # [E, nu, ...]
-    sdvs: np.ndarray,        # (4, 7)
+    props: np.ndarray,       # material properties (layout depends on mat_type)
+    sdvs: np.ndarray,        # (4, n_sdv), updated in place
     dt: float,
     elem_controls: np.ndarray = None
 ):
     """
-    Computes 8x8 tangent Ke and 8-element fe for 1 CPE4H mixed hybrid element.
+    8x8 tangent Ke and 8-element fe of one CPE4H element: constant pressure (Q1P0), any material.
+
+    The strain every Gauss point hands to the material is  eps* = eps + (D/3) (1, 1, 1, 0)  with
+    D = eps_vol_avg - eps_vol(point): the local DEVIATORIC strain of the plane-strain state (so eps_zz picks up
+    the out-of-plane part, -eps_vol/3) plus the element-AVERAGE volumetric strain. For a linear elastic material
+    this is exactly the classical Q1P0 element (deviatoric energy at the Gauss points, K eps_vol_avg^2 V / 2 for
+    the volume); for any other material the stress and tangent come from the same 3D material dispatch as every
+    other element, so plasticity, hyperelasticity and their state variables work.
+
+    eps* = B* u with B* = B + (Bvol_avg - Bvol)/3 on the xx, yy rows and (Bvol_avg - Bvol)/3 on the zz row, so
+    f = int B*^T sigma* dV and K = int B*^T C* B* dV are the exact derivative pair.
     """
-    E = props[0]
-    nu = props[1]
-    if nu > 0.499999:
-        nu = 0.499999
-
-    G = E / (2.0 * (1.0 + nu))
-    K = E / (3.0 * (1.0 - 2.0 * nu))
-
-    # Deviatoric C matrix in plane strain:
-    # 2G * [4/3, -2/3, 0; -2/3, 4/3, 0; 0, 0, 1] ...
-    # Wait, in plane strain eps_zz = 0, so eps_vol = eps_xx + eps_yy.
-    # Deviatoric strain: e_xx = eps_xx - 1/3(eps_xx+eps_yy), e_yy = eps_yy - 1/3(eps_xx+eps_yy), e_zz = -1/3(eps_xx+eps_yy).
-    # Deviatoric stress: s_xx = 2G e_xx, s_yy = 2G e_yy.
-    # Total stress: sigma_xx = s_xx + p, sigma_yy = s_yy + p, sigma_xy = 2G * eps_xy.
-
-    Ke_dev = np.zeros((8, 8), dtype=np.float64)
-    fe = np.zeros(8, dtype=np.float64)
-    vol_vec = np.zeros(8, dtype=np.float64)  # int B_vol dV
+    has_error = 0
+    B = np.zeros((4, 3, 8), dtype=np.float64)      # standard rows xx, yy, xy per Gauss point
+    dV = np.zeros(4, dtype=np.float64)
+    bvol_avg = np.zeros(8, dtype=np.float64)
     tot_vol = 0.0
 
-    has_error = 0
-    B = np.zeros((3, 8), dtype=np.float64)
-
     for q in range(4):
-        xi = _GPS[q, 0]
-        eta = _GPS[q, 1]
-        wt = _WTS[q]
-
-        dN_dxi = _shape_derivs_cpe4h(xi, eta)
+        dN_dxi = _shape_derivs_cpe4h(_GPS[q, 0], _GPS[q, 1])
         J = dN_dxi @ coords
         detJ = J[0, 0] * J[1, 1] - J[0, 1] * J[1, 0]
         if detJ <= 1e-14:
             has_error = 1
             detJ = 1e-14
 
-        invJ00 =  J[1, 1] / detJ
+        invJ00 = J[1, 1] / detJ
         invJ01 = -J[0, 1] / detJ
         invJ10 = -J[1, 0] / detJ
-        invJ11 =  J[0, 0] / detJ
-
-        dN_dX = np.zeros((2, 4), dtype=np.float64)
+        invJ11 = J[0, 0] / detJ
         for a in range(4):
-            dN_dX[0, a] = invJ00 * dN_dxi[0, a] + invJ01 * dN_dxi[1, a]
-            dN_dX[1, a] = invJ10 * dN_dxi[0, a] + invJ11 * dN_dxi[1, a]
+            dx = invJ00 * dN_dxi[0, a] + invJ01 * dN_dxi[1, a]
+            dy = invJ10 * dN_dxi[0, a] + invJ11 * dN_dxi[1, a]
+            B[q, 0, 2 * a + 0] = dx
+            B[q, 1, 2 * a + 1] = dy
+            B[q, 2, 2 * a + 0] = dy
+            B[q, 2, 2 * a + 1] = dx
+            bvol_avg[2 * a + 0] += dx * detJ * _WTS[q]
+            bvol_avg[2 * a + 1] += dy * detJ * _WTS[q]
+        dV[q] = detJ * _WTS[q]
+        tot_vol += dV[q]
 
-        B.fill(0.0)
-        for a in range(4):
-            B[0, 2 * a + 0] = dN_dX[0, a]
-            B[1, 2 * a + 1] = dN_dX[1, a]
-            B[2, 2 * a + 0] = dN_dX[1, a]
-            B[2, 2 * a + 1] = dN_dX[0, a]
+    for m in range(8):
+        bvol_avg[m] /= tot_vol
 
-        dV = detJ * wt
-        tot_vol += dV
+    fe = np.zeros(8, dtype=np.float64)
+    Ke = np.zeros((8, 8), dtype=np.float64)
+    I3 = np.eye(3, dtype=np.float64)
+    Bs = np.zeros((4, 8), dtype=np.float64)        # rows xx, yy, zz, xy of eps*
+    for q in range(4):
+        for m in range(8):
+            d = (bvol_avg[m] - B[q, 0, m] - B[q, 1, m]) / 3.0
+            Bs[0, m] = B[q, 0, m] + d
+            Bs[1, m] = B[q, 1, m] + d
+            Bs[2, m] = d
+            Bs[3, m] = B[q, 2, m]
+        eps = Bs @ u_elem
+        E_voigt = np.zeros(6, dtype=np.float64)
+        E_voigt[0] = eps[0]
+        E_voigt[1] = eps[1]
+        E_voigt[2] = eps[2]
+        E_voigt[3] = eps[3]
+        sdv_pt = sdvs[q] if sdvs is not None and len(sdvs) > q else np.zeros(8, dtype=np.float64)
+        S, C6, sdv_new, mat_err = material_dispatch_3d(mat_type, props, sdv_pt, E_voigt, I3, 1.0, dt)
+        if mat_err != 0:
+            has_error = 1
+        if sdvs is not None and len(sdvs) > q:
+            for s_i in range(min(len(sdv_new), len(sdvs[q]))):
+                sdvs[q, s_i] = sdv_new[s_i]
 
-        # B_vol = [dN_1/dx, dN_1/dy, dN_2/dx, dN_2/dy, ...]
-        for a in range(4):
-            vol_vec[2 * a + 0] += dN_dX[0, a] * dV
-            vol_vec[2 * a + 1] += dN_dX[1, a] * dV
-
-        # Deviatoric B: B_dev = B - 1/3 m B_vol where m = [1, 1, 0]^T
-        B_dev = np.zeros((3, 8), dtype=np.float64)
-        for j in range(8):
-            trB = (B[0, j] + B[1, j]) / 3.0
-            B_dev[0, j] = B[0, j] - trB
-            B_dev[1, j] = B[1, j] - trB
-            B_dev[2, j] = B[2, j]
-
-        # 2G * B_dev
+        for i in range(8):
+            fe[i] += (Bs[0, i] * S[0] + Bs[1, i] * S[1] + Bs[2, i] * S[2] + Bs[3, i] * S[3]) * dV[q]
+        C4 = np.zeros((4, 4), dtype=np.float64)
+        for r in range(4):
+            for c in range(4):
+                C4[r, c] = C6[r, c]
+        CB = C4 @ Bs
         for i in range(8):
             for j in range(8):
-                # deviatoric energy: 2G * (e_xx*e_xx + e_yy*e_yy + e_zz*e_zz + 2*e_xy*e_xy)
-                # Note: e_zz = -1/3*(eps_xx+eps_yy)
-                tr_j = (B[0, j] + B[1, j]) / 3.0
-                e_zz_j = -tr_j
-                tr_i = (B[0, i] + B[1, i]) / 3.0
-                e_zz_i = -tr_i
-
-                term = (
-                    B_dev[0, i] * B_dev[0, j] +
-                    B_dev[1, i] * B_dev[1, j] +
-                    e_zz_i * e_zz_j +
-                    0.5 * B_dev[2, i] * B_dev[2, j]
-                )
-                Ke_dev[i, j] += 2.0 * G * term * dV
-
-        # Deviatoric internal forces
-        eps = B @ u_elem
-        tr_eps = (eps[0] + eps[1]) / 3.0
-        e_xx = eps[0] - tr_eps
-        e_yy = eps[1] - tr_eps
-        e_zz = -tr_eps
-        gamma_xy = eps[2]
-
-        s_xx = 2.0 * G * e_xx
-        s_yy = 2.0 * G * e_yy
-        s_xy = G * gamma_xy
-
-        for i in range(8):
-            e_zz_i = -(B[0, i] + B[1, i]) / 3.0
-            fe[i] += (B_dev[0, i] * s_xx + B_dev[1, i] * s_yy + e_zz_i * (2.0 * G * e_zz) + B_dev[2, i] * s_xy) * dV
-
-    # Average volumetric strain over the element: eps_vol_avg = vol_vec^T * u_elem / tot_vol
-    eps_vol_avg = np.sum(vol_vec * u_elem) / tot_vol
-    p_avg = K * eps_vol_avg
-
-    # Add volumetric force: fe += p_avg * vol_vec
-    for i in range(8):
-        fe[i] += p_avg * vol_vec[i]
-
-    # Add volumetric stiffness: Ke = Ke_dev + (K / tot_vol) * (vol_vec (x) vol_vec)
-    Ke = Ke_dev.copy()
-    k_vol_fac = K / tot_vol
-    for i in range(8):
-        for j in range(8):
-            Ke[i, j] += k_vol_fac * vol_vec[i] * vol_vec[j]
+                Ke[i, j] += (Bs[0, i] * CB[0, j] + Bs[1, i] * CB[1, j] + Bs[2, i] * CB[2, j] + Bs[3, i] * CB[3, j]) * dV[q]
 
     return fe, Ke, has_error
 

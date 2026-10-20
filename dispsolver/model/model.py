@@ -86,6 +86,9 @@ class Model:
         self.sections: Dict[str, Section] = CaseInsensitiveDict()
         self.section_controls: Dict[str, SectionControls] = CaseInsensitiveDict()
         self.orientations: Dict[str, MaterialOrientation] = CaseInsensitiveDict()
+        # *RESTART: model-level WRITE request and the READ request, set by the reader (restart_kw)
+        self.restart_write: Optional[Dict[str, Any]] = None
+        self.restart_read: Optional[Dict[str, Any]] = None
         self.transforms: Dict[str, Dict[str, Any]] = CaseInsensitiveDict()
         self.amplitudes: Dict[str, Amplitude] = CaseInsensitiveDict()
         self.constraints: Dict[str, Constraint] = CaseInsensitiveDict()

@@ -362,6 +362,23 @@ class Assembly:
                         raise ValueError(f"section {sec_name!r}" + (f" [{loc}]" if loc else "")
                                          + f" refers to material {mat_name!r}, which the deck does not define")
                     
+                    if mat_obj is not None and ori_name and not etype_upper.startswith("C3D20"):
+                        # a section orientation rotates an orthotropic stiffness (C3D20 keeps its own path)
+                        from dispsolver.material.orientation import oriented_material
+                        mat_obj = oriented_material(mat_obj, model.orientations[ori_name], dim,
+                                                    f"section {sec_name!r}")
+                    elif (mat_obj is not None and ori_name and etype_upper.startswith("C3D20")
+                          and "engineering_constants" in (getattr(mat_obj, "extra_params", None) or {})):
+                        raise NotImplementedError(
+                            f"section {sec_name!r}: C3D20 reads orthotropic ENGINEERING CONSTANTS through its own path "
+                            f"and takes no section orientation (*ORIENTATION {ori_name}); solving it unrotated would be "
+                            f"a different model than the deck describes")
+                    elif (mat_obj is not None and dim == 3 and not etype_upper.startswith("C3D20")
+                          and "engineering_constants" in (getattr(mat_obj, "extra_params", None) or {})):
+                        # no orientation: the material axes are the global axes
+                        from dispsolver.material.orientation import oriented_material
+                        mat_obj = oriented_material(mat_obj, type("GlobalAxes", (), {"frame": np.eye(3)})(), dim,
+                                                    f"section {sec_name!r}")
                     if mat_obj is not None and not resolve_materials:
                         materials_by_pid[assigned_pid] = mat_obj
                     elif mat_obj is not None:

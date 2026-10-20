@@ -952,9 +952,16 @@ def finalize_materials(reader) -> None:
         loc = getattr(sec, "source_location", None)
         text = f"section {sec.name!r} orientation {ori!r}"
         if mat is not None and "engineering_constants" in mat.extra_params:
-            reader.refuse_definition(
-                mat, f"{text} on an anisotropic material (no solver reads the section orientation)", loc,
-                "orientation-not-connected")
+            ori_obj = reader.model.orientations.get(ori)
+            if reader.dim != 3:
+                reason = f"{text} on an anisotropic material: orthotropic elasticity is not implemented in 2D"
+            elif ori_obj is None or getattr(ori_obj, "frame", None) is None:
+                reason = (f"{text} on an anisotropic material: only a RECTANGULAR orientation given by COORDINATES is "
+                          f"implemented (this one is SYSTEM={getattr(ori_obj, 'system', '?')}, "
+                          f"DEFINITION={getattr(ori_obj, 'definition', '?')}); the other systems give every element its own axes")
+            else:
+                continue           # a fixed frame: the assembly rotates the stiffness into it
+            reader.refuse_definition(mat, reason, loc, "orientation-not-connected")
         else:
             reader.diagnostics.add("info", "orientation-ignored-isotropic",
                                    f"{text}: isotropic material, the orientation changes nothing", loc)
@@ -1265,6 +1272,8 @@ class OrientationRecord(Record):
     local_directions: int
     raw_rows: Tuple[Tuple[float, ...], ...]
     node_ids: Tuple[int, ...] = ()
+    rotation_axis: int = 0            # second data line: local direction the additional rotation turns about
+    rotation_angle: float = 0.0       # ... and the angle in degrees (right-hand rule)
 
 
 @keyword("ORIENTATION", support="PARTIAL",
@@ -1292,10 +1301,14 @@ class Orientation(Keyword):
             n_first = 9 if any(x is not None for x in first[6:]) else 6
             raw_rows = (tuple(_z(x) for x in first[:n_first]),) + raw_rows[1:]
         # second line: local direction and additional rotation alpha (defaults: direction 1, 0 degrees)
+        rot_axis, rot_angle = 0, 0.0
         if len(rows) > 1:
             second = _cells(rows[1], 2)
             if second[1] not in (None, 0.0):
-                raise Unsupported(f"*ORIENTATION {p.name}: an additional rotation of {second[1]} deg is not represented")
+                if second[0] is None or int(second[0]) not in (1, 2, 3):
+                    raise InputError(f"*ORIENTATION {p.name}: the additional rotation {second[1]} deg needs the local "
+                                     f"direction (1, 2 or 3) it turns about on the second data line")
+                rot_axis, rot_angle = int(second[0]), float(second[1])
         node_ids: tuple = ()
         if p.definition == "NODES":
             node_ids = tuple(int(v) for v in first[:3] if v is not None)
@@ -1306,6 +1319,8 @@ class Orientation(Keyword):
             local_directions=0 if p.local_directions is None else p.local_directions,
             raw_rows=raw_rows,
             node_ids=node_ids,
+            rotation_axis=rot_axis,
+            rotation_angle=rot_angle,
             loc=ctx.loc,
         )
 
@@ -1326,6 +1341,9 @@ def _apply_orientation(reader: AbaqusInputReader, rec: OrientationRecord) -> Non
             b = (b - a * float(np.dot(b, a))) / nb
         cz = np.cross(a, b)
         frame = np.array([a, b, cz], dtype=np.float64)
+        if rec.rotation_angle:
+            from dispsolver.material.orientation import rotate_frame
+            frame = rotate_frame(frame, rec.rotation_axis, rec.rotation_angle)
 
     reader.model.Orientation(
         name=rec.name,

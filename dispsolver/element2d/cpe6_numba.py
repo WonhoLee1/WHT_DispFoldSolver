@@ -9,6 +9,8 @@ Equivalents: Abaqus CPE6 / Ansys PLANE183 (Triangle).
 import numpy as np
 from numba import njit, prange
 
+from dispsolver.material3d.numba_materials import material_dispatch_2d
+
 # 3-point Dunavant/Hammer Gauss rule for triangle
 _GPS_TRI = np.array([
     [1.0 / 6.0, 1.0 / 6.0],
@@ -65,14 +67,6 @@ def compute_cpe6_element_numba(
     """
     Computes 12x12 Ke and 12-element fe for 1 CPE6 element.
     """
-    E = props[0]
-    nu = props[1]
-
-    c_fac = E / ((1.0 + nu) * (1.0 - 2.0 * nu))
-    C11 = c_fac * (1.0 - nu)
-    C12 = c_fac * nu
-    C33 = c_fac * 0.5 * (1.0 - 2.0 * nu)
-
     Ke = np.zeros((12, 12), dtype=np.float64)
     fe = np.zeros(12, dtype=np.float64)
     has_error = 0
@@ -110,25 +104,23 @@ def compute_cpe6_element_numba(
             B[2, 2 * a + 1] = dN_dX[0, a]
 
         eps = B @ u_elem
-        s_xx = C11 * eps[0] + C12 * eps[1]
-        s_yy = C12 * eps[0] + C11 * eps[1]
-        s_xy = C33 * eps[2]
-        sigma = np.array([s_xx, s_yy, s_xy], dtype=np.float64)
+        sdv_pt = sdvs[q] if (sdvs is not None and len(sdvs) > q) else np.zeros(8, dtype=np.float64)
+        sigma, Dm, sdv_new, mat_err = material_dispatch_2d(mat_type, props, sdv_pt, eps, dt)
+        if mat_err != 0:
+            has_error = 1
+        if sdvs is not None and len(sdvs) > q:
+            for s_i in range(min(len(sdv_new), len(sdvs[q]))):
+                sdvs[q, s_i] = sdv_new[s_i]
 
         dV = detJ * wt
 
         for i in range(12):
             fe[i] += (B[0, i] * sigma[0] + B[1, i] * sigma[1] + B[2, i] * sigma[2]) * dV
 
-        CB = np.zeros((3, 12), dtype=np.float64)
-        for j in range(12):
-            CB[0, j] = C11 * B[0, j] + C12 * B[1, j]
-            CB[1, j] = C12 * B[0, j] + C11 * B[1, j]
-            CB[2, j] = C33 * B[2, j]
-
+        DB = Dm @ B
         for i in range(12):
             for j in range(12):
-                Ke[i, j] += (B[0, i] * CB[0, j] + B[1, i] * CB[1, j] + B[2, i] * CB[2, j]) * dV
+                Ke[i, j] += (B[0, i] * DB[0, j] + B[1, i] * DB[1, j] + B[2, i] * DB[2, j]) * dV
 
     return fe, Ke, has_error
 

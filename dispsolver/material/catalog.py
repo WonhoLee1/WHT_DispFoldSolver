@@ -283,26 +283,8 @@ def pack_props(material: Any, dim: int = 3) -> np.ndarray:
             props[:n] = flat[:n]
             return props
         if "engineering_constants" in extra:
-            ec = [float(x) for x in extra["engineering_constants"]]
-            E1, E2, E3 = ec[0], ec[1], ec[2]
-            nu12, nu13, nu23 = ec[3], ec[4], ec[5]
-            G12, G13, G23 = ec[6], ec[7], ec[8]
-            nu21 = nu12 * E2 / E1
-            nu31 = nu13 * E3 / E1
-            nu32 = nu23 * E3 / E2
-            # 6x6 compliance matrix
-            S = np.zeros((6, 6), dtype=np.float64)
-            S[0, 0] = 1.0 / E1;    S[0, 1] = -nu21 / E2; S[0, 2] = -nu31 / E3
-            S[1, 0] = -nu12 / E1; S[1, 1] = 1.0 / E2;   S[1, 2] = -nu32 / E3
-            S[2, 0] = -nu13 / E1; S[2, 1] = -nu23 / E2; S[2, 2] = 1.0 / E3
-            S[3, 3] = 1.0 / G12
-            S[4, 4] = 1.0 / G23
-            S[5, 5] = 1.0 / G13
-            try:
-                C_6x6 = np.linalg.inv(S)
-            except np.linalg.LinAlgError:
-                C_6x6 = np.eye(6, dtype=np.float64) * E1
-            props[:36] = C_6x6.ravel()[:36]
+            from dispsolver.material.orientation import orthotropic_stiffness
+            props[:36] = orthotropic_stiffness(extra["engineering_constants"]).ravel()
             return props
         return props
 

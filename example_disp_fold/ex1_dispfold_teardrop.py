@@ -138,17 +138,12 @@ def run_dispfold_simulation(
         vtkhdf_path = os.path.join(out_dir, "model_and_results.vtkhdf")
         vdb = UnifiedVTKHDFDatabase(vtkhdf_path, mesh, meta, config)
 
-        # 7. Material mapping for solver
-        # PID 1: PET (E=4000, nu=0.30)
-        # PID 2: PSA (E=0.05, nu=0.499)
-        # PID 3: GLASS (E=70000, nu=0.22)
-        # PID 4: Rigid Plate (E=200000, nu=0.30)
-        materials = {
-            1: {"E": 4000.0, "nu": 0.30},
-            2: {"E": 0.05, "nu": 0.499},
-            3: {"E": 70000.0, "nu": 0.22},
-            4: {"E": 200000.0, "nu": 0.30},
-        }
+        # 7. Material mapping for solver: exactly the materials written to model.inp (PET elastic-plastic,
+        # PSA Arruda-Boyce + Prony, GLASS and PLATE elastic) -- not {"E", "nu"} stand-ins, which solved every
+        # layer as linear elastic. Pid rule of the mesh generator: 1 PET, 2 PSA, 3 GLASS, 4 plate.
+        materials = abq_builder.solver_materials(inp_path)
+        print("[*] Solver materials from model.inp: " + ", ".join(
+            f"pid {pid} = {m.name} ({m.mat_type})" for pid, m in sorted(materials.items())))
 
         # 8. Solver Instantiation
         if dim == "2D":

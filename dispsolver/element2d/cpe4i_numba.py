@@ -69,13 +69,21 @@ def compute_cpe4i_element_numba(
     coords: np.ndarray,      # (4, 2)
     u_elem: np.ndarray,      # (8,)
     mat_type: int,
-    props: np.ndarray,       # [E, nu, ...]
-    sdvs: np.ndarray,        # (4, 7)
+    props: np.ndarray,       # material properties (layout depends on mat_type)
+    sdvs: np.ndarray,        # (4, n_sdv), updated in place with the converged state
     dt: float,
     elem_controls: np.ndarray = None
 ):
     """
-    Computes statically condensed 8x8 tangent Ke and 8-element fe for 1 CPE4I element.
+    Statically condensed 8x8 tangent Ke and 8-element fe of one CPE4I element.
+
+    The enhanced strain parameters alpha are the solution of  fa(alpha) = sum M^T sigma(B u + M alpha) dV = 0
+    for the CURRENT displacements. For a linear material one Newton step from alpha = 0 is exact
+    (alpha = -Kaa^-1 fa0, fe = fu0 - Kua Kaa^-1 fa0); for a nonlinear material (plasticity, hyperelasticity)
+    alpha is iterated to equilibrium, otherwise the condensed force is not the derivative of the element energy and
+    the condensed tangent is not its Jacobian (measured: 1.9e-3 off, and the Newton loop of plastic bending
+    stalled). The material is evaluated from the state variables at the START of the increment on every iteration;
+    only the converged evaluation is written back.
     """
     # Centroid Jacobian J0
     dN0 = _shape_derivs_cpe4i(0.0, 0.0)
@@ -85,105 +93,107 @@ def compute_cpe4i_element_numba(
         detJ0 = 1e-14
 
     T0_inv_T = _voigt_transform_2d(J0)
-
-    Kuu = np.zeros((8, 8), dtype=np.float64)
-    Kua = np.zeros((8, 4), dtype=np.float64)
-    Kaa = np.zeros((4, 4), dtype=np.float64)
-    fu = np.zeros(8, dtype=np.float64)
-    fa = np.zeros(4, dtype=np.float64)
-
     has_error = 0
-    B = np.zeros((3, 8), dtype=np.float64)
-    M0 = np.zeros((3, 4), dtype=np.float64)
 
+    # geometry of the four Gauss points: B (3x8), M (3x4), volume weight
+    Bq = np.zeros((4, 3, 8), dtype=np.float64)
+    Mq = np.zeros((4, 3, 4), dtype=np.float64)
+    dVq = np.zeros(4, dtype=np.float64)
+    M0 = np.zeros((3, 4), dtype=np.float64)
     for q in range(4):
         xi = _GPS[q, 0]
         eta = _GPS[q, 1]
-        wt = _WTS[q]
-
         dN_dxi = _shape_derivs_cpe4i(xi, eta)
         J = dN_dxi @ coords
         detJ = J[0, 0] * J[1, 1] - J[0, 1] * J[1, 0]
         if detJ <= 1e-14:
             has_error = 1
             detJ = 1e-14
-
-        invJ00 =  J[1, 1] / detJ
+        invJ00 = J[1, 1] / detJ
         invJ01 = -J[0, 1] / detJ
         invJ10 = -J[1, 0] / detJ
-        invJ11 =  J[0, 0] / detJ
-
-        dN_dX = np.zeros((2, 4), dtype=np.float64)
+        invJ11 = J[0, 0] / detJ
         for a in range(4):
-            dN_dX[0, a] = invJ00 * dN_dxi[0, a] + invJ01 * dN_dxi[1, a]
-            dN_dX[1, a] = invJ10 * dN_dxi[0, a] + invJ11 * dN_dxi[1, a]
-
-        B.fill(0.0)
-        for a in range(4):
-            B[0, 2 * a + 0] = dN_dX[0, a]
-            B[1, 2 * a + 1] = dN_dX[1, a]
-            B[2, 2 * a + 0] = dN_dX[1, a]
-            B[2, 2 * a + 1] = dN_dX[0, a]
-
-        # Natural EAS modes: M0 = [[xi, 0, 0, 0], [0, eta, 0, 0], [0, 0, xi, eta]]
+            dx = invJ00 * dN_dxi[0, a] + invJ01 * dN_dxi[1, a]
+            dy = invJ10 * dN_dxi[0, a] + invJ11 * dN_dxi[1, a]
+            Bq[q, 0, 2 * a + 0] = dx
+            Bq[q, 1, 2 * a + 1] = dy
+            Bq[q, 2, 2 * a + 0] = dy
+            Bq[q, 2, 2 * a + 1] = dx
+        # Natural EAS modes M0 = [[xi, 0, 0, 0], [0, eta, 0, 0], [0, 0, xi, eta]]; physical M = (detJ0/detJ) T M0
         M0.fill(0.0)
         M0[0, 0] = xi
         M0[1, 1] = eta
         M0[2, 2] = xi
         M0[2, 3] = eta
+        Mq[q] = (detJ0 / detJ) * (T0_inv_T @ M0)
+        dVq[q] = detJ * _WTS[q]
 
-        # Physical EAS modes: M = (detJ0 / detJ) * T0_inv_T * M0
-        scale = detJ0 / detJ
-        M = scale * (T0_inv_T @ M0)  # (3, 4)
+    # state variables at the start of the increment (the material is always asked from these)
+    n_sdv = sdvs.shape[1] if (sdvs is not None and sdvs.ndim == 2) else 0
+    sdv0 = np.zeros((4, max(n_sdv, 1)), dtype=np.float64)
+    for q in range(4):
+        for s_i in range(n_sdv):
+            sdv0[q, s_i] = sdvs[q, s_i]
+    sdv_last = np.zeros((4, max(n_sdv, 1)), dtype=np.float64)
 
-        dV = detJ * wt
+    alpha = np.zeros(4, dtype=np.float64)
+    Kuu = np.zeros((8, 8), dtype=np.float64)
+    Kua = np.zeros((8, 4), dtype=np.float64)
+    Kaa = np.zeros((4, 4), dtype=np.float64)
+    fu = np.zeros(8, dtype=np.float64)
+    fa = np.zeros(4, dtype=np.float64)
 
-        # Compute strain and constitutive response
-        eps = B @ u_elem
-        sdv_pt = sdvs[q] if sdvs is not None and len(sdvs) > q else np.zeros(7, dtype=np.float64)
-        sigma, C_mat_2d, sdv_new, mat_err = material_dispatch_2d(mat_type, props, sdv_pt, eps, dt)
-        if mat_err != 0:
-            has_error = 1
-        if sdvs is not None and len(sdvs) > q:
-            for s_i in range(min(len(sdv_new), len(sdvs[q]))):
-                sdvs[q, s_i] = sdv_new[s_i]
+    for it in range(30):
+        Kuu.fill(0.0)
+        Kua.fill(0.0)
+        Kaa.fill(0.0)
+        fu.fill(0.0)
+        fa.fill(0.0)
+        for q in range(4):
+            B = Bq[q]
+            M = Mq[q]
+            dV = dVq[q]
+            eps = B @ u_elem + M @ alpha
+            sdv_pt = sdv0[q, :n_sdv].copy() if n_sdv > 0 else np.zeros(7, dtype=np.float64)
+            sigma, C_mat_2d, sdv_new, mat_err = material_dispatch_2d(mat_type, props, sdv_pt, eps, dt)
+            if mat_err != 0:
+                has_error = 1
+            for s_i in range(min(len(sdv_new), n_sdv)):
+                sdv_last[q, s_i] = sdv_new[s_i]
 
-        # CB = C * B (3, 8)
-        CB = C_mat_2d @ B
+            CB = C_mat_2d @ B
+            CM = C_mat_2d @ M
+            for i in range(8):
+                for j in range(8):
+                    Kuu[i, j] += (B[0, i] * CB[0, j] + B[1, i] * CB[1, j] + B[2, i] * CB[2, j]) * dV
+                for j in range(4):
+                    Kua[i, j] += (B[0, i] * CM[0, j] + B[1, i] * CM[1, j] + B[2, i] * CM[2, j]) * dV
+                fu[i] += (B[0, i] * sigma[0] + B[1, i] * sigma[1] + B[2, i] * sigma[2]) * dV
+            for i in range(4):
+                for j in range(4):
+                    Kaa[i, j] += (M[0, i] * CM[0, j] + M[1, i] * CM[1, j] + M[2, i] * CM[2, j]) * dV
+                fa[i] += (M[0, i] * sigma[0] + M[1, i] * sigma[1] + M[2, i] * sigma[2]) * dV
 
-        # CM = C * M (3, 4)
-        CM = C_mat_2d @ M
+        fa_norm = np.sqrt(np.sum(fa * fa))
+        fu_norm = np.sqrt(np.sum(fu * fu))
+        if fa_norm <= 1e-12 * max(fu_norm, 1.0e-3):
+            break
+        alpha = alpha - np.linalg.solve(Kaa, fa)
+    else:
+        fa_norm = np.sqrt(np.sum(fa * fa))
+        if fa_norm > 1e-6 * max(np.sqrt(np.sum(fu * fu)), 1.0e-3):
+            has_error = 1               # alpha did not reach equilibrium: let the increment be cut back
 
-        # Kuu += B^T * CB * dV
-        for i in range(8):
-            for j in range(8):
-                Kuu[i, j] += (B[0, i] * CB[0, j] + B[1, i] * CB[1, j] + B[2, i] * CB[2, j]) * dV
+    # write back the converged material state
+    for q in range(4):
+        for s_i in range(n_sdv):
+            sdvs[q, s_i] = sdv_last[q, s_i]
 
-        # Kua += B^T * CM * dV
-        for i in range(8):
-            for j in range(4):
-                Kua[i, j] += (B[0, i] * CM[0, j] + B[1, i] * CM[1, j] + B[2, i] * CM[2, j]) * dV
-
-        # Kaa += M^T * CM * dV
-        for i in range(4):
-            for j in range(4):
-                Kaa[i, j] += (M[0, i] * CM[0, j] + M[1, i] * CM[1, j] + M[2, i] * CM[2, j]) * dV
-
-        for i in range(8):
-            fu[i] += (B[0, i] * sigma[0] + B[1, i] * sigma[1] + B[2, i] * sigma[2]) * dV
-
-        for i in range(4):
-            fa[i] += (M[0, i] * sigma[0] + M[1, i] * sigma[1] + M[2, i] * sigma[2]) * dV
-
-    # Invert 4x4 Kaa for static condensation
+    # Static condensation at the converged alpha:  Ke = Kuu - Kua Kaa^-1 Kua^T ,  fe = fu - Kua Kaa^-1 fa (fa ~ 0)
     invKaa = np.linalg.inv(Kaa)
-
-    # Condensation: Ke = Kuu - Kua * invKaa * Kua^T
     Ke = Kuu - Kua @ invKaa @ Kua.T
-
-    # Condensed internal force: fe = fu - Kua * invKaa * fa
-    alpha = invKaa @ fa
-    fe = fu - Kua @ alpha
+    fe = fu - Kua @ (invKaa @ fa)
 
     return fe, Ke, has_error
 

@@ -16,7 +16,7 @@ from dispsolver.model.model import Model
 from dispsolver.model.step import Step
 from dispsolver.model.control import SolutionControl
 from dispsolver.model.interaction import ContactControl, ContactProperty, ContactStd
-from dispsolver.io import read_abaqus_input
+from dispsolver.io import read_abaqus_input, read_inp
 
 
 class AbaqusApiBuilder:
@@ -183,7 +183,10 @@ class AbaqusApiBuilder:
                 if mat.hardening_modulus > 0:
                     _w(f"{mat.yield_stress + mat.hardening_modulus * 0.1:.2f}, 0.1")
             elif mat.mat_type == "HYPERELASTIC_VISCO":
-                _w(f"*HYPERELASTIC, ARRUDA-BOYCE\n{mat.arruda_boyce_mu:.6f}, {mat.arruda_boyce_lm:.2f}, 0.001")
+                # Arruda-Boyce Hyperelastic + Viscoelastic
+                # D = 2/K with K = E / (3 (1 - 2 nu)) from the spec; a fixed 0.001 made the PSA 240x too stiff in volume
+                d_compress = 2.0 * 3.0 * (1.0 - 2.0 * mat.nu) / mat.E
+                _w(f"*HYPERELASTIC, ARRUDA-BOYCE\n{mat.arruda_boyce_mu:.6f}, {mat.arruda_boyce_lm:.2f}, {d_compress:.6g}")
                 if mat.prony_g:
                     _w("*VISCOELASTIC, TIME=PRONY")
                     for g, tau in zip(mat.prony_g, mat.prony_tau):
@@ -334,6 +337,22 @@ class AbaqusApiBuilder:
             f.write(inp_text)
 
         return filepath
+
+    # Mesh pid rule (gmsh_mesh_generator): PET -> 1, PSA -> 2, everything else in the stack (GLASS) -> 3, plate -> 4.
+    SOLVER_PIDS = {"PET": 1, "PSA": 2, "GLASS": 3, "PLATE": 4}
+
+    def solver_materials(self, filepath: str) -> Dict[int, Any]:
+        """Solver materials per mesh pid, read back from the exported deck.
+
+        The deck is the single place the stack's constitutive laws are written (PET elastic-plastic, PSA
+        Arruda-Boyce + Prony, GLASS and PLATE elastic), so the solver is given exactly what model.inp says.
+        The solvers used to be handed {"E", "nu"} dictionaries, which solved every layer as linear elastic.
+        """
+        parsed = read_inp(filepath, dim=2 if self.dim == "2D" else 3)
+        missing = [n for n in self.SOLVER_PIDS if n in self.config.materials and n not in parsed.materials]
+        if missing:
+            raise ValueError(f"materials {missing} are in the stack but not in {filepath}")
+        return {pid: parsed.materials[name] for name, pid in self.SOLVER_PIDS.items() if name in parsed.materials}
 
     def validate_inp_roundtrip(self, filepath: str) -> Dict[str, Any]:
         """Validates that the emitted .inp can be parsed back with full keyword fidelity."""

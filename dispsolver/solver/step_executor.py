@@ -107,8 +107,11 @@ class MultiStepExecutor:
         step: Step,
         from_parent_checkpoint: bool = True,
         output_mgr: Optional[Any] = None,
+        restart: Optional[dict] = None,
     ) -> bool:
-        """Execute a single analysis step, restoring parent checkpoint if requested."""
+        """Execute a single analysis step, restoring parent checkpoint if requested.
+
+        restart: a record from dispsolver.solver.restart; the step continues from it."""
         if self.solver is None:
             self.initialize_solver()
 
@@ -128,7 +131,8 @@ class MultiStepExecutor:
             print(f"  EXECUTING STEP: '{step.name}' (Procedure: {step.procedure})", flush=True)
             print(f"{'=' * 100}", flush=True)
 
-        success = self.solver.solve(step=step, sys=self.sys, output_mgr=output_mgr, verbose=self.verbose)
+        solve_kwargs = {"restart": restart} if restart is not None else {}
+        success = self.solver.solve(step=step, sys=self.sys, output_mgr=output_mgr, verbose=self.verbose, **solve_kwargs)
         if success:
             t_parent = 0.0
             if step.parent_step is not None and step.parent_step.name in self.checkpoints:

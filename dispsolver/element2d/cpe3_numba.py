@@ -9,6 +9,8 @@ Equivalents: Abaqus CPE3 / Ansys PLANE182 (Triangle).
 import numpy as np
 from numba import njit, prange
 
+from dispsolver.material3d.numba_materials import material_dispatch_2d
+
 
 @njit(fastmath=True)
 def compute_cpe3_element_numba(
@@ -23,15 +25,6 @@ def compute_cpe3_element_numba(
     """
     Computes 6x6 tangent stiffness Ke and 6-element internal force vector fe for 1 CPE3 element.
     """
-    E = props[0]
-    nu = props[1]
-
-    # Plane strain elasticity matrix C (3x3)
-    c_fac = E / ((1.0 + nu) * (1.0 - 2.0 * nu))
-    C11 = c_fac * (1.0 - nu)
-    C12 = c_fac * nu
-    C33 = c_fac * 0.5 * (1.0 - 2.0 * nu)
-
     Ke = np.zeros((6, 6), dtype=np.float64)
     fe = np.zeros(6, dtype=np.float64)
 
@@ -71,26 +64,24 @@ def compute_cpe3_element_numba(
     # In-plane strain: eps = B * u_elem (3,)
     eps = B @ u_elem
 
-    # Stress: sigma = C * eps
-    s_xx = C11 * eps[0] + C12 * eps[1]
-    s_yy = C12 * eps[0] + C11 * eps[1]
-    s_xy = C33 * eps[2]
-    sigma = np.array([s_xx, s_yy, s_xy], dtype=np.float64)
+    # Stress and tangent from the material model (one integration point). Linear elastic materials give the
+    # constant plane-strain matrix, so their answer is unchanged.
+    sdv_pt = sdvs[0] if (sdvs is not None and len(sdvs) > 0) else np.zeros(8, dtype=np.float64)
+    sigma, Dm, sdv_new, mat_err = material_dispatch_2d(mat_type, props, sdv_pt, eps, dt)
+    if mat_err != 0:
+        has_error = 1
+    if sdvs is not None and len(sdvs) > 0:
+        for s_i in range(min(len(sdv_new), len(sdvs[0]))):
+            sdvs[0, s_i] = sdv_new[s_i]
 
     # fe = B^T * sigma * area
     for i in range(6):
         fe[i] = (B[0, i] * sigma[0] + B[1, i] * sigma[1] + B[2, i] * sigma[2]) * area
 
-    # CB = C * B
-    CB = np.zeros((3, 6), dtype=np.float64)
-    for j in range(6):
-        CB[0, j] = C11 * B[0, j] + C12 * B[1, j]
-        CB[1, j] = C12 * B[0, j] + C11 * B[1, j]
-        CB[2, j] = C33 * B[2, j]
-
+    DB = Dm @ B
     for i in range(6):
         for j in range(6):
-            Ke[i, j] = (B[0, i] * CB[0, j] + B[1, i] * CB[1, j] + B[2, i] * CB[2, j]) * area
+            Ke[i, j] = (B[0, i] * DB[0, j] + B[1, i] * DB[1, j] + B[2, i] * DB[2, j]) * area
 
     return fe, Ke, has_error
 

@@ -399,6 +399,10 @@ def compute_c3d8_corotational_element_umat_numba(
                 )
                 if err != 0:
                     error_flag = err
+                # carry the material state to the next increment (it used to be dropped here, so an
+                # elastic-plastic C3D8 kept no plastic strain); same convention as the other 3D kernels
+                if sdvs.shape[0] > gp_idx:
+                    sdvs[gp_idx] = sdv_new
 
                 if stress_init.shape[0] == 8:
                     for i in range(6):

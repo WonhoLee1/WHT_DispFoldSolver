@@ -27,13 +27,8 @@
 8. `*STATIC, STABILIZE`. 리더 `Static`은 `direct`만 받음. 안정화는 레거시 `solver/stabilization.py`에만 있고 solver2d/3d에는 없음 (접촉 채터링 안정화는 별개). 포팅 필요.
 9. `*VISCO` 스텝 (시간영역 점탄성, CETOL). 스텝 종류는 STATIC/DYNAMIC뿐. 프레임워크는 PSA Prony(τ 0.05, 0.5 s)를 total_time=1.0과 함께 쓰므로 접힘 속도에 민감. STATIC dt가 물리 시간으로 쓰이는지 먼저 확인 (미확인).
 10. `*INITIAL CONDITIONS, TYPE=STRESS`. **2026-10-18 부분 해결**: 3D `C3D8`/`C3D8H`(NLGEOM 켬·끔 모두)는 동작, 나머지 커널과 2D는 명시적 거부 (`dev_log/prd_initial_stress_20261018.md`). 종전에는 `create_solver*`에서 `AttributeError`. 열팽창(`*EXPANSION`)은 있음. 합지 잔류응력·curl 재현용.
-11. `*RESTART`. `result_io`는 결과 저장만 있고 재시작은 없음.
-    - **2026-10-18 조사**: `MultiStepExecutor`에 메모리 내 `StateCheckpoint`(u, v, a, `elem_sdvs`, 누적 시간)와 스텝 분기용 복원이 있고 `tests/test_multi_step_*.py`가 있음. 디스크 재시작은 없음(분기 결과 pkl만 저장). 리더에 `*RESTART` 미등록.
-    - 체크포인트에 빠진 상태: 접촉 마찰 상태(`commit_friction_state` 대상), 갱신 라그랑지안 기준 `_ul_F_n`, 구속 객체 내부 상태, dt 제어기. 이대로 재개하면 모델이 달라질 수 있음.
-    - 판단: 설계(PRD)가 필요한 별도 작업. 이번 라운드에서는 구현하지 않음.
-12. `*ORIENTATION`은 PARTIAL. 재료 커널에 미연결. 이방성 필름용.
-    - **2026-10-18 조사**: 리더는 파싱·저장하고, 이방성 재료(`ENGINEERING CONSTANTS`)에 방향이 걸린 섹션은 `orientation-not-connected`로 **정의를 거부**(조용히 무시하지 않음, `keywords/material.py` `finalize_materials`). 등방성 재료는 정보 로그만 남기고 영향 없음.
-    - 폴더블 프레임워크의 재료(PET, PSA, GLASS, PLATE)는 모두 등방성이라 현재 영향 없음. 이방성 필름을 쓰게 될 때까지 보류.
+11. `*RESTART` — **2026-10-18 구현** (`dev_log/prd_restart_20261018.md`): `*RESTART, WRITE/READ`, `solve(restart=)`, `execute_inp(job, restart_dir, oldjob)`. 증분 중간·스텝 끝에서 이어 푼 결과가 끊김 없는 풀이와 1e-12 일치 (3D·2D, NLGEOM 켬·끔). 남은 것: `capture_state`가 없는 접촉 구속의 이력 복원 (경고로 보고됨), 동역학 스텝 재개 검증, 출력 이어쓰기.
+12. `*ORIENTATION` — **2026-10-18 구현(3D)** (`dev_log/prd_orientation_20261018.md`): 직교이방성 `ENGINEERING CONSTANTS`가 3D 모든 솔리드 요소에서 동작하고 RECTANGULAR 방향과 추가 회전각이 강성에 반영됨. 남은 것: 요소마다 달라지는 프레임(원통·구), 2D 직교이방성 강성 자체, C3D20 + 방향.
 
 ## 3. 어려움
 
@@ -54,3 +49,15 @@
 
 - 중복 방지: `release_notes_keyword.md` §8(명시 중단 키워드 로드맵), `dev_log/area_analysis_*_20260919.md`의 Open 항목, `dev_log/implicit_solver_parity_report_20260913.md`.
 - 본 문서는 접힘 프레임워크 관점의 미구현 목록이며, 위 문서들의 Open 항목은 다시 적지 않았다.
+
+## 6. 2026-10-18 후속 발견 (재시작·방향 작업 중 측정)
+
+N1. **C3D8 코로테이셔널 커널(k=1, 16)이 소성 상태를 저장하지 않았음 — 수정함.** `c3d8_corotational_numba.py`가 `material_dispatch_3d`의 `sdv_new`를 계산만 하고 `sdvs`에 되쓰지 않아, 탄소성 C3D8이 이력 없는 비선형 탄성처럼 거동했다 (단조 비례 하중에서는 같은 답이라 가려졌고, 제하 후 잔류응력이 정확히 0이었음). 다른 3D 커널(C3D6, C3D10M, C3D8R, EAS, 하이브리드)은 되쓰고 있었다. `tests/test_c3d8_plastic_history.py`.
+N2. **2D `elem_sdvs`가 `(n, 9, 7)` 고정이라 표형 J2(SDV 8개)가 소성 이력을 읽지 못했음 — 수정함.** 재료별 필요한 최대 SDV 수로 할당. CPE4(NLGEOM 끔)와 CPE4I가 이제 이력을 가짐. `tests/test_plastic_history_2d.py`.
+N3. **2D 일부 커널이 재료 모델을 호출하지 않고 E, ν로 선형 탄성만 계산하던 문제 — 수정함** (`dev_log/prd_2d_material_wiring_20261018.md`). CPE4H, CPE4R, CPE4(NLGEOM)를 재료 디스패치에 연결하고, 그 뒤 CPE3, 6, 6M, 8, 8R도 연결해 2D 평면변형률 요소 9종 전부가 재료를 따른다 (정량 검증: 일축 변형 J2 닫힌 형식과 1e-6). 연결하지 않은 커널(CPE4 F-bar, 탄성 전용 co-rotational CPE4, 축대칭, 트러스)은 `elastic_only`로 선언해 비선형 재료를 거부한다.
+N4. **프레임워크가 재료를 E, ν로만 넘기던 문제 — 수정함.** `AbaqusApiBuilder.solver_materials()`가 내보낸 덱의 재료를 솔버에 전달. PSA 체적 상수(D 고정 0.001 → K 2000 MPa, 스펙 8.33 MPa)도 함께 수정.
+N6. **[열림] 초탄성의 유한변형 정확도**: 디스패치가 소변형 `eps`와 `F=I`를 받아 20% 신장에서 닫힌 형식 대비 −22% (CPE4I). PSA의 큰 전단 평가에는 부적합. 재료-요소 인터페이스 재설계(별도 PRD) 필요.
+N5. **초기 응력 Voigt 순서 결함 — 수정함.** `dev_log/prd_initial_stress_20261018.md` §8.
+N7. **`CPE4I`(EAS)의 소성 접선 불일치와 소성 굽힘 수렴 실패 — 수정함** (`prd_2d_material_wiring_20261018.md` §9). 보강 변위 α를 평형까지 반복. 소성 굽힘이 수렴하고 오라클과 2% 이내.
+N8. **삼각형 co-rotational 프레임이 극분해 회전과 O(변형률) 달랐던 문제 — 수정함** (같은 문서 §9). 3D의 같은 성질(`cr_generic_3d` Kabsch)은 미수정.
+N9. **[열림] 굽힘에서 `CPE4`(완전적분)와 `CPE4H`(평균 팽창)는 전단 잠김** (탄성 구간에서도 +9.6%, +8.2%). 접힘 모델에서 굽힘 지배층에 이 요소를 쓰면 안 된다. `ELEM_CASES_2D`의 `plate: CPE4`는 강체에 가까운 판이라 무방하나 `2D-Base`(solid: CPE4)는 부적합.
