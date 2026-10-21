@@ -40,7 +40,9 @@ Controls, all read once at import time:
   confirming every machine that will load the cache has an identical CPU
   feature set to the one that built it (e.g. a homogeneous deployment
   fleet), or accept the SIGILL risk knowingly.
-- `DISPFOLD_CACHE_VERSION` (default "v7", bumped from "v6" on 2026-10-21 for the consistent
+- `DISPFOLD_CACHE_VERSION` (default "v8", bumped from "v7" on 2026-10-22 for the CPE4H hyperelastic
+  tangent (dE/d eps chain, reference bulk modulus) in cpe4h_numba.py, called from cache=True wrappers;
+  "v7" was bumped from "v6" on 2026-10-21 for the consistent
   (dR/du) tangent in c3d8_hybrid_numba.py, whose callers in cr_wrapper_3d.py are cache=True;
   "v6" was bumped from "v5" on 2026-09-10 for
   the mesh-invariant forward-difference step in
@@ -83,7 +85,7 @@ import functools
 
 _CACHE_ENABLED = os.environ.get("DISPFOLD_JIT_CACHE", "1") not in ("0", "false", "False")
 _JAX_CACHE_ENABLED = os.environ.get("DISPFOLD_JAX_CACHE", "0") not in ("0", "false", "False")
-_CACHE_VERSION = os.environ.get("DISPFOLD_CACHE_VERSION", "v7")
+_CACHE_VERSION = os.environ.get("DISPFOLD_CACHE_VERSION", "v8")
 
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 _CACHE_ROOT = os.path.join(_REPO_ROOT, ".cache")

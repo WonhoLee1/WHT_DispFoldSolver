@@ -13,7 +13,7 @@ from numba import njit, prange
 from dispsolver.material3d.numba_materials import (
     material_dispatch_3d,
     _eig3x3_jacobi_numba,
-    MAT_LINEAR_ELASTIC,
+    is_hyperelastic_material,
 )
 
 @njit(fastmath=True)
@@ -145,6 +145,17 @@ def compute_cpe4h_element_numba(
     Ke = np.zeros((8, 8), dtype=np.float64)
     I3 = np.eye(3, dtype=np.float64)
     Bs = np.zeros((4, 8), dtype=np.float64)        # rows xx, yy, zz, xy of eps*
+    hyper = is_hyperelastic_material(mat_type)
+
+    # Hyperelastic laws: the Gauss points carry the DEVIATORIC stress and the element carries the pressure
+    # K_bulk * eps_vol_avg. K_bulk is the material's own reference bulk modulus (1^T C 1 / 9 at zero strain),
+    # not a props slot: Neo-Hookean accepts [C10, D1], [E, nu] and [mu, K], J2 has nu in slot 1. It is a
+    # constant, so f and K stay an exact derivative pair.
+    K_bulk = 0.0
+    if hyper:
+        sdv0 = np.zeros(sdvs.shape[1] if sdvs is not None and sdvs.ndim == 2 else 8, dtype=np.float64)
+        _S0, C0, _sd0, _e0 = material_dispatch_3d(mat_type, props, sdv0, np.zeros(6, dtype=np.float64), I3, 1.0, dt)
+        K_bulk = (C0[0, 0] + C0[1, 1] + C0[2, 2] + 2.0 * (C0[0, 1] + C0[0, 2] + C0[1, 2])) / 9.0
     for q in range(4):
         for m in range(8):
             d = (bvol_avg[m] - B[q, 0, m] - B[q, 1, m]) / 3.0
@@ -158,9 +169,10 @@ def compute_cpe4h_element_numba(
         E_voigt[1] = eps[1]
         E_voigt[2] = eps[2]
         E_voigt[3] = eps[3]
-        if mat_type != MAT_LINEAR_ELASTIC:
+        if hyper:
             E_gl_voigt, F_loc, detF = _hencky_to_green_gl_numba(E_voigt)
         else:
+            # small-strain laws (linear elastic, J2 family) take the strain as it is
             E_gl_voigt = E_voigt
             F_loc = I3
             detF = 1.0
@@ -172,22 +184,39 @@ def compute_cpe4h_element_numba(
             for s_i in range(min(len(sdv_new), len(sdvs[q]))):
                 sdvs[q, s_i] = sdv_new[s_i]
 
-        if mat_type != MAT_LINEAR_ELASTIC:
+        if hyper:
             tr_S = (S[0] + S[1] + S[2]) / 3.0
             S_use0 = S[0] - tr_S
             S_use1 = S[1] - tr_S
             S_use2 = S[2] - tr_S
             S_use3 = S[3]
 
+            # dS_dev/d eps = P_dev C6 dE/d eps : the material tangent is dS/dE, and the strain it sees is
+            # E(eps), so the chain factor dE/d eps (central difference of the conversion, 4 columns) is part
+            # of the tangent. Without it K is off by O(eps) (3-7% at 5% strain) and Newton loses its rate.
+            dEde = np.zeros((6, 4), dtype=np.float64)
+            for c in range(4):
+                h_c = 1.0e-7
+                e_p = E_voigt.copy()
+                e_m = E_voigt.copy()
+                e_p[c] += h_c
+                e_m[c] -= h_c
+                E_p, _F1, _d1 = _hencky_to_green_gl_numba(e_p)
+                E_m, _F2, _d2 = _hencky_to_green_gl_numba(e_m)
+                for r in range(6):
+                    dEde[r, c] = (E_p[r] - E_m[r]) / (2.0 * h_c)
             C4 = np.zeros((4, 4), dtype=np.float64)
             for r in range(4):
                 for c in range(4):
-                    C4[r, c] = C6[r, c]
+                    acc = 0.0
+                    for k in range(6):
+                        acc += C6[r, k] * dEde[k, c]
+                    C4[r, c] = acc
             P_dev = np.eye(4, dtype=np.float64)
             for r in range(3):
                 for c in range(3):
                     P_dev[r, c] -= 1.0 / 3.0
-            C4 = P_dev @ C4 @ P_dev
+            C4 = P_dev @ C4
         else:
             S_use0 = S[0]
             S_use1 = S[1]
@@ -206,8 +235,7 @@ def compute_cpe4h_element_numba(
             for j in range(8):
                 Ke[i, j] += (Bs[0, i] * CB[0, j] + Bs[1, i] * CB[1, j] + Bs[2, i] * CB[2, j] + Bs[3, i] * CB[3, j]) * dV[q]
 
-    if mat_type != MAT_LINEAR_ELASTIC:
-        K_bulk = props[1]
+    if hyper:
         eps_vol_mean = 0.0
         for m in range(8):
             eps_vol_mean += bvol_avg[m] * u_elem[m]

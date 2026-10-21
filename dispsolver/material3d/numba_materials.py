@@ -2153,6 +2153,15 @@ def material_dispatch_2d(
 
 
 @njit(cache=True)
+def is_hyperelastic_material(mat_type: int) -> bool:
+    """Materials whose law is written in finite-strain (Green-Lagrange / F) form: Neo-Hookean, Arruda-Boyce, Yeoh,
+    their viscoelastic / Ogden-type siblings. Everything else (linear elastic, the J2 family) is a small-strain law
+    in these elements."""
+    return (mat_type == 1 or mat_type == 4 or mat_type == 5 or mat_type == 6 or mat_type == 8
+            or mat_type == 9 or mat_type == 10 or mat_type == 11)
+
+
+@njit(cache=True)
 def resolve_hourglass_mode(code: float, mat_type: int) -> float:
     """Hourglass control a reduced-integration kernel applies: 0 = ENHANCED, 1 = STIFFNESS.
 
