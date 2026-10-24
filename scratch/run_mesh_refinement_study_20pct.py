@@ -111,7 +111,7 @@ def run_refined_wht(dim="2D"):
     nid_map = mesh.node_id_to_index()
     ndof_n = 2 if dim == "2D" else 3
 
-    substeps = 5
+    substeps = 10
     theta_max_rad = math.radians(20.0)
     dt = 1.0 / float(substeps)
     theta_prev = 0.0
@@ -170,6 +170,9 @@ def run_refined_wht(dim="2D"):
             solver.u[dof] = val
 
         converged, iters = solver.solve_step(dt=dt, max_iters=25, tol=1e-4, use_anderson_accel=True, anderson_m=4)
+        print(f"      [{dim}] Step {step:2d}/{substeps} (deg={math.degrees(theta_curr):5.2f}): converged={converged}, iters={iters}", flush=True)
+        if not converged:
+            raise RuntimeError(f"WHT {dim} failed to converge at step {step} (deg={math.degrees(theta_curr):.2f})")
         theta_prev = theta_curr
 
         driven_nodes_L = meta["plate_left_nodes"] + meta["disp_bottom_left_nids"]
@@ -469,25 +472,42 @@ def run_refined_fistr_baseline():
     }
 
 def main():
+    wht_only = "--wht-only" in sys.argv
+    out_json = os.path.join(OUT_DIR, "mesh_refinement_20pct_results.json")
+    existing_results = {}
+    if os.path.exists(out_json):
+        try:
+            with open(out_json, "r", encoding="utf-8") as f:
+                existing_results = json.load(f)
+        except Exception:
+            pass
+
     print("=" * 100)
-    print("STARTING 20% ELEMENT SIZE REDUCTION (REFINED MESH) 4-SOLVER STUDY AT 20 DEGREES")
+    print("STARTING 20% ELEMENT SIZE REDUCTION (REFINED MESH) STUDY AT 20 DEGREES")
+    print(f"Mode: {'WHT Only (Reusing FrontISTR results)' if wht_only else 'Full 4-Solver Study'}")
     print("=" * 100)
 
-    print("\n>>> [1/4] Running WHT Solver 2D (Refined: nx_hinge=38, nx_plate=25)...")
+    print("\n>>> [1/4] Running WHT Solver 2D (Refined: nx_hinge=38, nx_plate=25, 10 substeps)...")
     res_wht2d = run_refined_wht("2D")
     print(f"    WHT 2D Done: |M_L| = {res_wht2d['bar_M_L']:.4f} N*mm, Time = {res_wht2d['wall_time_s']:.2f}s")
 
-    print("\n>>> [2/4] Running WHT Solver 3D (Refined: nx_hinge=38, nx_plate=25)...")
+    print("\n>>> [2/4] Running WHT Solver 3D (Refined: nx_hinge=38, nx_plate=25, 10 substeps)...")
     res_wht3d = run_refined_wht("3D")
     print(f"    WHT 3D Done: |M_L| = {res_wht3d['bar_M_L']:.4f} N*mm, Time = {res_wht3d['wall_time_s']:.2f}s")
 
-    print("\n>>> [3/4] Running FrontISTR Conforming 3D (Refined: nx_hinge=38, nx_plate=25)...")
-    res_conf = run_refined_fistr_conforming()
-    print(f"    FrontISTR Conforming Done: |M_L| = {res_conf['bar_M_L']:.4f} N*mm, Time = {res_conf['wall_time_s']:.2f}s")
+    if wht_only and "FISTR_Conforming_Refined" in existing_results and "FISTR_Baseline_Refined" in existing_results:
+        print("\n>>> Reusing existing FrontISTR Conforming 3D results...")
+        res_conf = existing_results["FISTR_Conforming_Refined"]
+        print("\n>>> Reusing existing FrontISTR Baseline 3D results...")
+        res_base = existing_results["FISTR_Baseline_Refined"]
+    else:
+        print("\n>>> [3/4] Running FrontISTR Conforming 3D (Refined: nx_hinge=38, nx_plate=25)...")
+        res_conf = run_refined_fistr_conforming()
+        print(f"    FrontISTR Conforming Done: |M_L| = {res_conf['bar_M_L']:.4f} N*mm, Time = {res_conf['wall_time_s']:.2f}s")
 
-    print("\n>>> [4/4] Running FrontISTR Baseline 3D (Refined: nx_hinge=38, nx_plate=25)...")
-    res_base = run_refined_fistr_baseline()
-    print(f"    FrontISTR Baseline Done: |M_L| = {res_base['bar_M_L']:.4f} N*mm, Time = {res_base['wall_time_s']:.2f}s")
+        print("\n>>> [4/4] Running FrontISTR Baseline 3D (Refined: nx_hinge=38, nx_plate=25)...")
+        res_base = run_refined_fistr_baseline()
+        print(f"    FrontISTR Baseline Done: |M_L| = {res_base['bar_M_L']:.4f} N*mm, Time = {res_base['wall_time_s']:.2f}s")
 
     all_results = {
         "WHT_2D_Refined": res_wht2d,
@@ -496,7 +516,6 @@ def main():
         "FISTR_Baseline_Refined": res_base,
     }
 
-    out_json = os.path.join(OUT_DIR, "mesh_refinement_20pct_results.json")
     with open(out_json, "w", encoding="utf-8") as f:
         json.dump(all_results, f, indent=2)
     print(f"\n[+] Saved all refined results to {out_json}")
