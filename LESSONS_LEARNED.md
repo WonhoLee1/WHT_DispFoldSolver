@@ -858,3 +858,23 @@ deck06 DUAL_MORTAR는 세 결함이 겹쳐 수렴하지 못했다(하나만 고�
      - WHT 3D: $M = \mathbf{0.5113\,\text{N}\cdot\text{mm}}$, PET_1 Mises $= \mathbf{5.73\,\text{MPa}}$, Glass Mises $= \mathbf{10.74\,\text{MPa}}$.
      - WHT 2D: $M = \mathbf{0.5133\,\text{N}\cdot\text{mm}}$, PET_1 Mises $= \mathbf{5.25\,\text{MPa}}$, Glass Mises $= \mathbf{9.71\,\text{MPa}}$.
      - 2D-3D 편차 $0.39\%$로 완벽한 연속체 역학 일치성 회복.
+
+
+---
+
+## 25. 2026-10-24 14층 대변형 티어드롭 90°(180° 접힘) 폴딩 외변위 구동 힘 잔차 고원(Plateau) 돌파 및 전 절점 $u_z = 0$ 순수 평면변형률 구속 표준화
+
+1. **외변위 구동 대변형 폴딩에서의 수치적 힘 잔차 고원(Residual Plateau) 극복**:
+   - 14층 폴더블 적층체 90° 티어드롭 접힘 시, 고곡률 정점부 진입 구간($\theta \approx 50^\circ \sim 60^\circ$)에서 점착제(PSA)의 국소 전단 변형률이 $\gamma > 200\%$에 달하여 2차 세렌디피티(`Hex 362`)와 1차 u-P(`Hex 361 UP`) 요소 계면에서 극미한 불평형력($\approx 0.56\,\text{N}$)이 잔존함.
+   - 순수 외변위 제어(Displacement-Driven) 문제에서는 $\|f_{\text{ext}}\| \approx 0$으로 인해 통상적인 상대 힘 잔차($\|R\| / \|f_{\text{ext}}\|$) 정의가 왜곡되어 수렴 판정이 지연되는 역설이 발생함.
+   - **해결 방안**: Abaqus 상용 솔버의 표준 변위 보정 수렴 기준($c_a \le 0.01 \Delta u_a$, 1%)을 준용하여 FrontISTR의 `CONVERG_DDISP=2.0e-3` ($0.2\%$, Abaqus 대비 5배 엄격) 및 `MAXITER=80`을 적용함으로써, 90 서브스텝 전 구간 100% 무결점 완주를 달성함.
+
+2. **메쉬 45% 세분화($nx=55, h \approx 0.273\,\text{mm}$)에 의한 90° 폴딩 국소 피닝 응력 대폭 소거 실증**:
+   - 거시적 굽힘 모멘트는 100% 메쉬($6.6193\,\text{N}\cdot\text{mm}$)와 55% 세분화 메쉬($6.6050\,\text{N}\cdot\text{mm}$) 사이에서 **$0.22\%$**의 극미한 오차로 완전 수렴함.
+   - 티어드롭 루프 폭 또한 양 메쉬 모두 **$3.8000\,\text{mm}$**로 비트 단위 일치함.
+   - 반면 정점부 Cover Glass의 Mises 응력은 계면 경계층 피닝(Boundary Layer Pinning) 해소로 인해 $1272.12\,\text{MPa} \to \mathbf{1034.51\,\text{MPa}}$로 **$237.6\,\text{MPa}$ ($-18.7\%$) 대폭 감소**하였으며, 국소 접선 응력 $\sigma_{tt}$ 역시 $2359.11 \to \mathbf{1888.02\,\text{MPa}}$ ($-20.0\%$)로 완화됨.
+
+3. **FrontISTR 3D 솔리드의 전 절점 $u_z = 0$ (순수 평면변형률) 경계조건의 역학적 규명**:
+   - FrontISTR Conforming 기본 빌더는 중심 대칭면($z = 0$)만 $u_z = 0$으로 구속하여 외측면($z = \pm 0.5$)의 자유 횡팽창(Free Poisson Lateral Expansion)을 허용함.
+   - 메쉬의 모든 비구동 절점에 $u_z = 0$을 강제 부여하여 기구학적 순수 평면변형률($\varepsilon_{zz} \equiv 0$)을 강제할 경우, PSA의 체적 비압축성 구속이 $100\%$ 복원되면서 초기 굽힘 모멘트가 $0.47 \sim 0.48\,\text{N}\cdot\text{mm}$ 대역으로 동시 융합됨을 실측 확인함.
+   - 단, 힌지 단부의 강체 지지 플레이트 회전 구동 시 3D 두께 효과에 따른 수직 반력 커플이 발생하므로, 모멘트 평가 기준점을 명확히 분리하여 해석해야 함.
