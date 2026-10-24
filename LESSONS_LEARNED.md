@@ -21,6 +21,7 @@
 16. [2026-10-22 FrontISTR 3D 14개층 OpenMP 8-Core 고속 90° 티어드롭 접힘 해석 및 대변형 수치 안정성 교훈](#18-2026-10-22-frontistr-3d-14개층-openmp-8-core-고속-90-티어드롭-접힘-해석-및-대변형-수치-안정성-교훈)
 17. [2026-10-24 2D 모델(Plane Strain)과 3D 모델(Solid Extrusion)의 100% 결과 일치(Equivalence)를 위한 5대 필수 조건](#19-2026-10-24-2d-모델plane-strain과-3d-모델solid-extrusion의-100-결과-일치equivalence를-위한-5대-필수-조건)
 18. [2026-10-24 대변형·유한회전 비선형 해석에서 고정 좌표계 변위 구배(∇_X u) 오독과 극분해(F = RU) 기반 진변형률 무결성 표준](#20-2026-10-24-대변형유한회전-비선형-해석에서-고정-좌표계-변위-구배nabla_x-mathbfu--mathbff---mathbfi-오독과-극분해mathbff--mathbfrmathbfu-기반-진변형률-무결성-표준)
+19. [2026-10-24 보 국소 좌표계 및 위치별(Apex vs End) 응력·변형률 평가 표준과 PSA의 Jaumann 속도 응력 발산 안티패턴](#21-2026-10-24-보-국소-좌표계local-tangentnormal-frame-및-위치별apex-vs-end-응력변형률-평가-표준과-psa의-jaumann-속도-응력-발산-안티패턴)
 
 ---
 
@@ -772,3 +773,22 @@ deck06 DUAL_MORTAR는 세 결함이 겹쳐 수렴하지 못했다(하나만 고�
      - 최외곽 UTG Cover Glass: 중심 진변형률 **$2.39\%$** (표면 공칭변형률 **$4.68\%$**), 이론 정해 $\frac{t/2}{R} \approx 2.0\%$와 완벽 일치.
      - PET 1~6 필름: 최대 진변형률 **$5.46\% \sim 10.89\%$**로 곡률 반경 증가에 따라 단조 감소.
      - PSA 층간 점착제: 층간 전단 변형률 **$\gamma_{12} = 79.4\% \sim 90.4\%$**로 대부분의 층간 슬립을 흡수함.
+
+
+---
+
+## 21. 2026-10-24 보 국소 좌표계(Local Tangent/Normal Frame) 및 위치별(Apex vs End) 응력·변형률 평가 표준과 PSA의 Jaumann 속도 응력 발산 안티패턴
+
+1. **대변형 곡선 보에서 전체 데카르트 좌표계({xx}, S_{yy}$) 평가 폐기 및 국소 빔 좌표계($\sigma_{tt}, \sigma_{nn}, 	au_{tn}$) 표준화**:
+   - 보가 180° 접히면 힌지부에서 보의 축방향이 전체  방향으로 회전하므로 고정 좌표계의 {xx}, S_{yy} 물리적 의미를 상실함.
+   - 극분해 회전 텐서 $\mathbf{R} 통한 변환 $oldsymbol{\sigma}_{	ext{local}} = \mathbf{R}^T oldsymbol{\sigma} \mathbf{R} 보 접선(축방향 굽힘 $\sigma_{tt}$), 보 두께 법선(관통 수직 $\sigma_{nn}$), 층간 전단($	au_{tn}$)으로 완전 분리 평가해야 함.
+
+2. **위치별 상이성 (중앙 힌지 정점부 vs 끝단 고정부) 분리 평가 표준**:
+   - 중앙 힌지 정점부(Apex, $|X| \le 2.0\,	ext{mm}$): 최대 굽힘 곡률 집중으로 PET 굽힘 Mises 응력  \sim 399\,	ext{MPa}$, 변형률 .3\% \sim 10.3\%$.
+   - 끝단 고정단 영역(Plate Ends, $|X| \ge 7.5\,	ext{mm}$): 강체 회전만 수행하므로 곡률이 0이 되어 PET 굽힘 응력 .7 \sim 16.3\,	ext{MPa}$, 변형률 .10\% \sim 0.37\% 사실상 0으로 소거됨.
+   - 반면 연성 PSA는 양단 끝단에서도 누적된 층간 슬립을 흡수하므로 끝단 전단 변형률이 $pprox 62\% \sim 72\% 높게 유지됨.
+
+3. **FrontISTR u-P 요소(static_LIB_3d_up.f90)의 조만(Jaumann) 속도 누적에 따른 PSA 응력 수치적 폭발 규명**:
+   - PSA는  = 0.05\,	ext{MPa} = 50\,	ext{kPa} 초연성 재료로, 실제 물리적 응력은 $	au_{tn} pprox 0.03 \sim 0.12\,	ext{MPa}$, Mises 응력 .04 \sim 0.22\,	ext{MPa}$ ( \sim 220\,	ext{kPa}$)임.
+   - 과거 보고된 5,000~16,000 MPa는 FrontISTR u-P 요소가 대회전 단순 전단에서 조만(Jaumann) 객관 응력 속도(dumstress + rot*dumstress - dumstress*rot)를 90 서브스텝 동안 누적 적분하면서 발생한 Dienes(1979) 수치적 응력 폭발 및 정점부 2차-1차 메쉬 코너 핀칭에 기인한 가짜 스파이크였음.
+   - 변형 구배 $\mathbf{F} 직접 적분한 해석적 초탄성 Cauchy 응력과 WHT Solver의 Total Lagrangian Hyperelasticity를 표준으로 삼아야 함.
